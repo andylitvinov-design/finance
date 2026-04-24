@@ -1,0 +1,78 @@
+{
+  "appVersion": "3.0.9",
+  "endpoint": "/api",
+  "spreadsheetId": "1kAKcNVUF_T-MtLU1vbfjw3MVbAQ8-NQEnVoPQysEf5o",
+  "tabs": [
+    {
+      "id": "movement",
+      "label": "Движение средства",
+      "sheetName": "движение средства"
+    },
+    {
+      "id": "analytics",
+      "label": "Аналитика",
+      "sheetName": "аналитика"
+    },
+    {
+      "id": "manualFinance",
+      "label": "fact",
+      "sheetName": "fact"
+    },
+    {
+      "id": "orders",
+      "label": "Список моих заказы",
+      "sheetName": "список моих заказы"
+    },
+    {
+      "id": "savings",
+      "label": "Переводы",
+      "sheetName": "динамика сбережений"
+    },
+    {
+      "id": "payouts",
+      "label": "Список выплат",
+      "sheetName": "список выплат"
+    }
+  ],
+  "manualFinance": {
+    "spreadsheetId": "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY",
+    "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/edit",
+    "title": "EzoHata Manual Inputs",
+    "transfersSheetName": "Переводы",
+    "expensesSheetName": "Расходы",
+    "channels": [
+      "Яндекс руб",
+      "пейпал дол",
+      "пейпал евр",
+      "пейпал сad",
+      "приват 24-дол",
+      "приват 24-евро",
+      "приват 24-грн",
+      "монобанк грн",
+      "трансервайз дол",
+      "трансервайз евро",
+      "REVOLUT дол",
+      "Payoneer - eur",
+      "Payoneer - dol",
+      "Бинанс spot",
+      "binance save",
+      "Налично -я-евр",
+      "местная валюты",
+      "БАНК КАНАДА cad",
+      "нал-мам-евро",
+      "нал-мам-дол"
+    ],
+    "expenseTypes": ["business", "flat", "food", "fun", "travel"]
+  },
+  "manualOrders": {
+    "spreadsheetId": "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY",
+    "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/edit",
+    "title": "EzoHata Manual Inputs",
+    "sheetName": "Мои заказы"
+  },
+  "googleAuth": {
+    "clientId": "244809429378-piep9u8ekm1t8q2ffstpq88kr2v8jrnc.apps.googleusercontent.com",
+    "scopes": "https://www.googleapis.com/auth/spreadsheets"
+  },
+  "fallbackNotice": "Google Sheets is unavailable right now. Incoming data opens in browser draft mode."
+}
