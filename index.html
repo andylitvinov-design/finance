@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_VERSION = "2026.04.24.11";
+      const APP_VERSION = "2026.04.24.20";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -631,9 +631,11 @@
           state.data = await loadDashboardDataDirect(startDate, endDate);
           if (hasConfiguredManualFinanceEndpoint()) {
             await syncManualFinanceForCurrentPeriod();
+            await syncManualTransfersForCurrentRange(startDate, endDate);
             await syncManualOrdersForCurrentRange(startDate, endDate);
           } else {
             state.manualFinance.data = null;
+            state.manualTransfers.data = null;
             state.manualOrders.data = null;
           }
           await applyClientSideDerivedData(startDate, endDate);
@@ -1101,7 +1103,7 @@
           transferHeader.appendChild(th);
         });
         transferBody.appendChild(transferHeader);
-        state.manualTransfers.data.transferRows.forEach((row, rowIndex) => {
+        const renderTransferEditorRow = (row, rowIndex) => {
           const tr = document.createElement("tr");
           ["transferDate", "who", "amount", "currency", "channel", "rate", "usdAmount"].forEach((key) => {
             const td = document.createElement("td");
@@ -1120,11 +1122,39 @@
           remove.addEventListener("click", () => removeManualTransfersRow(rowIndex));
           actionTd.appendChild(remove);
           tr.appendChild(actionTd);
-          transferBody.appendChild(tr);
+          return tr;
+        };
+        const transferRowsWithIndex = state.manualTransfers.data.transferRows.map((row, rowIndex) => ({ row, rowIndex }));
+        const filledTransferRows = transferRowsWithIndex.filter(({ row }) => hasAnyValue(Object.values(row || {})));
+        const emptyTransferRows = transferRowsWithIndex.filter(({ row }) => !hasAnyValue(Object.values(row || {})));
+        filledTransferRows.forEach(({ row, rowIndex }) => {
+          transferBody.appendChild(renderTransferEditorRow(row, rowIndex));
         });
         transferTable.appendChild(transferBody);
         transferWrap.appendChild(transferTable);
         shell.appendChild(transferWrap);
+
+        if (emptyTransferRows.length) {
+          const emptyRowsDetails = document.createElement("details");
+          emptyRowsDetails.className = "analytics-section";
+          emptyRowsDetails.style.marginTop = "12px";
+          const summary = document.createElement("summary");
+          summary.textContent = `Пустые строки (${emptyTransferRows.length})`;
+          emptyRowsDetails.appendChild(summary);
+          const emptyWrap = document.createElement("div");
+          emptyWrap.className = "table-wrap";
+          const emptyTable = document.createElement("table");
+          const emptyBody = document.createElement("tbody");
+          const emptyHeader = transferHeader.cloneNode(true);
+          emptyBody.appendChild(emptyHeader);
+          emptyTransferRows.forEach(({ row, rowIndex }) => {
+            emptyBody.appendChild(renderTransferEditorRow(row, rowIndex));
+          });
+          emptyTable.appendChild(emptyBody);
+          emptyWrap.appendChild(emptyTable);
+          emptyRowsDetails.appendChild(emptyWrap);
+          shell.appendChild(emptyRowsDetails);
+        }
 
         const actions = document.createElement("div");
         actions.className = "finance-actions";
@@ -1514,9 +1544,36 @@
           title.style.fontWeight = "700";
           title.textContent = section.title;
           block.appendChild(title);
-          block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
+          if (normalizeCell(section.title) === normalizeCell("Итоговая выжимка Движение средства")) {
+            appendCollapsibleZeroAnalyticsTable(block, section.rows);
+          } else {
+            block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
+          }
           container.appendChild(block);
         });
+      }
+
+      function isZeroOnlyAnalyticsRow(row) {
+        if (!row || normalizeCell(row[0]) === normalizeCell(MANUAL_FINANCE_TOTAL_LABEL)) return false;
+        const numericValues = row.slice(1).map((cell) => parseLooseNumber(cell));
+        return numericValues.length > 0 && numericValues.every((value) => !value);
+      }
+
+      function appendCollapsibleZeroAnalyticsTable(block, rows) {
+        const header = rows?.[0] || [];
+        const dataRows = (rows || []).slice(1);
+        const visibleRows = dataRows.filter((row) => !isZeroOnlyAnalyticsRow(row));
+        const zeroRows = dataRows.filter(isZeroOnlyAnalyticsRow);
+        block.appendChild(renderResponsiveDataView([header, ...visibleRows], { mobileTableColumnCount: 10 }));
+        if (!zeroRows.length) return;
+        const details = document.createElement("details");
+        details.className = "analytics-section";
+        details.style.marginTop = "12px";
+        const summary = document.createElement("summary");
+        summary.textContent = `Пустые каналы (${zeroRows.length})`;
+        details.appendChild(summary);
+        details.appendChild(renderResponsiveDataView([header, ...zeroRows], { mobileTableColumnCount: 10 }));
+        block.appendChild(details);
       }
 
       function splitAnalyticsSections(values) {
@@ -2270,6 +2327,18 @@
         } finally {
           state.manualTransfers.loading = false;
           renderTabs();
+        }
+      }
+
+      async function syncManualTransfersForCurrentRange(startDate, endDate) {
+        if (!hasConfiguredManualFinanceEndpoint()) return;
+        try {
+          state.manualTransfers.data = await getManualTransfersSheetDirect(startDate, endDate);
+          state.manualTransfers.dirty = false;
+          setManualTransfersStatus("Переводы за диапазон загружены.", false);
+        } catch (error) {
+          state.manualTransfers.data = null;
+          setManualTransfersStatus(error.message || "Не удалось загрузить переводы для списка выплат.", true);
         }
       }
 
@@ -4134,7 +4203,12 @@
         const firstSectionRows = Array.isArray(sections[0]?.rows) ? sections[0].rows : [];
         const manualRows = aggregatedManual?.rows || [];
         const movementStats = calculateMovementChannelStats(movementValues);
-        const payoutStats = calculatePayoutChannelStats(payoutsValues, aggregatedManual?.transferRows || []);
+        const normalizedTransferRows = ANALYTICS_PAYOUTS_HELPER.buildTransferPayoutRowsWithUsd
+          ? ANALYTICS_PAYOUTS_HELPER.buildTransferPayoutRowsWithUsd(MANUAL_TRANSFER_HEADERS, aggregatedManual?.transferRows || [], {
+              movementValues
+            })
+          : (aggregatedManual?.transferRows || []);
+        const payoutStats = calculatePayoutChannelStats(payoutsValues, normalizedTransferRows);
         const usdRateLookup = buildManualFinanceUsdRateLookup(aggregatedManual?.transferRows || [], movementValues);
         const manualRowsWithUsd = manualRows.map((row) => ({
           ...row,
@@ -4205,8 +4279,8 @@
           const balanceDifference = balanceGrowth - planProfit;
           const commission = paidOut;
           const additionalExpenses = balanceDifference - commission;
-          const balance = planProfit;
-          const extraValue = "";
+          const balance = movementStats.balanceByChannel[channel] || 0;
+          const extraValue = additionalExpenses - balance;
           planRows.push([
             channel,
             formatSheetNumber(localIncoming),
@@ -4229,7 +4303,7 @@
             formatSheetNumber(commission, 4),
             formatSheetNumber(additionalExpenses),
             formatSheetNumber(balance),
-            extraValue
+            formatSheetNumber(extraValue)
           ]);
           totalUsdReceived += usdIncoming;
           totalPlanGrowth += planGrowth;
@@ -4246,7 +4320,46 @@
           totalAdditionalExpenses += additionalExpenses;
           totalBalance += balance;
         });
+        const balanceSection = {
+          title: "БАЛАНС",
+          header: ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+          rows: [
+            ...balanceRows,
+            [
+              MANUAL_FINANCE_TOTAL_LABEL,
+              formatSheetNumber(totalOpeningBalance),
+              formatSheetNumber(totalClosingBalance),
+              formatSheetNumber(totalBalanceGrowth),
+              formatSheetNumber(totalPlanProfit),
+              formatSheetNumber(totalBalanceDifference),
+              formatSheetNumber(totalCommission, 4),
+              formatSheetNumber(totalAdditionalExpenses),
+              formatSheetNumber(totalBalance),
+              formatSheetNumber(totalAdditionalExpenses - totalBalance)
+            ]
+          ]
+        };
+        const movementSummarySection = {
+          title: "Итоговая выжимка Движение средства",
+          header: [
+            "канал переводов",
+            "план = ACCRUED",
+            "план плюс процент начислено = ACCRUED +3%",
+            "70% OF +3%",
+            "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО",
+            "BALANCE"
+          ],
+          rows: ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows
+            ? ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows(
+                movementValues,
+                MANUAL_FINANCE_MONEY_CHANNELS,
+                ANALYTICS_PAYMENT_RULES
+              )
+            : []
+        };
         const rebuiltSections = [
+          movementSummarySection,
+          balanceSection,
           { title: firstTitle, header: topHeader, rows: topRows },
           {
             title: "Plan",
@@ -4266,25 +4379,6 @@
                 formatSheetNumber(totalPlanProfit)
               ],
               ["Итого движение", formatPlanLocalSummary(movementStats.localByCurrency), formatSheetNumber(totalUsdReceived)]
-            ]
-          },
-          {
-            title: "БАЛАНС",
-            header: ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
-            rows: [
-              ...balanceRows,
-              [
-                MANUAL_FINANCE_TOTAL_LABEL,
-                formatSheetNumber(totalOpeningBalance),
-                formatSheetNumber(totalClosingBalance),
-                formatSheetNumber(totalBalanceGrowth),
-                formatSheetNumber(totalPlanProfit),
-                formatSheetNumber(totalBalanceDifference),
-                formatSheetNumber(totalCommission, 4),
-                formatSheetNumber(totalAdditionalExpenses),
-                formatSheetNumber(totalBalance),
-                ""
-              ]
             ]
           }
         ];
@@ -4322,10 +4416,12 @@
           });
         }
         (transferRows || []).forEach((row) => {
-          const channel = String(row?.destination || row?.channel || "").trim();
+          const channel = Array.isArray(row)
+            ? String(row[4] || "").trim()
+            : String(row?.destination || row?.channel || "").trim();
           if (!channel || !stats[channel]) return;
-          stats[channel].local += normalizePayoutAmount(row.amount);
-          stats[channel].usd += normalizePayoutAmount(row.usdAmount);
+          stats[channel].local += normalizePayoutAmount(Array.isArray(row) ? row[2] : row.amount);
+          stats[channel].usd += normalizePayoutAmount(Array.isArray(row) ? row[6] : row.usdAmount);
         });
         return stats;
       }
@@ -4342,7 +4438,7 @@
         if (exact) return exact;
         const normalized = normalizeLookupText(raw);
         const entry = Object.entries(ANALYTICS_PAYMENT_RULES).find(([, rule]) => {
-          return [...(rule.localPatterns || []), ...(rule.usdPatterns || [])].some((pattern) => pattern.test(normalized));
+          return [...(rule.localPatterns || []), ...(rule.usdPatterns || [])].some((pattern) => pattern.test(raw) || pattern.test(normalized));
         });
         return entry ? entry[0] : "";
       }
@@ -4458,19 +4554,31 @@
 
       function calculateMovementChannelStats(values) {
         if (!values.length) {
-          return { localByChannel: {}, usdByChannel: {}, localByCurrency: {} };
+          return { localByChannel: {}, usdByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
         }
         const header = values[0] || [];
         const paymentMethodIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD"]);
+        const clientIndex = findHeaderIndexByAliases(header, ["CLIENT", "КЛИЕНТ"]);
         const receivedRubIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В РУБЛЯХ"]);
         const receivedUahIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ГРИВНАХ"]);
         const receivedUsdIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
+        const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
         const localByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
         const usdByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+        const balanceByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
         const localByCurrency = {};
-        values.slice(1).forEach((row) => {
+        const dataRows = values.slice(1);
+        const nextPaymentByClient = {};
+        for (let index = dataRows.length - 1; index >= 0; index -= 1) {
+          const row = dataRows[index] || [];
+          const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
+          const paymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
+          if (client && paymentMethod) nextPaymentByClient[client] = paymentMethod;
+        }
+        dataRows.forEach((row) => {
           if (!hasAnyValue(row)) return;
-          const paymentMethod = paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] : "";
+          const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
+          const paymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim() || nextPaymentByClient[client] || "";
           if (!String(paymentMethod || "").trim()) return;
           Object.entries(ANALYTICS_PAYMENT_RULES).forEach(([channel, rule]) => {
             if ((rule.localPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))) {
@@ -4495,9 +4603,19 @@
                 }
               }
             }
+            if (
+              balanceIndex !== -1 &&
+              balanceIndex < row.length &&
+              (
+                (rule.localPatterns || []).some((pattern) => pattern.test(String(paymentMethod || ""))) ||
+                (rule.usdPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))
+              )
+            ) {
+              balanceByChannel[channel] += parseLooseNumber(row[balanceIndex]);
+            }
           });
         });
-        return { localByChannel, usdByChannel, localByCurrency };
+        return { localByChannel, usdByChannel, balanceByChannel, localByCurrency };
       }
 
       function calculatePayoutUsdTotal(values) {
@@ -4717,16 +4835,13 @@
         const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
         const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
         const ordersReceivedUsdTotal = parseLooseNumber(ordersSummary.totalReceivedUsd);
-        const totalPaid = getCombinedPayoutUsdTotal(
-          state.data?.tabs?.payouts?.values || [],
-          state.data?.tabs?.payouts?.closedFactTransfers || []
-        );
+        const totalPaid = calculateCurrentPayoutTransferRowsUsdTotal();
 
         const totalOrders = movementAccruedTotal + manualOrdersTotal;
         const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
         const balance = totalOrders - totalReceivedUsd;
         const totalOrdersSeventyPct = movementSeventyTotal + (manualOrdersTotal * 0.7);
-        const total = totalPaid - totalOrdersSeventyPct;
+        const total = totalReceivedUsd - totalOrdersSeventyPct + totalPaid;
 
         return {
           totalOrders,
@@ -4752,26 +4867,63 @@
         return totalRow;
       }
 
+      function getNormalizedPayoutTransferRows() {
+        const header = MANUAL_TRANSFER_HEADERS.slice();
+        const savedRows = state.manualTransfers.data?.transferRows
+          ? state.manualTransfers.data.transferRows.map((row) => [
+              row.transferDate || "",
+              row.who || "",
+              row.amount || "",
+              row.currency || "",
+              row.channel || "",
+              row.rate || "",
+              row.usdAmount || ""
+            ])
+          : [];
+        const rawRows = savedRows.length
+          ? savedRows
+          : clone2dArray(state.data?.tabs?.payouts?.closedFactTransfers || []);
+        const nonEmptyRows = rawRows.filter((row) => hasAnyValue(row));
+        const rows = ANALYTICS_PAYOUTS_HELPER.buildTransferPayoutRowsWithUsd
+          ? ANALYTICS_PAYOUTS_HELPER.buildTransferPayoutRowsWithUsd(header, nonEmptyRows, {
+              movementValues: state.data?.tabs?.movement?.values || []
+            })
+          : nonEmptyRows;
+        return { header, rows };
+      }
+
+      function calculateCurrentPayoutTransferRowsUsdTotal() {
+        return calculateClosedFactTransferRowsUsdTotal(getNormalizedPayoutTransferRows().rows);
+      }
+
+      function buildPayoutTransferChannelTotalRows(header, rows) {
+        const stats = calculatePayoutChannelStats([header], rows);
+        const amountIndex = findHeaderIndexByAliases(header, ["сумма", "СУММА ТЕКУЩАЯ"]);
+        const usdIndex = findHeaderIndexByAliases(header, ["сумма в долларах", "AMOUNT (USD)"]);
+        return MANUAL_FINANCE_MONEY_CHANNELS
+          .map((channel) => ({ channel, stat: stats[channel] || { local: 0, usd: 0 } }))
+          .filter(({ stat }) => parseLooseNumber(stat.local) || parseLooseNumber(stat.usd))
+          .map(({ channel, stat }) => {
+            const row = Array.from({ length: Math.max(header.length, MANUAL_TRANSFER_HEADERS.length) }, () => "");
+            row[0] = `${MANUAL_FINANCE_TOTAL_LABEL}: ${channel}`;
+            row[4] = channel;
+            if (amountIndex !== -1) row[amountIndex] = formatPayoutNumber(Math.abs(stat.local));
+            if (usdIndex !== -1) row[usdIndex] = formatPayoutNumber(Math.abs(stat.usd));
+            return row;
+          });
+      }
+
       function getPayoutTransferTableValues() {
-        const header = (state.data?.tabs?.payouts?.closedFactTransferHeaders || MANUAL_TRANSFER_HEADERS).slice();
-        const rows = clone2dArray(state.data?.tabs?.payouts?.closedFactTransfers || []);
-        if (!rows.length) return [];
+        const { header, rows } = getNormalizedPayoutTransferRows();
+        if (!rows.length) return [header];
+        const channelTotalRows = buildPayoutTransferChannelTotalRows(header, rows);
         const totalRow = buildClosedFactTransferTotalRow(header, rows);
-        const overallRow = buildClosedFactTransferTotalRow(
-          header,
-          rows,
-          "Всего выплат",
-          getCombinedPayoutUsdTotal(
-            state.data?.tabs?.payouts?.values || [],
-            state.data?.tabs?.payouts?.closedFactTransfers || []
-          )
-        );
-        return [header, ...rows, totalRow, overallRow];
+        const overallRow = buildClosedFactTransferTotalRow(header, rows, "Всего выплат");
+        return [header, ...rows, ...channelTotalRows, totalRow, overallRow];
       }
 
       function renderPayoutTransfersBlock() {
         const values = getPayoutTransferTableValues();
-        if (!values.length) return null;
         const block = document.createElement("div");
         block.className = "analytics-section";
         block.style.marginTop = "18px";
@@ -4779,8 +4931,15 @@
         title.className = "tab-note";
         title.style.marginBottom = "10px";
         title.style.fontWeight = "700";
-        title.textContent = "Переводы за выбранный период";
+        title.textContent = "Переводы из вкладки Переводы за выбранный период";
         block.appendChild(title);
+        if (values.length <= 1) {
+          const empty = document.createElement("div");
+          empty.className = "config-note";
+          empty.style.marginBottom = "10px";
+          empty.textContent = "Сохраненных переводов за выбранный период нет.";
+          block.appendChild(empty);
+        }
         const wrap = document.createElement("div");
         wrap.className = "table-wrap";
         wrap.appendChild(renderResponsiveDataView(values, { mobileTableColumnCount: 1 }));

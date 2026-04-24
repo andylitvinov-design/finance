@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   buildPayoutTotalRow,
+  buildMovementPaymentSummaryRows,
+  buildTransferPayoutRowsWithUsd,
   calculatePayoutTotalsByChannel,
   calculatePayoutUsdTotalFromTable,
   mapAnalyticsTopRows,
@@ -70,4 +72,68 @@ test("calculatePayoutTotalsByChannel maps payout rows to matching channels", () 
   assert.deepEqual(totals["приват 24-грн"], { local: 4000, usd: 100 });
   assert.deepEqual(totals["пейпал дол"], { local: 25, usd: 25 });
   assert.deepEqual(totals["Яндекс руб"], { local: 0, usd: 0 });
+});
+
+test("buildMovementPaymentSummaryRows summarizes movement metrics by payment channel", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "А", "сайт, рубли", "100", "103", "72.1", "90", "13"],
+      ["2", "А", "сайт рубли", "50", "51.5", "36.05", "60", "-8.5"],
+      ["18110", "Инна Устименко", "", "100", "103", "72.1", "", "-103"],
+      ["18111", "Инна Устименко", "сайт, дол, пэйпэл", "200", "206", "144.2", "315", "109"]
+    ],
+    ["Яндекс руб", "пейпал дол", "приват 24-грн"],
+    {
+      "Яндекс руб": {
+        localPatterns: [/сайт рубли/i],
+        usdPatterns: [/сайт рубли/i]
+      },
+      "пейпал дол": {
+        usdPatterns: [/сайт, дол, пэйпэл|сайт, пэйпэл, дол/i]
+      }
+    }
+  );
+
+  assert.deepEqual(rows[0], ["Яндекс руб", "150,0000", "154,5000", "108,1500", "150,0000", "4,5000"]);
+  assert.deepEqual(rows[1], ["пейпал дол", "300,0000", "309,0000", "216,3000", "315,0000", "6,0000"]);
+  assert.deepEqual(rows[2], ["приват 24-грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
+  assert.deepEqual(rows[3], ["Итого", "450,0000", "463,5000", "324,4500", "465,0000", "10,5000"]);
+});
+
+test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {
+  const header = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
+  const rows = buildTransferPayoutRowsWithUsd(
+    header,
+    [
+      {
+        transferDate: "2026-04-20",
+        amount: "4000",
+        currency: "UAH",
+        channel: "приват 24-грн",
+        rate: "40",
+        usdAmount: "999"
+      },
+      {
+        transferDate: "2026-04-21",
+        amount: "8455,63",
+        currency: "RUB",
+        channel: "Яндекс руб",
+        rate: "",
+        usdAmount: ""
+      }
+    ],
+    {
+      movementValues: [
+        ["DATE", "RUB RATE", "UAH RATE"],
+        ["2026-04-21", "84.5563", "43.86"]
+      ]
+    }
+  );
+
+  assert.equal(rows[0][5], "40");
+  assert.equal(rows[0][6], "100,0000");
+  assert.equal(rows[1][5], "84,5563");
+  assert.equal(rows[1][6], "100,0000");
+  assert.equal(buildPayoutTotalRow(header, rows)[6], "200,0000");
 });
