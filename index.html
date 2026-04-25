@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.02";
+      const APP_BUILD_VERSION = "2026.04.25.03";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -2420,9 +2420,7 @@
           spreadsheetUrl: data.spreadsheetUrl || state.config?.manualFinance?.spreadsheetUrl || "",
           moneyTitle: data.moneyTitle || MANUAL_FINANCE_MONEY_TITLE,
           moneyHeaders: Array.isArray(data.moneyHeaders) && data.moneyHeaders.length ? data.moneyHeaders : MANUAL_FINANCE_HEADERS,
-          moneyRows: data.emptyFact
-            ? []
-            : Array.isArray(data.moneyRows) && data.moneyRows.length
+          moneyRows: Array.isArray(data.moneyRows) && data.moneyRows.length
             ? normalizeManualFinanceMoneyRows(data.moneyRows)
             : buildLegacyFactMoneyRowsFromExpenseRows(expenseRows),
           transferTitle: data.transferTitle || MANUAL_FINANCE_TRANSFER_TITLE,
@@ -3269,9 +3267,11 @@
           status: "saved",
           moneyTitle: MANUAL_FINANCE_MONEY_TITLE,
           moneyHeaders: MANUAL_FINANCE_HEADERS,
-          moneyRows: expenseRows.length
-            ? buildLegacyFactMoneyRowsFromExpenseRows(normalizeManualFinanceExpenseRows(expenseRows, snapshotDate, snapshotDate))
-            : [],
+          moneyRows: buildLegacyFactMoneyRowsFromExpenseRows(
+            expenseRows.length
+              ? normalizeManualFinanceExpenseRows(expenseRows, snapshotDate, snapshotDate)
+              : []
+          ),
           transferTitle: getManualTransfersSheetName(),
           transferHeaders: MANUAL_TRANSFER_HEADERS,
           transferRows,
