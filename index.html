@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.06";
+      const APP_BUILD_VERSION = "2026.04.25.07";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -1602,7 +1602,7 @@
           title.style.fontWeight = "700";
           title.textContent = section.title;
           block.appendChild(title);
-          if (normalizeCell(section.title) === normalizeCell("Итоговая выжимка Движение средства")) {
+          if (normalizeCell(section.title) === normalizeCell("личное движение средств")) {
             appendCollapsibleZeroAnalyticsTable(block, section.rows);
           } else {
             block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
@@ -4298,6 +4298,7 @@
         }));
         const manualTotalLookup = buildManualTotalLookup(manualRowsWithUsd);
         const manualTotalUsdLookup = buildManualTotalUsdLookup(manualRowsWithUsd);
+        const manualServiceIncomeLookup = buildManualServiceIncomeLookup(manualRowsWithUsd);
         const manualExchangeLookup = buildManualExchangeLookup(manualRowsWithUsd);
         const manualExchangeUsdLookup = buildManualExchangeUsdLookup(manualRowsWithUsd);
         const manualNowUsdLookup = buildManualNowUsdLookup(manualRowsWithUsd);
@@ -4342,9 +4343,15 @@
         let totalCommission = 0;
         let totalAdditionalExpenses = 0;
         let totalBalance = 0;
+        const planLocalByCurrency = { ...(movementStats.localByCurrency || {}) };
         MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
-          const localIncoming = movementStats.localByChannel[channel] || 0;
-          const usdIncoming = movementStats.usdByChannel[channel] || 0;
+          const serviceIncome = manualServiceIncomeLookup[channel] || 0;
+          const currency = inferManualFinanceChannelCurrency(channel);
+          const localIncoming = (movementStats.localByChannel[channel] || 0) + serviceIncome;
+          const incomingRate = getManualFinanceUsdPerLocalRate({ channel }, usdRateLookup);
+          const usdIncoming = currency === "USD"
+            ? (movementStats.usdByChannel[channel] || 0) + serviceIncome
+            : (incomingRate ? localIncoming * incomingRate : (movementStats.usdByChannel[channel] || 0));
           const paidOut = payoutStats[channel]?.usd || 0;
           const exchange = manualExchangeLookup[channel] || 0;
           const exchangeUsd = manualExchangeUsdLookup[channel] || 0;
@@ -4362,6 +4369,9 @@
           const additionalExpenses = balanceDifference - commission;
           const balance = movementStats.balanceByChannel[channel] || 0;
           const extraValue = additionalExpenses - balance;
+          if (serviceIncome) {
+            planLocalByCurrency[currency] = (planLocalByCurrency[currency] || 0) + serviceIncome;
+          }
           planRows.push([
             channel,
             formatSheetNumber(localIncoming),
@@ -4421,7 +4431,7 @@
           ]
         };
         const movementSummarySection = {
-          title: "Итоговая выжимка Движение средства",
+          title: "личное движение средств",
           header: [
             "канал переводов",
             "план = ACCRUED",
@@ -4449,7 +4459,7 @@
               ...planRows,
               [
                 MANUAL_FINANCE_TOTAL_LABEL,
-                formatPlanLocalSummary(movementStats.localByCurrency),
+                formatPlanLocalSummary(planLocalByCurrency),
                 formatSheetNumber(totalUsdReceived),
                 formatSheetNumber(payoutUsdTotal, 4),
                 formatSheetNumber(totalExchange),
@@ -4459,7 +4469,7 @@
                 formatSheetNumber(totalManualCostUsd),
                 formatSheetNumber(totalPlanProfit)
               ],
-              ["Итого движение", formatPlanLocalSummary(movementStats.localByCurrency), formatSheetNumber(totalUsdReceived)]
+              ["Итого движение", formatPlanLocalSummary(planLocalByCurrency), formatSheetNumber(totalUsdReceived)]
             ]
           }
         ];
@@ -4559,6 +4569,16 @@
           const channel = String(row.channel || "").trim();
           if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
           totals[channel] = parseLooseNumber(row.totalUsd);
+        });
+        return totals;
+      }
+
+      function buildManualServiceIncomeLookup(rows) {
+        const totals = {};
+        (rows || []).forEach((row) => {
+          const channel = String(row.channel || "").trim();
+          if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
+          totals[channel] = parseLooseNumber(row.serviceIncome);
         });
         return totals;
       }
