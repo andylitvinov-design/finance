@@ -396,12 +396,9 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const date = formatDisplayDate(isoDate);
   const paymentMethod = derivedContext.paymentMethod;
   const priceBase = normalizeNumberCell(row[6]);
-  const explicitAccrued = normalizeNumberCell(row[9]);
-  const explicitAccruedPlus3 = normalizeNumberCell(row[10]);
-  const accrued = explicitAccrued || normalizeNumberCell(row[6]);
-  const accruedPlus3 = isCryptoPaymentMethod(paymentMethod)
-    ? deriveAccruedPlusPercent(accrued, paymentMethod)
-    : (explicitAccruedPlus3 || deriveAccruedPlusPercent(accrued, paymentMethod));
+  const quantity = normalizeNumberCell(row[8]);
+  const accrued = deriveAccruedAmount(row);
+  const accruedPlus3 = deriveAccruedPlusPercent(accrued, paymentMethod);
   const correctedContext = applySourceReceivedAmountCorrection(row, derivedContext);
   const receivedUsd = correctedContext.receivedUsd;
   const receivedRub = correctedContext.receivedRub;
@@ -427,7 +424,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     String(row[5] || "").trim(),
     priceBase,
     String(row[7] || "").trim(),
-    normalizeNumberCell(row[8]),
+    quantity,
     accrued,
     accruedPlus3,
     normalizePercentShare(accrued),
@@ -450,6 +447,18 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     "",
     "",
   ];
+}
+
+function deriveAccruedAmount(row) {
+  const explicitTotal = normalizeNumberCell(row?.[9]);
+  if (explicitTotal) return explicitTotal;
+
+  const price = parseLooseNumber(row?.[6]);
+  if (price === null) return "";
+
+  const quantity = parseLooseNumber(row?.[8]);
+  const accrued = quantity ? price * quantity : price;
+  return formatDisplayNumber(accrued);
 }
 
 function applySourceReceivedAmountCorrection(row, derivedContext) {
