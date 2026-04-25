@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.01";
+      const APP_BUILD_VERSION = "2026.04.25.02";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -2091,6 +2091,7 @@
 
       async function hydrateManualFinanceFromMainFactImport(manualData) {
         if (!manualData || !state.config?.spreadsheetId) return manualData;
+        if (manualData.sourceType === "incoming-repository" || manualData.emptyFact) return manualData;
         let values = [];
         try {
           values = await getSheetValuesByTitle(ANALYTICS_FACT_IMPORT_SHEET, state.config.spreadsheetId);
@@ -4910,6 +4911,13 @@
         return totalRow;
       }
 
+      function calculateCombinedPayoutDisplayTotal(upperPayoutUsdTotal, transferRows) {
+        const upperAbsTotal = Math.abs(parseLooseNumber(upperPayoutUsdTotal));
+        const transferAbsTotal = Math.abs(calculateClosedFactTransferRowsUsdTotal(transferRows));
+        const total = upperAbsTotal + transferAbsTotal;
+        return total ? -total : 0;
+      }
+
       function getNormalizedPayoutTransferRows() {
         const header = MANUAL_TRANSFER_HEADERS.slice();
         const savedRows = state.manualTransfers.data?.transferRows
@@ -4966,7 +4974,7 @@
           header,
           rows,
           "Всего выплат",
-          upperPayoutUsdTotal + calculateClosedFactTransferRowsUsdTotal(rows)
+          calculateCombinedPayoutDisplayTotal(upperPayoutUsdTotal, rows)
         );
         return [header, ...rows, ...channelTotalRows, totalRow, overallRow];
       }
