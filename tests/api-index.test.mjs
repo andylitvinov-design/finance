@@ -212,6 +212,9 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(response.body?.ok, true);
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
+    const cryptoRow = movementRows.find((row) => row?.[0] === "18126");
+    assert.equal(cryptoRow?.[9], "101");
+    assert.equal(cryptoRow?.[11], "70,7");
     assert.deepEqual(positions, [
       "дата 1",
       "Поменяй даты. Таблица автоматически подтянет записи за выбранный период из исходного файла.",

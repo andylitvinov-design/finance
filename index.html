@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.12";
+      const APP_BUILD_VERSION = "2026.04.25.13";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -360,7 +360,8 @@
         },
         "Бинанс spot": {
           currency: "USD",
-          usdPatterns: [/крипта, дол/i]
+          localPatterns: [/крипта, дол|binance save/i],
+          usdPatterns: [/крипта, дол|binance save/i]
         }
       };
       const MANUAL_FINANCE_MONEY_CHANNELS = [
@@ -4770,6 +4771,7 @@
       function resolvePaymentChannel(value) {
         const raw = String(value || "").trim();
         if (!raw) return "";
+        if (normalizeCell(raw) === normalizeCell("binance save")) return "Бинанс spot";
         const exact = MANUAL_FINANCE_MONEY_CHANNELS.find((channel) => normalizeCell(channel) === normalizeCell(raw));
         if (exact) return exact;
         const normalized = normalizeLookupText(raw);
@@ -4819,6 +4821,11 @@
         if (/лозин/i.test(text)) return "монобанк грн";
         if (/игнат/i.test(text)) return "пейпал дол";
         return "";
+      }
+
+      function isAmbiguousPersonalCardPayment(value) {
+        const normalized = normalizeLookupText(value);
+        return /андрей.*карта|карта.*андрей/.test(normalized);
       }
 
       function sumChannelStat(stats, key) {
@@ -5000,7 +5007,10 @@
           const enteredPaymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
           const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
           const fallbackChannel = !enteredPaymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
-          const channel = resolvePaymentChannel(enteredPaymentMethod) || fallbackChannel || resolvePaymentChannel(inferredPaymentMethod);
+          const cardFallbackChannel = enteredPaymentMethod && isAmbiguousPersonalCardPayment(enteredPaymentMethod)
+            ? inferFallbackPaymentChannelFromClient(client)
+            : "";
+          const channel = cardFallbackChannel || resolvePaymentChannel(enteredPaymentMethod) || fallbackChannel || resolvePaymentChannel(inferredPaymentMethod);
           if (!channel || !Object.prototype.hasOwnProperty.call(localByChannel, channel)) return;
           const currency = inferManualFinanceChannelCurrency(channel);
           let localValue = 0;

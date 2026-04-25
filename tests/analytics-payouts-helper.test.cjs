@@ -141,10 +141,25 @@ test("buildMovementPaymentSummaryRows falls back blank clients to transferwise a
     }
   );
 
-  assert.deepEqual(rows[0], ["трансервайз дол", "150,0000", "154,5000", "108,1500", "154,5000", "0,0000"]);
+  assert.deepEqual(rows[0], ["трансервайз дол", "160,0000", "164,8000", "115,3600", "164,8000", "0,0000"]);
   assert.deepEqual(rows[1], ["пейпал дол", "70,0000", "72,1000", "50,4700", "72,1000", "0,0000"]);
-  assert.deepEqual(rows[2], ["монобанк грн", "10,0000", "10,3000", "7,2100", "10,3000", "0,0000"]);
+  assert.deepEqual(rows[2], ["монобанк грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
   assert.deepEqual(rows[3], ["Итого", "230,0000", "236,9000", "165,8300", "236,9000", "0,0000"]);
+});
+
+test("buildMovementPaymentSummaryRows maps binance save movement to Binance spot", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "Crypto", "binance save", "100", "101", "70.7", "101", "0"]
+    ],
+    ["Бинанс spot", "binance save"],
+    {}
+  );
+
+  assert.deepEqual(rows[0], ["Бинанс spot", "100,0000", "101,0000", "70,7000", "101,0000", "0,0000"]);
+  assert.deepEqual(rows[1], ["binance save", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
+  assert.deepEqual(rows[2], ["Итого", "100,0000", "101,0000", "70,7000", "101,0000", "0,0000"]);
 });
 
 test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {

@@ -390,7 +390,9 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const explicitAccrued = normalizeNumberCell(row[9]);
   const explicitAccruedPlus3 = normalizeNumberCell(row[10]);
   const accrued = explicitAccrued || normalizeNumberCell(row[6]);
-  const accruedPlus3 = explicitAccruedPlus3 || deriveAccruedPlusPercent(accrued, paymentMethod);
+  const accruedPlus3 = isCryptoPaymentMethod(paymentMethod)
+    ? deriveAccruedPlusPercent(accrued, paymentMethod)
+    : (explicitAccruedPlus3 || deriveAccruedPlusPercent(accrued, paymentMethod));
   const receivedUsd = derivedContext.receivedUsd;
   const receivedRub = derivedContext.receivedRub;
   const receivedUah = derivedContext.receivedUah;

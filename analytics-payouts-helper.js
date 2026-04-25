@@ -65,9 +65,15 @@
     return "";
   }
 
+  function isAmbiguousPersonalCardPayment(value) {
+    const normalized = normalizeLookupText(value);
+    return /андрей.*карта|карта.*андрей/.test(normalized);
+  }
+
   function resolvePaymentChannel(value, channels = [], paymentRules = {}) {
     const raw = String(value || "").trim();
     if (!raw) return "";
+    if (normalizeCell(raw) === normalizeCell("binance save")) return "Бинанс spot";
     const exact = channels.find((channel) => normalizeCell(channel) === normalizeCell(raw));
     if (exact) return exact;
     const normalized = normalizeLookupText(raw);
@@ -121,8 +127,11 @@
       const enteredPaymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim();
       const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
       const fallbackChannel = !enteredPaymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
-      const paymentMethod = enteredPaymentMethod || inferredPaymentMethod;
-      const channel = resolvePaymentChannel(enteredPaymentMethod, channels, paymentRules) ||
+      const cardFallbackChannel = enteredPaymentMethod && isAmbiguousPersonalCardPayment(enteredPaymentMethod)
+        ? inferFallbackPaymentChannelFromClient(client)
+        : "";
+      const channel = cardFallbackChannel ||
+        resolvePaymentChannel(enteredPaymentMethod, channels, paymentRules) ||
         fallbackChannel ||
         resolvePaymentChannel(inferredPaymentMethod, channels, paymentRules);
       if (!channel || !totals[channel]) return;
