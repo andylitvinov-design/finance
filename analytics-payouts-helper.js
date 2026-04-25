@@ -33,6 +33,28 @@
     return (header || []).findIndex((cell) => normalizedAliases.has(normalizeCell(cell)));
   }
 
+  function normalizeClientFamilyToken(value) {
+    const token = normalizeLookupText(value);
+    if (!token || token.length < 4) return "";
+    return token
+      .replace(/(ого|его|ой|ая|яя|ый|ий|ые|ие|ых|их|а|я|ы|и)$/i, "")
+      .replace(/(ов|ев|ин|ын)$/i, (ending) => {
+        if (/^(ин|ын)$/i.test(ending)) return ending;
+        return "";
+      });
+  }
+
+  function getClientPaymentLookupKeys(client) {
+    const normalized = normalizeLookupText(client);
+    if (!normalized) return [];
+    const relationWords = new Set(["сын", "дочь", "мать", "отец", "мама", "папа", "жена", "муж"]);
+    const tokens = normalized.split(" ").filter((token) => token && !relationWords.has(token));
+    const keys = [normalized];
+    const familyToken = normalizeClientFamilyToken(tokens.at(-1) || "");
+    if (familyToken) keys.push(`family:${familyToken}`);
+    return [...new Set(keys)];
+  }
+
   function resolvePaymentChannel(value, channels = [], paymentRules = {}) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -76,13 +98,19 @@
       const row = dataRows[index] || [];
       const client = String(clientIndex !== -1 ? row[clientIndex] || "" : "").trim();
       const paymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim();
-      if (client && paymentMethod) nextPaymentByClient[client] = paymentMethod;
+      if (client && paymentMethod && resolvePaymentChannel(paymentMethod, channels, paymentRules)) {
+        getClientPaymentLookupKeys(client).forEach((key) => {
+          if (!nextPaymentByClient[key]) nextPaymentByClient[key] = paymentMethod;
+        });
+      }
     }
 
     dataRows.forEach((row) => {
       if (!row || !row.some((cell) => String(cell || "").trim())) return;
       const client = String(clientIndex !== -1 ? row[clientIndex] || "" : "").trim();
-      const paymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim() || nextPaymentByClient[client] || "";
+      const enteredPaymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim();
+      const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
+      const paymentMethod = enteredPaymentMethod || inferredPaymentMethod;
       const channel = resolvePaymentChannel(paymentMethod, channels, paymentRules);
       if (!channel || !totals[channel]) return;
       if (accruedIndex !== -1) totals[channel].accrued += parseLooseNumber(row[accruedIndex]);

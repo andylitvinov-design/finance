@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.08";
+      const APP_BUILD_VERSION = "2026.04.25.09";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -1602,7 +1602,7 @@
           title.style.fontWeight = "700";
           title.textContent = section.title;
           block.appendChild(title);
-          if (normalizeCell(section.title) === normalizeCell("личное движение средств")) {
+          if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
             appendCollapsibleZeroAnalyticsTable(block, section.rows);
           } else {
             block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
@@ -4447,7 +4447,7 @@
           formatSheetNumber(movementRealTotals.balanceTotal)
         ];
         const movementSummarySection = {
-          title: "личное движение средств",
+          title: "движение 1",
           header: [
             "канал переводов",
             "план = ACCRUED",
@@ -4552,6 +4552,25 @@
           .replace(/[^0-9a-zа-я]+/g, " ")
           .replace(/\s+/g, " ")
           .trim();
+      }
+
+      function normalizeClientFamilyToken(value) {
+        const token = normalizeLookupText(value);
+        if (!token || token.length < 4) return "";
+        return token
+          .replace(/(ого|его|ой|ая|яя|ый|ий|ые|ие|ых|их|а|я|ы|и)$/i, "")
+          .replace(/(ов|ев|ин|ын)$/i, (ending) => (/^(ин|ын)$/i.test(ending) ? ending : ""));
+      }
+
+      function getClientPaymentLookupKeys(client) {
+        const normalized = normalizeLookupText(client);
+        if (!normalized) return [];
+        const relationWords = new Set(["сын", "дочь", "мать", "отец", "мама", "папа", "жена", "муж"]);
+        const tokens = normalized.split(" ").filter((token) => token && !relationWords.has(token));
+        const keys = [normalized];
+        const familyToken = normalizeClientFamilyToken(tokens.at(-1) || "");
+        if (familyToken) keys.push(`family:${familyToken}`);
+        return [...new Set(keys)];
       }
 
       function sumChannelStat(stats, key) {
@@ -4684,12 +4703,18 @@
           const row = dataRows[index] || [];
           const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
           const paymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
-          if (client && paymentMethod) nextPaymentByClient[client] = paymentMethod;
+          if (client && paymentMethod && resolvePaymentChannel(paymentMethod)) {
+            getClientPaymentLookupKeys(client).forEach((key) => {
+              if (!nextPaymentByClient[key]) nextPaymentByClient[key] = paymentMethod;
+            });
+          }
         }
         dataRows.forEach((row) => {
           if (!hasAnyValue(row)) return;
           const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
-          const paymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim() || nextPaymentByClient[client] || "";
+          const enteredPaymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
+          const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
+          const paymentMethod = enteredPaymentMethod || inferredPaymentMethod;
           if (!String(paymentMethod || "").trim()) return;
           Object.entries(ANALYTICS_PAYMENT_RULES).forEach(([channel, rule]) => {
             if ((rule.localPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))) {

@@ -105,8 +105,9 @@ test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank U
   const rows = buildMovementPaymentSummaryRows(
     [
       ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
-      ["1", "Лозина", "Лозиной на монобанк", "100", "103", "72.1", "103", "0"],
-      ["2", "Mono", "mono грн", "50", "51.5", "36.05", "40", "11.5"]
+      ["18114", "Валерия Лозина", "", "200", "206", "144.2", "", "-206"],
+      ["18115", "Валерия Лозина", "", "30", "30.9", "21.63", "", "-30.9"],
+      ["18116", "сын Валерии Лозиной", "карта Андрей", "100", "103", "72.1", "339.89", "236.89"]
     ],
     ["монобанк грн", "приват 24-грн"],
     {
@@ -117,9 +118,9 @@ test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank U
     }
   );
 
-  assert.deepEqual(rows[0], ["монобанк грн", "150,0000", "154,5000", "108,1500", "143,0000", "11,5000"]);
+  assert.deepEqual(rows[0], ["монобанк грн", "330,0000", "339,9000", "237,9300", "339,8900", "-0,0100"]);
   assert.deepEqual(rows[1], ["приват 24-грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
-  assert.deepEqual(rows[2], ["Итого", "150,0000", "154,5000", "108,1500", "143,0000", "11,5000"]);
+  assert.deepEqual(rows[2], ["Итого", "330,0000", "339,9000", "237,9300", "339,8900", "-0,0100"]);
 });
 
 test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {
