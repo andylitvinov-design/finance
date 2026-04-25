@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.04";
+      const APP_BUILD_VERSION = "2026.04.25.05";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -1420,9 +1420,7 @@
 
       function buildManualFinanceUsdRateLookup(transferRows = [], movementValues = []) {
         const channelRates = {};
-        const currencyRates = Object.fromEntries(
-          Object.entries(MANUAL_FINANCE_FALLBACK_USD_RATES).map(([currency, rate]) => [currency, [rate]])
-        );
+        const currencyRates = {};
 
         const addRate = (bucket, key, rate) => {
           if (!key || !Number.isFinite(rate) || rate <= 0) return;
@@ -1455,10 +1453,19 @@
           byChannel: Object.fromEntries(
             Object.entries(channelRates).map(([channel, values]) => [channel, average(values)])
           ),
-          byCurrency: Object.fromEntries(
-            Object.entries(currencyRates).map(([currency, values]) => [currency, average(values)])
-          )
+          byCurrency: {
+            ...MANUAL_FINANCE_FALLBACK_USD_RATES,
+            ...Object.fromEntries(
+              Object.entries(currencyRates).map(([currency, values]) => [currency, average(values)])
+            )
+          }
         };
+      }
+
+      function getLocalPerUsdRate(currency, rateLookup = { byCurrency: {} }) {
+        const usdPerLocal = parseLooseNumber(rateLookup.byCurrency?.[currency]);
+        if (!usdPerLocal) return 0;
+        return currency === "USD" ? 1 : 1 / usdPerLocal;
       }
 
       function getManualFinanceDisplayRates(rateLookup = { byCurrency: {} }) {
@@ -1468,7 +1475,7 @@
           { label: "евро", currency: "EUR" }
         ].map((row) => ({
           ...row,
-          rate: parseLooseNumber(rateLookup.byCurrency?.[row.currency])
+          rate: getLocalPerUsdRate(row.currency, rateLookup)
         }));
       }
 
@@ -1477,7 +1484,7 @@
         wrap.className = "table-wrap rate-table-wrap";
         const table = document.createElement("table");
         const body = document.createElement("tbody");
-        [["валюта", "курс в USD"], ...getManualFinanceDisplayRates(rateLookup).map((row) => [
+        [["валюта", "курс за 1 USD"], ...getManualFinanceDisplayRates(rateLookup).map((row) => [
           row.label,
           row.rate ? formatSheetNumber(row.rate, 6) : "—"
         ])].forEach((row, rowIndex) => {
