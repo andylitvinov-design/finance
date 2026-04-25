@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.03";
+      const APP_BUILD_VERSION = "2026.04.25.04";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -310,8 +310,10 @@
       ];
       const MANUAL_TRANSFER_HEADERS = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
       const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "travel"];
+      const MANUAL_NOW_CATEGORY = "now";
       const MANUAL_EXCHANGE_CATEGORY = "exchange";
       const MANUAL_INPUT_CATEGORIES = [...MANUAL_EXPENSE_TYPES, MANUAL_EXCHANGE_CATEGORY];
+      const MANUAL_STORED_INPUT_CATEGORIES = [MANUAL_NOW_CATEGORY, ...MANUAL_INPUT_CATEGORIES];
       const MANUAL_TRANSFER_MIN_ROWS = 3;
       const ANALYTICS_PAYOUTS_HELPER = window.EzohataAnalyticsPayoutsHelper || {};
       const MANUAL_FINANCE_FORMULAS = window.EzohataManualFinanceFormulas || {};
@@ -1760,6 +1762,10 @@
           : MANUAL_INPUT_CATEGORIES.slice();
       }
 
+      function getManualStoredExpenseTypes() {
+        return [...new Set([...MANUAL_STORED_INPUT_CATEGORIES, ...getManualExpenseTypes()])];
+      }
+
       function buildManualExpenseHeaders() {
         return ["дата", "категория", ...getManualFinanceChannels()];
       }
@@ -1908,12 +1914,14 @@
         const channelRows = getManualFinanceChannels().map((channel) => createLegacyFactMoneyRow(channel));
         expenseRows.forEach((row) => {
           const targetField = ({
+            now: "now",
             serviceIncome: "serviceIncome",
             business: "business",
             flat: "house",
             food: "food",
             fun: "study",
-            travel: "travelFun"
+            travel: "travelFun",
+            exchange: "exchange"
           })[row.category];
           if (!targetField) return;
           channelRows.forEach((target) => {
@@ -1934,12 +1942,13 @@
             .filter(([channel]) => channel && channel !== MANUAL_FINANCE_TOTAL_LABEL)
         );
         const expenseLookup = Object.fromEntries(
-          MANUAL_INPUT_CATEGORIES.map((category) => [category, createManualFinanceExpenseRow(periodEnd, category)])
+          MANUAL_STORED_INPUT_CATEGORIES.map((category) => [category, createManualFinanceExpenseRow(periodEnd, category)])
         );
         normalized.forEach((row) => {
           const channel = String(row.channel || "").trim();
           if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
           const rowIndex = rowIndexByChannel[channel];
+          expenseLookup[MANUAL_NOW_CATEGORY].amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "now"));
           expenseLookup.serviceIncome.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "serviceIncome"));
           expenseLookup.business.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "business"));
           expenseLookup.flat.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "house"));
@@ -1948,7 +1957,7 @@
           expenseLookup.travel.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "travelFun"));
           expenseLookup[MANUAL_EXCHANGE_CATEGORY].amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "exchange"));
         });
-        return MANUAL_INPUT_CATEGORIES.map((category) => expenseLookup[category]);
+        return MANUAL_STORED_INPUT_CATEGORIES.map((category) => expenseLookup[category]);
       }
 
       function buildAnalyticsManualRowsFromFactMoneyRows(moneyRows, transferRows = []) {
@@ -2172,7 +2181,7 @@
         const limit = parseIsoDate(endDate);
         while (current <= limit) {
           const isoDate = current.toISOString().slice(0, 10);
-          getManualExpenseTypes().forEach((category) => rows.push(createManualFinanceExpenseRow(isoDate, category)));
+          getManualStoredExpenseTypes().forEach((category) => rows.push(createManualFinanceExpenseRow(isoDate, category)));
           current.setUTCDate(current.getUTCDate() + 1);
         }
         return rows;
@@ -2213,6 +2222,7 @@
       function buildManualFinanceSummaryRows(expenseRows) {
         const channelRows = getManualFinanceChannels().map((channel) => ({
           channel,
+          now: 0,
           serviceIncome: 0,
           business: 0,
           flat: 0,
@@ -2223,9 +2233,13 @@
           exchange: 0
         }));
         expenseRows.forEach((row) => {
-          if (!getManualExpenseTypes().includes(row.category)) return;
+          if (!getManualStoredExpenseTypes().includes(row.category)) return;
           channelRows.forEach((target) => {
             const amount = getManualFinanceComputedAmount(row.amounts?.[target.channel]);
+            if (row.category === MANUAL_NOW_CATEGORY) {
+              target.now += amount;
+              return;
+            }
             if (row.category === MANUAL_EXCHANGE_CATEGORY) {
               target.exchange += amount;
               return;
@@ -2236,6 +2250,7 @@
         });
         const formatted = channelRows.map((row) => ({
           channel: row.channel,
+          now: formatSheetNumber(row.now),
           serviceIncome: formatSheetNumber(row.serviceIncome),
           business: formatSheetNumber(row.business),
           flat: formatSheetNumber(row.flat),
@@ -2247,6 +2262,7 @@
         }));
         formatted.push({
           channel: MANUAL_FINANCE_TOTAL_LABEL,
+          now: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.now), 0)),
           serviceIncome: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.serviceIncome), 0)),
           business: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.business), 0)),
           flat: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.flat), 0)),
@@ -2620,7 +2636,7 @@
         try {
           const response = await saveManualSheetDirect(payload);
           await syncMainAnalyticsFactImportFromMoneyRows(state.manualFinance.data.moneyRows, state.manualFinance.data.transferRows);
-          await loadManualFinanceSheet(payload.startDate, payload.endDate);
+          await loadDashboardData();
           setManualFinanceStatus(`Fact за период сохранён в репозиторий. ${response?.savedAt || ""}`.trim(), false);
         } catch (error) {
           setManualFinanceStatus(error.message || "Не удалось сохранить входящие данные.", true);
