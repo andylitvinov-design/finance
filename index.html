@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_VERSION = "2026.04.24.20";
+      const APP_BUILD_VERSION = "2026.04.25.01";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -436,7 +436,7 @@
 
       async function init() {
         state.config = await loadConfig();
-        elements.endpointLabel.textContent = `Server dashboard API | v${APP_VERSION}`;
+        elements.endpointLabel.textContent = `Server dashboard API | v${getConfiguredAppVersion()} | build ${APP_BUILD_VERSION}`;
         state.googleAuth.clientId = String(state.config?.googleAuth?.clientId || "").trim();
         state.googleAuth.scopes = String(state.config?.googleAuth?.scopes || "https://www.googleapis.com/auth/spreadsheets").trim();
         state.googleAuth.configured = Boolean(
@@ -444,7 +444,7 @@
           state.googleAuth.clientId !== "PASTE_GOOGLE_OAUTH_CLIENT_ID"
         );
         elements.manualEndpointLabel.textContent = state.googleAuth.configured
-          ? "OAuth client configured for manual Sheets access"
+          ? getOAuthReadinessMessage()
           : "Set googleAuth.clientId in sheet-config.json for fact/orders editing";
         await applyDefaultDatesFromSnapshot();
         elements.todayButton.addEventListener("click", setToday);
@@ -586,8 +586,32 @@
         elements.manualEndpointLabel.textContent = connected
           ? "Connected via browser OAuth for fact/orders"
           : state.googleAuth.configured
-            ? `OAuth optional for fact/orders at ${window.location.origin}. If Google shows redirect_uri_mismatch, add this origin to Authorized JavaScript origins for the configured client.`
+            ? getOAuthReadinessMessage()
             : "Set googleAuth.clientId in sheet-config.json for fact/orders editing";
+      }
+
+      function getConfiguredAppVersion() {
+        return String(state.config?.appVersion || "").trim() || "unversioned";
+      }
+
+      function getConfiguredOAuthOrigins() {
+        return Array.isArray(state.config?.googleAuth?.authorizedJavaScriptOrigins)
+          ? state.config.googleAuth.authorizedJavaScriptOrigins.map((origin) => String(origin || "").trim()).filter(Boolean)
+          : [];
+      }
+
+      function isCurrentOriginDeclaredForOAuth() {
+        const origins = getConfiguredOAuthOrigins();
+        if (!origins.length) return false;
+        return origins.includes(window.location.origin);
+      }
+
+      function getOAuthReadinessMessage() {
+        const currentOrigin = window.location.origin;
+        if (isCurrentOriginDeclaredForOAuth()) {
+          return `OAuth configured for ${currentOrigin}. Browser login still must be verified manually in Google.`;
+        }
+        return `OAuth client configured, but ${currentOrigin} is not listed in sheet-config authorizedJavaScriptOrigins. Add it in config and Google Cloud Console.`;
       }
 
       async function loadConfig() {
@@ -2379,7 +2403,9 @@
       }
 
       function buildManualFinanceStateFromPayload(data, startDate, endDate) {
-        const expenseRows = normalizeManualFinanceExpenseRows(data.expenseRows, startDate, endDate);
+        const expenseRows = data.emptyFact
+          ? []
+          : normalizeManualFinanceExpenseRows(data.expenseRows, startDate, endDate);
         return {
           sheetName: data.displayName || data.sheetName || buildManualFinancePeriodLabel(startDate, endDate),
           created: Boolean(data.created),
@@ -2393,7 +2419,9 @@
           spreadsheetUrl: data.spreadsheetUrl || state.config?.manualFinance?.spreadsheetUrl || "",
           moneyTitle: data.moneyTitle || MANUAL_FINANCE_MONEY_TITLE,
           moneyHeaders: Array.isArray(data.moneyHeaders) && data.moneyHeaders.length ? data.moneyHeaders : MANUAL_FINANCE_HEADERS,
-          moneyRows: Array.isArray(data.moneyRows) && data.moneyRows.length
+          moneyRows: data.emptyFact
+            ? []
+            : Array.isArray(data.moneyRows) && data.moneyRows.length
             ? normalizeManualFinanceMoneyRows(data.moneyRows)
             : buildLegacyFactMoneyRowsFromExpenseRows(expenseRows),
           transferTitle: data.transferTitle || MANUAL_FINANCE_TRANSFER_TITLE,
@@ -3240,10 +3268,13 @@
           status: "saved",
           moneyTitle: MANUAL_FINANCE_MONEY_TITLE,
           moneyHeaders: MANUAL_FINANCE_HEADERS,
-          moneyRows: buildLegacyFactMoneyRowsFromExpenseRows(normalizeManualFinanceExpenseRows(expenseRows, snapshotDate, snapshotDate)),
+          moneyRows: expenseRows.length
+            ? buildLegacyFactMoneyRowsFromExpenseRows(normalizeManualFinanceExpenseRows(expenseRows, snapshotDate, snapshotDate))
+            : [],
           transferTitle: getManualTransfersSheetName(),
           transferHeaders: MANUAL_TRANSFER_HEADERS,
           transferRows,
+          emptyFact: !expenseRows.length,
           expenseTitle: getManualExpensesSheetName(),
           expenseHeaders: buildManualExpenseHeaders(),
           expenseRows,
@@ -3936,16 +3967,17 @@
           return getAnalyticsExportRows(rows);
         }
         if (tabId === "payouts") {
-          const transferRows = getPayoutTransferTableValues();
-          if (!transferRows.length) return rows;
-          return [
-            ...rows,
-            [],
-            ["Переводы из входящих данных за период"],
-            ...transferRows
-          ];
+          return getUnifiedPayoutExportRows(rows);
         }
         return rows;
+      }
+
+      function getUnifiedPayoutExportRows(payoutRows) {
+        const rows = clone2dArray(payoutRows || []);
+        if (!rows.length) return rows;
+        const transferRows = getNormalizedPayoutTransferRows().rows;
+        if (!transferRows.length) return rows;
+        return mergePayoutsWithClosedTransfers(rows, transferRows);
       }
 
       function getTransfersTabValues() {
@@ -4671,15 +4703,26 @@
           if (index !== -1) row[index] = value;
         };
         return (transfers || []).map((transfer) => {
+          const normalizedTransfer = Array.isArray(transfer)
+            ? {
+                date: transfer[0] || "",
+                who: transfer[1] || "",
+                amount: transfer[2] || "",
+                localCurrency: transfer[3] || "",
+                destination: transfer[4] || "",
+                rate: transfer[5] || "",
+                usdAmount: transfer[6] || ""
+              }
+            : (transfer || {});
           const row = new Array(header.length).fill("");
-          setCell(row, "DATE", transfer.date || "");
-          setCell(row, "CLIENT", transfer.who || "");
+          setCell(row, "DATE", normalizedTransfer.date || "");
+          setCell(row, "CLIENT", normalizedTransfer.who || "");
           setCell(row, "SERVICE", "Closed fact transfer");
-          setCell(row, "PAYMENT METHOD", transfer.destination || "");
-          setCell(row, "ВАЛЮТА", transfer.localCurrency || "");
-          setCell(row, "СУММА ТЕКУЩАЯ", formatSheetNumber(normalizePayoutAmount(transfer.amount)));
-          setCell(row, "AMOUNT (USD)", formatSheetNumber(normalizePayoutAmount(transfer.usdAmount)));
-          setCell(row, "КУРС ПЕРЕВОДА", transfer.rate || "");
+          setCell(row, "PAYMENT METHOD", normalizedTransfer.destination || "");
+          setCell(row, "ВАЛЮТА", normalizedTransfer.localCurrency || "");
+          setCell(row, "СУММА ТЕКУЩАЯ", formatSheetNumber(normalizePayoutAmount(normalizedTransfer.amount)));
+          setCell(row, "AMOUNT (USD)", formatSheetNumber(normalizePayoutAmount(normalizedTransfer.usdAmount)));
+          setCell(row, "КУРС ПЕРЕВОДА", normalizedTransfer.rate || "");
           setCell(row, "COMMENT", "closed fact");
           return row;
         });
@@ -4918,7 +4961,13 @@
         if (!rows.length) return [header];
         const channelTotalRows = buildPayoutTransferChannelTotalRows(header, rows);
         const totalRow = buildClosedFactTransferTotalRow(header, rows);
-        const overallRow = buildClosedFactTransferTotalRow(header, rows, "Всего выплат");
+        const upperPayoutUsdTotal = calculatePayoutUsdTotal(state.data?.tabs?.payouts?.values || []);
+        const overallRow = buildClosedFactTransferTotalRow(
+          header,
+          rows,
+          "Всего выплат",
+          upperPayoutUsdTotal + calculateClosedFactTransferRowsUsdTotal(rows)
+        );
         return [header, ...rows, ...channelTotalRows, totalRow, overallRow];
       }
 

@@ -1,5 +1,5 @@
 {
-  "appVersion": "3.0.9",
+  "appVersion": "3.0.10",
   "endpoint": "/api",
   "spreadsheetId": "1kAKcNVUF_T-MtLU1vbfjw3MVbAQ8-NQEnVoPQysEf5o",
   "tabs": [
@@ -72,7 +72,11 @@
   },
   "googleAuth": {
     "clientId": "244809429378-piep9u8ekm1t8q2ffstpq88kr2v8jrnc.apps.googleusercontent.com",
-    "scopes": "https://www.googleapis.com/auth/spreadsheets"
+    "scopes": "https://www.googleapis.com/auth/spreadsheets",
+    "authorizedJavaScriptOrigins": [
+      "https://ezohata-incoming-ledger.vercel.app",
+      "https://reconcile-v2-eight.vercel.app"
+    ]
   },
   "fallbackNotice": "Google Sheets is unavailable right now. Incoming data opens in browser draft mode."
 }

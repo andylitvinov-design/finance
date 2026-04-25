@@ -2,7 +2,7 @@
 
 Separate online project for the incoming-data repository flow.
 
-Current saved release: `3.0.5`
+Current saved release: `3.0.10`
 
 This is the only active incoming-ledger implementation. The old repo-root and `data/` Vercel deployment configs are archived and must not be used.
 
@@ -22,7 +22,7 @@ Production URL:
 ## Files
 
 - `index.html` - incoming ledger UI
-- `sheet-config.json` - client-side config, including Google OAuth client id and optional dashboard `endpoint`
+- `sheet-config.json` - client-side config, including the canonical `appVersion`, Google OAuth client id, allowed OAuth origins, and optional dashboard `endpoint`
 - `sheet-snapshot.json` - read-only snapshot for standard tabs
 
 ## Google setup
@@ -35,6 +35,7 @@ The incoming ledger flow no longer depends on Apps Script period tabs. It uses:
 You must set `googleAuth.clientId` in `sheet-config.json`.
 
 For this deployed Vercel UI, the OAuth client must allow the active site origin under `Authorized JavaScript origins`.
+Keep the same origins in `googleAuth.authorizedJavaScriptOrigins` so the UI can warn when the current browser origin is not covered.
 
 Current origins that matter:
 
@@ -42,6 +43,13 @@ Current origins that matter:
 - `https://reconcile-v2-eight.vercel.app`
 
 If Google shows `Error 400: redirect_uri_mismatch`, the browser flow is healthy but the OAuth client does not yet allow the current site origin. Add the origin in Google Cloud Console for client `244809429378-piep9u8ekm1t8q2ffstpq88kr2v8jrnc.apps.googleusercontent.com`.
+
+Manual readiness check:
+
+1. Open [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app).
+2. Click `Подключить Google`.
+3. Open `fact`, `Переводы`, and `Список моих заказов`.
+4. If login or Sheets access fails, verify the client id and authorized JavaScript origins in Google Cloud Console.
 
 Official docs:
 
