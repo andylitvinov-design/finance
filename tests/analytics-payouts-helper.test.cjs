@@ -101,6 +101,27 @@ test("buildMovementPaymentSummaryRows summarizes movement metrics by payment cha
   assert.deepEqual(rows[3], ["Итого", "450,0000", "463,5000", "324,4500", "465,0000", "10,5000"]);
 });
 
+test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank UAH", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "Лозина", "Лозиной на монобанк", "100", "103", "72.1", "103", "0"],
+      ["2", "Mono", "mono грн", "50", "51.5", "36.05", "40", "11.5"]
+    ],
+    ["монобанк грн", "приват 24-грн"],
+    {
+      "монобанк грн": {
+        localPatterns: [/^(карта андрей|андрей карта)$/i, /монобанк|monobank|mono|лозин|lozin/i],
+        usdPatterns: [/^(карта андрей|андрей карта)$/i, /монобанк|monobank|mono|лозин|lozin/i]
+      }
+    }
+  );
+
+  assert.deepEqual(rows[0], ["монобанк грн", "150,0000", "154,5000", "108,1500", "143,0000", "11,5000"]);
+  assert.deepEqual(rows[1], ["приват 24-грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
+  assert.deepEqual(rows[2], ["Итого", "150,0000", "154,5000", "108,1500", "143,0000", "11,5000"]);
+});
+
 test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {
   const header = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
   const rows = buildTransferPayoutRowsWithUsd(

@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.07";
+      const APP_BUILD_VERSION = "2026.04.25.08";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -353,8 +353,8 @@
         },
         "монобанк грн": {
           currency: "UAH",
-          localPatterns: [/^(карта андрей|андрей карта)$/i],
-          usdPatterns: [/^(карта андрей|андрей карта)$/i]
+          localPatterns: [/^(карта андрей|андрей карта)$/i, /монобанк|monobank|mono|лозин|lozin/i],
+          usdPatterns: [/^(карта андрей|андрей карта)$/i, /монобанк|monobank|mono|лозин|lozin/i]
         },
         "Бинанс spot": {
           currency: "USD",
@@ -4430,6 +4430,22 @@
             ]
           ]
         };
+        const movementSummaryRows = ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows
+          ? ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows(
+              movementValues,
+              MANUAL_FINANCE_MONEY_CHANNELS,
+              ANALYTICS_PAYMENT_RULES
+            )
+          : [];
+        const movementRealTotals = getMovementTotalsFromTable(movementValues);
+        const movementRealTotalRow = [
+          "Итого реал",
+          formatSheetNumber(movementRealTotals.baseAccruedTotal),
+          formatSheetNumber(movementRealTotals.accruedTotal),
+          formatSheetNumber(movementRealTotals.seventyTotal),
+          formatSheetNumber(movementRealTotals.receivedUsdTotal),
+          formatSheetNumber(movementRealTotals.balanceTotal)
+        ];
         const movementSummarySection = {
           title: "личное движение средств",
           header: [
@@ -4440,13 +4456,7 @@
             "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО",
             "BALANCE"
           ],
-          rows: ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows
-            ? ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows(
-                movementValues,
-                MANUAL_FINANCE_MONEY_CHANNELS,
-                ANALYTICS_PAYMENT_RULES
-              )
-            : []
+          rows: [...movementSummaryRows, movementRealTotalRow]
         };
         const rebuiltSections = [
           movementSummarySection,
@@ -4857,34 +4867,40 @@
 
       function getMovementTotalsFromTable(values) {
         if (!Array.isArray(values) || !values.length) {
-          return { priceTotal: 0, accruedTotal: 0, seventyTotal: 0, receivedUsdTotal: 0 };
+          return { priceTotal: 0, baseAccruedTotal: 0, accruedTotal: 0, seventyTotal: 0, receivedUsdTotal: 0, balanceTotal: 0 };
         }
         const header = values[0] || [];
         const priceIndex = findHeaderIndexByAliases(header, ["PRICE BASE"]);
+        const baseAccruedIndex = findHeaderIndexByAliases(header, ["ACCRUED"]);
         const accruedIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
         const seventyIndex = findHeaderIndexByAliases(header, ["70% OF +3%"]);
         const receivedUsdIndex = findHeaderIndexByAliases(
           header,
           ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]
         );
+        const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
         const totalRow = values.slice(1).find((row) => isTableTotalRow(row));
         if (totalRow) {
           return {
             priceTotal: priceIndex === -1 ? 0 : parseLooseNumber(totalRow[priceIndex]),
+            baseAccruedTotal: baseAccruedIndex === -1 ? 0 : parseLooseNumber(totalRow[baseAccruedIndex]),
             accruedTotal: accruedIndex === -1 ? 0 : parseLooseNumber(totalRow[accruedIndex]),
             seventyTotal: seventyIndex === -1 ? 0 : parseLooseNumber(totalRow[seventyIndex]),
             receivedUsdTotal: receivedUsdIndex === -1 ? 0 : parseLooseNumber(totalRow[receivedUsdIndex]),
+            balanceTotal: balanceIndex === -1 ? 0 : parseLooseNumber(totalRow[balanceIndex]),
           };
         }
 
         return values.slice(1).reduce((totals, row) => {
           if (!hasAnyValue(row) || isTableTotalRow(row)) return totals;
           if (priceIndex !== -1 && priceIndex < row.length) totals.priceTotal += parseLooseNumber(row[priceIndex]);
+          if (baseAccruedIndex !== -1 && baseAccruedIndex < row.length) totals.baseAccruedTotal += parseLooseNumber(row[baseAccruedIndex]);
           if (accruedIndex !== -1 && accruedIndex < row.length) totals.accruedTotal += parseLooseNumber(row[accruedIndex]);
           if (seventyIndex !== -1 && seventyIndex < row.length) totals.seventyTotal += parseLooseNumber(row[seventyIndex]);
           if (receivedUsdIndex !== -1 && receivedUsdIndex < row.length) totals.receivedUsdTotal += parseLooseNumber(row[receivedUsdIndex]);
+          if (balanceIndex !== -1 && balanceIndex < row.length) totals.balanceTotal += parseLooseNumber(row[balanceIndex]);
           return totals;
-        }, { priceTotal: 0, accruedTotal: 0, seventyTotal: 0, receivedUsdTotal: 0 });
+        }, { priceTotal: 0, baseAccruedTotal: 0, accruedTotal: 0, seventyTotal: 0, receivedUsdTotal: 0, balanceTotal: 0 });
       }
 
       function getMovementTotalHeaders() {
@@ -4947,7 +4963,7 @@
         const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
         const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
         const ordersReceivedUsdTotal = parseLooseNumber(ordersSummary.totalReceivedUsd);
-        const totalPaid = calculateCurrentPayoutTransferRowsUsdTotal();
+        const totalPaid = calculateCurrentOverallPayoutUsdTotal();
 
         const totalOrders = movementAccruedTotal + manualOrdersTotal;
         const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
@@ -5013,6 +5029,12 @@
 
       function calculateCurrentPayoutTransferRowsUsdTotal() {
         return calculateClosedFactTransferRowsUsdTotal(getNormalizedPayoutTransferRows().rows);
+      }
+
+      function calculateCurrentOverallPayoutUsdTotal() {
+        const { rows } = getNormalizedPayoutTransferRows();
+        const upperPayoutUsdTotal = calculatePayoutUsdTotal(state.data?.tabs?.payouts?.values || []);
+        return calculateCombinedPayoutDisplayTotal(upperPayoutUsdTotal, rows);
       }
 
       function buildPayoutTransferChannelTotalRows(header, rows) {
