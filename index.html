@@ -287,13 +287,14 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.09";
+      const APP_BUILD_VERSION = "2026.04.25.10";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
       const MANUAL_FINANCE_MONEY_TITLE = "расходы по каналам";
       const MANUAL_FINANCE_TRANSFER_TITLE = "Переводы";
       const MANUAL_FINANCE_EXPENSE_TITLE = "Расходы";
+      const MANUAL_FINANCE_COMMISSION_TITLE = "Комиссии";
       const MANUAL_FINANCE_TOTAL_LABEL = "Итого";
       const ANALYTICS_FACT_IMPORT_SHEET = "MANUAL_INPUTS_IMPORT";
       const MANUAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -309,6 +310,7 @@
         "spent for travel", "затраты-мои", "обмен"
       ];
       const MANUAL_TRANSFER_HEADERS = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
+      const MANUAL_COMMISSION_HEADERS = ["дата", "канал", "сумма в долларах", "комментарий"];
       const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "travel"];
       const MANUAL_NOW_CATEGORY = "now";
       const MANUAL_EXCHANGE_CATEGORY = "exchange";
@@ -1182,6 +1184,53 @@
           shell.appendChild(emptyRowsDetails);
         }
 
+        const commissionTitle = document.createElement("div");
+        commissionTitle.className = "tab-note";
+        commissionTitle.style.margin = "18px 0 10px";
+        commissionTitle.style.fontWeight = "700";
+        commissionTitle.textContent = "Комиссии";
+        shell.appendChild(commissionTitle);
+
+        state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || []);
+        const commissionWrap = document.createElement("div");
+        commissionWrap.className = "table-wrap";
+        const commissionTable = document.createElement("table");
+        const commissionBody = document.createElement("tbody");
+        const commissionHeader = document.createElement("tr");
+        [...(state.manualTransfers.data.commissionHeaders || MANUAL_COMMISSION_HEADERS), ""].forEach((cell) => {
+          const th = document.createElement("th");
+          th.textContent = cell || "";
+          commissionHeader.appendChild(th);
+        });
+        commissionBody.appendChild(commissionHeader);
+        const renderCommissionEditorRow = (row, rowIndex) => {
+          const tr = document.createElement("tr");
+          ["date", "channel", "usdAmount", "comment"].forEach((key) => {
+            const td = document.createElement("td");
+            const input = document.createElement("input");
+            input.className = "finance-input";
+            input.value = row[key] || "";
+            input.addEventListener("input", (event) => updateManualCommissionValue(rowIndex, key, event.target.value));
+            td.appendChild(input);
+            tr.appendChild(td);
+          });
+          const actionTd = document.createElement("td");
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "ghost";
+          remove.textContent = "Удалить";
+          remove.addEventListener("click", () => removeManualCommissionRow(rowIndex));
+          actionTd.appendChild(remove);
+          tr.appendChild(actionTd);
+          return tr;
+        };
+        state.manualTransfers.data.commissionRows.forEach((row, rowIndex) => {
+          commissionBody.appendChild(renderCommissionEditorRow(row, rowIndex));
+        });
+        commissionTable.appendChild(commissionBody);
+        commissionWrap.appendChild(commissionTable);
+        shell.appendChild(commissionWrap);
+
         const actions = document.createElement("div");
         actions.className = "finance-actions";
         const addTransferButton = document.createElement("button");
@@ -1189,7 +1238,12 @@
         addTransferButton.className = "secondary";
         addTransferButton.textContent = "Добавить перевод";
         addTransferButton.addEventListener("click", () => addManualTransfersRow());
-        actions.appendChild(addTransferButton);
+        const addCommissionButton = document.createElement("button");
+        addCommissionButton.type = "button";
+        addCommissionButton.className = "secondary";
+        addCommissionButton.textContent = "Добавить комиссию";
+        addCommissionButton.addEventListener("click", () => addManualCommissionRow());
+        actions.append(addTransferButton, addCommissionButton);
         shell.appendChild(actions);
 
         return shell;
@@ -1810,6 +1864,10 @@
         return { transferDate: "", who: "", amount: "", currency: "", channel: "", rate: "", usdAmount: "" };
       }
 
+      function createEmptyManualCommissionRow() {
+        return { date: "", channel: "", usdAmount: "", comment: "" };
+      }
+
       function createManualFinanceExpenseRow(date, category) {
         return { date, category, amounts: buildEmptyExpenseAmounts() };
       }
@@ -2236,6 +2294,20 @@
         return normalized;
       }
 
+      function normalizeManualCommissionRows(rows, options = {}) {
+        const padToMinimum = options.padToMinimum !== false;
+        const normalized = (rows || []).map((row) => ({
+          date: row?.date ?? "",
+          channel: row?.channel ?? "",
+          usdAmount: row?.usdAmount ?? row?.amount ?? "",
+          comment: row?.comment ?? ""
+        }));
+        if (padToMinimum) {
+          while (normalized.length < MANUAL_TRANSFER_MIN_ROWS) normalized.push(createEmptyManualCommissionRow());
+        }
+        return normalized;
+      }
+
       function normalizeManualFinanceExpenseRows(rows, startDate, endDate) {
         const index = new Map();
         (rows || []).forEach((row) => {
@@ -2359,9 +2431,24 @@
         state.manualTransfers.dirty = true;
       }
 
+      function updateManualCommissionValue(rowIndex, key, rawValue) {
+        const row = state.manualTransfers.data?.commissionRows?.[rowIndex];
+        if (!row) return;
+        row[key] = rawValue;
+        state.manualTransfers.dirty = true;
+      }
+
       function addManualTransfersRow() {
         if (!state.manualTransfers.data) return;
         state.manualTransfers.data.transferRows.push(createEmptyManualFinanceTransferRow());
+        state.manualTransfers.dirty = true;
+        renderTabs();
+      }
+
+      function addManualCommissionRow() {
+        if (!state.manualTransfers.data) return;
+        state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false });
+        state.manualTransfers.data.commissionRows.push(createEmptyManualCommissionRow());
         state.manualTransfers.dirty = true;
         renderTabs();
       }
@@ -2371,6 +2458,17 @@
         state.manualTransfers.data.transferRows.splice(rowIndex, 1);
         while (state.manualTransfers.data.transferRows.length < MANUAL_TRANSFER_MIN_ROWS) {
           state.manualTransfers.data.transferRows.push(createEmptyManualFinanceTransferRow());
+        }
+        state.manualTransfers.dirty = true;
+        renderTabs();
+      }
+
+      function removeManualCommissionRow(rowIndex) {
+        if (!state.manualTransfers.data) return;
+        state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false });
+        state.manualTransfers.data.commissionRows.splice(rowIndex, 1);
+        while (state.manualTransfers.data.commissionRows.length < MANUAL_TRANSFER_MIN_ROWS) {
+          state.manualTransfers.data.commissionRows.push(createEmptyManualCommissionRow());
         }
         state.manualTransfers.dirty = true;
         renderTabs();
@@ -2429,6 +2527,14 @@
             rate: normalizeManualFinancePersistedNumberInput(row.rate),
             usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount)
           }));
+        const commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false })
+          .filter((row) => Object.values(row).some((value) => String(value || "").trim()))
+          .map((row) => ({
+            date: normalizeIncomingSheetDateValue(row.date) || period.endDate,
+            channel: String(row.channel || "").trim(),
+            usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount),
+            comment: String(row.comment || "").trim()
+          }));
         state.manualTransfers.loading = true;
         renderTabs();
         try {
@@ -2438,7 +2544,7 @@
           if (!hasConfiguredManualFinanceEndpoint()) {
             throw new Error(getManualFinanceUnavailableMessage());
           }
-          const response = await saveManualTransfersSheetDirect(period.startDate, period.endDate, transferRows);
+          const response = await saveManualTransfersSheetDirect(period.startDate, period.endDate, transferRows, commissionRows);
           state.manualTransfers.data = await getManualTransfersSheetDirect(period.startDate, period.endDate);
           state.manualTransfers.dirty = false;
           setManualTransfersStatus(`Переводы сохранены. ${response?.savedAt || ""}`.trim(), false);
@@ -3137,6 +3243,10 @@
         return String(state.config?.manualFinance?.expensesSheetName || MANUAL_FINANCE_EXPENSE_TITLE).trim() || MANUAL_FINANCE_EXPENSE_TITLE;
       }
 
+      function getManualCommissionsSheetName() {
+        return String(state.config?.manualFinance?.commissionsSheetName || MANUAL_FINANCE_COMMISSION_TITLE).trim() || MANUAL_FINANCE_COMMISSION_TITLE;
+      }
+
       function assertIncomingTransferHeaders(values) {
         const rows = values || [];
         if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
@@ -3154,6 +3264,15 @@
         const actual = expected.map((_, index) => String(rows[0]?.[index] || "").trim());
         if (JSON.stringify(actual) !== JSON.stringify(expected)) {
           throw new Error(`Expense sheet header mismatch. Expected ${expected.join(" | ")}, got ${actual.join(" | ")}`);
+        }
+      }
+
+      function assertIncomingCommissionHeaders(values) {
+        const rows = values || [];
+        if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
+        const actual = MANUAL_COMMISSION_HEADERS.map((_, index) => String(rows[0]?.[index] || "").trim());
+        if (JSON.stringify(actual) !== JSON.stringify(MANUAL_COMMISSION_HEADERS)) {
+          throw new Error(`Commission sheet header mismatch. Expected ${MANUAL_COMMISSION_HEADERS.join(" | ")}, got ${actual.join(" | ")}`);
         }
       }
 
@@ -3218,6 +3337,23 @@
         return expenseRows;
       }
 
+      function parseIncomingCommissionSheetValues(values) {
+        const rows = values || [];
+        assertIncomingCommissionHeaders(rows);
+        const commissionRows = [];
+        for (let index = 1; index < rows.length; index += 1) {
+          const row = rows[index] || [];
+          if (!row.some((cell) => String(cell || "").trim())) continue;
+          const date = normalizeIncomingSheetDateValue(row[0]);
+          const channel = String(row[1] || "").trim();
+          const usdAmount = normalizeManualFinancePersistedNumberInput(row[2] || "");
+          const comment = String(row[3] || "").trim();
+          if (!date || (!channel && !String(usdAmount || "").trim() && !comment)) continue;
+          commissionRows.push({ date, channel, usdAmount, comment });
+        }
+        return commissionRows;
+      }
+
       function normalizeIncomingSheetDateValue(value) {
         const raw = String(value ?? "").trim();
         if (!raw) return "";
@@ -3236,6 +3372,18 @@
             row.channel || "",
             row.rate || "",
             row.usdAmount || ""
+          ])
+        ];
+      }
+
+      function buildIncomingCommissionSheetValues(rows) {
+        return [
+          MANUAL_COMMISSION_HEADERS.slice(),
+          ...rows.map((row) => [
+            row.date || "",
+            row.channel || "",
+            row.usdAmount || "",
+            row.comment || ""
           ])
         ];
       }
@@ -3275,9 +3423,13 @@
         const expenseValues = titles.has(getManualExpensesSheetName())
           ? await getSheetValuesByTitle(getManualExpensesSheetName())
           : [];
+        const commissionValues = titles.has(getManualCommissionsSheetName())
+          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
+          : [];
         const dates = new Set();
         parseIncomingTransferSheetValues(transferValues).forEach((row) => row.transferDate && dates.add(row.transferDate));
         parseIncomingExpenseSheetValues(expenseValues).forEach((row) => row.date && dates.add(row.date));
+        parseIncomingCommissionSheetValues(commissionValues).forEach((row) => row.date && dates.add(row.date));
         return {
           dates: [...dates].sort().reverse(),
           spreadsheetUrl: state.config?.manualFinance?.spreadsheetUrl || "",
@@ -3297,6 +3449,9 @@
         const expenseValues = titles.has(getManualExpensesSheetName())
           ? await getSheetValuesByTitle(getManualExpensesSheetName())
           : buildIncomingExpenseSheetValues([]);
+        const commissionValues = titles.has(getManualCommissionsSheetName())
+          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
+          : buildIncomingCommissionSheetValues([]);
         const transferRows = parseIncomingTransferSheetValues(transferValues).filter((row) => {
           return row.transferDate && row.transferDate === snapshotDate;
         });
@@ -3339,28 +3494,39 @@
         const transferValues = titles.has(getManualTransfersSheetName())
           ? await getSheetValuesByTitle(getManualTransfersSheetName())
           : buildIncomingTransferSheetValues([]);
+        const commissionValues = titles.has(getManualCommissionsSheetName())
+          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
+          : buildIncomingCommissionSheetValues([]);
         const transferRows = parseIncomingTransferSheetValues(transferValues)
           .filter((row) => row.transferDate && row.transferDate >= period.startDate && row.transferDate <= period.endDate);
+        const commissionRows = parseIncomingCommissionSheetValues(commissionValues)
+          .filter((row) => row.date && row.date >= period.startDate && row.date <= period.endDate);
         return {
           sheetName: getManualTransfersSheetName(),
-          sourceSheetName: getManualTransfersSheetName(),
+          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualCommissionsSheetName()}`,
           periodStart: period.startDate,
           periodEnd: period.endDate,
           status: "saved",
           transferTitle: getManualTransfersSheetName(),
           transferHeaders: MANUAL_TRANSFER_HEADERS,
           transferRows: normalizeManualFinanceTransferRows(transferRows),
+          commissionTitle: getManualCommissionsSheetName(),
+          commissionHeaders: MANUAL_COMMISSION_HEADERS,
+          commissionRows: normalizeManualCommissionRows(commissionRows),
           writeEnabled: true,
           spreadsheetUrl: state.config?.manualFinance?.spreadsheetUrl || ""
         };
       }
 
-      async function saveManualTransfersSheetDirect(startDate, endDate, rawTransferRows) {
+      async function saveManualTransfersSheetDirect(startDate, endDate, rawTransferRows, rawCommissionRows = []) {
         const period = normalizePeriod(startDate, endDate);
         const metadata = await getManualSpreadsheetMetadata();
         const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
         const existingTransfers = titles.has(getManualTransfersSheetName())
           ? parseIncomingTransferSheetValues(await getSheetValuesByTitle(getManualTransfersSheetName()))
+          : [];
+        const existingCommissions = titles.has(getManualCommissionsSheetName())
+          ? parseIncomingCommissionSheetValues(await getSheetValuesByTitle(getManualCommissionsSheetName()))
           : [];
         const transferRows = normalizeManualFinanceTransferRows(rawTransferRows, { padToMinimum: false })
           .filter((row) => Object.values(row).some((value) => String(value || "").trim()))
@@ -3373,6 +3539,14 @@
             rate: normalizeManualFinancePersistedNumberInput(row.rate),
             usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount)
           }));
+        const commissionRows = normalizeManualCommissionRows(rawCommissionRows, { padToMinimum: false })
+          .filter((row) => Object.values(row).some((value) => String(value || "").trim()))
+          .map((row) => ({
+            date: normalizeIncomingSheetDateValue(row.date) || period.endDate,
+            channel: String(row.channel || "").trim(),
+            usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount),
+            comment: String(row.comment || "").trim()
+          }));
         const mergedTransfers = replaceManualRowsForDateRange(
           existingTransfers,
           transferRows,
@@ -3380,12 +3554,21 @@
           period.endDate,
           "transferDate"
         );
+        const mergedCommissions = replaceManualRowsForDateRange(
+          existingCommissions,
+          commissionRows,
+          period.startDate,
+          period.endDate,
+          "date"
+        );
         await ensureSheetExists(getManualTransfersSheetName(), getManualFinanceSpreadsheetId());
+        await ensureSheetExists(getManualCommissionsSheetName(), getManualFinanceSpreadsheetId());
         await overwriteSheetValues(getManualTransfersSheetName(), buildIncomingTransferSheetValues(mergedTransfers), getManualFinanceSpreadsheetId());
+        await overwriteSheetValues(getManualCommissionsSheetName(), buildIncomingCommissionSheetValues(mergedCommissions), getManualFinanceSpreadsheetId());
         return {
           periodStart: period.startDate,
           periodEnd: period.endDate,
-          sourceSheetName: getManualTransfersSheetName(),
+          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualCommissionsSheetName()}`,
           savedAt: new Date().toLocaleString("ru-RU"),
           writeEnabled: true
         };
@@ -4032,6 +4215,7 @@
       function getTransfersTabValues() {
         if (state.manualTransfers.data?.transferRows) {
           return [
+            [state.manualTransfers.data.transferTitle || getManualTransfersSheetName()],
             (state.manualTransfers.data.transferHeaders || MANUAL_TRANSFER_HEADERS).slice(),
             ...state.manualTransfers.data.transferRows.map((row) => [
               row.transferDate || "",
@@ -4041,6 +4225,15 @@
               row.channel || "",
               row.rate || "",
               row.usdAmount || ""
+            ]),
+            [],
+            [state.manualTransfers.data.commissionTitle || getManualCommissionsSheetName()],
+            (state.manualTransfers.data.commissionHeaders || MANUAL_COMMISSION_HEADERS).slice(),
+            ...normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false }).map((row) => [
+              row.date || "",
+              row.channel || "",
+              row.usdAmount || "",
+              row.comment || ""
             ])
           ];
         }
@@ -4238,10 +4431,13 @@
           startDate,
           endDate
         );
+        const commissionRows = parseIncomingCommissionSheetValues(commissionValues)
+          .filter((row) => row.date && row.date >= startDate && row.date <= endDate);
         return {
           rows: buildManualFinanceSummaryRows(expenseRows),
           transferRows,
-          selectedSheets: [getManualExpensesSheetName(), getManualTransfersSheetName()]
+          commissionRows,
+          selectedSheets: [getManualExpensesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
         };
       }
 
@@ -4255,6 +4451,9 @@
         }
         if (sheetTitle === getManualExpensesSheetName()) {
           return { expenseRows: parseIncomingExpenseSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
+        }
+        if (sheetTitle === getManualCommissionsSheetName()) {
+          return { commissionRows: parseIncomingCommissionSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
         }
         return { transferRows: [], expenseRows: [] };
       }
@@ -4290,6 +4489,7 @@
             })
           : (aggregatedManual?.transferRows || []);
         const payoutStats = calculatePayoutChannelStats(payoutsValues, normalizedTransferRows);
+        const commissionLookup = buildCommissionUsdLookup(aggregatedManual?.commissionRows || []);
         const usdRateLookup = buildManualFinanceUsdRateLookup(aggregatedManual?.transferRows || [], movementValues);
         const manualRowsWithUsd = manualRows.map((row) => ({
           ...row,
@@ -4365,7 +4565,7 @@
             : (Object.prototype.hasOwnProperty.call(fallbackNowUsdLookup, channel) ? fallbackNowUsdLookup[channel] : 0);
           const balanceGrowth = closingBalance - openingBalance;
           const balanceDifference = balanceGrowth - planProfit;
-          const commission = paidOut;
+          const commission = commissionLookup[channel] || 0;
           const additionalExpenses = balanceDifference - commission;
           const balance = movementStats.balanceByChannel[channel] || 0;
           const extraValue = additionalExpenses - balance;
@@ -4461,7 +4661,6 @@
         const rebuiltSections = [
           movementSummarySection,
           balanceSection,
-          { title: firstTitle, header: topHeader, rows: topRows },
           {
             title: "Plan",
             header: ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "обмен", "обмен_usd", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
@@ -4481,7 +4680,8 @@
               ],
               ["Итого движение", formatPlanLocalSummary(planLocalByCurrency), formatSheetNumber(totalUsdReceived)]
             ]
-          }
+          },
+          { title: firstTitle, header: topHeader, rows: topRows }
         ];
         const values = [];
         rebuiltSections.forEach((section, index) => {
@@ -4573,6 +4773,19 @@
         return [...new Set(keys)];
       }
 
+      function inferFallbackPaymentChannelFromClient(client) {
+        if (ANALYTICS_PAYOUTS_HELPER.inferFallbackPaymentChannelFromClient) {
+          return ANALYTICS_PAYOUTS_HELPER.inferFallbackPaymentChannelFromClient(client);
+        }
+        const normalized = normalizeLookupText(client);
+        const familyKeys = getClientPaymentLookupKeys(client).join(" ");
+        const text = `${normalized} ${familyKeys}`;
+        if (/(william|вильям|вилл)/i.test(text)) return "трансервайз дол";
+        if (/лозин/i.test(text)) return "монобанк грн";
+        if (/игнат/i.test(text)) return "пейпал дол";
+        return "";
+      }
+
       function sumChannelStat(stats, key) {
         return Object.values(stats || {}).reduce((sum, row) => sum + parseLooseNumber(row?.[key]), 0);
       }
@@ -4639,6 +4852,19 @@
           if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
           const raw = String(row.nowUsd ?? "").trim();
           if (raw) lookup[channel] = parseLooseNumber(raw);
+        });
+        return lookup;
+      }
+
+      function buildCommissionUsdLookup(rows) {
+        if (ANALYTICS_PAYOUTS_HELPER.calculateCommissionTotalsByChannel) {
+          return ANALYTICS_PAYOUTS_HELPER.calculateCommissionTotalsByChannel(rows, MANUAL_FINANCE_MONEY_CHANNELS);
+        }
+        const lookup = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+        (rows || []).forEach((row) => {
+          const channel = resolvePaymentChannel(row?.channel || "");
+          if (!channel || !Object.prototype.hasOwnProperty.call(lookup, channel)) return;
+          lookup[channel] += parseLooseNumber(row.usdAmount);
         });
         return lookup;
       }
@@ -4714,42 +4940,28 @@
           const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
           const enteredPaymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
           const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
-          const paymentMethod = enteredPaymentMethod || inferredPaymentMethod;
-          if (!String(paymentMethod || "").trim()) return;
-          Object.entries(ANALYTICS_PAYMENT_RULES).forEach(([channel, rule]) => {
-            if ((rule.localPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))) {
-              let localValue = 0;
-              if (rule.currency === "RUB" && receivedRubIndex !== -1 && receivedRubIndex < row.length) {
-                localValue = parseLooseNumber(row[receivedRubIndex]);
-              } else if (rule.currency === "UAH" && receivedUahIndex !== -1 && receivedUahIndex < row.length) {
-                localValue = parseLooseNumber(row[receivedUahIndex]);
-              }
-              if (localValue) {
-                localByChannel[channel] += localValue;
-                localByCurrency[rule.currency] = (localByCurrency[rule.currency] || 0) + localValue;
-              }
-            }
-            if ((rule.usdPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))) {
-              if (receivedUsdIndex !== -1 && receivedUsdIndex < row.length) {
-                const usdValue = parseLooseNumber(row[receivedUsdIndex]);
-                usdByChannel[channel] += usdValue;
-                if (rule.currency === "USD" && usdValue) {
-                  localByChannel[channel] += usdValue;
-                  localByCurrency.USD = (localByCurrency.USD || 0) + usdValue;
-                }
-              }
-            }
-            if (
-              balanceIndex !== -1 &&
-              balanceIndex < row.length &&
-              (
-                (rule.localPatterns || []).some((pattern) => pattern.test(String(paymentMethod || ""))) ||
-                (rule.usdPatterns || []).some((pattern) => pattern.test(String(paymentMethod || "")))
-              )
-            ) {
-              balanceByChannel[channel] += parseLooseNumber(row[balanceIndex]);
-            }
-          });
+          const fallbackChannel = !enteredPaymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
+          const channel = resolvePaymentChannel(enteredPaymentMethod) || fallbackChannel || resolvePaymentChannel(inferredPaymentMethod);
+          if (!channel || !Object.prototype.hasOwnProperty.call(localByChannel, channel)) return;
+          const currency = inferManualFinanceChannelCurrency(channel);
+          let localValue = 0;
+          if (currency === "RUB" && receivedRubIndex !== -1 && receivedRubIndex < row.length) {
+            localValue = parseLooseNumber(row[receivedRubIndex]);
+          } else if (currency === "UAH" && receivedUahIndex !== -1 && receivedUahIndex < row.length) {
+            localValue = parseLooseNumber(row[receivedUahIndex]);
+          } else if (currency === "USD" && receivedUsdIndex !== -1 && receivedUsdIndex < row.length) {
+            localValue = parseLooseNumber(row[receivedUsdIndex]);
+          }
+          if (localValue) {
+            localByChannel[channel] += localValue;
+            localByCurrency[currency] = (localByCurrency[currency] || 0) + localValue;
+          }
+          if (receivedUsdIndex !== -1 && receivedUsdIndex < row.length) {
+            usdByChannel[channel] += parseLooseNumber(row[receivedUsdIndex]);
+          }
+          if (balanceIndex !== -1 && balanceIndex < row.length) {
+            balanceByChannel[channel] += parseLooseNumber(row[balanceIndex]);
+          }
         });
         return { localByChannel, usdByChannel, balanceByChannel, localByCurrency };
       }

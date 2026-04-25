@@ -1,5 +1,5 @@
 {
-  "appVersion": "3.0.18",
+  "appVersion": "3.0.19",
   "endpoint": "/api",
   "spreadsheetId": "1kAKcNVUF_T-MtLU1vbfjw3MVbAQ8-NQEnVoPQysEf5o",
   "tabs": [
@@ -40,6 +40,7 @@
     "title": "EzoHata Manual Inputs",
     "transfersSheetName": "Переводы",
     "expensesSheetName": "Расходы",
+    "commissionsSheetName": "Комиссии",
     "channels": [
       "Яндекс руб",
       "пейпал дол",

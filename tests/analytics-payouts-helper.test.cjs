@@ -5,6 +5,7 @@ const {
   buildPayoutTotalRow,
   buildMovementPaymentSummaryRows,
   buildTransferPayoutRowsWithUsd,
+  calculateCommissionTotalsByChannel,
   calculatePayoutTotalsByChannel,
   calculatePayoutUsdTotalFromTable,
   mapAnalyticsTopRows,
@@ -123,6 +124,29 @@ test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank U
   assert.deepEqual(rows[2], ["Итого", "330,0000", "339,9000", "237,9300", "339,8900", "-0,0100"]);
 });
 
+test("buildMovementPaymentSummaryRows falls back blank clients to transferwise and paypal", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "William", "", "100", "103", "72.1", "103", "0"],
+      ["2", "Вильям", "", "50", "51.5", "36.05", "51.5", "0"],
+      ["3", "Игнат Сачивко", "", "70", "72.1", "50.47", "72.1", "0"],
+      ["4", "William", "карта Андрей", "10", "10.3", "7.21", "10.3", "0"]
+    ],
+    ["трансервайз дол", "пейпал дол", "монобанк грн"],
+    {
+      "монобанк грн": {
+        usdPatterns: [/^(карта андрей|андрей карта)$/i]
+      }
+    }
+  );
+
+  assert.deepEqual(rows[0], ["трансервайз дол", "150,0000", "154,5000", "108,1500", "154,5000", "0,0000"]);
+  assert.deepEqual(rows[1], ["пейпал дол", "70,0000", "72,1000", "50,4700", "72,1000", "0,0000"]);
+  assert.deepEqual(rows[2], ["монобанк грн", "10,0000", "10,3000", "7,2100", "10,3000", "0,0000"]);
+  assert.deepEqual(rows[3], ["Итого", "230,0000", "236,9000", "165,8300", "236,9000", "0,0000"]);
+});
+
 test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {
   const header = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
   const rows = buildTransferPayoutRowsWithUsd(
@@ -158,4 +182,21 @@ test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback
   assert.equal(rows[1][5], "84,5563");
   assert.equal(rows[1][6], "100,0000");
   assert.equal(buildPayoutTotalRow(header, rows)[6], "200,0000");
+});
+
+test("calculateCommissionTotalsByChannel summarizes balance commissions independently from payouts", () => {
+  const totals = calculateCommissionTotalsByChannel(
+    [
+      { date: "2026-04-25", channel: "трансервайз дол", usdAmount: "12,5", comment: "wise fee" },
+      { date: "2026-04-25", channel: "монобанк грн", usdAmount: "3.25", comment: "mono fee" },
+      { date: "2026-04-25", channel: "unknown", usdAmount: "99", comment: "ignored" }
+    ],
+    ["трансервайз дол", "монобанк грн", "пейпал дол"]
+  );
+
+  assert.deepEqual(totals, {
+    "трансервайз дол": 12.5,
+    "монобанк грн": 3.25,
+    "пейпал дол": 0
+  });
 });

@@ -55,6 +55,16 @@
     return [...new Set(keys)];
   }
 
+  function inferFallbackPaymentChannelFromClient(client) {
+    const normalized = normalizeLookupText(client);
+    const familyKeys = getClientPaymentLookupKeys(client).join(" ");
+    const text = `${normalized} ${familyKeys}`;
+    if (/(william|вильям|вилл)/i.test(text)) return "трансервайз дол";
+    if (/лозин/i.test(text)) return "монобанк грн";
+    if (/игнат/i.test(text)) return "пейпал дол";
+    return "";
+  }
+
   function resolvePaymentChannel(value, channels = [], paymentRules = {}) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -110,8 +120,11 @@
       const client = String(clientIndex !== -1 ? row[clientIndex] || "" : "").trim();
       const enteredPaymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim();
       const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
+      const fallbackChannel = !enteredPaymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
       const paymentMethod = enteredPaymentMethod || inferredPaymentMethod;
-      const channel = resolvePaymentChannel(paymentMethod, channels, paymentRules);
+      const channel = resolvePaymentChannel(enteredPaymentMethod, channels, paymentRules) ||
+        fallbackChannel ||
+        resolvePaymentChannel(inferredPaymentMethod, channels, paymentRules);
       if (!channel || !totals[channel]) return;
       if (accruedIndex !== -1) totals[channel].accrued += parseLooseNumber(row[accruedIndex]);
       if (accruedPlusIndex !== -1) totals[channel].accruedPlus += parseLooseNumber(row[accruedPlusIndex]);
@@ -342,13 +355,26 @@
     ]);
   }
 
+  function calculateCommissionTotalsByChannel(rows, channels = []) {
+    const totals = Object.fromEntries((channels || []).map((channel) => [channel, 0]));
+    (rows || []).forEach((row) => {
+      const rawChannel = Array.isArray(row) ? row[1] : row?.channel;
+      const channel = (channels || []).find((item) => normalizeCell(item) === normalizeCell(rawChannel));
+      if (!channel) return;
+      totals[channel] += parseLooseNumber(Array.isArray(row) ? row[2] : row?.usdAmount);
+    });
+    return totals;
+  }
+
   return {
     TOTAL_LABEL,
     buildPayoutTotalRow,
     buildMovementPaymentSummaryRows,
     buildTransferPayoutRowsWithUsd,
+    calculateCommissionTotalsByChannel,
     calculatePayoutTotalsByChannel,
     calculatePayoutUsdTotalFromTable,
+    inferFallbackPaymentChannelFromClient,
     mapAnalyticsTopRows,
   };
 });
