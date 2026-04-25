@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.11";
+      const APP_BUILD_VERSION = "2026.04.25.12";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -4442,6 +4442,9 @@
         const expenseValues = titles.has(getManualExpensesSheetName())
           ? await getSheetValuesByTitle(getManualExpensesSheetName())
           : buildIncomingExpenseSheetValues([]);
+        const commissionValues = titles.has(getManualCommissionsSheetName())
+          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
+          : buildIncomingCommissionSheetValues([]);
         const transferRows = parseIncomingTransferSheetValues(transferValues)
           .filter((row) => row.transferDate && row.transferDate >= startDate && row.transferDate <= endDate)
           .map((row) => ({
@@ -4453,8 +4456,9 @@
             usdAmount: row.usdAmount || "",
             destination: row.channel || ""
           }));
+        const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
         const expenseRows = normalizeManualFinanceExpenseRows(
-          parseIncomingExpenseSheetValues(expenseValues).filter((row) => row.date && row.date >= startDate && row.date <= endDate),
+          parsedExpenseRows.filter((row) => row.date && row.date >= startDate && row.date <= endDate),
           startDate,
           endDate
         );
@@ -4464,6 +4468,7 @@
           rows: buildManualFinanceSummaryRows(expenseRows),
           transferRows,
           commissionRows,
+          latestNowByChannel: buildLatestNowByChannel(parsedExpenseRows, endDate),
           selectedSheets: [getManualExpensesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
         };
       }
@@ -4529,6 +4534,7 @@
         const manualExchangeLookup = buildManualExchangeLookup(manualRowsWithUsd);
         const manualExchangeUsdLookup = buildManualExchangeUsdLookup(manualRowsWithUsd);
         const manualNowUsdLookup = buildManualNowUsdLookup(manualRowsWithUsd);
+        const latestNowUsdLookup = buildLatestNowUsdLookup(aggregatedManual?.latestNowByChannel || {}, usdRateLookup);
         const fallbackNowUsdLookup = buildAnalyticsNowUsdLookup(firstSectionRows);
         const openingSavingsLookup = buildSavingsLookup(savingsValues);
         const payoutUsdTotal = sumChannelStat(payoutStats, "usd");
@@ -4587,7 +4593,9 @@
           const ownCostUsd = manualTotalUsdLookup[channel] || 0;
           const planProfit = planGrowth - ownCostUsd;
           const openingBalance = openingSavingsLookup[channel] || 0;
-          const closingBalance = Object.prototype.hasOwnProperty.call(manualNowUsdLookup, channel)
+          const closingBalance = Object.prototype.hasOwnProperty.call(latestNowUsdLookup, channel)
+            ? latestNowUsdLookup[channel]
+            : Object.prototype.hasOwnProperty.call(manualNowUsdLookup, channel)
             ? manualNowUsdLookup[channel]
             : (Object.prototype.hasOwnProperty.call(fallbackNowUsdLookup, channel) ? fallbackNowUsdLookup[channel] : 0);
           const balanceGrowth = closingBalance - openingBalance;
@@ -4879,6 +4887,30 @@
           if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
           const raw = String(row.nowUsd ?? "").trim();
           if (raw) lookup[channel] = parseLooseNumber(raw);
+        });
+        return lookup;
+      }
+
+      function buildLatestNowByChannel(expenseRows, endDate) {
+        const latest = {};
+        (expenseRows || [])
+          .filter((row) => row?.date && row.date <= endDate && row.category === MANUAL_NOW_CATEGORY)
+          .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+          .forEach((row) => {
+            MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
+              const raw = String(row.amounts?.[channel] ?? "").trim();
+              if (!raw) return;
+              latest[channel] = raw;
+            });
+          });
+        return latest;
+      }
+
+      function buildLatestNowUsdLookup(latestNowByChannel, rateLookup) {
+        const lookup = {};
+        Object.entries(latestNowByChannel || {}).forEach(([channel, now]) => {
+          const nowUsd = getManualFinanceNowUsdValue({ channel, now }, rateLookup);
+          if (String(nowUsd || "").trim()) lookup[channel] = parseLooseNumber(nowUsd);
         });
         return lookup;
       }
