@@ -435,7 +435,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const receivedUah = correctedContext.receivedUah;
   const rubRate = derivedContext.rubRate;
   const uahRate = derivedContext.uahRate;
-  const totalUsd = deriveTotalUsd({ receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
+  const totalUsd = deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
   const balance = deriveBalance(totalUsd, accruedPlus3);
   const statusInfo = deriveStatusInfo({
     comment: row[5],
@@ -552,9 +552,6 @@ function mapSourceRowToPayoutRow(row, isoDate, derivedContext = buildSourcePayme
   const receivedUah = derivedContext.receivedUahForPayout;
   const rubRate = derivedContext.rubRate;
   const uahRate = derivedContext.uahRate;
-  const totalUsd = deriveTotalUsd({ receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
-
-  if (!paymentMethod || parseLooseNumber(totalUsd) === null) return null;
 
   let currency = "USD";
   let currentAmount = receivedUsd;
@@ -576,6 +573,9 @@ function mapSourceRowToPayoutRow(row, isoDate, derivedContext = buildSourcePayme
     currency = "USD";
     currentAmount = receivedUsd;
   }
+  const totalUsd = derivePayoutUsd({ currency, currentAmount, transferRate, receivedUsd, paymentMethod, receivedRub, receivedUah, rubRate, uahRate });
+
+  if (!paymentMethod || parseLooseNumber(totalUsd) === null) return null;
 
   return [
     String(row[1] || "").trim(),
@@ -589,6 +589,16 @@ function mapSourceRowToPayoutRow(row, isoDate, derivedContext = buildSourcePayme
     transferRate,
     joinReviewParts([String(row[5] || "").trim(), String(row[40] || "").trim()]),
   ];
+}
+
+function derivePayoutUsd({ currency, currentAmount, transferRate, receivedUsd, paymentMethod, receivedRub, receivedUah, rubRate, uahRate }) {
+  const amount = parseLooseNumber(currentAmount);
+  const rate = parseLooseNumber(transferRate);
+  if (currency !== "USD" && amount !== null && rate) {
+    return formatDisplayNumber(amount / rate);
+  }
+
+  return deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
 }
 
 function normalizePaymentMethod(row) {
@@ -666,7 +676,23 @@ function deriveAccruedPlusPercent(accrued, paymentMethod) {
   return formatDisplayNumber(accruedValue * multiplier);
 }
 
-function deriveTotalUsd({ receivedUsd, receivedRub, receivedUah, rubRate, uahRate }) {
+function deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate }) {
+  if (looksLikeUahPayment(paymentMethod)) {
+    const uah = parseLooseNumber(receivedUah);
+    const uahRateValue = parseLooseNumber(uahRate);
+    if (uah !== null && uahRateValue) {
+      return formatDisplayNumber(uah / uahRateValue);
+    }
+  }
+
+  if (looksLikeRublePayment(paymentMethod)) {
+    const rub = parseLooseNumber(receivedRub);
+    const rubRateValue = parseLooseNumber(rubRate);
+    if (rub !== null && rubRateValue) {
+      return formatDisplayNumber(rub / rubRateValue);
+    }
+  }
+
   const usd = parseLooseNumber(receivedUsd);
   if (usd !== null) return formatDisplayNumber(usd);
 

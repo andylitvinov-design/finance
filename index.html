@@ -287,13 +287,14 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.18";
+      const APP_BUILD_VERSION = "2026.04.25.20";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
       const MANUAL_FINANCE_MONEY_TITLE = "расходы по каналам";
       const MANUAL_FINANCE_TRANSFER_TITLE = "Переводы";
       const MANUAL_FINANCE_EXPENSE_TITLE = "Расходы";
+      const MANUAL_FINANCE_BALANCE_TITLE = "Остатки";
       const MANUAL_FINANCE_COMMISSION_TITLE = "Комиссии";
       const MANUAL_FINANCE_TOTAL_LABEL = "Итого";
       const ANALYTICS_FACT_IMPORT_SHEET = "MANUAL_INPUTS_IMPORT";
@@ -310,6 +311,7 @@
         "spent for travel", "затраты-мои", "обмен"
       ];
       const MANUAL_TRANSFER_HEADERS = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
+      const MANUAL_BALANCE_HEADERS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
       const MANUAL_COMMISSION_HEADERS = ["дата", "канал", "сумма в долларах", "комментарий"];
       const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "travel"];
       const MANUAL_NOW_CATEGORY = "now";
@@ -1493,10 +1495,11 @@
         return "LOCAL";
       }
 
-      function buildLatestMovementUsdRateLookup(movementValues = []) {
+      function buildLatestMovementUsdRateLookup(movementValues = [], endDate = "") {
         if (!Array.isArray(movementValues) || !movementValues.length) return {};
         const header = movementValues[0] || [];
         const dateIndex = findHeaderIndexByAliases(header, ["DATE", "дата"]);
+        const cutoff = endDate ? parseDisplayDate(endDate) : null;
         const rateIndexes = {
           RUB: findHeaderIndexByAliases(header, ["RUB RATE", "курс руб", "к-р"]),
           UAH: findHeaderIndexByAliases(header, ["UAH RATE", "курс грн", "к-гр"]),
@@ -1507,6 +1510,7 @@
         (movementValues || []).slice(1).forEach((row, rowIndex) => {
           if (!hasAnyValue(row)) return;
           const parsedDate = dateIndex === -1 ? null : parseDisplayDate(row[dateIndex]);
+          if (cutoff && parsedDate && parsedDate > cutoff) return;
           const timestamp = parsedDate ? parsedDate.getTime() : rowIndex;
           Object.entries(rateIndexes).forEach(([currency, rateIndex]) => {
             if (rateIndex === -1 || rateIndex >= row.length) return;
@@ -1519,10 +1523,10 @@
         return Object.fromEntries(Object.entries(latest).map(([currency, row]) => [currency, row.usdPerLocal]));
       }
 
-      function buildManualFinanceUsdRateLookup(transferRows = [], movementValues = []) {
+      function buildManualFinanceUsdRateLookup(transferRows = [], movementValues = [], options = {}) {
         const channelRates = {};
         const currencyRates = {};
-        const latestMovementRates = buildLatestMovementUsdRateLookup(movementValues);
+        const latestMovementRates = buildLatestMovementUsdRateLookup(movementValues, options.endDate || "");
 
         const addRate = (bucket, key, rate) => {
           if (!key || !Number.isFinite(rate) || rate <= 0) return;
@@ -2347,7 +2351,7 @@
         );
       }
 
-      function buildManualFinanceSummaryRows(expenseRows) {
+      function buildManualFinanceSummaryRows(expenseRows, latestNowByChannel = {}) {
         const channelRows = getManualFinanceChannels().map((channel) => ({
           channel,
           now: 0,
@@ -2365,7 +2369,6 @@
           channelRows.forEach((target) => {
             const amount = getManualFinanceComputedAmount(row.amounts?.[target.channel]);
             if (row.category === MANUAL_NOW_CATEGORY) {
-              target.now += amount;
               return;
             }
             if (row.category === MANUAL_EXCHANGE_CATEGORY) {
@@ -2375,6 +2378,11 @@
             target[row.category] += amount;
             if (row.category !== "serviceIncome") target.total += amount;
           });
+        });
+        channelRows.forEach((target) => {
+          const latest = latestNowByChannel[target.channel];
+          const raw = typeof latest === "object" && latest !== null ? latest.value : latest;
+          target.now = parseLooseNumber(raw);
         });
         const formatted = channelRows.map((row) => ({
           channel: row.channel,
@@ -3267,6 +3275,10 @@
         return String(state.config?.manualFinance?.expensesSheetName || MANUAL_FINANCE_EXPENSE_TITLE).trim() || MANUAL_FINANCE_EXPENSE_TITLE;
       }
 
+      function getManualBalancesSheetName() {
+        return String(state.config?.manualFinance?.balancesSheetName || MANUAL_FINANCE_BALANCE_TITLE).trim() || MANUAL_FINANCE_BALANCE_TITLE;
+      }
+
       function getManualCommissionsSheetName() {
         return String(state.config?.manualFinance?.commissionsSheetName || MANUAL_FINANCE_COMMISSION_TITLE).trim() || MANUAL_FINANCE_COMMISSION_TITLE;
       }
@@ -3288,6 +3300,15 @@
         const actual = expected.map((_, index) => String(rows[0]?.[index] || "").trim());
         if (JSON.stringify(actual) !== JSON.stringify(expected)) {
           throw new Error(`Expense sheet header mismatch. Expected ${expected.join(" | ")}, got ${actual.join(" | ")}`);
+        }
+      }
+
+      function assertIncomingBalanceHeaders(values) {
+        const rows = values || [];
+        if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
+        const actual = MANUAL_BALANCE_HEADERS.map((_, index) => String(rows[0]?.[index] || "").trim());
+        if (JSON.stringify(actual) !== JSON.stringify(MANUAL_BALANCE_HEADERS)) {
+          throw new Error(`Balance sheet header mismatch. Expected ${MANUAL_BALANCE_HEADERS.join(" | ")}, got ${actual.join(" | ")}`);
         }
       }
 
@@ -3361,6 +3382,35 @@
         return expenseRows;
       }
 
+      function parseIncomingBalanceSheetValues(values) {
+        const rows = values || [];
+        assertIncomingBalanceHeaders(rows);
+        const balanceRows = [];
+        for (let index = 1; index < rows.length; index += 1) {
+          const row = rows[index] || [];
+          if (!row.some((cell) => String(cell || "").trim())) continue;
+          const date = normalizeIncomingSheetDateValue(row[0]);
+          const channel = String(row[1] || "").trim();
+          const amount = normalizeManualFinancePersistedNumberInput(row[2] || "");
+          const currency = String(row[3] || "").trim().toUpperCase();
+          const rate = normalizeManualFinancePersistedNumberInput(row[4] || "");
+          const usdAmount = normalizeManualFinancePersistedNumberInput(row[5] || "");
+          const comment = String(row[6] || "").trim();
+          if (!date || !channel) continue;
+          if (!String(amount || "").trim() && !String(usdAmount || "").trim()) continue;
+          balanceRows.push({
+            date,
+            channel,
+            amount,
+            currency: currency || inferManualFinanceChannelCurrency(channel),
+            rate,
+            usdAmount,
+            comment
+          });
+        }
+        return balanceRows;
+      }
+
       function parseIncomingCommissionSheetValues(values) {
         const rows = values || [];
         assertIncomingCommissionHeaders(rows);
@@ -3424,6 +3474,21 @@
         ];
       }
 
+      function buildIncomingBalanceSheetValues(rows) {
+        return [
+          MANUAL_BALANCE_HEADERS.slice(),
+          ...(rows || []).map((row) => [
+            row.date || "",
+            row.channel || "",
+            row.amount || "",
+            row.currency || "",
+            row.rate || "",
+            row.usdAmount || "",
+            row.comment || ""
+          ])
+        ];
+      }
+
       function replaceManualRowsForDateRange(existingRows, replacementRows, startDate, endDate, dateKey) {
         const preserved = (existingRows || []).filter((row) => {
           const rowDate = normalizeIncomingSheetDateValue(row?.[dateKey] || "");
@@ -3438,6 +3503,75 @@
         });
       }
 
+      function filterManualFlowExpenseRows(rows) {
+        return (rows || []).filter((row) => normalizeManualExpenseCategory(row?.category) !== MANUAL_NOW_CATEGORY);
+      }
+
+      function buildManualBalanceRowsFromAmounts(date, amounts = {}, transferRows = [], movementValues = []) {
+        const rateLookup = buildManualFinanceUsdRateLookup(transferRows, movementValues, { endDate: date });
+        return getManualFinanceChannels().map((channel) => {
+          const rawAmount = normalizeManualFinancePersistedNumberInput(amounts?.[channel]);
+          const amount = parseLooseNumber(rawAmount);
+          if (!rawAmount || !amount) return null;
+          const currency = inferManualFinanceChannelCurrency(channel);
+          const usdAmount = currency === "USD"
+            ? amount
+            : parseLooseNumber(getManualFinanceNowUsdValue({ channel, now: rawAmount }, rateLookup));
+          return {
+            date,
+            channel,
+            amount: rawAmount,
+            currency,
+            rate: formatSheetNumber(getLocalPerUsdRate(currency, rateLookup), 6),
+            usdAmount: formatSheetNumber(usdAmount),
+            comment: ""
+          };
+        }).filter(Boolean);
+      }
+
+      function buildManualBalanceRowsFromMoneyRows(moneyRows, date, transferRows = [], movementValues = []) {
+        const amounts = {};
+        normalizeManualFinanceMoneyRows(moneyRows).forEach((row) => {
+          const channel = String(row?.channel || "").trim();
+          if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
+          amounts[channel] = row.now;
+        });
+        return buildManualBalanceRowsFromAmounts(date, amounts, transferRows, movementValues);
+      }
+
+      function buildManualBalanceRowsFromNowExpenseRows(expenseRows, date, transferRows = [], movementValues = []) {
+        const amounts = {};
+        (expenseRows || [])
+          .filter((row) => normalizeManualExpenseCategory(row?.category) === MANUAL_NOW_CATEGORY)
+          .forEach((row) => {
+            getManualFinanceChannels().forEach((channel) => {
+              const raw = normalizeManualFinancePersistedNumberInput(row.amounts?.[channel]);
+              if (raw && parseLooseNumber(raw)) amounts[channel] = raw;
+            });
+          });
+        return buildManualBalanceRowsFromAmounts(date, amounts, transferRows, movementValues);
+      }
+
+      function mergeManualBalanceRows(existingRows = [], replacementRows = []) {
+        const replacementKeys = new Set(
+          (replacementRows || []).map((row) => `${normalizeIncomingSheetDateValue(row?.date || "")}|${String(row?.channel || "").trim()}`)
+        );
+        const preserved = (existingRows || []).filter((row) => {
+          const key = `${normalizeIncomingSheetDateValue(row?.date || "")}|${String(row?.channel || "").trim()}`;
+          return !replacementKeys.has(key);
+        });
+        return [...preserved, ...(replacementRows || [])].sort((a, b) => {
+          const leftDate = normalizeIncomingSheetDateValue(a?.date || "");
+          const rightDate = normalizeIncomingSheetDateValue(b?.date || "");
+          if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+          return String(a?.channel || "").localeCompare(String(b?.channel || ""));
+        });
+      }
+
+      function mergeLatestNowEntries(primary = {}, fallback = {}) {
+        return { ...(fallback || {}), ...(primary || {}) };
+      }
+
       async function listManualSheetDatesDirect() {
         const metadata = await getManualSpreadsheetMetadata();
         const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
@@ -3447,12 +3581,16 @@
         const expenseValues = titles.has(getManualExpensesSheetName())
           ? await getSheetValuesByTitle(getManualExpensesSheetName())
           : [];
+        const balanceValues = titles.has(getManualBalancesSheetName())
+          ? await getSheetValuesByTitle(getManualBalancesSheetName())
+          : [];
         const commissionValues = titles.has(getManualCommissionsSheetName())
           ? await getSheetValuesByTitle(getManualCommissionsSheetName())
           : [];
         const dates = new Set();
         parseIncomingTransferSheetValues(transferValues).forEach((row) => row.transferDate && dates.add(row.transferDate));
         parseIncomingExpenseSheetValues(expenseValues).forEach((row) => row.date && dates.add(row.date));
+        parseIncomingBalanceSheetValues(balanceValues).forEach((row) => row.date && dates.add(row.date));
         parseIncomingCommissionSheetValues(commissionValues).forEach((row) => row.date && dates.add(row.date));
         return {
           dates: [...dates].sort().reverse(),
@@ -3467,25 +3605,36 @@
         const snapshotDate = period.endDate;
         const metadata = await getManualSpreadsheetMetadata();
         const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-        const transferValues = titles.has(getManualTransfersSheetName())
-          ? await getSheetValuesByTitle(getManualTransfersSheetName())
-          : buildIncomingTransferSheetValues([]);
-        const expenseValues = titles.has(getManualExpensesSheetName())
-          ? await getSheetValuesByTitle(getManualExpensesSheetName())
-          : buildIncomingExpenseSheetValues([]);
-        const commissionValues = titles.has(getManualCommissionsSheetName())
-          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
-          : buildIncomingCommissionSheetValues([]);
+        const [transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+          titles.has(getManualTransfersSheetName())
+            ? getSheetValuesByTitle(getManualTransfersSheetName())
+            : Promise.resolve(buildIncomingTransferSheetValues([])),
+          titles.has(getManualExpensesSheetName())
+            ? getSheetValuesByTitle(getManualExpensesSheetName())
+            : Promise.resolve(buildIncomingExpenseSheetValues([])),
+          titles.has(getManualBalancesSheetName())
+            ? getSheetValuesByTitle(getManualBalancesSheetName())
+            : Promise.resolve(buildIncomingBalanceSheetValues([])),
+          titles.has(getManualCommissionsSheetName())
+            ? getSheetValuesByTitle(getManualCommissionsSheetName())
+            : Promise.resolve(buildIncomingCommissionSheetValues([]))
+        ]);
         const transferRows = parseIncomingTransferSheetValues(transferValues).filter((row) => {
           return row.transferDate && row.transferDate === snapshotDate;
         });
-        const expenseRows = parseIncomingExpenseSheetValues(expenseValues).filter((row) => {
+        const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
+        const expenseRows = parsedExpenseRows.filter((row) => {
           return row.date && row.date === snapshotDate;
         });
+        const flowExpenseRows = filterManualFlowExpenseRows(expenseRows);
+        const latestNowEntriesByChannel = mergeLatestNowEntries(
+          buildLatestBalanceEntriesByChannel(parseIncomingBalanceSheetValues(balanceValues), snapshotDate),
+          buildLatestNowEntriesByChannel(parsedExpenseRows, snapshotDate)
+        );
         return {
           sheetName: MANUAL_INCOMING_TITLE,
           displayName: `${MANUAL_INCOMING_TITLE}: ${snapshotDate}`,
-          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()}`,
+          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
           created: false,
           virtual: false,
           sourceType: "incoming-repository",
@@ -3495,14 +3644,19 @@
           moneyTitle: MANUAL_FINANCE_MONEY_TITLE,
           moneyHeaders: MANUAL_FINANCE_HEADERS,
           moneyRows: buildLegacyFactMoneyRowsFromExpenseRows(
-            expenseRows.length
-              ? normalizeManualFinanceExpenseRows(expenseRows, snapshotDate, snapshotDate)
+            flowExpenseRows.length || Object.keys(latestNowEntriesByChannel).length
+              ? normalizeManualFinanceExpenseRows(flowExpenseRows, snapshotDate, snapshotDate)
+                  .concat(Object.entries(latestNowEntriesByChannel).map(([channel, entry]) => ({
+                    date: entry.date || snapshotDate,
+                    category: MANUAL_NOW_CATEGORY,
+                    amounts: Object.fromEntries(getManualFinanceChannels().map((item) => [item, item === channel ? entry.value : ""]))
+                  })))
               : []
           ),
           transferTitle: getManualTransfersSheetName(),
           transferHeaders: MANUAL_TRANSFER_HEADERS,
           transferRows,
-          emptyFact: !expenseRows.length,
+          emptyFact: !expenseRows.length && !Object.keys(latestNowEntriesByChannel).length,
           expenseTitle: getManualExpensesSheetName(),
           expenseHeaders: buildManualExpenseHeaders(),
           expenseRows,
@@ -3609,6 +3763,9 @@
         const existingExpenses = titles.has(getManualExpensesSheetName())
           ? parseIncomingExpenseSheetValues(await getSheetValuesByTitle(getManualExpensesSheetName()))
           : [];
+        const existingBalances = titles.has(getManualBalancesSheetName())
+          ? parseIncomingBalanceSheetValues(await getSheetValuesByTitle(getManualBalancesSheetName()))
+          : [];
         const transferRows = normalizeManualFinanceTransferRows(params.transferRows, { padToMinimum: false })
           .filter((row) => Object.values(row).some((value) => String(value || "").trim()))
           .map((row) => ({
@@ -3621,29 +3778,37 @@
             usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount)
           }));
         const isLegacyFactSnapshotSave = Array.isArray(params.moneyRows) && params.moneyRows.length;
-        const expenseRows = isLegacyFactSnapshotSave
+        const movementValues = state.data?.tabs?.movement?.values || [];
+        const rawExpenseRows = isLegacyFactSnapshotSave
           ? convertLegacyFactMoneyRowsToExpenseRows(params.moneyRows, snapshotDate)
-          : normalizeManualFinanceExpenseRows(params.expenseRows, snapshotDate, snapshotDate)
-              .map((row) => ({
-                date: snapshotDate,
-                category: row.category,
-                amounts: Object.fromEntries(
-                  getManualFinanceChannels().map((channel) => [channel, normalizeManualFinancePersistedNumberInput(row.amounts?.[channel])])
-                )
-              }));
+          : normalizeManualFinanceExpenseRows(params.expenseRows, snapshotDate, snapshotDate);
+        const balanceRows = isLegacyFactSnapshotSave
+          ? buildManualBalanceRowsFromMoneyRows(params.moneyRows, snapshotDate, transferRows, movementValues)
+          : buildManualBalanceRowsFromNowExpenseRows(rawExpenseRows, snapshotDate, transferRows, movementValues);
+        const expenseRows = filterManualFlowExpenseRows(rawExpenseRows)
+          .map((row) => ({
+            date: snapshotDate,
+            category: row.category,
+            amounts: Object.fromEntries(
+              getManualFinanceChannels().map((channel) => [channel, normalizeManualFinancePersistedNumberInput(row.amounts?.[channel])])
+            )
+          }));
         const expenseReplaceStart = snapshotDate;
         const expenseReplaceEnd = snapshotDate;
         const mergedTransfers = replaceManualRowsForDateRange(existingTransfers, transferRows, snapshotDate, snapshotDate, "transferDate");
         const mergedExpenses = replaceManualRowsForDateRange(existingExpenses, expenseRows, expenseReplaceStart, expenseReplaceEnd, "date");
+        const mergedBalances = mergeManualBalanceRows(existingBalances, balanceRows);
         await ensureSheetExists(getManualTransfersSheetName(), getManualFinanceSpreadsheetId());
         await ensureSheetExists(getManualExpensesSheetName(), getManualFinanceSpreadsheetId());
+        await ensureSheetExists(getManualBalancesSheetName(), getManualFinanceSpreadsheetId());
         await overwriteSheetValues(getManualTransfersSheetName(), buildIncomingTransferSheetValues(mergedTransfers), getManualFinanceSpreadsheetId());
         await overwriteSheetValues(getManualExpensesSheetName(), buildIncomingExpenseSheetValues(mergedExpenses), getManualFinanceSpreadsheetId());
+        await overwriteSheetValues(getManualBalancesSheetName(), buildIncomingBalanceSheetValues(mergedBalances), getManualFinanceSpreadsheetId());
         return {
           periodStart: snapshotDate,
           periodEnd: snapshotDate,
           status: "saved",
-          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()}`,
+          sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
           savedAt: new Date().toLocaleString("ru-RU"),
           writeEnabled: true
         };
@@ -4440,15 +4605,20 @@
       async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
         const metadata = await getManualSpreadsheetMetadata();
         const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-        const transferValues = titles.has(getManualTransfersSheetName())
-          ? await getSheetValuesByTitle(getManualTransfersSheetName())
-          : buildIncomingTransferSheetValues([]);
-        const expenseValues = titles.has(getManualExpensesSheetName())
-          ? await getSheetValuesByTitle(getManualExpensesSheetName())
-          : buildIncomingExpenseSheetValues([]);
-        const commissionValues = titles.has(getManualCommissionsSheetName())
-          ? await getSheetValuesByTitle(getManualCommissionsSheetName())
-          : buildIncomingCommissionSheetValues([]);
+        const [transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+          titles.has(getManualTransfersSheetName())
+            ? getSheetValuesByTitle(getManualTransfersSheetName())
+            : Promise.resolve(buildIncomingTransferSheetValues([])),
+          titles.has(getManualExpensesSheetName())
+            ? getSheetValuesByTitle(getManualExpensesSheetName())
+            : Promise.resolve(buildIncomingExpenseSheetValues([])),
+          titles.has(getManualBalancesSheetName())
+            ? getSheetValuesByTitle(getManualBalancesSheetName())
+            : Promise.resolve(buildIncomingBalanceSheetValues([])),
+          titles.has(getManualCommissionsSheetName())
+            ? getSheetValuesByTitle(getManualCommissionsSheetName())
+            : Promise.resolve(buildIncomingCommissionSheetValues([]))
+        ]);
         const transferRows = parseIncomingTransferSheetValues(transferValues)
           .filter((row) => row.transferDate && row.transferDate >= startDate && row.transferDate <= endDate)
           .map((row) => ({
@@ -4462,23 +4632,33 @@
           }));
         const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
         const expenseRows = normalizeManualFinanceExpenseRows(
-          parsedExpenseRows.filter((row) => row.date && row.date >= startDate && row.date <= endDate),
+          filterManualFlowExpenseRows(parsedExpenseRows).filter((row) => row.date && row.date >= startDate && row.date <= endDate),
           startDate,
           endDate
         );
         const commissionRows = parseIncomingCommissionSheetValues(commissionValues)
           .filter((row) => row.date && row.date >= startDate && row.date <= endDate);
+        const latestNowEntriesByChannel = mergeLatestNowEntries(
+          buildLatestBalanceEntriesByChannel(parseIncomingBalanceSheetValues(balanceValues), endDate),
+          buildLatestNowEntriesByChannel(parsedExpenseRows, endDate)
+        );
         return {
-          rows: buildManualFinanceSummaryRows(expenseRows),
+          rows: buildManualFinanceSummaryRows(expenseRows, latestNowEntriesByChannel),
           transferRows,
           commissionRows,
-          latestNowByChannel: buildLatestNowByChannel(parsedExpenseRows, endDate),
-          selectedSheets: [getManualExpensesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
+          latestNowByChannel: Object.fromEntries(
+            Object.entries(latestNowEntriesByChannel).map(([channel, row]) => [channel, row.value])
+          ),
+          latestNowEntriesByChannel,
+          selectedSheets: [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
         };
       }
 
       async function selectClosedManualPeriodSheetsDirect(startDate, endDate) {
-        return [{ sheetName: getManualExpensesSheetName(), startDate, endDate, status: "saved" }];
+        return [
+          { sheetName: getManualExpensesSheetName(), startDate, endDate, status: "saved" },
+          { sheetName: getManualBalancesSheetName(), startDate, endDate, status: "saved" }
+        ];
       }
 
       async function loadManualSheetByTitleDirect(sheetTitle) {
@@ -4487,6 +4667,9 @@
         }
         if (sheetTitle === getManualExpensesSheetName()) {
           return { expenseRows: parseIncomingExpenseSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
+        }
+        if (sheetTitle === getManualBalancesSheetName()) {
+          return { balanceRows: parseIncomingBalanceSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
         }
         if (sheetTitle === getManualCommissionsSheetName()) {
           return { commissionRows: parseIncomingCommissionSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
@@ -4527,9 +4710,22 @@
         const payoutStats = calculatePayoutChannelStats(payoutsValues, normalizedTransferRows);
         const commissionLookup = buildCommissionUsdLookup(aggregatedManual?.commissionRows || []);
         const usdRateLookup = buildManualFinanceUsdRateLookup(aggregatedManual?.transferRows || [], movementValues);
+        const latestNowUsdLookup = buildLatestNowUsdLookup(
+          aggregatedManual?.latestNowEntriesByChannel || aggregatedManual?.latestNowByChannel || {},
+          usdRateLookup,
+          {
+            transferRows: aggregatedManual?.transferRows || [],
+            movementValues
+          }
+        );
         const manualRowsWithUsd = manualRows.map((row) => ({
           ...row,
           totalUsd: row.totalUsd || getManualFinanceTotalUsdValue(row, usdRateLookup),
+          nowUsd: row.nowUsd || (
+            Object.prototype.hasOwnProperty.call(latestNowUsdLookup, row.channel)
+              ? formatSheetNumber(latestNowUsdLookup[row.channel])
+              : getManualFinanceNowUsdValue(row, usdRateLookup)
+          ),
           exchangeUsd: row.exchangeUsd || getManualFinanceExchangeUsdValue(row, usdRateLookup)
         }));
         const manualTotalLookup = buildManualTotalLookup(manualRowsWithUsd);
@@ -4537,7 +4733,6 @@
         const manualServiceIncomeLookup = buildManualServiceIncomeLookup(manualRowsWithUsd);
         const manualExchangeLookup = buildManualExchangeLookup(manualRowsWithUsd);
         const manualExchangeUsdLookup = buildManualExchangeUsdLookup(manualRowsWithUsd);
-        const latestNowUsdLookup = buildLatestNowUsdLookup(aggregatedManual?.latestNowByChannel || {}, usdRateLookup);
         const currentNowUsdLookup = buildManualNowLookup(manualRowsWithUsd, usdRateLookup);
         const fallbackNowUsdLookup = buildAnalyticsNowUsdLookup(firstSectionRows);
         const openingSavingsLookup = buildSavingsLookup(savingsValues);
@@ -4905,6 +5100,13 @@
       }
 
       function buildLatestNowByChannel(expenseRows, endDate) {
+        return Object.fromEntries(
+          Object.entries(buildLatestNowEntriesByChannel(expenseRows, endDate))
+            .map(([channel, row]) => [channel, row.value])
+        );
+      }
+
+      function buildLatestNowEntriesByChannel(expenseRows, endDate) {
         const latest = {};
         (expenseRows || [])
           .filter((row) => row?.date && row.date <= endDate && normalizeManualExpenseCategory(row.category) === MANUAL_NOW_CATEGORY)
@@ -4913,8 +5115,28 @@
             MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
               const raw = String(row.amounts?.[channel] ?? "").trim();
               if (!raw || !parseLooseNumber(raw)) return;
-              latest[channel] = raw;
+              latest[channel] = { value: raw, date: row.date };
             });
+        });
+        return latest;
+      }
+
+      function buildLatestBalanceEntriesByChannel(balanceRows, endDate) {
+        const latest = {};
+        (balanceRows || [])
+          .filter((row) => row?.date && row.date <= endDate)
+          .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+          .forEach((row) => {
+            const channel = String(row.channel || "").trim();
+            const raw = String(row.amount ?? "").trim();
+            if (!channel || !raw || !parseLooseNumber(raw)) return;
+            latest[channel] = {
+              value: raw,
+              date: row.date,
+              currency: String(row.currency || "").trim().toUpperCase() || inferManualFinanceChannelCurrency(channel),
+              rate: row.rate || "",
+              usdAmount: row.usdAmount || ""
+            };
           });
         return latest;
       }
@@ -4933,10 +5155,39 @@
         return String(value || "").trim();
       }
 
-      function buildLatestNowUsdLookup(latestNowByChannel, rateLookup) {
+      function buildLatestNowUsdLookup(latestNowByChannel, rateLookup, options = {}) {
         const lookup = {};
-        Object.entries(latestNowByChannel || {}).forEach(([channel, now]) => {
-          const nowUsd = getManualFinanceNowUsdValue({ channel, now }, rateLookup);
+        const datedRateLookupByDate = new Map();
+        Object.entries(latestNowByChannel || {}).forEach(([channel, entry]) => {
+          const now = typeof entry === "object" && entry !== null ? entry.value : entry;
+          const storedUsdAmount = typeof entry === "object" && entry !== null ? parseLooseNumber(entry.usdAmount) : 0;
+          if (storedUsdAmount) {
+            lookup[channel] = storedUsdAmount;
+            return;
+          }
+          let datedRateLookup = rateLookup;
+          if (typeof entry === "object" && entry?.date) {
+            if (!datedRateLookupByDate.has(entry.date)) {
+              datedRateLookupByDate.set(
+                entry.date,
+                buildManualFinanceUsdRateLookup(options.transferRows || [], options.movementValues || [], { endDate: entry.date })
+              );
+            }
+            datedRateLookup = datedRateLookupByDate.get(entry.date);
+          }
+          if (typeof entry === "object" && entry !== null) {
+            const currency = String(entry.currency || "").trim().toUpperCase() || inferManualFinanceChannelCurrency(channel);
+            const localPerUsd = parseLooseNumber(entry.rate);
+            if (currency === "USD") {
+              lookup[channel] = parseLooseNumber(now);
+              return;
+            }
+            if (localPerUsd) {
+              lookup[channel] = parseLooseNumber(now) / localPerUsd;
+              return;
+            }
+          }
+          const nowUsd = getManualFinanceNowUsdValue({ channel, now }, datedRateLookup);
           if (String(nowUsd || "").trim()) lookup[channel] = parseLooseNumber(nowUsd);
         });
         return lookup;
