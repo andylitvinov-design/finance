@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.10";
+      const APP_BUILD_VERSION = "2026.04.25.11";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -746,10 +746,7 @@
           button.className = "tab" + (tab.id === state.activeTab ? " active" : "");
           button.type = "button";
           button.textContent = tab.label;
-          button.addEventListener("click", () => {
-            state.activeTab = tab.id;
-            renderTabs();
-          });
+          button.addEventListener("click", () => handleTabClick(tab.id));
           elements.tabs.appendChild(button);
 
           const panel = document.createElement("section");
@@ -766,6 +763,29 @@
           elements.tabPanels.appendChild(panel);
         }
         refreshGoogleControlsVisibility();
+      }
+
+      async function handleTabClick(tabId) {
+        if (tabId === "manualFinance") {
+          await openManualFinanceToday();
+          return;
+        }
+        state.activeTab = tabId;
+        renderTabs();
+      }
+
+      async function openManualFinanceToday() {
+        setToday();
+        state.activeTab = "manualFinance";
+        setManualFinanceStatus("Подключаю Google и открываю fact за сегодня.", false);
+        renderTabs();
+        try {
+          await ensureGoogleAccess(true);
+          await loadManualFinanceSheet(elements.startDate.value, elements.endDate.value, true);
+        } catch (error) {
+          setManualFinanceStatus(error.message || "Не удалось открыть fact за сегодня.", true);
+          renderTabs();
+        }
       }
 
       function refreshGoogleControlsVisibility() {
@@ -4347,8 +4367,15 @@
         return (values || []).map((row) => (row || []).slice());
       }
 
+      function formatDateInputValue(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      }
+
       function setToday() {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = formatDateInputValue(new Date());
         elements.startDate.value = today;
         elements.endDate.value = today;
       }
@@ -4357,8 +4384,8 @@
         const endDate = new Date();
         const startDate = new Date(endDate);
         startDate.setDate(startDate.getDate() - 6);
-        elements.startDate.value = startDate.toISOString().slice(0, 10);
-        elements.endDate.value = endDate.toISOString().slice(0, 10);
+        elements.startDate.value = formatDateInputValue(startDate);
+        elements.endDate.value = formatDateInputValue(endDate);
       }
 
       function buildMovementSummaryRows(movementValues, ordersValues, payoutsValues, fallbackSummaryRows = []) {

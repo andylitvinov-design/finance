@@ -132,7 +132,7 @@ test("GET getDashboardData maps to calculatePeriod for Apps Script v2", async ()
   }
 });
 
-test("GET getDashboardData preserves upstream movement rows even when raw source has newer rows", async () => {
+test("GET getDashboardData overlays fresh source movement rows when upstream is stale", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
   process.env.EZOHATA_V2_APPS_SCRIPT_URL =
@@ -212,7 +212,15 @@ test("GET getDashboardData preserves upstream movement rows even when raw source
     assert.equal(response.body?.ok, true);
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
-    assert.deepEqual(positions, ["дата 1", "Поменяй даты.", "NUMBER", "18126"]);
+    assert.deepEqual(positions, [
+      "дата 1",
+      "Поменяй даты. Таблица автоматически подтянет записи за выбранный период из исходного файла.",
+      "NUMBER",
+      "18126",
+      "18127",
+      "18129",
+      "Итого"
+    ]);
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {
@@ -223,7 +231,7 @@ test("GET getDashboardData preserves upstream movement rows even when raw source
   }
 });
 
-test("GET getDashboardData preserves upstream payout rows even when raw source has newer rows", async () => {
+test("GET getDashboardData overlays fresh source payout rows when upstream is stale", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
   process.env.EZOHATA_V2_APPS_SCRIPT_URL =
@@ -305,7 +313,7 @@ test("GET getDashboardData preserves upstream payout rows even when raw source h
     assert.equal(response.body?.ok, true);
     const payoutRows = response.body?.data?.tabs?.payouts?.values || [];
     const positions = payoutRows.map((row) => row?.[0]).filter(Boolean);
-    assert.deepEqual(positions, ["Выплаты", "POSITION", "18124"]);
+    assert.deepEqual(positions, ["Выплаты", "POSITION", "18127", "Итого"]);
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {
@@ -316,7 +324,7 @@ test("GET getDashboardData preserves upstream payout rows even when raw source h
   }
 });
 
-test("GET getDashboardData does not invent Kovalev movement rows from raw source when upstream has none", async () => {
+test("GET getDashboardData overlays fresh source movement rows even when upstream has none", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
   process.env.EZOHATA_V2_APPS_SCRIPT_URL =
@@ -402,8 +410,21 @@ test("GET getDashboardData does not invent Kovalev movement rows from raw source
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
     const ordersRows = response.body?.data?.tabs?.orders?.values || [];
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
-    assert.deepEqual(positions, ["дата 1", "Поменяй даты.", "NUMBER"]);
-    assert.deepEqual(ordersRows, [["NUMBER", "DATE", "CLIENT", "SERVICE"]]);
+    assert.deepEqual(positions, [
+      "дата 1",
+      "Поменяй даты. Таблица автоматически подтянет записи за выбранный период из исходного файла.",
+      "NUMBER",
+      "18101",
+      "18102",
+      "18103",
+      "18104",
+      "18105",
+      "18106",
+      "18107",
+      "18108",
+      "Итого"
+    ]);
+    assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {

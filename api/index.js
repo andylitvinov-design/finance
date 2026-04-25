@@ -221,7 +221,25 @@ async function pipeResponse(response, upstreamResponse, action) {
 }
 
 async function maybeOverlayFreshSourceData(data) {
-  return data;
+  if (!data?.tabs || !data?.period) return data;
+  try {
+    const sourceRows = await loadSourceRows();
+    const freshMovement = buildFreshMovementTableFromRows(sourceRows, data.period);
+    if (!freshMovement) return data;
+    const freshPayouts = buildFreshPayoutsTableFromRows(sourceRows, data.period);
+    return {
+      ...data,
+      tabs: {
+        ...data.tabs,
+        movement: freshMovement,
+        orders: buildFreshOrdersTable(freshMovement),
+        ...(freshPayouts ? { payouts: freshPayouts } : {})
+      }
+    };
+  } catch (error) {
+    console.warn("Fresh source overlay failed, using upstream dashboard data.", error);
+    return data;
+  }
 }
 
 async function loadSourceRows() {
