@@ -1,0 +1,885 @@
+// ============================================================
+// RENDERING
+// ============================================================
+
+function renderTabs() {
+  elements.tabs.innerHTML = "";
+  elements.tabPanels.innerHTML = "";
+  for (const tab of state.config.tabs) {
+    const button = document.createElement("button");
+    button.className = "tab" + (tab.id === state.activeTab ? " active" : "");
+    button.type = "button";
+    button.textContent = tab.label;
+    button.addEventListener("click", () => handleTabClick(tab.id));
+    elements.tabs.appendChild(button);
+
+    const panel = document.createElement("section");
+    panel.className = "tab-panel" + (tab.id === state.activeTab ? " active" : "");
+    if (tab.id === "manualFinance") {
+      panel.appendChild(renderManualFinanceBlock());
+    } else if (tab.id === "savings") {
+      panel.appendChild(renderManualTransfersBlock());
+    } else if (tab.id === "orders") {
+      panel.appendChild(renderManualOrdersBlock());
+    } else {
+      panel.appendChild(renderStandardTab(tab.id, tab.label));
+    }
+    elements.tabPanels.appendChild(panel);
+  }
+  refreshGoogleControlsVisibility();
+}
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+async function handleTabClick(tabId) {
+  if (tabId === "manualFinance") {
+    await openManualFinanceToday();
+    return;
+  }
+  state.activeTab = tabId;
+  renderTabs();
+}
+
+
+// ============================================================
+// RENDERING
+// ============================================================
+
+async function openManualFinanceToday() {
+  setToday();
+  state.activeTab = "manualFinance";
+  setManualFinanceStatus("Подключаю Google и открываю fact за сегодня.", false);
+  renderTabs();
+  try {
+    await ensureGoogleAccess(true);
+    await loadManualFinanceSheet(elements.startDate.value, elements.endDate.value, true);
+  } catch (error) {
+    setManualFinanceStatus(error.message || "Не удалось открыть fact за сегодня.", true);
+    renderTabs();
+  }
+}
+
+function renderStandardTab(tabId, label) {
+  const block = document.createElement("div");
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  const sourceType = String(state.data?.tabs?.[tabId]?.sourceType || "").trim();
+  const note = tabId === "savings"
+    ? "Переводы за выбранный период читаются из workbook fact/Переводы."
+    : (sourceType === "live-source-csv"
+        ? "Актуальные данные загружаются сервером без Google-авторизации."
+        : "Данные за выбранный период загружаются через серверный API. Google нужен только для ручных вкладок.");
+  const titleWrap = document.createElement("div");
+  const movementSourceUrl = tabId === "movement"
+    ? getMovementSourceSpreadsheetUrl()
+    : "";
+  const manualWorkbookUrl = tabId === "savings"
+    ? String(state.config?.manualFinance?.spreadsheetUrl || "").trim()
+    : "";
+  titleWrap.innerHTML = `<div><h2>${escapeHtml(label)}</h2><div class="tab-note">${escapeHtml(note)}${
+    movementSourceUrl
+      ? ` <a href="${escapeHtml(movementSourceUrl)}" target="_blank" rel="noreferrer">Открыть онлайн-документ источника</a>.`
+      : ""
+  }${
+    manualWorkbookUrl
+      ? ` <a href="${escapeHtml(manualWorkbookUrl)}" target="_blank" rel="noreferrer">Открыть workbook переводов</a>.`
+      : ""
+  }</div></div>`;
+  header.appendChild(titleWrap);
+  const headerActions = renderTabExportActions(tabId);
+  if (headerActions.childNodes.length && tabId !== "movement") header.appendChild(headerActions);
+  block.appendChild(header);
+  if (tabId === "movement" && headerActions.childNodes.length) {
+    headerActions.classList.add("movement-export-actions");
+    block.appendChild(headerActions);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const values = tabId === "analytics"
+    ? getAnalyticsMergedValues()
+    : (state.data?.tabs?.[tabId]?.values || []);
+  if (!values.length) {
+    wrap.innerHTML = `<div class="empty">Нет данных для отображения.</div>`;
+    block.appendChild(wrap);
+    return block;
+  }
+  if (tabId === "analytics") {
+    renderAnalyticsSections(wrap, values);
+  } else {
+    wrap.appendChild(renderResponsiveDataView(
+      values,
+      tabId === "movement" ? { mobileTableColumnCount: 7 } : { mobileTableColumnCount: 1 }
+    ));
+  }
+  block.appendChild(wrap);
+  if (tabId === "payouts") {
+    const transfersBlock = renderPayoutTransfersBlock();
+    if (transfersBlock) block.appendChild(transfersBlock);
+  }
+  return block;
+}
+
+function renderPlainTable(values) {
+  const table = document.createElement("table");
+  const tbody = document.createElement("tbody");
+  values.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    row.forEach((cell) => {
+      const tag = rowIndex === 0 ? "th" : "td";
+      const node = document.createElement(tag);
+      node.textContent = formatCellForDisplay(cell);
+      tr.appendChild(node);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+function renderResponsiveDataView(values, options = {}) {
+  const shell = document.createElement("div");
+  const desktopTable = document.createElement("div");
+  const mobileTableColumnCount = Number(options.mobileTableColumnCount || 0);
+  desktopTable.className = "desktop-table";
+  desktopTable.appendChild(renderPlainTable(values));
+  shell.appendChild(desktopTable);
+
+  if (mobileTableColumnCount > 0) {
+    const mobileTable = document.createElement("div");
+    mobileTable.className = "mobile-table";
+    mobileTable.appendChild(renderPlainTable(values));
+    shell.appendChild(mobileTable);
+    return shell;
+  }
+
+  const mobileCards = renderMobileCards(values);
+  if (mobileCards) shell.appendChild(mobileCards);
+  return shell;
+}
+
+function renderMobileCards(values) {
+  if (!Array.isArray(values) || values.length < 2) return null;
+  const headers = (values[0] || []).map((cell) => String(cell || "").trim());
+  const rows = values.slice(1).filter((row) => hasAnyValue(row));
+  if (!rows.length) return null;
+  const container = document.createElement("div");
+  container.className = "mobile-cards";
+  rows.forEach((row, rowIndex) => {
+    const card = document.createElement("article");
+    card.className = "mobile-card";
+    const firstMeaningful = row.find((cell) => String(cell || "").trim()) || `Запись ${rowIndex + 1}`;
+    const title = document.createElement("div");
+    title.className = "mobile-card-title";
+    title.textContent = String(firstMeaningful || `Запись ${rowIndex + 1}`);
+    card.appendChild(title);
+
+    const grid = document.createElement("div");
+    grid.className = "mobile-card-grid";
+    row.forEach((cell, cellIndex) => {
+      const value = String(cell || "").trim();
+      const label = String(headers[cellIndex] || "").trim();
+      if (!value && !label) return;
+      const item = document.createElement("div");
+      item.className = "mobile-card-row";
+      const labelNode = document.createElement("div");
+      labelNode.className = "mobile-card-label";
+      labelNode.textContent = label || `Колонка ${cellIndex + 1}`;
+      const valueNode = document.createElement("div");
+      valueNode.className = "mobile-card-value";
+      valueNode.textContent = value || "—";
+      item.append(labelNode, valueNode);
+      grid.appendChild(item);
+    });
+    card.appendChild(grid);
+    container.appendChild(card);
+  });
+  return container;
+}
+
+function renderManualFinanceBlock() {
+  const shell = document.createElement("div");
+  shell.className = "finance-shell";
+
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  header.innerHTML = `<div><h2>fact</h2><div class="tab-note">В HTML остаётся только legacy fact-таблица. При сохранении данные раскладываются в скрытый репозиторий \`Переводы\` + \`Расходы\`.</div></div>`;
+  const headerActions = document.createElement("div");
+  headerActions.className = "finance-actions";
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "secondary";
+  openButton.textContent = "Открыть диапазон";
+  openButton.disabled = state.manualFinance.loading;
+  openButton.addEventListener("click", async () => {
+    await loadManualFinanceSheet(elements.startDate.value, elements.endDate.value, true);
+  });
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "primary";
+  saveButton.textContent = state.manualFinance.dirty ? "Сохранить диапазон*" : "Сохранить диапазон";
+  saveButton.disabled = state.manualFinance.loading || !state.manualFinance.data;
+  saveButton.addEventListener("click", async () => saveManualFinanceSheet());
+  headerActions.append(openButton, saveButton);
+  appendExportButtons(headerActions, "manualFinance");
+  header.appendChild(headerActions);
+  shell.appendChild(header);
+
+  const meta = document.createElement("div");
+  meta.className = "finance-meta";
+  const spreadsheetUrl = state.config?.manualFinance?.spreadsheetUrl || "";
+  const isLive = hasConfiguredManualFinanceEndpoint() && state.manualFinance.data?.writeEnabled !== false;
+  const statusText = state.manualFinance.status || (
+    isLive
+      ? (state.manualFinance.data
+          ? "Диапазон открыт из накопительных вкладок manual workbook."
+          : "Google подключен. Откройте диапазон для чтения и сохранения.")
+      : (state.googleAuth.configured
+          ? "Google OAuth обязателен. Подключите Google, чтобы загрузить и пересчитать данные."
+          : "Google OAuth client is not configured")
+  );
+  const modeText = isLive
+    ? "Google OAuth + Sheets API"
+    : (state.googleAuth.accessToken
+        ? "Google подключен, откройте период"
+        : (state.googleAuth.configured
+            ? "OAuth required, Google not connected"
+            : "Google OAuth not configured"));
+  const showError = state.manualFinance.error && !isLive;
+  meta.innerHTML =
+    `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
+    `<div class="finance-status${showError ? " error" : ""}">${escapeHtml(statusText)}</div>` +
+    `<div class="config-note">Mode: ${escapeHtml(modeText)}</div>` +
+    (state.manualFinance.data ? (
+      `<div class="config-note">Source sheet: ${escapeHtml(state.manualFinance.data.sourceSheetName || "local-preview")}</div>` +
+      `<div class="config-note">Status: ${escapeHtml(state.manualFinance.data.status || "draft")}</div>` +
+      `<div class="config-note">Source type: ${escapeHtml(state.manualFinance.data.sourceType || "local")}</div>` +
+      `<div class="config-note">Transfers: ${escapeHtml(state.manualFinance.data.transferRows.length.toString())}, fact rows: ${escapeHtml(state.manualFinance.data.moneyRows.length.toString())}</div>`
+    ) : "") +
+    (spreadsheetUrl ? `<div class="config-note">Manual workbook: <a href="${escapeHtml(spreadsheetUrl)}" target="_blank" rel="noreferrer">${escapeHtml(spreadsheetUrl)}</a></div>` : "");
+  shell.appendChild(meta);
+
+  const dates = document.createElement("div");
+  dates.className = "date-tags";
+  (state.manualFinance.periods || []).slice(0, 12).forEach((period) => {
+    const tag = document.createElement("button");
+    tag.type = "button";
+    tag.className = "date-tag";
+    tag.textContent = `${period.startDate} → ${period.endDate}`;
+    tag.addEventListener("click", async () => {
+      elements.startDate.value = period.startDate;
+      elements.endDate.value = period.endDate;
+      await loadDashboardData();
+    });
+    dates.appendChild(tag);
+  });
+  if (dates.childNodes.length) shell.appendChild(dates);
+
+  if (!state.manualFinance.data) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.manualFinance.loading ? "Загрузка fact..." : "Откройте диапазон для работы с fact.";
+    shell.appendChild(empty);
+    return shell;
+  }
+
+  const factWrap = document.createElement("div");
+  factWrap.className = "table-wrap";
+  const factTable = document.createElement("table");
+  const factBody = document.createElement("tbody");
+  const factHeader = document.createElement("tr");
+  const usdRateLookup = buildManualFinanceUsdRateLookup(
+    state.manualFinance.data.transferRows,
+    state.data?.tabs?.movement?.values || []
+  );
+  shell.appendChild(renderManualFinanceRateTable(usdRateLookup));
+  getManualFinanceDisplayHeaders(state.manualFinance.data.moneyHeaders || MANUAL_FINANCE_HEADERS).forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell || "";
+    factHeader.appendChild(th);
+  });
+  factBody.appendChild(factHeader);
+  state.manualFinance.data.moneyRows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    const isTotal = row.channel === MANUAL_FINANCE_TOTAL_LABEL;
+
+    const channelTd = document.createElement("td");
+    channelTd.className = "readonly-cell";
+    channelTd.textContent = row.channel || "";
+    tr.appendChild(channelTd);
+
+    ["now", "serviceIncome", "business", "house", "food", "study", "travelFun", "total", "exchange", "totalUsd", "nowUsd"].forEach((key) => {
+      const td = document.createElement("td");
+      if (key === "totalUsd") {
+        td.className = "readonly-cell";
+        td.textContent = getManualFinanceTotalUsdValue(row, usdRateLookup);
+      } else if (key === "nowUsd") {
+        td.className = "readonly-cell";
+        td.textContent = getManualFinanceNowUsdValue(row, usdRateLookup);
+      } else if (key === "total" || isTotal) {
+        td.className = "readonly-cell";
+        td.textContent = row[key] || "";
+      } else {
+        const input = document.createElement("input");
+        input.className = "finance-input";
+        input.value = row[key] || "";
+        input.addEventListener("input", (event) => updateManualFinanceMoneyValue(rowIndex, key, event.target.value));
+        td.appendChild(input);
+      }
+      tr.appendChild(td);
+    });
+    factBody.appendChild(tr);
+  });
+  factTable.appendChild(factBody);
+  factWrap.appendChild(factTable);
+  shell.appendChild(factWrap);
+
+  return shell;
+}
+
+function renderManualTransfersBlock() {
+  const shell = document.createElement("div");
+  shell.className = "finance-shell";
+
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  header.innerHTML = `<div><h2>Переводы</h2><div class="tab-note">Редактирование переводов из manual workbook за выбранный диапазон.</div></div>`;
+  const headerActions = document.createElement("div");
+  headerActions.className = "finance-actions";
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "secondary";
+  openButton.textContent = "Открыть диапазон";
+  openButton.disabled = state.manualTransfers.loading;
+  openButton.addEventListener("click", async () => {
+    await loadManualTransfersSheet(elements.startDate.value, elements.endDate.value, true);
+  });
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "primary";
+  saveButton.textContent = state.manualTransfers.dirty ? "Сохранить диапазон*" : "Сохранить диапазон";
+  saveButton.disabled = state.manualTransfers.loading || !state.manualTransfers.data;
+  saveButton.addEventListener("click", async () => saveManualTransfersSheet());
+
+  headerActions.append(openButton, saveButton);
+  appendExportButtons(headerActions, "savings");
+  header.appendChild(headerActions);
+  shell.appendChild(header);
+
+  const meta = document.createElement("div");
+  meta.className = "finance-meta";
+  const spreadsheetUrl = state.config?.manualFinance?.spreadsheetUrl || "";
+  const isLive = hasConfiguredManualFinanceEndpoint() && state.manualTransfers.data?.writeEnabled !== false;
+  const statusText = state.manualTransfers.status || (
+    isLive
+      ? "Переводы открыты из manual workbook."
+      : (state.googleAuth.configured
+          ? "Google OAuth обязателен. Подключите Google, чтобы открыть и сохранить переводы."
+          : "Google OAuth client is not configured")
+  );
+  meta.innerHTML =
+    `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
+    `<div class="finance-status${state.manualTransfers.error && !isLive ? " error" : ""}">${escapeHtml(statusText)}</div>` +
+    `<div class="config-note">Mode: ${escapeHtml(isLive ? "Google OAuth + Sheets API" : "OAuth required")}</div>` +
+    (state.manualTransfers.data ? (
+      `<div class="config-note">Source sheet: ${escapeHtml(state.manualTransfers.data.sourceSheetName || getManualTransfersSheetName())}</div>` +
+      `<div class="config-note">Rows: ${escapeHtml(state.manualTransfers.data.transferRows.length.toString())}</div>`
+    ) : "") +
+    (spreadsheetUrl ? `<div class="config-note">Manual workbook: <a href="${escapeHtml(spreadsheetUrl)}" target="_blank" rel="noreferrer">${escapeHtml(spreadsheetUrl)}</a></div>` : "");
+  shell.appendChild(meta);
+
+  if (!state.manualTransfers.data) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.manualTransfers.loading ? "Загрузка переводов..." : "Откройте диапазон для работы с переводами.";
+    shell.appendChild(empty);
+    return shell;
+  }
+
+  const transferWrap = document.createElement("div");
+  transferWrap.className = "table-wrap";
+  const transferTable = document.createElement("table");
+  const transferBody = document.createElement("tbody");
+  const transferHeader = document.createElement("tr");
+  [...(state.manualTransfers.data.transferHeaders || MANUAL_TRANSFER_HEADERS), ""].forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell || "";
+    transferHeader.appendChild(th);
+  });
+  transferBody.appendChild(transferHeader);
+  const renderTransferEditorRow = (row, rowIndex) => {
+    const tr = document.createElement("tr");
+    ["transferDate", "who", "amount", "currency", "channel", "rate", "usdAmount"].forEach((key) => {
+      const td = document.createElement("td");
+      const input = document.createElement("input");
+      input.className = "finance-input";
+      input.value = row[key] || "";
+      input.addEventListener("input", (event) => updateManualTransfersValue(rowIndex, key, event.target.value));
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    const actionTd = document.createElement("td");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", () => removeManualTransfersRow(rowIndex));
+    actionTd.appendChild(remove);
+    tr.appendChild(actionTd);
+    return tr;
+  };
+  const transferRowsWithIndex = state.manualTransfers.data.transferRows.map((row, rowIndex) => ({ row, rowIndex }));
+  const filledTransferRows = transferRowsWithIndex.filter(({ row }) => hasAnyValue(Object.values(row || {})));
+  const emptyTransferRows = transferRowsWithIndex.filter(({ row }) => !hasAnyValue(Object.values(row || {})));
+  filledTransferRows.forEach(({ row, rowIndex }) => {
+    transferBody.appendChild(renderTransferEditorRow(row, rowIndex));
+  });
+  transferTable.appendChild(transferBody);
+  transferWrap.appendChild(transferTable);
+  shell.appendChild(transferWrap);
+
+  if (emptyTransferRows.length) {
+    const emptyRowsDetails = document.createElement("details");
+    emptyRowsDetails.className = "analytics-section";
+    emptyRowsDetails.style.marginTop = "12px";
+    const summary = document.createElement("summary");
+    summary.textContent = `Пустые строки (${emptyTransferRows.length})`;
+    emptyRowsDetails.appendChild(summary);
+    const emptyWrap = document.createElement("div");
+    emptyWrap.className = "table-wrap";
+    const emptyTable = document.createElement("table");
+    const emptyBody = document.createElement("tbody");
+    const emptyHeader = transferHeader.cloneNode(true);
+    emptyBody.appendChild(emptyHeader);
+    emptyTransferRows.forEach(({ row, rowIndex }) => {
+      emptyBody.appendChild(renderTransferEditorRow(row, rowIndex));
+    });
+    emptyTable.appendChild(emptyBody);
+    emptyWrap.appendChild(emptyTable);
+    emptyRowsDetails.appendChild(emptyWrap);
+    shell.appendChild(emptyRowsDetails);
+  }
+
+  const commissionTitle = document.createElement("div");
+  commissionTitle.className = "tab-note";
+  commissionTitle.style.margin = "18px 0 10px";
+  commissionTitle.style.fontWeight = "700";
+  commissionTitle.textContent = "Комиссии";
+  shell.appendChild(commissionTitle);
+
+  state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || []);
+  const commissionWrap = document.createElement("div");
+  commissionWrap.className = "table-wrap";
+  const commissionTable = document.createElement("table");
+  const commissionBody = document.createElement("tbody");
+  const commissionHeader = document.createElement("tr");
+  [...(state.manualTransfers.data.commissionHeaders || MANUAL_COMMISSION_HEADERS), ""].forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell || "";
+    commissionHeader.appendChild(th);
+  });
+  commissionBody.appendChild(commissionHeader);
+  const renderCommissionEditorRow = (row, rowIndex) => {
+    const tr = document.createElement("tr");
+    ["date", "channel", "usdAmount", "comment"].forEach((key) => {
+      const td = document.createElement("td");
+      const input = document.createElement("input");
+      input.className = "finance-input";
+      input.value = row[key] || "";
+      input.addEventListener("input", (event) => updateManualCommissionValue(rowIndex, key, event.target.value));
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    const actionTd = document.createElement("td");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", () => removeManualCommissionRow(rowIndex));
+    actionTd.appendChild(remove);
+    tr.appendChild(actionTd);
+    return tr;
+  };
+  state.manualTransfers.data.commissionRows.forEach((row, rowIndex) => {
+    commissionBody.appendChild(renderCommissionEditorRow(row, rowIndex));
+  });
+  commissionTable.appendChild(commissionBody);
+  commissionWrap.appendChild(commissionTable);
+  shell.appendChild(commissionWrap);
+
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+  const addTransferButton = document.createElement("button");
+  addTransferButton.type = "button";
+  addTransferButton.className = "secondary";
+  addTransferButton.textContent = "Добавить перевод";
+  addTransferButton.addEventListener("click", () => addManualTransfersRow());
+  const addCommissionButton = document.createElement("button");
+  addCommissionButton.type = "button";
+  addCommissionButton.className = "secondary";
+  addCommissionButton.textContent = "Добавить комиссию";
+  addCommissionButton.addEventListener("click", () => addManualCommissionRow());
+  actions.append(addTransferButton, addCommissionButton);
+  shell.appendChild(actions);
+
+  return shell;
+}
+
+function renderManualOrdersBlock() {
+  const shell = document.createElement("div");
+  shell.className = "finance-shell";
+
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  header.innerHTML = `<div><h2>Список моих заказов</h2><div class="tab-note">Ручной ввод заказов с сохранением в Google Sheets через browser OAuth.</div></div>`;
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "secondary";
+  openButton.textContent = "Открыть заказы";
+  openButton.disabled = state.manualOrders.loading;
+  openButton.addEventListener("click", async () => {
+    await loadManualOrdersSheet(true);
+  });
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "primary";
+  saveButton.textContent = state.manualOrders.dirty ? "Сохранить заказы*" : "Сохранить заказы";
+  saveButton.disabled = state.manualOrders.loading || !state.manualOrders.data;
+  saveButton.addEventListener("click", async () => saveManualOrdersSheet());
+
+  actions.append(openButton, saveButton);
+  appendExportButtons(actions, "orders");
+  header.appendChild(actions);
+  shell.appendChild(header);
+
+  const meta = document.createElement("div");
+  meta.className = "finance-meta";
+  const ordersConfig = getManualOrdersConfig();
+  const isLive = hasConfiguredManualOrdersEndpoint() && state.manualOrders.data?.writeEnabled !== false;
+  const statusText = state.manualOrders.status || (
+    isLive
+      ? "Orders открыты из manual workbook."
+      : (state.googleAuth.configured
+          ? "Google OAuth готов. Подключите Google и откройте orders."
+          : "Orders доступны только локально, пока OAuth не настроен.")
+  );
+  const modeText = isLive
+    ? "Google OAuth + Sheets API"
+    : (state.googleAuth.accessToken
+        ? "Google подключен, откройте orders"
+        : (state.googleAuth.configured
+            ? "OAuth ready, Google not connected"
+            : "Browser draft / Google OAuth not connected"));
+  meta.innerHTML =
+    `<div class="finance-status${state.manualOrders.error && !isLive ? " error" : ""}">${escapeHtml(statusText)}</div>` +
+    `<div class="config-note">Mode: ${escapeHtml(modeText)}</div>` +
+    (state.manualOrders.data ? (
+      `<div class="config-note">Source sheet: ${escapeHtml(state.manualOrders.data.sourceSheetName || "local-preview")}</div>` +
+      `<div class="config-note">Source type: ${escapeHtml(state.manualOrders.data.sourceType || "local")}</div>`
+    ) : "") +
+    (ordersConfig.spreadsheetUrl ? `<div class="config-note">Manual workbook: <a href="${escapeHtml(ordersConfig.spreadsheetUrl)}" target="_blank" rel="noreferrer">${escapeHtml(ordersConfig.spreadsheetUrl)}</a></div>` : "");
+  shell.appendChild(meta);
+
+  const intakeField = document.createElement("div");
+  intakeField.className = "field";
+  intakeField.innerHTML = `<label>Добавить заказ текстом</label>`;
+  const intakeArea = document.createElement("textarea");
+  intakeArea.placeholder =
+    "номер: 18094\nдата: 21.04.2026\nклиент: ...\nуслуга: ...\nprice base: 200\npayment method: сайт, рубли";
+  intakeArea.value = state.manualOrders.textDraft || "";
+  intakeArea.addEventListener("input", (event) => {
+    state.manualOrders.textDraft = event.target.value;
+  });
+  intakeField.appendChild(intakeArea);
+
+  const intakeActions = document.createElement("div");
+  intakeActions.className = "finance-actions";
+
+  const parseButton = document.createElement("button");
+  parseButton.type = "button";
+  parseButton.className = "secondary";
+  parseButton.textContent = "Разложить по ячейкам";
+  parseButton.disabled = state.manualOrders.loading;
+  parseButton.addEventListener("click", () => appendManualOrdersFromText());
+
+  const clearButton = document.createElement("button");
+  clearButton.type = "button";
+  clearButton.className = "ghost";
+  clearButton.textContent = "Очистить текст";
+  clearButton.disabled = !state.manualOrders.textDraft;
+  clearButton.addEventListener("click", () => {
+    state.manualOrders.textDraft = "";
+    renderTabs();
+  });
+
+  intakeActions.append(parseButton, clearButton);
+  intakeField.appendChild(intakeActions);
+  intakeField.insertAdjacentHTML("beforeend", `<div class="config-note">Поддерживаются строки вида ключ: значение. Несколько заказов можно вставлять блоками через пустую строку.</div>`);
+  shell.appendChild(intakeField);
+
+  if (!state.manualOrders.data) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = state.manualOrders.loading ? "Загрузка orders..." : "Откройте orders для ручного ввода.";
+    shell.appendChild(empty);
+    return shell;
+  }
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const tbody = document.createElement("tbody");
+  const headerRow = document.createElement("tr");
+  state.manualOrders.data.headers.forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell || "";
+    headerRow.appendChild(th);
+  });
+  const actionHeader = document.createElement("th");
+  actionHeader.textContent = "";
+  headerRow.appendChild(actionHeader);
+  tbody.appendChild(headerRow);
+
+  state.manualOrders.data.rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    row.forEach((cell, cellIndex) => {
+      const td = document.createElement("td");
+      const input = document.createElement("input");
+      input.className = "finance-input";
+      input.value = cell || "";
+      input.addEventListener("input", (event) => updateManualOrderValue(rowIndex, cellIndex, event.target.value));
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    const actionTd = document.createElement("td");
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost";
+    removeButton.textContent = "Удалить";
+    removeButton.addEventListener("click", () => removeManualOrderRow(rowIndex));
+    actionTd.appendChild(removeButton);
+    tr.appendChild(actionTd);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  shell.appendChild(tableWrap);
+
+  const footerActions = document.createElement("div");
+  footerActions.className = "finance-actions";
+  const addRowButton = document.createElement("button");
+  addRowButton.type = "button";
+  addRowButton.className = "secondary";
+  addRowButton.textContent = "Добавить заказ";
+  addRowButton.addEventListener("click", addManualOrderRow);
+  footerActions.appendChild(addRowButton);
+  shell.appendChild(footerActions);
+
+  return shell;
+}
+
+function renderManualFinanceRateTable(rateLookup) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap rate-table-wrap";
+  const table = document.createElement("table");
+  const body = document.createElement("tbody");
+  [["валюта", "курс за 1 USD"], ...getManualFinanceDisplayRates(rateLookup).map((row) => [
+    row.label,
+    row.rate ? formatSheetNumber(row.rate, 6) : "—"
+  ])].forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    row.forEach((cell) => {
+      const el = document.createElement(rowIndex === 0 ? "th" : "td");
+      el.textContent = cell;
+      tr.appendChild(el);
+    });
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function renderMovementSummaryBlock(summaryRows) {
+  const block = document.createElement("div");
+  block.className = "movement-summary";
+  const title = document.createElement("div");
+  title.className = "movement-summary-title";
+  title.textContent = "Итоги за выбранный период";
+  block.appendChild(title);
+  block.appendChild(renderResponsiveDataView([["Показатель", "Значение"], ...summaryRows], { mobileTableColumnCount: 2 }));
+  return block;
+}
+
+function renderClosedFactTransfersBlock(headers, rows) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Переводы из входящих данных за период";
+  block.appendChild(title);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.appendChild(renderResponsiveDataView([headers, ...rows], { mobileTableColumnCount: 1 }));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderAnalyticsSections(container, values) {
+  const sections = getAnalyticsSections(values);
+  const manualWorkbookUrl = state.config?.manualFinance?.spreadsheetUrl || "";
+  if (manualWorkbookUrl) {
+    const linkNote = document.createElement("div");
+    linkNote.className = "config-note";
+    linkNote.style.marginBottom = "12px";
+    linkNote.innerHTML = `Источник fact: <a href="${escapeHtml(manualWorkbookUrl)}" target="_blank" rel="noreferrer">EzoHata Manual Inputs</a>`;
+    container.appendChild(linkNote);
+  }
+  sections.forEach((section) => {
+    const block = document.createElement("div");
+    block.className = "analytics-section";
+    const title = document.createElement("div");
+    title.className = "tab-note";
+    title.style.marginBottom = "10px";
+    title.style.fontWeight = "700";
+    title.textContent = section.title;
+    block.appendChild(title);
+    if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
+      appendCollapsibleZeroAnalyticsTable(block, section.rows);
+    } else {
+      block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
+    }
+    container.appendChild(block);
+  });
+}
+
+function isZeroOnlyAnalyticsRow(row) {
+  if (!row || normalizeCell(row[0]) === normalizeCell(MANUAL_FINANCE_TOTAL_LABEL)) return false;
+  const numericValues = row.slice(1).map((cell) => parseLooseNumber(cell));
+  return numericValues.length > 0 && numericValues.every((value) => !value);
+}
+
+function appendCollapsibleZeroAnalyticsTable(block, rows) {
+  const header = rows?.[0] || [];
+  const dataRows = (rows || []).slice(1);
+  const visibleRows = dataRows.filter((row) => !isZeroOnlyAnalyticsRow(row));
+  const zeroRows = dataRows.filter(isZeroOnlyAnalyticsRow);
+  block.appendChild(renderResponsiveDataView([header, ...visibleRows], { mobileTableColumnCount: 10 }));
+  if (!zeroRows.length) return;
+  const details = document.createElement("details");
+  details.className = "analytics-section";
+  details.style.marginTop = "12px";
+  const summary = document.createElement("summary");
+  summary.textContent = `Пустые каналы (${zeroRows.length})`;
+  details.appendChild(summary);
+  details.appendChild(renderResponsiveDataView([header, ...zeroRows], { mobileTableColumnCount: 10 }));
+  block.appendChild(details);
+}
+
+function splitAnalyticsSections(values) {
+  const sections = [];
+  let index = 0;
+  while (index < values.length) {
+    const title = String(values[index]?.[0] || "").trim();
+    if (!title) { index += 1; continue; }
+    const header = values[index + 1] || [];
+    const rows = [];
+    let cursor = index + 2;
+    while (cursor < values.length && hasAnyValue(values[cursor])) {
+      rows.push(values[cursor]);
+      cursor += 1;
+    }
+    if (header.length) sections.push({ title, rows: [header, ...rows] });
+    index = cursor + 1;
+  }
+  return sections;
+}
+
+function renderTabExportActions(tabId) {
+  const actions = document.createElement("div");
+  actions.className = "tab-actions";
+  appendExportButtons(actions, tabId);
+  return actions;
+}
+
+function appendExportButtons(container, tabId) {
+  const excelButton = document.createElement("button");
+  excelButton.type = "button";
+  excelButton.className = "ghost";
+  excelButton.textContent = "Скачать Excel-овский файл";
+  excelButton.disabled = !getExportRowsForTab(tabId).length;
+  excelButton.addEventListener("click", () => downloadTabXlsx(tabId));
+  container.appendChild(excelButton);
+
+  if (tabId === "movement") return;
+
+  const csvButton = document.createElement("button");
+  csvButton.type = "button";
+  csvButton.className = "ghost";
+  csvButton.textContent = "Скачать CSV";
+  csvButton.disabled = !getExportRowsForTab(tabId).length;
+  csvButton.addEventListener("click", () => downloadTabCsv(tabId));
+  container.appendChild(csvButton);
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "ghost";
+  copyButton.textContent = "Копировать Excel";
+  copyButton.disabled = !getExportRowsForTab(tabId).length;
+  copyButton.addEventListener("click", () => copyTabTsv(tabId));
+  container.appendChild(copyButton);
+}
+
+function renderPayoutTransfersBlock() {
+  const values = getPayoutTransferTableValues();
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  block.style.marginTop = "18px";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Переводы из вкладки Переводы за выбранный период";
+  block.appendChild(title);
+  if (values.length <= 1) {
+    const empty = document.createElement("div");
+    empty.className = "config-note";
+    empty.style.marginBottom = "10px";
+    empty.textContent = "Сохраненных переводов за выбранный период нет.";
+    block.appendChild(empty);
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.appendChild(renderResponsiveDataView(values, { mobileTableColumnCount: 1 }));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderMetrics() {
+  const metrics = buildTopMetricsSummary();
+  elements.metricPeriod.textContent = formatSheetNumber(metrics.totalOrders, 4);
+  elements.metricOrders.textContent = formatSheetNumber(metrics.balance, 4);
+  elements.metricBalances.textContent = formatSheetNumber(metrics.totalPaid, 4);
+  elements.metricTransfers.textContent = formatSheetNumber(metrics.total, 4);
+}
+
+function buildLoadedStatus() {
+  const analyticsSource = state.data?.tabs?.analytics?.sourceType === "closed-range-aggregation"
+    ? "browser incoming-data aggregation"
+    : "server dashboard aggregation";
+  const factSource = state.manualFinance.data?.writeEnabled
+    ? "incoming repository linked to manual workbook"
+    : "manual workbook optional";
+  return `${analyticsSource} • ${factSource}`;
+}
