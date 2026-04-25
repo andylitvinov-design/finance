@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.13";
+      const APP_BUILD_VERSION = "2026.04.25.14";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -1598,7 +1598,10 @@
       function getManualFinanceUsdPerLocalRate(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
         const currency = inferManualFinanceChannelCurrency(row?.channel);
         if (currency === "USD") return 1;
-        return parseLooseNumber(rateLookup.byCurrency?.[currency]) || parseLooseNumber(rateLookup.byChannel?.[row?.channel]);
+        return parseLooseNumber(rateLookup.byCurrency?.[currency]) ||
+          parseLooseNumber(rateLookup.byChannel?.[row?.channel]) ||
+          MANUAL_FINANCE_FALLBACK_USD_RATES[currency] ||
+          0;
       }
 
       function getManualFinanceTotalUsdValue(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
@@ -4753,9 +4756,10 @@
           });
         }
         (transferRows || []).forEach((row) => {
-          const channel = Array.isArray(row)
+          const rawChannel = Array.isArray(row)
             ? String(row[4] || "").trim()
             : String(row?.destination || row?.channel || "").trim();
+          const channel = resolvePaymentChannel(rawChannel) || rawChannel;
           if (!channel || !stats[channel]) return;
           stats[channel].local += normalizePayoutAmount(Array.isArray(row) ? row[2] : row.amount);
           stats[channel].usd += normalizePayoutAmount(Array.isArray(row) ? row[6] : row.usdAmount);
@@ -5003,6 +5007,8 @@
         }
         dataRows.forEach((row) => {
           if (!hasAnyValue(row)) return;
+          if (isTableTotalRow(row)) return;
+          if (!/^\d+$/.test(String(row[0] || "").trim())) return;
           const client = String(clientIndex !== -1 && clientIndex < row.length ? row[clientIndex] || "" : "").trim();
           const enteredPaymentMethod = String(paymentMethodIndex !== -1 && paymentMethodIndex < row.length ? row[paymentMethodIndex] || "" : "").trim();
           const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
@@ -5508,6 +5514,7 @@
           if (!hasAnyValue(row)) break;
           if (firstCell === "итого" || firstCell === "показатели" || firstCell === "number") break;
           const trimmed = padRowToWidth(row.slice(0, width), width);
+          if (!/^\d+$/.test(String(trimmed[0] || "").trim())) continue;
           const cellDate = dateColumn === -1 ? null : parseDisplayDate(trimmed[dateColumn]);
           if (!cellDate || cellDate < start || cellDate > end) continue;
           rows.push(trimmed);

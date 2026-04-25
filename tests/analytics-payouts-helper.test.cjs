@@ -162,6 +162,22 @@ test("buildMovementPaymentSummaryRows maps binance save movement to Binance spot
   assert.deepEqual(rows[2], ["Итого", "100,0000", "101,0000", "70,7000", "101,0000", "0,0000"]);
 });
 
+test("buildMovementPaymentSummaryRows ignores shifted duplicate table blocks", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "William", "", "100", "103", "72.1", "103", "0"],
+      ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "2", "William", "", "999", "999", "999", "999", "0"],
+      ["Итого", "", "", "1099", "1102", "1071.1", "1102", "0"]
+    ],
+    ["трансервайз дол"],
+    {}
+  );
+
+  assert.deepEqual(rows[0], ["трансервайз дол", "100,0000", "103,0000", "72,1000", "103,0000", "0,0000"]);
+  assert.deepEqual(rows[1], ["Итого", "100,0000", "103,0000", "72,1000", "103,0000", "0,0000"]);
+});
+
 test("buildTransferPayoutRowsWithUsd divides amount by entered or dated fallback rate", () => {
   const header = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
   const rows = buildTransferPayoutRowsWithUsd(

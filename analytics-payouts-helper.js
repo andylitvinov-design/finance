@@ -123,6 +123,7 @@
 
     dataRows.forEach((row) => {
       if (!row || !row.some((cell) => String(cell || "").trim())) return;
+      if (!/^\d+$/.test(String(row[0] || "").trim())) return;
       const client = String(clientIndex !== -1 ? row[clientIndex] || "" : "").trim();
       const enteredPaymentMethod = String(paymentIndex !== -1 ? row[paymentIndex] || "" : "").trim();
       const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
