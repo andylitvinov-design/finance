@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.14";
+      const APP_BUILD_VERSION = "2026.04.25.15";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -4910,7 +4910,7 @@
           .forEach((row) => {
             MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
               const raw = String(row.amounts?.[channel] ?? "").trim();
-              if (!raw) return;
+              if (!raw || !parseLooseNumber(raw)) return;
               latest[channel] = raw;
             });
           });

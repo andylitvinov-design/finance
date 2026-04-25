@@ -53,6 +53,15 @@ const FRESH_PAYOUTS_HEADER = [
   "КУРС ПЕРЕВОДА",
   "COMMENT",
 ];
+const SOURCE_RECEIVED_AMOUNT_CORRECTIONS = {
+  "18116": {
+    matchClient: /лозин/i,
+    matchPayment: /карта\s+андрей|андрей\s+карта/i,
+    matchReceivedUah: 22490.05,
+    receivedUah: "14870",
+    reason: "source duplicate 14870 UAH"
+  }
+};
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -393,9 +402,10 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const accruedPlus3 = isCryptoPaymentMethod(paymentMethod)
     ? deriveAccruedPlusPercent(accrued, paymentMethod)
     : (explicitAccruedPlus3 || deriveAccruedPlusPercent(accrued, paymentMethod));
-  const receivedUsd = derivedContext.receivedUsd;
-  const receivedRub = derivedContext.receivedRub;
-  const receivedUah = derivedContext.receivedUah;
+  const correctedContext = applySourceReceivedAmountCorrection(row, derivedContext);
+  const receivedUsd = correctedContext.receivedUsd;
+  const receivedRub = correctedContext.receivedRub;
+  const receivedUah = correctedContext.receivedUah;
   const rubRate = derivedContext.rubRate;
   const uahRate = derivedContext.uahRate;
   const totalUsd = deriveTotalUsd({ receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
@@ -431,7 +441,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     totalUsd,
     balance,
     statusInfo.status,
-    statusInfo.reviewNote,
+    joinReviewParts([statusInfo.reviewNote, correctedContext.correctionNote]),
     "",
     "",
     "",
@@ -440,6 +450,29 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     "",
     "",
   ];
+}
+
+function applySourceReceivedAmountCorrection(row, derivedContext) {
+  const number = String(row?.[1] || "").trim();
+  const correction = SOURCE_RECEIVED_AMOUNT_CORRECTIONS[number];
+  if (!correction) return derivedContext;
+
+  const client = String(row?.[3] || "").trim();
+  const paymentMethod = String(derivedContext.paymentMethod || "").trim();
+  const receivedUahValue = parseLooseNumber(derivedContext.receivedUah);
+  const matches =
+    correction.matchClient.test(client) &&
+    correction.matchPayment.test(paymentMethod) &&
+    receivedUahValue !== null &&
+    Math.abs(receivedUahValue - correction.matchReceivedUah) < 0.01;
+
+  if (!matches) return derivedContext;
+
+  return {
+    ...derivedContext,
+    receivedUah: correction.receivedUah,
+    correctionNote: correction.reason,
+  };
 }
 
 function buildPayoutRowsFromSource(rows, period) {
