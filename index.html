@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.17";
+      const APP_BUILD_VERSION = "2026.04.25.18";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -3350,7 +3350,7 @@
             amounts[channel] = normalizeManualFinancePersistedNumberInput(row[channelIndex + 2] || "");
           });
           const normalizedDate = normalizeIncomingSheetDateValue(row[0]);
-          const category = String(row[1] || "").trim();
+          const category = normalizeManualExpenseCategory(row[1]);
           if (!normalizedDate || !category) continue;
           expenseRows.push({
             date: normalizedDate,
@@ -4537,8 +4537,8 @@
         const manualServiceIncomeLookup = buildManualServiceIncomeLookup(manualRowsWithUsd);
         const manualExchangeLookup = buildManualExchangeLookup(manualRowsWithUsd);
         const manualExchangeUsdLookup = buildManualExchangeUsdLookup(manualRowsWithUsd);
-        const manualNowUsdLookup = buildManualNowUsdLookup(manualRowsWithUsd);
         const latestNowUsdLookup = buildLatestNowUsdLookup(aggregatedManual?.latestNowByChannel || {}, usdRateLookup);
+        const currentNowUsdLookup = buildManualNowLookup(manualRowsWithUsd, usdRateLookup);
         const fallbackNowUsdLookup = buildAnalyticsNowUsdLookup(firstSectionRows);
         const openingSavingsLookup = buildSavingsLookup(savingsValues);
         const payoutUsdTotal = sumChannelStat(payoutStats, "usd");
@@ -4599,8 +4599,8 @@
           const openingBalance = openingSavingsLookup[channel] || 0;
           const closingBalance = Object.prototype.hasOwnProperty.call(latestNowUsdLookup, channel)
             ? latestNowUsdLookup[channel]
-            : Object.prototype.hasOwnProperty.call(manualNowUsdLookup, channel)
-            ? manualNowUsdLookup[channel]
+            : Object.prototype.hasOwnProperty.call(currentNowUsdLookup, channel)
+            ? currentNowUsdLookup[channel]
             : (Object.prototype.hasOwnProperty.call(fallbackNowUsdLookup, channel) ? fallbackNowUsdLookup[channel] : 0);
           const balanceGrowth = closingBalance - openingBalance;
           const balanceDifference = balanceGrowth - planProfit;
@@ -4891,13 +4891,15 @@
         return totals;
       }
 
-      function buildManualNowUsdLookup(rows) {
+      function buildManualNowLookup(rows, rateLookup) {
         const lookup = {};
         (rows || []).forEach((row) => {
           const channel = String(row.channel || "").trim();
           if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
-          const raw = String(row.nowUsd ?? "").trim();
-          if (raw) lookup[channel] = parseLooseNumber(raw);
+          const raw = String(row.now ?? "").trim();
+          if (!raw || !parseLooseNumber(raw)) return;
+          const nowUsd = getManualFinanceNowUsdValue({ channel, now: raw }, rateLookup);
+          if (String(nowUsd || "").trim()) lookup[channel] = parseLooseNumber(nowUsd);
         });
         return lookup;
       }
@@ -4905,7 +4907,7 @@
       function buildLatestNowByChannel(expenseRows, endDate) {
         const latest = {};
         (expenseRows || [])
-          .filter((row) => row?.date && row.date <= endDate && row.category === MANUAL_NOW_CATEGORY)
+          .filter((row) => row?.date && row.date <= endDate && normalizeManualExpenseCategory(row.category) === MANUAL_NOW_CATEGORY)
           .sort((left, right) => String(left.date).localeCompare(String(right.date)))
           .forEach((row) => {
             MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
@@ -4915,6 +4917,20 @@
             });
           });
         return latest;
+      }
+
+      function normalizeManualExpenseCategory(value) {
+        const normalized = normalizeCell(value).replace(/ё/g, "е");
+        if (!normalized) return "";
+        if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return MANUAL_NOW_CATEGORY;
+        if (/service|приход/.test(normalized)) return "serviceIncome";
+        if (/business|бизнес/.test(normalized)) return "business";
+        if (/flat|house|кварт|дом/.test(normalized)) return "flat";
+        if (/food|еда/.test(normalized)) return "food";
+        if (/travel|путеш/.test(normalized)) return "travel";
+        if (/fun|study|развлеч|учеб/.test(normalized)) return "fun";
+        if (/exchange|обмен/.test(normalized)) return MANUAL_EXCHANGE_CATEGORY;
+        return String(value || "").trim();
       }
 
       function buildLatestNowUsdLookup(latestNowByChannel, rateLookup) {

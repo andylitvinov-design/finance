@@ -7,6 +7,8 @@ const vm = require("node:vm");
 const indexHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const match = indexHtml.match(/function buildLatestNowByChannel\(expenseRows, endDate\) \{[\s\S]*?\n      \}/);
 if (!match) throw new Error("buildLatestNowByChannel was not found in index.html");
+const categoryMatch = indexHtml.match(/function normalizeManualExpenseCategory\(value\) \{[\s\S]*?\n      \}/);
+if (!categoryMatch) throw new Error("normalizeManualExpenseCategory was not found in index.html");
 
 function parseLooseNumber(value) {
   const raw = String(value ?? "").trim();
@@ -16,13 +18,19 @@ function parseLooseNumber(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function normalizeCell(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 const context = {
   MANUAL_NOW_CATEGORY: "now",
+  MANUAL_EXCHANGE_CATEGORY: "exchange",
   MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "пейпал дол"],
   parseLooseNumber,
+  normalizeCell,
 };
 vm.createContext(context);
-vm.runInContext(`${match[0]}\nthis.buildLatestNowByChannel = buildLatestNowByChannel;`, context);
+vm.runInContext(`${categoryMatch[0]}\n${match[0]}\nthis.buildLatestNowByChannel = buildLatestNowByChannel;`, context);
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
@@ -64,6 +72,26 @@ test("buildLatestNowByChannel uses a newer non-zero value independently per chan
 
   assert.deepEqual(plain(context.buildLatestNowByChannel(rows, "2026-04-25")), {
     "Яндекс руб": "1200",
+    "пейпал дол": "50",
+  });
+});
+
+test("buildLatestNowByChannel ignores spent for business when loading closing balance", () => {
+  const rows = [
+    {
+      date: "2026-04-24",
+      category: "now",
+      amounts: { "Яндекс руб": "1000", "пейпал дол": "50" },
+    },
+    {
+      date: "2026-04-25",
+      category: "spent for business",
+      amounts: { "Яндекс руб": "9000", "пейпал дол": "700" },
+    },
+  ];
+
+  assert.deepEqual(plain(context.buildLatestNowByChannel(rows, "2026-04-25")), {
+    "Яндекс руб": "1000",
     "пейпал дол": "50",
   });
 });
