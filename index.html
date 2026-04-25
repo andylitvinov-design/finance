@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.05";
+      const APP_BUILD_VERSION = "2026.04.25.06";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -1418,9 +1418,36 @@
         return "LOCAL";
       }
 
+      function buildLatestMovementUsdRateLookup(movementValues = []) {
+        if (!Array.isArray(movementValues) || !movementValues.length) return {};
+        const header = movementValues[0] || [];
+        const dateIndex = findHeaderIndexByAliases(header, ["DATE", "дата"]);
+        const rateIndexes = {
+          RUB: findHeaderIndexByAliases(header, ["RUB RATE", "курс руб", "к-р"]),
+          UAH: findHeaderIndexByAliases(header, ["UAH RATE", "курс грн", "к-гр"]),
+          EUR: findHeaderIndexByAliases(header, ["EUR RATE", "курс евро", "к-евро"]),
+          CAD: findHeaderIndexByAliases(header, ["CAD RATE", "курс cad", "курс канада"])
+        };
+        const latest = {};
+        (movementValues || []).slice(1).forEach((row, rowIndex) => {
+          if (!hasAnyValue(row)) return;
+          const parsedDate = dateIndex === -1 ? null : parseDisplayDate(row[dateIndex]);
+          const timestamp = parsedDate ? parsedDate.getTime() : rowIndex;
+          Object.entries(rateIndexes).forEach(([currency, rateIndex]) => {
+            if (rateIndex === -1 || rateIndex >= row.length) return;
+            const localPerUsd = parseLooseNumber(row[rateIndex]);
+            if (!localPerUsd) return;
+            if (latest[currency] && latest[currency].timestamp > timestamp) return;
+            latest[currency] = { timestamp, usdPerLocal: 1 / localPerUsd };
+          });
+        });
+        return Object.fromEntries(Object.entries(latest).map(([currency, row]) => [currency, row.usdPerLocal]));
+      }
+
       function buildManualFinanceUsdRateLookup(transferRows = [], movementValues = []) {
         const channelRates = {};
         const currencyRates = {};
+        const latestMovementRates = buildLatestMovementUsdRateLookup(movementValues);
 
         const addRate = (bucket, key, rate) => {
           if (!key || !Number.isFinite(rate) || rate <= 0) return;
@@ -1438,15 +1465,6 @@
           addRate(currencyRates, currency, derivedRate);
         });
 
-        const movementStats = calculateMovementChannelStats(movementValues);
-        Object.keys(movementStats.localByChannel || {}).forEach((channel) => {
-          const localValue = parseLooseNumber(movementStats.localByChannel?.[channel]);
-          const usdValue = parseLooseNumber(movementStats.usdByChannel?.[channel]);
-          const derivedRate = localValue > 0 && usdValue > 0 ? usdValue / localValue : 0;
-          addRate(channelRates, channel, derivedRate);
-          addRate(currencyRates, inferManualFinanceChannelCurrency(channel), derivedRate);
-        });
-
         const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
 
         return {
@@ -1457,7 +1475,8 @@
             ...MANUAL_FINANCE_FALLBACK_USD_RATES,
             ...Object.fromEntries(
               Object.entries(currencyRates).map(([currency, values]) => [currency, average(values)])
-            )
+            ),
+            ...latestMovementRates
           }
         };
       }
@@ -1501,11 +1520,17 @@
         return wrap;
       }
 
+      function getManualFinanceUsdPerLocalRate(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
+        const currency = inferManualFinanceChannelCurrency(row?.channel);
+        if (currency === "USD") return 1;
+        return parseLooseNumber(rateLookup.byCurrency?.[currency]) || parseLooseNumber(rateLookup.byChannel?.[row?.channel]);
+      }
+
       function getManualFinanceTotalUsdValue(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
         const total = parseLooseNumber(row?.total);
         if (!total) return formatSheetNumber(0);
         const currency = inferManualFinanceChannelCurrency(row?.channel);
-        const rate = parseLooseNumber(rateLookup.byChannel?.[row?.channel]) || parseLooseNumber(rateLookup.byCurrency?.[currency]);
+        const rate = getManualFinanceUsdPerLocalRate(row, rateLookup);
         if (currency === "USD") return formatSheetNumber(total);
         if (!rate) return "";
         return formatSheetNumber(total * rate);
@@ -1515,7 +1540,7 @@
         const now = parseLooseNumber(row?.now);
         if (!now) return formatSheetNumber(0);
         const currency = inferManualFinanceChannelCurrency(row?.channel);
-        const rate = parseLooseNumber(rateLookup.byChannel?.[row?.channel]) || parseLooseNumber(rateLookup.byCurrency?.[currency]);
+        const rate = getManualFinanceUsdPerLocalRate(row, rateLookup);
         if (currency === "USD") return formatSheetNumber(now);
         if (!rate) return "";
         return formatSheetNumber(now * rate);
@@ -1525,7 +1550,7 @@
         const exchange = parseLooseNumber(row?.exchange);
         if (!exchange) return formatSheetNumber(0);
         const currency = inferManualFinanceChannelCurrency(row?.channel);
-        const rate = parseLooseNumber(rateLookup.byChannel?.[row?.channel]) || parseLooseNumber(rateLookup.byCurrency?.[currency]);
+        const rate = getManualFinanceUsdPerLocalRate(row, rateLookup);
         if (currency === "USD") return formatSheetNumber(exchange);
         if (!rate) return "";
         return formatSheetNumber(exchange * rate);
