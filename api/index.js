@@ -233,7 +233,8 @@ async function maybeOverlayFreshSourceData(data) {
   if (!data?.tabs || !data?.period) return data;
   try {
     const sourceRows = await loadSourceRows();
-    const freshMovement = buildFreshMovementTableFromRows(sourceRows, data.period);
+    const movementSummaryRows = extractMovementSummaryRows(data.tabs.movement?.values || []);
+    const freshMovement = buildFreshMovementTableFromRows(sourceRows, data.period, movementSummaryRows);
     if (!freshMovement) return data;
     const freshPayouts = buildFreshPayoutsTableFromRows(sourceRows, data.period);
     return {
@@ -265,7 +266,7 @@ async function loadSourceRows() {
   return parseCsv(csvText);
 }
 
-function buildFreshMovementTableFromRows(rows, period) {
+function buildFreshMovementTableFromRows(rows, period, summaryRows = []) {
   const mappedRows = buildMovementRowsFromSource(rows, period);
   if (!mappedRows.length) return null;
   const totalRow = buildFreshMovementTotalRow(mappedRows);
@@ -291,9 +292,38 @@ function buildFreshMovementTableFromRows(rows, period) {
       ...mappedRows,
       totalRow,
     ],
+    ...(summaryRows.length ? { summaryRows } : {}),
     rowCount: mappedRows.length + 4,
     columnCount: FRESH_MOVEMENT_HEADER.length,
   };
+}
+
+function extractMovementSummaryRows(values) {
+  const summaryRows = [];
+  let started = false;
+  for (const row of values || []) {
+    const firstCell = normalizeSummaryText(row?.[0]);
+    if (!started) {
+      if (firstCell === "показатели") started = true;
+      continue;
+    }
+    if (!row?.some((cell) => String(cell || "").trim())) {
+      if (summaryRows.length) break;
+      continue;
+    }
+    const label = String(row?.[0] || "").trim();
+    const value = String(row?.[1] || "").trim();
+    if (!label) {
+      if (summaryRows.length) break;
+      continue;
+    }
+    summaryRows.push([label, value]);
+  }
+  return summaryRows;
+}
+
+function normalizeSummaryText(value) {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
 }
 
 function buildFreshPayoutsTableFromRows(rows, period) {

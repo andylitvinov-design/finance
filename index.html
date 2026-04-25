@@ -287,7 +287,7 @@
     <script src="./orders-helper.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-      const APP_BUILD_VERSION = "2026.04.25.16";
+      const APP_BUILD_VERSION = "2026.04.25.17";
       const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
       const URL_PARAMS = new URLSearchParams(location.search);
       const MANUAL_INCOMING_TITLE = "fact";
@@ -5268,9 +5268,13 @@
 
       function buildTopMetricsSummary() {
         const movementTotals = getMovementTotalsFromTable(state.data?.tabs?.movement?.values || []);
-        const movementAccruedTotal = movementTotals.accruedTotal;
-        const movementSeventyTotal = movementTotals.seventyTotal;
-        const movementReceivedUsdTotal = movementTotals.receivedUsdTotal;
+        const movementSummaryRows = state.data?.tabs?.movement?.summaryRows || [];
+        const summaryAccruedTotal = getMovementSummaryMetric(movementSummaryRows, ["начислено прайс"]);
+        const summarySeventyTotal = getMovementSummaryMetric(movementSummaryRows, ["70% от прайс"]);
+        const summaryReceivedUsdTotal = getMovementSummaryMetric(movementSummaryRows, ["получено в долларах"]);
+        const movementAccruedTotal = summaryAccruedTotal || movementTotals.accruedTotal;
+        const movementSeventyTotal = summarySeventyTotal || movementTotals.seventyTotal;
+        const movementReceivedUsdTotal = summaryReceivedUsdTotal || movementTotals.receivedUsdTotal;
 
         const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
         const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
@@ -5289,6 +5293,14 @@
           totalPaid,
           total
         };
+      }
+
+      function getMovementSummaryMetric(summaryRows, labelParts) {
+        const row = (summaryRows || []).find((item) => {
+          const label = normalizeCell(item?.[0]).replace(/ё/g, "е");
+          return (labelParts || []).every((part) => label.includes(normalizeCell(part).replace(/ё/g, "е")));
+        });
+        return row ? parseLooseNumber(row[1]) : 0;
       }
 
       function formatPayoutNumber(value) {

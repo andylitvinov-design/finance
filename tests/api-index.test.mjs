@@ -162,7 +162,13 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
                       ["дата 1", "01.04.2026", "дата 2", "30.04.2026", "обновить", "", "источник: 1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo"],
                       ["Поменяй даты.", "", "", "", "", "", "Обновлено: 15.04.2026 18:07:45"],
                       ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
-                      ["18126", "16.04.2026", "Ярослав Архипов", "Чистка мышечных напряжений", "", "100", "", "", "100", "103", "70", "72.1", "84.5563", "UAH RATE", "крипта, дол", "103", "", "", "103", "0", "ARRIVED", ""]
+                      ["18126", "16.04.2026", "Ярослав Архипов", "Чистка мышечных напряжений", "", "100", "", "", "100", "103", "70", "72.1", "84.5563", "UAH RATE", "крипта, дол", "103", "", "", "103", "0", "ARRIVED", ""],
+                      ["ИТОГО", "", "", "", "", "4495,0000", "", "4,0000", "4695,0000", "4874,0000", "3286,5000", "3411,8100", "", "", "", "734,6500", "80117,1200", "142657,4400", "4939,2400", "65,2400"],
+                      [],
+                      ["показатели", "значение"],
+                      ["2) начислено прайс +%", "4874,0000"],
+                      ["4) получено в долларах", "4939,2400"],
+                      ["6) 70% от прайс+%", "3411,8100"]
                     ]
                   },
                   orders: {
@@ -213,6 +219,7 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
+    const movementSummaryRows = response.body?.data?.tabs?.movement?.summaryRows || [];
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
     const cryptoRow = movementRows.find((row) => row?.[0] === "18126");
     const correctedLozinaRow = movementRows.find((row) => row?.[0] === "18116");
@@ -227,6 +234,11 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(correctedAccruedRow?.[9], "206");
     assert.equal(quantityRow?.[8], "200");
     assert.equal(quantityRow?.[9], "206");
+    assert.deepEqual(movementSummaryRows, [
+      ["2) начислено прайс +%", "4874,0000"],
+      ["4) получено в долларах", "4939,2400"],
+      ["6) 70% от прайс+%", "3411,8100"]
+    ]);
     assert.deepEqual(positions, [
       "дата 1",
       "Поменяй даты. Таблица автоматически подтянет записи за выбранный период из исходного файла.",

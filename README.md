@@ -2,7 +2,7 @@
 
 Separate online project for the incoming-data repository flow.
 
-Current saved release: `3.0.25`
+Current saved release: `3.0.26`
 
 This is the only active incoming-ledger implementation. The old repo-root and `data/` Vercel deployment configs are archived and must not be used.
 
