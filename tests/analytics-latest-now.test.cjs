@@ -4,29 +4,29 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const indexHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const match = indexHtml.match(/function buildLatestNowByChannel\(expenseRows, endDate\) \{[\s\S]*?\n      \}/);
-if (!match) throw new Error("buildLatestNowByChannel was not found in index.html");
-const entriesMatch = indexHtml.match(/function buildLatestNowEntriesByChannel\(expenseRows, endDate\) \{[\s\S]*?\n      \}/);
-if (!entriesMatch) throw new Error("buildLatestNowEntriesByChannel was not found in index.html");
-const balanceEntriesMatch = indexHtml.match(/function buildLatestBalanceEntriesByChannel\(balanceRows, endDate\) \{[\s\S]*?\n      \}/);
-if (!balanceEntriesMatch) throw new Error("buildLatestBalanceEntriesByChannel was not found in index.html");
-const categoryMatch = indexHtml.match(/function normalizeManualExpenseCategory\(value\) \{[\s\S]*?\n      \}/);
-if (!categoryMatch) throw new Error("normalizeManualExpenseCategory was not found in index.html");
-const flowExpenseRowsMatch = indexHtml.match(/function filterManualFlowExpenseRows\(rows\) \{[\s\S]*?\n      \}/);
-if (!flowExpenseRowsMatch) throw new Error("filterManualFlowExpenseRows was not found in index.html");
-const movementRateMatch = indexHtml.match(/function buildLatestMovementUsdRateLookup\(movementValues = \[\], endDate = ""\) \{[\s\S]*?\n      \}/);
-if (!movementRateMatch) throw new Error("buildLatestMovementUsdRateLookup was not found in index.html");
-const financeRateMatch = indexHtml.match(/function buildManualFinanceUsdRateLookup\(transferRows = \[\], movementValues = \[\], options = \{\}\) \{[\s\S]*?\n      \}/);
-if (!financeRateMatch) throw new Error("buildManualFinanceUsdRateLookup was not found in index.html");
-const summaryRowsMatch = indexHtml.match(/function buildManualFinanceSummaryRows\(expenseRows, latestNowByChannel = \{\}\) \{[\s\S]*?\n      \}/);
-if (!summaryRowsMatch) throw new Error("buildManualFinanceSummaryRows was not found in index.html");
-const usdPerLocalMatch = indexHtml.match(/function getManualFinanceUsdPerLocalRate\(row, rateLookup = \{ byChannel: \{\}, byCurrency: \{\} \}\) \{[\s\S]*?\n      \}/);
-if (!usdPerLocalMatch) throw new Error("getManualFinanceUsdPerLocalRate was not found in index.html");
-const nowUsdMatch = indexHtml.match(/function getManualFinanceNowUsdValue\(row, rateLookup = \{ byChannel: \{\}, byCurrency: \{\} \}\) \{[\s\S]*?\n      \}/);
-if (!nowUsdMatch) throw new Error("getManualFinanceNowUsdValue was not found in index.html");
-const latestNowUsdMatch = indexHtml.match(/function buildLatestNowUsdLookup\(latestNowByChannel, rateLookup, options = \{\}\) \{[\s\S]*?\n      \}/);
-if (!latestNowUsdMatch) throw new Error("buildLatestNowUsdLookup was not found in index.html");
+const financeJs = fs.readFileSync(path.join(__dirname, "..", "finance.js"), "utf8");
+
+function extractFunction(name) {
+  const pattern = new RegExp(`^function ${name}\\(`, "m");
+  const match = pattern.exec(financeJs);
+  if (!match) throw new Error(`${name} was not found in finance.js`);
+  const next = financeJs.slice(match.index + 1).search(/^function [A-Za-z0-9_]+\(/m);
+  return next === -1
+    ? financeJs.slice(match.index).trim()
+    : financeJs.slice(match.index, match.index + 1 + next).trim();
+}
+
+const match = [extractFunction("buildLatestNowByChannel")];
+const entriesMatch = [extractFunction("buildLatestNowEntriesByChannel")];
+const balanceEntriesMatch = [extractFunction("buildLatestBalanceEntriesByChannel")];
+const categoryMatch = [extractFunction("normalizeManualExpenseCategory")];
+const flowExpenseRowsMatch = [extractFunction("filterManualFlowExpenseRows")];
+const movementRateMatch = [extractFunction("buildLatestMovementUsdRateLookup")];
+const financeRateMatch = [extractFunction("buildManualFinanceUsdRateLookup")];
+const summaryRowsMatch = [extractFunction("buildManualFinanceSummaryRows")];
+const usdPerLocalMatch = [extractFunction("getManualFinanceUsdPerLocalRate")];
+const nowUsdMatch = [extractFunction("getManualFinanceNowUsdValue")];
+const latestNowUsdMatch = [extractFunction("buildLatestNowUsdLookup")];
 
 function parseLooseNumber(value) {
   const raw = String(value ?? "").trim();

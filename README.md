@@ -1,66 +1,85 @@
 # EzoHata Incoming Ledger
 
-Separate online project for the incoming-data repository flow.
+Веб-приложение для учёта входящих платежей, расходов и балансов по каналам.
 
-Current saved release: `3.0.27`
+Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app)
 
-This is the only active incoming-ledger implementation. The old repo-root and `data/` Vercel deployment configs are archived and must not be used.
+## Стек
 
-Production URL:
+- Чистый HTML/CSS/JS (без фреймворков)
+- Google Sheets API (через OAuth2, токен в памяти браузера)
+- xlsx.js для экспорта
+- Vercel для хостинга
+- Vercel `/api` serverless endpoint для dashboard fallback/proxy
 
-- [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app)
+## Файловая структура
 
-## Purpose
+| Файл | Назначение |
+|------|-----------|
+| `index.html` | HTML-разметка, подключение стилей и скриптов |
+| `style.css` | Все стили, CSS-переменные, адаптив |
+| `config.js` | Константы и настройки, используемые клиентским кодом |
+| `state.js` | Глобальные объекты `state` и `elements` |
+| `google-auth.js` | Google OAuth: connect/disconnect, токены |
+| `google-sheets.js` | Чтение и запись листов Google Sheets |
+| `finance.js` | Расчёты курсов валют, балансов, сумм |
+| `orders.js` | Вкладка "Мои заказы" |
+| `ui.js` | Рендер таблиц, вкладок, метрик |
+| `export.js` | Экспорт в CSV / XLSX / TSV |
+| `main.js` | Точка входа, `init()`, слушатели событий |
+| `sheet-config.json` | Runtime config: app version, endpoint, OAuth, spreadsheet IDs, tabs |
+| `api/index.js` | Vercel API endpoint для dashboard data и snapshot fallback |
+| `analytics-payouts-helper.js` | Вспомогательная логика аналитики выплат |
+| `manual-finance-formulas.js` | Формулы ручных финансов |
+| `orders-helper.js` | Вспомогательная логика заказов |
 
-- keep legacy `data/` dashboard untouched
-- provide a clearer incoming-data dashboard with one manual input tab
-- save `Переводы` and `Расходы` directly to Google Sheets from the browser
-- keep one cumulative repository and replace only the selected date range on save
-- read `analytics` from the live `/api?action=getDashboardData` endpoint when available
-- build the first analytics section from range-based aggregation of the incoming repository, with snapshot-only fallback
+## Google Sheets
 
-## Files
+Проект работает с двумя Google Spreadsheets:
 
-- `index.html` - incoming ledger UI
-- `sheet-config.json` - client-side config, including the canonical `appVersion`, Google OAuth client id, allowed OAuth origins, and optional dashboard `endpoint`
-- `sheet-snapshot.json` - read-only snapshot for standard tabs
+**1. Основная таблица (аналитика + snapshot)**
 
-## Google setup
+- URL задаётся через `sheet-config.json`, интерфейс или URL-параметр
+- Содержит лист `MANUAL_INPUTS_IMPORT` для синхронизации fact
 
-The incoming ledger flow no longer depends on Apps Script period tabs. It uses:
+**2. Таблица ручных данных (fact, расходы, переводы)**
 
-- Google Identity Services token flow
-- direct Google Sheets API calls from the browser
+- URL: см. `MOVEMENT_SOURCE_SPREADSHEET_FALLBACK_URL` в `config.js`
+- Листы: `fact`, `расходы по каналам`, `Переводы`, `Расходы`, `Комиссии`, `Мои заказы`
+- Структура листов: даты в формате `YYYY-MM-DD ~ YYYY-MM-DD` как имена листов
 
-You must set `googleAuth.clientId` in `sheet-config.json`.
+## Настройка (для Claude / Codex)
 
-For this deployed Vercel UI, the OAuth client must allow the active site origin under `Authorized JavaScript origins`.
-Keep the same origins in `googleAuth.authorizedJavaScriptOrigins` so the UI can warn when the current browser origin is not covered.
+Основные изменяемые параметры находятся в `config.js`:
 
-Current origins that matter:
+- Курсы валют → `MANUAL_FINANCE_FALLBACK_USD_RATES`
+- Каналы оплаты → `MANUAL_FINANCE_MONEY_CHANNELS`
+- Имена листов → константы `MANUAL_*_TITLE`
+- URL основной таблицы → `MOVEMENT_SOURCE_SPREADSHEET_FALLBACK_URL`
 
-- `https://ezohata-incoming-ledger.vercel.app`
-- `https://reconcile-v2-eight.vercel.app`
+Runtime-параметры окружения остаются в `sheet-config.json`:
 
-If Google shows `Error 400: redirect_uri_mismatch`, the browser flow is healthy but the OAuth client does not yet allow the current site origin. Add the origin in Google Cloud Console for client `244809429378-piep9u8ekm1t8q2ffstpq88kr2v8jrnc.apps.googleusercontent.com`.
+- OAuth client ID и разрешённые origins
+- `/api` endpoint
+- Spreadsheet IDs
+- Набор dashboard tabs
 
-Manual readiness check:
+## Деплой
 
-1. Open [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app).
-2. Click `Подключить Google`.
-3. Open `fact`, `Переводы`, and `Список моих заказов`.
-4. If login or Sheets access fails, verify the client id and authorized JavaScript origins in Google Cloud Console.
-
-Official docs:
-
-- [Using the token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
-- [Sheets JavaScript quickstart](https://developers.google.com/sheets/api/quickstart/js)
-
-## Deployment
-
-Deploy this folder as a separate Vercel project, for example `ezohata-incoming-ledger`:
+Production деплоится из GitHub через Vercel Git Integration после merge в `main`.
 
 ```bash
-cd /Users/andriilitvinov/projects/MYPROJECTS/ezohata/reconcile-v2
-vercel --prod
+git add .
+git commit -m "описание изменений"
+git push origin main
+# Vercel автоматически задеплоит на ezohata-incoming-ledger.vercel.app
 ```
+
+Для рабочих изменений используйте ветку и PR, затем merge в `main`.
+
+## Версия
+
+Версия интерфейса хранится в `APP_BUILD_VERSION` в `config.js`.
+Формат: `YYYY.MM.DD.HH` — обновлять вручную при каждом релизе.
+
+`sheet-config.json` также содержит `appVersion`, который отображается в dashboard status.
