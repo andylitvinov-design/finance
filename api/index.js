@@ -60,6 +60,13 @@ const SOURCE_RECEIVED_AMOUNT_CORRECTIONS = {
     matchReceivedUah: 22490.05,
     receivedUah: "14870",
     reason: "source duplicate 14870 UAH"
+  },
+  "18118": {
+    matchClient: /ковалев/i,
+    matchPayment: /фоп\s+приват|приват\s+фоп/i,
+    matchReceivedUah: 1000,
+    receivedUah: "22490,05",
+    reason: "source missing 515 USD UAH equivalent"
   }
 };
 
@@ -514,6 +521,14 @@ function applySourceReceivedAmountCorrection(row, derivedContext) {
   };
 }
 
+function isCharitySourceRow(row) {
+  return /благотвор/i.test([
+    row?.[4],
+    row?.[5],
+    row?.[40],
+  ].map((value) => String(value || "")).join(" "));
+}
+
 function buildPayoutRowsFromSource(rows, period) {
   const output = [];
   const seenNumbers = new Set();
@@ -534,6 +549,7 @@ function buildPayoutRowsFromSource(rows, period) {
     if (startDate && isoDate < startDate) continue;
     if (endDate && isoDate > endDate) continue;
     if (!/ковалев/i.test(String(padded[3] || "").trim())) continue;
+    if (isCharitySourceRow(padded)) continue;
 
     const payoutRow = mapSourceRowToPayoutRow(padded, isoDate, derivedContext);
     if (!payoutRow) continue;
@@ -546,12 +562,13 @@ function buildPayoutRowsFromSource(rows, period) {
 }
 
 function mapSourceRowToPayoutRow(row, isoDate, derivedContext = buildSourcePaymentContext(row)) {
-  const paymentMethod = derivedContext.paymentMethod;
-  const receivedUsd = derivedContext.receivedUsd;
-  const receivedRub = derivedContext.receivedRubForPayout;
-  const receivedUah = derivedContext.receivedUahForPayout;
-  const rubRate = derivedContext.rubRate;
-  const uahRate = derivedContext.uahRate;
+  const correctedContext = applySourceReceivedAmountCorrection(row, derivedContext);
+  const paymentMethod = correctedContext.paymentMethod;
+  const receivedUsd = correctedContext.receivedUsd;
+  const receivedRub = correctedContext.receivedRubForPayout;
+  const receivedUah = firstNonEmpty([correctedContext.receivedUah, correctedContext.receivedUahForPayout]);
+  const rubRate = correctedContext.rubRate;
+  const uahRate = correctedContext.uahRate;
 
   let currency = "USD";
   let currentAmount = receivedUsd;
@@ -587,7 +604,7 @@ function mapSourceRowToPayoutRow(row, isoDate, derivedContext = buildSourcePayme
     currentAmount,
     totalUsd,
     transferRate,
-    joinReviewParts([String(row[5] || "").trim(), String(row[40] || "").trim()]),
+    joinReviewParts([String(row[5] || "").trim(), String(row[40] || "").trim(), correctedContext.correctionNote]),
   ];
 }
 
@@ -635,15 +652,23 @@ function buildSourcePaymentContext(row, previousRates = {}) {
   const hasUsd = parseLooseNumber(receivedUsd) !== null;
   const hasRub = parseLooseNumber(receivedRubForPayout) !== null;
   const hasUah = parseLooseNumber(receivedUah) !== null;
-  const explicitRate16 = normalizeNumberCell(row[16]);
-  const explicitRate18 = normalizeNumberCell(row[18]);
+  const explicitRubRate = firstNonEmpty([
+    normalizeNumberCell(row[16]),
+    normalizeNumberCell(row[19]),
+    normalizeNumberCell(row[21]),
+  ]);
+  const explicitUahRate = firstNonEmpty([
+    normalizeNumberCell(row[18]),
+    normalizeNumberCell(row[20]),
+    normalizeNumberCell(row[22]),
+  ]);
 
   const rubRate = looksLikeRublePayment(paymentMethod) || (hasRub && !hasUah && !hasUsd)
-    ? firstNonEmpty([explicitRate16, explicitRate18, previousRates.rubRate])
-    : firstNonEmpty([explicitRate16, explicitRate18]);
+    ? firstNonEmpty([explicitRubRate, previousRates.rubRate])
+    : explicitRubRate;
   const uahRate = looksLikeUahPayment(paymentMethod) || hasUah
-    ? firstNonEmpty([explicitRate16, explicitRate18, previousRates.uahRate])
-    : firstNonEmpty([explicitRate16, explicitRate18]);
+    ? firstNonEmpty([explicitUahRate, previousRates.uahRate])
+    : explicitUahRate;
 
   return {
     paymentMethod,
@@ -656,10 +681,10 @@ function buildSourcePaymentContext(row, previousRates = {}) {
     uahRate,
     nextRates: {
       rubRate: (looksLikeRublePayment(paymentMethod) || (hasRub && !hasUah && !hasUsd))
-        ? firstNonEmpty([explicitRate16, explicitRate18, previousRates.rubRate])
+        ? firstNonEmpty([explicitRubRate, previousRates.rubRate])
         : (previousRates.rubRate || ""),
       uahRate: (looksLikeUahPayment(paymentMethod) || hasUah)
-        ? firstNonEmpty([explicitRate16, explicitRate18, previousRates.uahRate])
+        ? firstNonEmpty([explicitUahRate, previousRates.uahRate])
         : (previousRates.uahRate || ""),
     },
   };

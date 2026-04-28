@@ -39,13 +39,14 @@ test("mapAnalyticsTopRows uses now value in the now column", () => {
         travel: "50",
         total: "150",
         exchange: "12",
+        exchangeUsd: "0.14",
         totalUsd: "1.5",
         nowUsd: "900",
       },
     ]
   );
 
-  assert.deepEqual(rows[0], ["Яндекс руб", "900", "77", "10", "20", "30", "40", "50", "150", "12", "1.5", "900"]);
+  assert.deepEqual(rows[0], ["Яндекс руб", "900", "77", "10", "20", "30", "40", "50", "150", "12", "0.14", "1.5", "900"]);
 });
 
 test("calculatePayoutUsdTotalFromTable prefers summary row total", () => {

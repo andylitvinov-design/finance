@@ -193,6 +193,9 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
               ",,Дата ,Клиент,Название заказа,Коммент/ остаток,Прайс база,25% акция,кол-во,всего,пр+3%,,%а,%б,,,руб,евр,грн,к-р,к-гр,к-р,к-гр,к-евро,метод оплаты,валюта,дол,руб,грн, +,дол,евро,руб,грн,КАРТА грн,дата,время,хвост,готовность ,ОТЗЫВ?,отчет,Тип/карта,руб,грн,,,Примечание,ВК,№К,Отзыв был?,емейл",
               ",18116,2026-04-09,сын Валерии Лозиной,Убрать сигнал по уровню Высшей Психики,,100,,,,,,,,,,,,43.75,,,,,,карта Андрей,,,,,,,,,22490.05,,,,,,,,,,,,,,,,,",
               ",18103,2026-04-06,Сергей Ковалев,Остановка процессов,,200,,,,,,,,,,,,43.86,,,,,,приват ФОП,,,,,,1030.07,,,45175.80,,,,,,,,,,,,,,,,,",
+              ",18118,2026-04-11,Сергей Ковалев,Программи фиксация возраста - 1го уровня,,500,,,,515,,,,,,,,43.67,,,,,,фоп приват,,,,,,,,,1000,,,,,,,,,,,,,,,,,",
+              ",18120,2026-04-13,Сергей Ковалев,UAH with rub and uah rates,,200,,,,206,,,,,,84.5563,,43.67,,,,,,фоп приват,,,,,,,,,8996.02,,,,,,,,,,,,,,,,,",
+              ",18121,2026-04-13,Сергей Ковалев,UAH fallback rate,,,,,,,,,,,,,,,,,,,,фоп приват,,,,,,,,,451.76,,,,,,,,,,,,,,,,,",
               ",18126,2026-04-17,Ярослав Архипов,Чистка мышечных напряжений,,100,,,,103,,,,,,,,,,,,,,крипта, дол,,,,,,103,,,,,,,,,,,,,,,,,,,,",
               ",18127,2026-04-19,Сергей Ковалев,Посвящение Масонов 1 ступень,,100,,,,103,,,,,,,,,,,,,,Андрей карта,,,,,,103,,,,,,,,,,,,,,,,,,,,",
               ",18129,2026-04-18,Олеся Сандырева,Динамика Точки Сборки - Свет сознания. Ускорение обработки информации.,оплата 2 частями,100,,2,,206,,,,,,84.5563,,,,,,,сайт, рубли,,,,,,,\"9 216,64 + 9 216,64\",,,,,,,,,,,,,,,,,,"
@@ -224,6 +227,9 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     const cryptoRow = movementRows.find((row) => row?.[0] === "18126");
     const correctedLozinaRow = movementRows.find((row) => row?.[0] === "18116");
     const correctedAccruedRow = movementRows.find((row) => row?.[0] === "18103");
+    const correctedKovalevRow = movementRows.find((row) => row?.[0] === "18118");
+    const mixedRateUahRow = movementRows.find((row) => row?.[0] === "18120");
+    const fallbackUahRateRow = movementRows.find((row) => row?.[0] === "18121");
     const quantityRow = movementRows.find((row) => row?.[0] === "18129");
     assert.equal(cryptoRow?.[9], "101");
     assert.equal(cryptoRow?.[11], "70,7");
@@ -235,6 +241,16 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(correctedAccruedRow?.[17], "45175,8");
     assert.equal(correctedAccruedRow?.[18], "1030");
     assert.equal(correctedAccruedRow?.[19], "824");
+    assert.equal(correctedKovalevRow?.[17], "22490,05");
+    assert.equal(correctedKovalevRow?.[18], "515");
+    assert.equal(correctedKovalevRow?.[19], "0");
+    assert.match(correctedKovalevRow?.[21], /source missing 515 USD UAH equivalent/);
+    assert.equal(mixedRateUahRow?.[12], "84,5563");
+    assert.equal(mixedRateUahRow?.[13], "43,67");
+    assert.equal(mixedRateUahRow?.[18], "206");
+    assert.equal(mixedRateUahRow?.[19], "0");
+    assert.equal(fallbackUahRateRow?.[13], "43,67");
+    assert.equal(fallbackUahRateRow?.[18], "10,3449");
     assert.equal(quantityRow?.[8], "200");
     assert.equal(quantityRow?.[9], "206");
     assert.deepEqual(movementSummaryRows, [
@@ -248,6 +264,9 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
       "NUMBER",
       "18116",
       "18103",
+      "18118",
+      "18120",
+      "18121",
       "18126",
       "18127",
       "18129",
@@ -320,6 +339,8 @@ test("GET getDashboardData overlays fresh source payout rows when upstream is st
               ",,,,,,,,-,,,,-,-,,,курс,курс,курс,3%,3%,3%,3%,,,-,План,План,План,доп,Реал,Реал,Реал,Реал,-,дата,время,-,-,-,-,-,,,,,-,-,-,-,-",
               ",,Дата ,Клиент,Название заказа,Коммент/ остаток,Прайс база,25% акция,кол-во,всего,пр+3%,,%а,%б,,,руб,евр,грн,к-р,к-гр,к-р,к-гр,к-евро,метод оплаты,валюта,дол,руб,грн, +,дол,евро,руб,грн,КАРТА грн,дата,время,хвост,готовность ,ОТЗЫВ?,отчет,Тип/карта,руб,грн,,,Примечание,ВК,№К,Отзыв был?,емейл",
               ",18108,2026-04-07,Сергей Ковалев,5) Программы Мана,,200,,,,,,,,,,,,43.86,,,,,,приват ФОП,,,,,,1030.07,,,45175.80,,,,,,,,,,,,,,,,,",
+              ",18118,2026-04-11,Сергей Ковалев,Программи фиксация возраста - 1го уровня,,500,,,,515,,,,,,,,43.67,,,,,,фоп приват,,,,,,,,,1000,,,,,,,,,,,,,,,,,",
+              ",18121,2026-04-13,Сергей Ковалев,на благотворительность,,100,,,,103,,,,,,,,,,,,,,фоп приват,,,,,,,,,451.76,,,,,,,,,,,,,,,,,",
               ",18127,2026-04-19,Сергей Ковалев,Посвящение Масонов 1 ступень,,100,,,,103,,,,,,,,,,,,,,Андрей карта,,,,,,103,,,,,,,,,,,,,,,,,,,,",
               ",18129,2026-04-18,Олеся Сандырева,Динамика Точки Сборки - Свет сознания. Ускорение обработки информации.,оплата 2 частями,100,,2,,206,,,,,,84.5563,,,,,,,сайт, рубли,,,,,,,\"9 216,64 + 9 216,64\",,,,,,,,,,,,,,,,,,"
             ].join("\n");
@@ -347,10 +368,16 @@ test("GET getDashboardData overlays fresh source payout rows when upstream is st
     const payoutRows = response.body?.data?.tabs?.payouts?.values || [];
     const positions = payoutRows.map((row) => row?.[0]).filter(Boolean);
     const kovalevPayout = payoutRows.find((row) => row?.[0] === "18108");
-    assert.deepEqual(positions, ["Выплаты", "POSITION", "18108", "18127", "Итого"]);
+    const correctedPayout = payoutRows.find((row) => row?.[0] === "18118");
+    assert.deepEqual(positions, ["Выплаты", "POSITION", "18108", "18118", "18127", "Итого"]);
     assert.equal(kovalevPayout?.[5], "грн");
     assert.equal(kovalevPayout?.[6], "45175,8");
     assert.equal(kovalevPayout?.[7], "1030");
+    assert.equal(correctedPayout?.[5], "грн");
+    assert.equal(correctedPayout?.[6], "22490,05");
+    assert.equal(correctedPayout?.[7], "515");
+    assert.match(correctedPayout?.[9], /source missing 515 USD UAH equivalent/);
+    assert.equal(payoutRows.some((row) => /благотвор/i.test(String(row?.[3] || ""))), false);
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {

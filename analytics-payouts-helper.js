@@ -360,6 +360,7 @@
       row.travel || "",
       row.total || "",
       row.exchange || "",
+      row.exchangeUsd || "",
       row.totalUsd || "",
       row.nowUsd || ""
     ]);
