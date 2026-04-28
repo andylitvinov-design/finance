@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   evaluateManualFinanceFormula,
   evaluateManualFinanceCellNumericValue,
+  evaluatePlainArithmeticExpression,
   normalizeManualFinancePersistedNumberInput,
 } = require("../manual-finance-formulas.js");
 
@@ -71,6 +72,13 @@ test("normalizeManualFinancePersistedNumberInput stores formulas as final number
 
 test("normalizeManualFinancePersistedNumberInput evaluates plain arithmetic formulas without row context", () => {
   assert.equal(normalizeManualFinancePersistedNumberInput("=2000+5000"), "7000");
+});
+
+test("normalizeManualFinancePersistedNumberInput evaluates arithmetic text without concatenating numbers", () => {
+  assert.equal(evaluatePlainArithmeticExpression("10013+287"), 10300);
+  assert.equal(normalizeManualFinancePersistedNumberInput("10013+287"), "10300");
+  assert.equal(normalizeManualFinancePersistedNumberInput("10013 + 287"), "10300");
+  assert.equal(normalizeManualFinancePersistedNumberInput("-1000"), "-1000");
 });
 
 test("normalizeManualFinancePersistedNumberInput drops invalid formulas instead of persisting raw text", () => {

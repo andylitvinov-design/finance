@@ -62,6 +62,19 @@
     return parseLooseNumber(row[key]);
   }
 
+  function evaluatePlainArithmeticExpression(rawValue) {
+    const normalized = String(rawValue ?? "").trim().replace(/\s+/g, "").replace(/,/g, ".");
+    if (!normalized || !/^[\d.+\-*/()]+$/.test(normalized) || !/\d/.test(normalized)) return null;
+    if (!/[\d)][+\-*/][\d(]/.test(normalized)) return null;
+
+    try {
+      const numeric = Function('"use strict"; return (' + normalized + ');')();
+      return Number.isFinite(numeric) ? numeric : null;
+    } catch {
+      return null;
+    }
+  }
+
   function normalizeManualFinancePersistedNumberInput(value, options = {}) {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
@@ -74,6 +87,9 @@
       return String(roundTo2(evaluated));
     }
 
+    const arithmetic = evaluatePlainArithmeticExpression(raw);
+    if (arithmetic !== null) return String(roundTo2(arithmetic));
+
     const parseLooseNumber = options.parseLooseNumber || defaultParseLooseNumber;
     const parsed = parseLooseNumber(raw);
     return Number.isFinite(parsed) ? String(roundTo2(parsed)) : "";
@@ -83,6 +99,7 @@
     isManualFinanceFormula,
     evaluateManualFinanceFormula,
     evaluateManualFinanceCellNumericValue,
+    evaluatePlainArithmeticExpression,
     normalizeManualFinancePersistedNumberInput,
   };
 });

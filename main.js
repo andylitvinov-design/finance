@@ -299,7 +299,6 @@ function formatDateInputValue(date) {
 
 function setToday() {
   const today = formatDateInputValue(new Date());
-  elements.startDate.value = today;
   elements.endDate.value = today;
 }
 
