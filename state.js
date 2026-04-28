@@ -22,6 +22,14 @@ const state = {
     status: "",
     error: false
   },
+  expenseAccounting: {
+    activeSubtab: "list",
+    loading: false,
+    entries: [],
+    warnings: [],
+    status: "",
+    error: false
+  },
   manualTransfers: {
     loading: false,
     data: null,

@@ -123,7 +123,7 @@ function getOAuthReadinessMessage() {
 }
 
 function refreshGoogleControlsVisibility() {
-  const shouldShow = state.activeTab === "manualFinance" || state.activeTab === "savings" || state.activeTab === "orders";
+  const shouldShow = state.activeTab === "manualFinance" || state.activeTab === "expenseAccounting" || state.activeTab === "savings" || state.activeTab === "orders";
   const display = shouldShow ? "" : "none";
   elements.connectGoogleButton.style.display = display;
   elements.disconnectGoogleButton.style.display = display;

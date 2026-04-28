@@ -1,5 +1,5 @@
 {
-  "appVersion": "3.0.29",
+  "appVersion": "3.0.30",
   "endpoint": "/api",
   "spreadsheetId": "1kAKcNVUF_T-MtLU1vbfjw3MVbAQ8-NQEnVoPQysEf5o",
   "tabs": [
@@ -17,6 +17,11 @@
       "id": "manualFinance",
       "label": "fact",
       "sheetName": "fact"
+    },
+    {
+      "id": "expenseAccounting",
+      "label": "Учет расходов",
+      "sheetName": "Расходы"
     },
     {
       "id": "orders",
@@ -63,7 +68,7 @@
       "нал-мам-евро",
       "нал-мам-дол"
     ],
-    "expenseTypes": ["business", "flat", "food", "fun", "travel"]
+    "expenseTypes": ["business", "flat", "food", "fun", "travel", "study"]
   },
   "manualOrders": {
     "spreadsheetId": "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY",

@@ -7,7 +7,7 @@ const {
   parseManualOrdersTextBlocks,
 } = require("../orders-helper.js");
 
-test("parseManualOrdersTextBlocks keeps one date-name block as one order row", () => {
+test("parseManualOrdersTextBlocks splits numbered items inside one date-name block", () => {
   const rows = parseManualOrdersTextBlocks(
     [
       "14/04 Литвинов Андрей",
@@ -25,7 +25,7 @@ test("parseManualOrdersTextBlocks keeps one date-name block as one order row", (
     "2026-05-21"
   );
 
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 4);
   assert.deepEqual(rows[0], [
     "14.04.2026",
     "Литвинов Андрей",
@@ -35,10 +35,16 @@ test("parseManualOrdersTextBlocks keeps one date-name block as one order row", (
   assert.deepEqual(rows[1], [
     "21.05.2026",
     "Литвинов Андрей",
-    "сжатие - на уровне живота - разовый стресс 6 ед - неудобство перед мужчиной который больше меня, сильнее меня /сжатие / неудобно себя чувствую / нияковость 25 на уровне горла - испуг внезапный - с мужчиной которы йбольше меня, сильнее меня 8 ед",
+    "сжатие - на уровне живота - разовый стресс 6 ед - неудобство перед мужчиной который больше меня, сильнее меня /сжатие / неудобно себя чувствую / нияковость",
     "25",
   ]);
   assert.deepEqual(rows[2], [
+    "21.05.2026",
+    "Литвинов Андрей",
+    "на уровне горла - испуг внезапный - с мужчиной которы йбольше меня, сильнее меня 8 ед",
+    "25",
+  ]);
+  assert.deepEqual(rows[3], [
     "",
     "литвинова наталья",
     "разовый стресс приближение собтсвенной смерти",
