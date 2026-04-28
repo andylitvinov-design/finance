@@ -45,7 +45,7 @@ Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-inc
 **2. Таблица ручных данных (fact, расходы, переводы)**
 
 - URL: см. `MOVEMENT_SOURCE_SPREADSHEET_FALLBACK_URL` в `config.js`
-- Листы: `fact`, `расходы по каналам`, `Переводы`, `Расходы`, `Комиссии`, `Мои заказы`
+- Листы: `fact`, `расходы по каналам`, `Переводы`, `Расходы`, `Остатки`, `Комиссии`, `Мои заказы`
 - Структура листов: даты в формате `YYYY-MM-DD ~ YYYY-MM-DD` как имена листов
 
 ## Настройка (для Claude / Codex)
@@ -63,6 +63,25 @@ Runtime-параметры окружения остаются в `sheet-config.
 - `/api` endpoint
 - Spreadsheet IDs
 - Набор dashboard tabs
+
+## PayPal / Wise
+
+Вкладка `Учет расходов` умеет подтягивать выписки за выбранный период через Vercel Functions:
+
+- `/api/paypal-transactions`
+- `/api/wise-transactions`
+
+Production env vars:
+
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_ENVIRONMENT=live`
+- optional fallback: `PAYPAL_MCP_CLIENT_ID`, `PAYPAL_MCP_REFRESH_TOKEN`
+- `WISE_API_TOKEN`
+- optional: `WISE_PROFILE_ID`, `WISE_ENVIRONMENT=live`
+
+PayPal REST app must have Transaction Search enabled. Official setup:
+[PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live).
 
 ## Деплой
 

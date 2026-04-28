@@ -1,6 +1,6 @@
 // config.js — все настройки проекта в одном месте
 
-const APP_BUILD_VERSION = "2026.04.28.5";
+const APP_BUILD_VERSION = "2026.04.28.6";
 const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
 const URL_PARAMS = new URLSearchParams(location.search);
 const MANUAL_INCOMING_TITLE = "fact";
@@ -31,6 +31,7 @@ const MANUAL_EXPENSE_ACCOUNTING_CATEGORIES = ["business", "flat", "food", "fun",
 const MANUAL_NOW_CATEGORY = "now";
 const MANUAL_EXCHANGE_CATEGORY = "exchange";
 const MANUAL_INPUT_CATEGORIES = [...MANUAL_EXPENSE_TYPES, MANUAL_EXCHANGE_CATEGORY];
+const MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES = MANUAL_INPUT_CATEGORIES.slice();
 const MANUAL_STORED_INPUT_CATEGORIES = [MANUAL_NOW_CATEGORY, ...MANUAL_INPUT_CATEGORIES];
 const MANUAL_TRANSFER_MIN_ROWS = 3;
 const ANALYTICS_PAYOUTS_HELPER = window.EzohataAnalyticsPayoutsHelper || {};

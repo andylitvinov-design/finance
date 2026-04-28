@@ -394,6 +394,12 @@ function getManualFinanceChannels() {
     : MANUAL_FINANCE_MONEY_CHANNELS.slice();
 }
 
+function canonicalManualFinanceChannel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return getManualFinanceChannels().find((channel) => normalizeCell(channel) === normalizeCell(raw)) || raw;
+}
+
 function getManualExpenseTypes() {
   return Array.isArray(state.config?.manualFinance?.expenseTypes) && state.config.manualFinance.expenseTypes.length
     ? state.config.manualFinance.expenseTypes.slice()
@@ -1772,6 +1778,92 @@ async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
     latestNowEntriesByChannel,
     selectedSheets: [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
   };
+}
+
+function buildAggregatedManualDataFromServerPayload(manual, startDate, endDate) {
+  const expenseRows = normalizeManualFinanceExpenseRows(
+    filterManualFlowExpenseRows(normalizeServerExpenseRows(manual?.expenseRows || []))
+      .filter((row) => row.date && row.date >= startDate && row.date <= endDate),
+    startDate,
+    endDate
+  );
+  const transferRows = normalizeServerTransferRows(manual?.transfers || [])
+    .filter((row) => row.transferDate && row.transferDate >= startDate && row.transferDate <= endDate)
+    .map((row) => ({
+      date: row.transferDate || "",
+      who: row.who || "",
+      amount: row.amount || "",
+      localCurrency: row.currency || "",
+      rate: row.rate || "",
+      usdAmount: row.usdAmount || "",
+      destination: row.channel || ""
+    }));
+  const commissionRows = normalizeServerCommissionRows(manual?.commissionRows || [])
+    .filter((row) => row.date && row.date >= startDate && row.date <= endDate);
+  const latestNowEntriesByChannel = mergeLatestNowEntries(
+    buildLatestBalanceEntriesByChannel(normalizeServerBalanceRows(manual?.balanceRows || manual?.balances || []), endDate),
+    buildLatestNowEntriesByChannel(normalizeServerExpenseRows(manual?.expenseRows || []), endDate)
+  );
+  const hasRepositoryRows =
+    expenseRows.length ||
+    transferRows.length ||
+    commissionRows.length ||
+    Object.keys(latestNowEntriesByChannel).length;
+  if (!hasRepositoryRows) return null;
+  return {
+    rows: buildManualFinanceSummaryRows(expenseRows, latestNowEntriesByChannel),
+    transferRows,
+    commissionRows,
+    latestNowByChannel: Object.fromEntries(
+      Object.entries(latestNowEntriesByChannel).map(([channel, row]) => [channel, row.value])
+    ),
+    latestNowEntriesByChannel,
+    selectedSheets: [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
+  };
+}
+
+function normalizeServerExpenseRows(rows) {
+  return (rows || []).map((row) => ({
+    date: normalizeIncomingSheetDateValue(row?.date),
+    category: normalizeManualExpenseCategory(row?.category),
+    amounts: Object.fromEntries(getManualFinanceChannels().map((channel) => [
+      channel,
+      normalizeManualFinancePersistedNumberInput(row?.amounts?.[channel] ?? row?.[channel] ?? "")
+    ]))
+  })).filter((row) => row.date && row.category);
+}
+
+function normalizeServerBalanceRows(rows) {
+  return (rows || []).map((row) => ({
+    date: normalizeIncomingSheetDateValue(row?.date || row?.checkDate),
+    channel: canonicalManualFinanceChannel(row?.channel || row?.accountName || ""),
+    amount: normalizeManualFinancePersistedNumberInput(row?.amount || row?.balanceAmount || ""),
+    currency: String(row?.currency || "").trim().toUpperCase(),
+    rate: normalizeManualFinancePersistedNumberInput(row?.rate || ""),
+    usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount || ""),
+    comment: String(row?.comment || "").trim()
+  })).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+}
+
+function normalizeServerCommissionRows(rows) {
+  return normalizeManualCommissionRows((rows || []).map((row) => ({
+    date: normalizeIncomingSheetDateValue(row?.date),
+    channel: canonicalManualFinanceChannel(row?.channel || ""),
+    usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount || ""),
+    comment: String(row?.comment || "").trim()
+  })), { padToMinimum: false });
+}
+
+function normalizeServerTransferRows(rows) {
+  return normalizeManualFinanceTransferRows((rows || []).map((row) => ({
+    date: normalizeIncomingSheetDateValue(row?.date || row?.transferDate),
+    who: row?.who || row?.fromAccount || "",
+    amount: normalizeManualFinancePersistedNumberInput(row?.amount || ""),
+    localCurrency: row?.localCurrency || row?.currency || "",
+    rate: normalizeManualFinancePersistedNumberInput(row?.rate || ""),
+    usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount || ""),
+    destination: canonicalManualFinanceChannel(row?.destination || row?.toAccount || row?.channel || "")
+  })), { padToMinimum: false });
 }
 
 

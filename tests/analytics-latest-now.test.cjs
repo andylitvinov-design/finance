@@ -5,6 +5,9 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const financeJs = fs.readFileSync(path.join(__dirname, "..", "finance.js"), "utf8");
+const configJs = fs.readFileSync(path.join(__dirname, "..", "config.js"), "utf8");
+const mainJs = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+const uiJs = fs.readFileSync(path.join(__dirname, "..", "ui.js"), "utf8");
 
 function extractFunction(name) {
   const pattern = new RegExp(`^function ${name}\\(`, "m");
@@ -285,4 +288,24 @@ test("normalizeManualExpenseCategory keeps study separate from fun", () => {
   assert.equal(context.normalizeManualExpenseCategory("spent for study"), "study");
   assert.equal(context.normalizeManualExpenseCategory("учеба"), "study");
   assert.equal(context.normalizeManualExpenseCategory("spent for fun"), "fun");
+});
+
+test("provider accounting save keeps income and exchange categories", () => {
+  assert.match(configJs, /const MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES = MANUAL_INPUT_CATEGORIES\.slice\(\);/);
+  assert.match(uiJs, /MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES\.forEach\(\(category\) =>/);
+  assert.match(uiJs, /entry\.direction === "income" \|\| entry\.direction === "exchange"/);
+  assert.doesNotMatch(
+    uiJs,
+    /state\.expenseAccounting\.entries\.filter\(\(entry\) => entry\.direction !== "income"/
+  );
+  assert.match(uiJs, /if \(!MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES\.includes\(category\)\) return;/);
+});
+
+test("server manual payload is preserved for analytics without browser OAuth", () => {
+  assert.match(mainJs, /manual: data\?\.manual \|\| null/);
+  assert.match(mainJs, /buildAggregatedManualDataFromServerPayload\(state\.data\.manual, startDate, endDate\)/);
+  assert.match(financeJs, /function buildAggregatedManualDataFromServerPayload\(manual, startDate, endDate\)/);
+  assert.match(financeJs, /normalizeServerExpenseRows\(manual\?\.expenseRows \|\| \[\]\)/);
+  assert.match(financeJs, /normalizeServerBalanceRows\(manual\?\.balanceRows \|\| manual\?\.balances \|\| \[\]\)/);
+  assert.match(financeJs, /normalizeServerCommissionRows\(manual\?\.commissionRows \|\| \[\]\)/);
 });

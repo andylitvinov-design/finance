@@ -10,5 +10,6 @@
 ## Deployment
 
 - Start production-facing work from `origin/main`, run `bash scripts/release-guard.sh`, then push a branch and merge through PR.
+- If the current branch is not based on `origin/main`, create a fresh branch/worktree from `origin/main` and port only the needed changes.
 - Vercel deploys the root app after `main` is updated. Manual production deploys must be run only from this repository root.
 - Never deploy from `data/` or from a stale `reconcile-v2/` checkout.
