@@ -357,6 +357,7 @@
       row.flat || "",
       row.food || "",
       row.fun || "",
+      row.study || "",
       row.travel || "",
       row.total || "",
       row.exchange || "",

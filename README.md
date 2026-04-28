@@ -69,13 +69,16 @@ Runtime-параметры окружения остаются в `sheet-config.
 Production деплоится из GitHub через Vercel Git Integration после merge в `main`.
 
 ```bash
+git switch -c codex/my-change origin/main
+# внести изменения
 git add .
 git commit -m "описание изменений"
-git push origin main
-# Vercel автоматически задеплоит на ezohata-incoming-ledger.vercel.app
+bash scripts/release-guard.sh
+git push -u origin codex/my-change
+gh pr create --base main --head codex/my-change
 ```
 
-Для рабочих изменений используйте ветку и PR, затем merge в `main`.
+Активный источник деплоя - корень этого репозитория на ветке от `origin/main`. Старый `reconcile-v2/` не использовать как источник новых production-коммитов: такие ветки могут не иметь общей истории с `main`, из-за чего PR и автодеплой зависают.
 
 ## Версия
 

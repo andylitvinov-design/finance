@@ -15,9 +15,10 @@ const FORMULA_KEY_BY_COLUMN = {
   D: "business",
   E: "house",
   F: "food",
-  G: "study",
-  H: "travelFun",
-  I: "total",
+  G: "fun",
+  H: "study",
+  I: "travelFun",
+  J: "total",
 };
 
 const rows = [
@@ -26,6 +27,7 @@ const rows = [
     business: "=4000+6000",
     house: "5",
     food: "7",
+    fun: "9",
     study: "11",
     travelFun: "13",
     total: "",

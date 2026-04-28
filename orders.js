@@ -294,13 +294,15 @@ function getVisibleManualOrdersRows(startDate = elements.startDate.value, endDat
 
 function buildOrdersSummaryFromClient(values) {
   if (!values.length) {
-    return { orderRows: 0, totalAccruedPlus3Pct: 0, totalReceivedUsd: 0 };
+    return { orderRows: 0, totalAccruedPlus3Pct: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
   }
   const header = values[0] || [];
   const accruedIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "СТОИМОСТЬ", "COST", "PRICE BASE"]);
   const receivedIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
+  const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
   let totalAccrued = 0;
   let totalReceived = 0;
+  let totalBalance = 0;
   let orderRows = 0;
   values.slice(1).forEach((row) => {
     if (!hasAnyValue(row)) return;
@@ -308,10 +310,13 @@ function buildOrdersSummaryFromClient(values) {
     orderRows += 1;
     if (accruedIndex !== -1 && accruedIndex < row.length) totalAccrued += parseLooseNumber(row[accruedIndex]);
     if (receivedIndex !== -1 && receivedIndex < row.length) totalReceived += parseLooseNumber(row[receivedIndex]);
+    if (balanceIndex !== -1 && balanceIndex < row.length) totalBalance += parseLooseNumber(row[balanceIndex]);
   });
+  if (balanceIndex === -1) totalBalance = totalAccrued - totalReceived;
   return {
     orderRows,
     totalAccruedPlus3Pct: roundTo2(totalAccrued),
-    totalReceivedUsd: roundTo2(totalReceived)
+    totalReceivedUsd: roundTo2(totalReceived),
+    totalBalanceUsd: roundTo2(totalBalance)
   };
 }

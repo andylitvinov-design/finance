@@ -53,12 +53,13 @@ function getManualFinanceDisplayHeaders(headers = MANUAL_FINANCE_HEADERS) {
         source[4] || "spent for flat",
         source[5] || "spent for food",
         source[6] || "spent for fun",
-        source[7] || "spent for travel",
-        source[8] || "затраты-мои",
-        source[9] || "обмен"
+        source[7] || "spent for study",
+        source[8] || "spent for travel",
+        source[9] || "затраты-мои",
+        source[10] || "обмен"
       ]
     : [source[0] || "канал", source[1] || "now", "приход от услуг", ...source.slice(2)];
-  return [...base, "затраты-мои usd", "now_usd"];
+  return [...base, "обмен_usd", "затраты-мои usd", "now_usd"];
 }
 
 
@@ -219,7 +220,7 @@ function sumManualFinanceFieldUsdNumber(rows, key, rateLookup = { byChannel: {},
 }
 
 function getManualFinanceSpendUsdNumber(row, rateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
-  return ["business", "house", "food", "study", "travelFun"].reduce(
+  return ["business", "house", "food", "fun", "study", "travelFun"].reduce(
     (sum, key) => sum + getManualFinanceFieldUsdNumber(row, key, rateLookup, options),
     0
   );
@@ -444,7 +445,7 @@ function createManualFinanceExpenseRow(date, category) {
 }
 
 function createLegacyFactMoneyRow(channel = "") {
-  return { channel, now: "", serviceIncome: "", business: "", food: "", house: "", study: "", travelFun: "", total: "", exchange: "", nowUsd: "" };
+  return { channel, now: "", serviceIncome: "", business: "", food: "", house: "", fun: "", study: "", travelFun: "", total: "", exchange: "", nowUsd: "" };
 }
 
 const MANUAL_FINANCE_FORMULA_KEY_BY_COLUMN = {
@@ -454,10 +455,11 @@ const MANUAL_FINANCE_FORMULA_KEY_BY_COLUMN = {
   D: "business",
   E: "house",
   F: "food",
-  G: "study",
-  H: "travelFun",
-  I: "total",
-  J: "exchange"
+  G: "fun",
+  H: "study",
+  I: "travelFun",
+  J: "total",
+  K: "exchange"
 };
 const MANUAL_FINANCE_FORMULA_ROW_OFFSET = 3;
 
@@ -519,6 +521,7 @@ function calculateLegacyFactRowTotal(row, rows, rowIndex) {
     evaluateManualFinanceCellNumericValue(rows, rowIndex, "business") +
     evaluateManualFinanceCellNumericValue(rows, rowIndex, "food") +
     evaluateManualFinanceCellNumericValue(rows, rowIndex, "house") +
+    evaluateManualFinanceCellNumericValue(rows, rowIndex, "fun") +
     evaluateManualFinanceCellNumericValue(rows, rowIndex, "study") +
     evaluateManualFinanceCellNumericValue(rows, rowIndex, "travelFun")
   );
@@ -537,7 +540,8 @@ function normalizeManualFinanceMoneyRows(rows = []) {
       business: row?.business ?? "",
       food: row?.food ?? "",
       house: row?.house ?? row?.flat ?? "",
-      study: row?.study ?? row?.fun ?? "",
+      fun: row?.fun ?? "",
+      study: row?.study ?? "",
       travelFun: row?.travelFun ?? row?.travel ?? "",
       exchange: row?.exchange ?? "",
       total: row?.total ?? ""
@@ -563,6 +567,7 @@ function normalizeManualFinanceMoneyRows(rows = []) {
     business: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "business"), 0)),
     food: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "food"), 0)),
     house: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "house"), 0)),
+    fun: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "fun"), 0)),
     study: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "study"), 0)),
     travelFun: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "travelFun"), 0)),
     exchange: formatSheetNumber(normalized.reduce((sum, row, rowIndex) => sum + evaluateManualFinanceCellNumericValue(normalized, rowIndex, "exchange"), 0)),
@@ -580,7 +585,8 @@ function buildLegacyFactMoneyRowsFromExpenseRows(expenseRows) {
       business: "business",
       flat: "house",
       food: "food",
-      fun: "study",
+      fun: "fun",
+      study: "study",
       travel: "travelFun",
       exchange: "exchange"
     })[row.category];
@@ -614,7 +620,8 @@ function convertLegacyFactMoneyRowsToExpenseRows(moneyRows, periodEnd) {
     expenseLookup.business.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "business"));
     expenseLookup.flat.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "house"));
     expenseLookup.food.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "food"));
-    expenseLookup.fun.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "study"));
+    expenseLookup.fun.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "fun"));
+    expenseLookup.study.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "study"));
     expenseLookup.travel.amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "travelFun"));
     expenseLookup[MANUAL_EXCHANGE_CATEGORY].amounts[channel] = formatSheetNumber(evaluateManualFinanceCellNumericValue(normalized, rowIndex, "exchange"));
   });
@@ -630,7 +637,8 @@ function buildAnalyticsManualRowsFromFactMoneyRows(moneyRows, transferRows = [])
     business: row.business,
     flat: row.house,
     food: row.food,
-    fun: row.study,
+    fun: row.fun,
+    study: row.study,
     travel: row.travelFun,
     total: row.total,
     exchange: row.exchange,
@@ -691,7 +699,7 @@ function buildMainAnalyticsFactImportValues(moneyRows, transferRows = []) {
   const normalized = normalizeManualFinanceMoneyRows(moneyRows);
   const usdRateLookup = buildManualFinanceUsdRateLookup(transferRows, state.data?.tabs?.movement?.values || []);
   return [
-    ["валюта", "now", "service income", "spent for business", "spent for food", "spent for house", "spent for study", "spent for travel/ fun", "затраты-мои", "обмен", "now_usd"],
+    ["валюта", "now", "service income", "spent for business", "spent for food", "spent for house", "spent for fun", "spent for study", "spent for travel/ fun", "затраты-мои", "обмен", "now_usd"],
     ...normalized
       .filter((row) => row.channel !== MANUAL_FINANCE_TOTAL_LABEL)
       .map((row, rowIndex) => [
@@ -701,6 +709,7 @@ function buildMainAnalyticsFactImportValues(moneyRows, transferRows = []) {
         normalizeManualFinancePersistedNumberInput(row.business, { rows: normalized, rowIndex, key: "business" }),
         normalizeManualFinancePersistedNumberInput(row.food, { rows: normalized, rowIndex, key: "food" }),
         normalizeManualFinancePersistedNumberInput(row.house, { rows: normalized, rowIndex, key: "house" }),
+        normalizeManualFinancePersistedNumberInput(row.fun, { rows: normalized, rowIndex, key: "fun" }),
         normalizeManualFinancePersistedNumberInput(row.study, { rows: normalized, rowIndex, key: "study" }),
         normalizeManualFinancePersistedNumberInput(row.travelFun, { rows: normalized, rowIndex, key: "travelFun" }),
         row.total || "",
@@ -725,7 +734,8 @@ function buildFactImportLookupFromValues(values) {
   const businessIndex = findHeaderIndexByAliases(header, ["spent for business"]);
   const foodIndex = findHeaderIndexByAliases(header, ["spent for food"]);
   const houseIndex = findHeaderIndexByAliases(header, ["spent for house", "spent for flat"]);
-  const studyIndex = findHeaderIndexByAliases(header, ["spent for study", "spent for fun"]);
+  const funIndex = findHeaderIndexByAliases(header, ["spent for fun"]);
+  const studyIndex = findHeaderIndexByAliases(header, ["spent for study"]);
   const travelFunIndex = findHeaderIndexByAliases(header, ["spent for travel/ fun", "spent for travel"]);
   const exchangeIndex = findHeaderIndexByAliases(header, ["обмен", "exchange"]);
   const lookup = {};
@@ -738,6 +748,7 @@ function buildFactImportLookupFromValues(values) {
       business: businessIndex !== -1 ? (row[businessIndex] || "") : "",
       food: foodIndex !== -1 ? (row[foodIndex] || "") : "",
       house: houseIndex !== -1 ? (row[houseIndex] || "") : "",
+      fun: funIndex !== -1 ? (row[funIndex] || "") : "",
       study: studyIndex !== -1 ? (row[studyIndex] || "") : "",
       travelFun: travelFunIndex !== -1 ? (row[travelFunIndex] || "") : "",
       exchange: exchangeIndex !== -1 ? (row[exchangeIndex] || "") : ""
@@ -752,7 +763,7 @@ function applyFactImportLookupToMoneyRows(moneyRows, lookup) {
     if (!row || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return;
     const imported = lookup[row.channel];
     if (!imported) return;
-    ["now", "serviceIncome", "business", "food", "house", "study", "travelFun", "exchange"].forEach((key) => {
+    ["now", "serviceIncome", "business", "food", "house", "fun", "study", "travelFun", "exchange"].forEach((key) => {
       if (String(imported[key] ?? "").trim()) row[key] = imported[key];
     });
   });
@@ -903,6 +914,7 @@ function buildManualFinanceSummaryRows(expenseRows, latestNowByChannel = {}) {
     flat: 0,
     food: 0,
     fun: 0,
+    study: 0,
     travel: 0,
     total: 0,
     exchange: 0
@@ -935,6 +947,7 @@ function buildManualFinanceSummaryRows(expenseRows, latestNowByChannel = {}) {
     flat: formatSheetNumber(row.flat),
     food: formatSheetNumber(row.food),
     fun: formatSheetNumber(row.fun),
+    study: formatSheetNumber(row.study),
     travel: formatSheetNumber(row.travel),
     exchange: formatSheetNumber(row.exchange),
     total: formatSheetNumber(row.total)
@@ -947,6 +960,7 @@ function buildManualFinanceSummaryRows(expenseRows, latestNowByChannel = {}) {
     flat: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.flat), 0)),
     food: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.food), 0)),
     fun: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.fun), 0)),
+    study: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.study), 0)),
     travel: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.travel), 0)),
     exchange: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.exchange), 0)),
     total: formatSheetNumber(formatted.reduce((sum, row) => sum + parseLooseNumber(row.total), 0))
@@ -1385,6 +1399,7 @@ function buildManualSheetValuesFromState(moneyRows, transferRows) {
       row.business || "",
       row.house || "",
       row.food || "",
+      row.fun || "",
       row.study || "",
       row.travelFun || "",
       row.total || "",
@@ -1398,6 +1413,7 @@ function buildManualSheetValuesFromState(moneyRows, transferRows) {
     business: "",
     food: "",
     house: "",
+    fun: "",
     study: "",
     travelFun: "",
     total: "",
@@ -1410,6 +1426,7 @@ function buildManualSheetValuesFromState(moneyRows, transferRows) {
     summary.business || "",
     summary.house || "",
     summary.food || "",
+    summary.fun || "",
     summary.study || "",
     summary.travelFun || "",
     summary.total || "",
@@ -1457,10 +1474,11 @@ function parseManualSheetValues(values) {
         business: hasServiceIncomeColumn ? (row[3] || "") : (row[2] || ""),
         house: hasServiceIncomeColumn ? (row[4] || "") : (row[4] || ""),
         food: hasServiceIncomeColumn ? (row[5] || "") : (row[3] || ""),
-        study: hasServiceIncomeColumn ? (row[6] || "") : (row[5] || ""),
-        travelFun: hasServiceIncomeColumn ? (row[7] || "") : (row[6] || ""),
-        total: hasServiceIncomeColumn ? (row[8] || "") : (row[7] || ""),
-        exchange: hasServiceIncomeColumn ? (row[9] || "") : (row[8] || "")
+        fun: hasServiceIncomeColumn ? (row[6] || "") : "",
+        study: hasServiceIncomeColumn ? (row[7] || "") : (row[5] || ""),
+        travelFun: hasServiceIncomeColumn ? (row[8] || "") : (row[6] || ""),
+        total: hasServiceIncomeColumn ? (row[9] || "") : (row[7] || ""),
+        exchange: hasServiceIncomeColumn ? (row[10] || "") : (row[8] || "")
       });
       index += 1;
       break;
@@ -1472,10 +1490,11 @@ function parseManualSheetValues(values) {
       business: hasServiceIncomeColumn ? (row[3] || "") : (row[2] || ""),
       house: hasServiceIncomeColumn ? (row[4] || "") : (row[4] || ""),
       food: hasServiceIncomeColumn ? (row[5] || "") : (row[3] || ""),
-      study: hasServiceIncomeColumn ? (row[6] || "") : (row[5] || ""),
-      travelFun: hasServiceIncomeColumn ? (row[7] || "") : (row[6] || ""),
-      total: hasServiceIncomeColumn ? (row[8] || "") : (row[7] || ""),
-      exchange: hasServiceIncomeColumn ? (row[9] || "") : (row[8] || "")
+      fun: hasServiceIncomeColumn ? (row[6] || "") : "",
+      study: hasServiceIncomeColumn ? (row[7] || "") : (row[5] || ""),
+      travelFun: hasServiceIncomeColumn ? (row[8] || "") : (row[6] || ""),
+      total: hasServiceIncomeColumn ? (row[9] || "") : (row[7] || ""),
+      exchange: hasServiceIncomeColumn ? (row[10] || "") : (row[8] || "")
     });
     index += 1;
   }
@@ -1483,12 +1502,12 @@ function parseManualSheetValues(values) {
     if (moneyRows.length < MANUAL_FINANCE_MONEY_CHANNELS.length) {
       moneyRows.push({
         channel: MANUAL_FINANCE_MONEY_CHANNELS[moneyRows.length],
-        now: "", serviceIncome: "", business: "", food: "", house: "", study: "", travelFun: "", total: "", exchange: ""
+        now: "", serviceIncome: "", business: "", food: "", house: "", fun: "", study: "", travelFun: "", total: "", exchange: ""
       });
     } else {
       moneyRows.push({
         channel: MANUAL_FINANCE_TOTAL_LABEL,
-        now: "", serviceIncome: "", business: "", food: "", house: "", study: "", travelFun: "", total: "", exchange: ""
+        now: "", serviceIncome: "", business: "", food: "", house: "", fun: "", study: "", travelFun: "", total: "", exchange: ""
       });
     }
   }
@@ -1672,7 +1691,7 @@ function buildMovementSummaryRows(movementValues, ordersValues, payoutsValues, f
   const factTotals = getCurrentFactMetricTotals();
   const totalAccrued = seventyTotal + (ordersAccruedTotal * 0.7);
   const percent = accruedTotal - priceTotal;
-  const balance = receivedUsdTotal - accruedTotal;
+  const balance = movementTotals.balanceTotal;
   const totalBalance = buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct: totalAccrued,
     totalPaid: payoutUsdTotal,
@@ -1778,6 +1797,7 @@ function calculateManualMoneyTotals(rows) {
     flat: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.flat), 0)),
     food: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.food), 0)),
     fun: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.fun), 0)),
+    study: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.study), 0)),
     travel: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.travel), 0)),
     total: formatSheetNumber(relevantRows.reduce((sum, row) => sum + parseLooseNumber(row.total), 0))
   };
@@ -1841,8 +1861,11 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
             row.flat || "",
             row.food || "",
             row.fun || "",
+            row.study || "",
             row.travel || "",
             row.total || "",
+            row.exchange || "",
+            row.exchangeUsd || "",
             row.totalUsd || "",
             row.nowUsd || ""
           ]))
@@ -2321,7 +2344,8 @@ function normalizeManualExpenseCategory(value) {
   if (/flat|house|кварт|дом/.test(normalized)) return "flat";
   if (/food|еда/.test(normalized)) return "food";
   if (/travel|путеш/.test(normalized)) return "travel";
-  if (/fun|study|развлеч|учеб/.test(normalized)) return "fun";
+  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
+  if (/fun|развлеч/.test(normalized)) return "fun";
   if (/exchange|обмен/.test(normalized)) return MANUAL_EXCHANGE_CATEGORY;
   return String(value || "").trim();
 }
@@ -2752,12 +2776,13 @@ function buildTopMetricsSummary() {
   const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
   const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
   const ordersReceivedUsdTotal = parseLooseNumber(ordersSummary.totalReceivedUsd);
+  const ordersBalanceTotal = parseLooseNumber(ordersSummary.totalBalanceUsd);
   const totalPaid = calculateCurrentOverallPayoutUsdTotal();
   const factTotals = getCurrentFactMetricTotals();
 
   const totalOrders = movementAccruedTotal + manualOrdersTotal;
   const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
-  const balance = totalOrders - totalReceivedUsd;
+  const balance = movementTotals.balanceTotal + ordersBalanceTotal;
   const totalOrdersSeventyPct = movementSeventyTotal + (manualOrdersTotal * 0.7);
   const upgradeTotals = buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct,
