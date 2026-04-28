@@ -27,7 +27,28 @@ async function init() {
   refreshAuthButtons();
   renderMetrics();
   renderTabs();
+  void updateLiveCadRate();
   await loadDashboardData();
+}
+
+async function fetchLiveCadUsdRate() {
+  try {
+    const response = await fetch("https://open.er-api.com/v6/latest/USD", { cache: "no-store" });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    const cadPerUsd = parseLooseNumber(payload?.rates?.CAD);
+    return cadPerUsd > 0 ? 1 / cadPerUsd : null;
+  } catch {
+    return null;
+  }
+}
+
+async function updateLiveCadRate() {
+  const liveRate = await fetchLiveCadUsdRate();
+  if (!liveRate || liveRate <= 0) return false;
+  MANUAL_FINANCE_FALLBACK_USD_RATES.CAD = liveRate;
+  renderMetrics();
+  return true;
 }
 
 function normalizeEndpointUrl(value) {

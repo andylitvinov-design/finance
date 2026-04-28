@@ -5,6 +5,7 @@
 function getAnalyticsMergedValues() {
   const baseValues = state.data?.tabs?.analytics?.values || [];
   const factMoneyRows = state.analyticsFact?.moneyRows || [];
+  const factTransferRows = state.analyticsFact?.transferRows || [];
   const values = factMoneyRows.length
     ? buildFullRangeBasedAnalyticsValuesFromClosedFact(
         baseValues,
@@ -12,8 +13,8 @@ function getAnalyticsMergedValues() {
         state.data?.tabs?.payouts?.values || [],
         state.data?.tabs?.savings?.values || [],
         {
-          rows: buildAnalyticsManualRowsFromFactMoneyRows(factMoneyRows, []),
-          transferRows: [],
+          rows: buildAnalyticsManualRowsFromFactMoneyRows(factMoneyRows, factTransferRows),
+          transferRows: buildAnalyticsTransfersFromFactRows(factTransferRows),
           selectedSheets: []
         }
       )
@@ -196,6 +197,40 @@ function getManualFinanceExchangeUsdValue(row, rateLookup = { byChannel: {}, byC
   if (currency === "USD") return formatSheetNumber(exchange);
   if (!rate) return "";
   return formatSheetNumber(exchange * rate);
+}
+
+function getManualFinanceFieldUsdNumber(row, key, rateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
+  const amount = options.rows
+    ? evaluateManualFinanceCellNumericValue(options.rows, options.rowIndex || 0, key)
+    : getManualFinanceComputedAmount(row?.[key]);
+  if (!amount) return 0;
+  const currency = inferManualFinanceChannelCurrency(row?.channel);
+  if (currency === "USD") return amount;
+  const rate = getManualFinanceUsdPerLocalRate(row, rateLookup);
+  return rate ? amount * rate : 0;
+}
+
+function sumManualFinanceFieldUsdNumber(rows, key, rateLookup = { byChannel: {}, byCurrency: {} }) {
+  const normalized = normalizeManualFinanceMoneyRows(rows);
+  return normalized.reduce((sum, row, rowIndex) => {
+    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
+    return sum + getManualFinanceFieldUsdNumber(row, key, rateLookup, { rows: normalized, rowIndex });
+  }, 0);
+}
+
+function getManualFinanceSpendUsdNumber(row, rateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
+  return ["business", "house", "food", "study", "travelFun"].reduce(
+    (sum, key) => sum + getManualFinanceFieldUsdNumber(row, key, rateLookup, options),
+    0
+  );
+}
+
+function sumManualFinanceSpendUsdNumber(rows, rateLookup = { byChannel: {}, byCurrency: {} }) {
+  const normalized = normalizeManualFinanceMoneyRows(rows);
+  return normalized.reduce((sum, row, rowIndex) => {
+    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
+    return sum + getManualFinanceSpendUsdNumber(row, rateLookup, { rows: normalized, rowIndex });
+  }, 0);
 }
 
 
@@ -1133,7 +1168,8 @@ function syncAnalyticsFactFromManualData(manualData) {
     periodEnd: manualData.periodEnd || "",
     moneyTitle: manualData.moneyTitle || MANUAL_FINANCE_MONEY_TITLE,
     moneyHeaders: Array.isArray(manualData.moneyHeaders) ? manualData.moneyHeaders.slice() : MANUAL_FINANCE_HEADERS.slice(),
-    moneyRows: Array.isArray(manualData.moneyRows) ? manualData.moneyRows.map((row) => ({ ...row })) : []
+    moneyRows: Array.isArray(manualData.moneyRows) ? manualData.moneyRows.map((row) => ({ ...row })) : [],
+    transferRows: Array.isArray(manualData.transferRows) ? manualData.transferRows.map((row) => ({ ...row })) : []
   };
 }
 
@@ -1623,6 +1659,7 @@ function buildMovementSummaryRows(movementValues, ordersValues, payoutsValues, f
   const seventyTotal = movementTotals.seventyTotal;
   const receivedUsdTotal = movementTotals.receivedUsdTotal;
   const ordersSummary = buildOrdersSummaryFromClient(ordersValues || []);
+  const ordersAccruedTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
   const ordersReceivedUsd = ordersSummary.totalReceivedUsd || 0;
   const payoutUsdTotal =
     getCombinedPayoutUsdTotal(
@@ -1632,10 +1669,16 @@ function buildMovementSummaryRows(movementValues, ordersValues, payoutsValues, f
     calculateClosedFactTransferUsdTotal(payoutsValues || []) ||
     getSummaryValueByLabel(fallbackSummaryRows, SUMMARY_LABELS.payout);
   const openingBalance = getSummaryValueByLabel(fallbackSummaryRows, SUMMARY_LABELS.openingBalance);
-  const totalAccrued = seventyTotal + ordersReceivedUsd;
+  const factTotals = getCurrentFactMetricTotals();
+  const totalAccrued = seventyTotal + (ordersAccruedTotal * 0.7);
   const percent = accruedTotal - priceTotal;
   const balance = receivedUsdTotal - accruedTotal;
-  const totalBalance = payoutUsdTotal - totalAccrued;
+  const totalBalance = buildAnalyticsUpgradeTotals({
+    totalOrdersSeventyPct: totalAccrued,
+    totalPaid: payoutUsdTotal,
+    myServicesTotal: factTotals.myServices,
+    myCostsTotal: factTotals.myCosts
+  }).total;
   return [
     [SUMMARY_LABELS.price, formatSummaryNumber(priceTotal)],
     [SUMMARY_LABELS.accrued, formatSummaryNumber(accruedTotal)],
@@ -1906,6 +1949,30 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
         formatSheetNumber(totalAdditionalExpenses),
         formatSheetNumber(totalBalance),
         formatSheetNumber(totalAdditionalExpenses - totalBalance)
+      ],
+      [
+        "ОСТАТОК",
+        formatSheetNumber(totalOpeningBalance),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "ВСЕГО",
+        "",
+        formatSheetNumber(totalClosingBalance + totalOpeningBalance),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
       ]
     ]
   };
@@ -1937,6 +2004,14 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
     ],
     rows: [...movementSummaryRows, movementRealTotalRow]
   };
+  const periodUsdSummarySection = {
+    title: "ИТОГО ЗА ПЕРИОД USD",
+    header: ["показатель", "USD"],
+    rows: buildAnalyticsPeriodUsdSummaryRows(manualRowsWithUsd, usdRateLookup, {
+      totalOrdersSeventyPct: movementRealTotals.seventyTotal,
+      payoutsUsdTotal: payoutUsdTotal
+    })
+  };
   const rebuiltSections = [
     movementSummarySection,
     balanceSection,
@@ -1960,6 +2035,7 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
         ["Итого движение", formatPlanLocalSummary(planLocalByCurrency), formatSheetNumber(totalUsdReceived)]
       ]
     },
+    periodUsdSummarySection,
     { title: firstTitle, header: topHeader, rows: topRows }
   ];
   const values = [];
@@ -2677,19 +2753,88 @@ function buildTopMetricsSummary() {
   const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
   const ordersReceivedUsdTotal = parseLooseNumber(ordersSummary.totalReceivedUsd);
   const totalPaid = calculateCurrentOverallPayoutUsdTotal();
+  const factTotals = getCurrentFactMetricTotals();
 
   const totalOrders = movementAccruedTotal + manualOrdersTotal;
   const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
   const balance = totalOrders - totalReceivedUsd;
   const totalOrdersSeventyPct = movementSeventyTotal + (manualOrdersTotal * 0.7);
-  const total = totalReceivedUsd - totalOrdersSeventyPct + totalPaid;
+  const upgradeTotals = buildAnalyticsUpgradeTotals({
+    totalOrdersSeventyPct,
+    totalPaid,
+    myServicesTotal: factTotals.myServices,
+    myCostsTotal: factTotals.myCosts
+  });
 
   return {
     totalOrders,
     balance,
     totalPaid,
-    total
+    total: upgradeTotals.total,
+    myServices: factTotals.myServices,
+    myCosts: factTotals.myCosts,
+    profit: upgradeTotals.profit
   };
+}
+
+function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0, myServicesTotal = 0, myCostsTotal = 0 } = {}) {
+  const accrued = parseLooseNumber(totalOrdersSeventyPct);
+  const paid = parseLooseNumber(totalPaid);
+  const services = parseLooseNumber(myServicesTotal);
+  const costs = parseLooseNumber(myCostsTotal);
+  const rawTotal = accrued + paid + services;
+  return {
+    totalOrdersSeventyPct: accrued,
+    rawTotal,
+    total: -rawTotal,
+    profit: services + accrued - costs
+  };
+}
+
+function getCurrentFactMetricRows() {
+  if (state.manualFinance.data?.moneyRows?.length) return state.manualFinance.data.moneyRows;
+  if (state.analyticsFact?.moneyRows?.length) return state.analyticsFact.moneyRows;
+  return [];
+}
+
+function getCurrentFactMetricTransfers() {
+  if (state.manualFinance.data?.transferRows?.length) return state.manualFinance.data.transferRows;
+  if (state.analyticsFact?.transferRows?.length) return state.analyticsFact.transferRows;
+  return [];
+}
+
+function getCurrentFactMetricTotals() {
+  const moneyRows = getCurrentFactMetricRows();
+  if (!moneyRows.length) return { myServices: 0, myCosts: 0 };
+  const rateLookup = buildManualFinanceUsdRateLookup(
+    getCurrentFactMetricTransfers(),
+    state.data?.tabs?.movement?.values || [],
+    { endDate: elements.endDate?.value || state.analyticsFact?.periodEnd || "" }
+  );
+  return {
+    myServices: sumManualFinanceFieldUsdNumber(moneyRows, "serviceIncome", rateLookup),
+    myCosts: sumManualFinanceSpendUsdNumber(moneyRows, rateLookup)
+  };
+}
+
+function buildAnalyticsPeriodUsdSummaryRows(manualRows, rateLookup, totals = {}) {
+  const myServicesTotal = sumManualFinanceFieldUsdNumber(manualRows, "serviceIncome", rateLookup);
+  const myCostsTotal = sumManualFinanceSpendUsdNumber(manualRows, rateLookup);
+  const totalOrdersSeventyPct = parseLooseNumber(totals.totalOrdersSeventyPct);
+  const payoutsUsdTotal = parseLooseNumber(totals.payoutsUsdTotal);
+  const upgradeTotals = buildAnalyticsUpgradeTotals({
+    totalOrdersSeventyPct,
+    totalPaid: payoutsUsdTotal,
+    myServicesTotal,
+    myCostsTotal
+  });
+  return [
+    ["Мои услуги", formatSheetNumber(myServicesTotal)],
+    ["Начислено (70% от +3%)", formatSheetNumber(totalOrdersSeventyPct)],
+    ["Выплаты", formatSheetNumber(payoutsUsdTotal)],
+    ["Итого", formatSheetNumber(upgradeTotals.total)],
+    ["Всего расходов", formatSheetNumber(myCostsTotal)]
+  ];
 }
 
 function getMovementSummaryMetric(summaryRows, labelParts) {

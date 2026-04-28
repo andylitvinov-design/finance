@@ -231,12 +231,40 @@ function rebuildBalanceSection(section, closingUsdLookup) {
     [TOTAL_LABEL, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   );
 
+  const formattedTotalRow = totalRow.map((value, index) => (index === 0 ? value : formatNumber(value)));
+  const openingTotal = totalRow[1];
+  const closingTotal = totalRow[2];
+
   return {
     title: section.title,
     header: BALANCE_HEADER,
     rows: [
       ...rows,
-      totalRow.map((value, index) => (index === 0 ? value : formatNumber(value))),
+      formattedTotalRow,
+      [
+        "ОСТАТОК",
+        formatNumber(openingTotal),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ],
+      [
+        "ВСЕГО",
+        "",
+        formatNumber(openingTotal + closingTotal),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ],
     ],
   };
 }

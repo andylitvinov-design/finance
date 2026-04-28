@@ -150,7 +150,7 @@ function renderResponsiveDataView(values, options = {}) {
   if (mobileTableColumnCount > 0) {
     const mobileTable = document.createElement("div");
     mobileTable.className = "mobile-table";
-    mobileTable.appendChild(renderPlainTable(values));
+    mobileTable.appendChild(renderPlainTable(truncateTableValues(values, mobileTableColumnCount)));
     shell.appendChild(mobileTable);
     return shell;
   }
@@ -158,6 +158,12 @@ function renderResponsiveDataView(values, options = {}) {
   const mobileCards = renderMobileCards(values);
   if (mobileCards) shell.appendChild(mobileCards);
   return shell;
+}
+
+function truncateTableValues(values, columnCount) {
+  const count = Number(columnCount || 0);
+  if (!count) return clone2dArray(values || []);
+  return (values || []).map((row) => (row || []).slice(0, count));
 }
 
 function renderMobileCards(values) {
@@ -757,6 +763,11 @@ function renderAnalyticsSections(container, values) {
     block.appendChild(title);
     if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
       appendCollapsibleZeroAnalyticsTable(block, section.rows);
+    } else if (
+      normalizeCell(section.title) === normalizeCell("ИТОГО ЗА ПЕРИОД USD") ||
+      normalizeCell(section.title) === normalizeCell("БАЛАНС")
+    ) {
+      block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 2 }));
     } else {
       block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
     }
@@ -872,6 +883,15 @@ function renderMetrics() {
   elements.metricOrders.textContent = formatSheetNumber(metrics.balance, 4);
   elements.metricBalances.textContent = formatSheetNumber(metrics.totalPaid, 4);
   elements.metricTransfers.textContent = formatSheetNumber(metrics.total, 4);
+  if (elements.metricMyServices) {
+    elements.metricMyServices.textContent = "Мои услуги: " + formatSheetNumber(metrics.myServices, 4);
+  }
+  if (elements.metricMyCosts) {
+    elements.metricMyCosts.textContent = "Мои затраты: " + formatSheetNumber(metrics.myCosts, 4);
+  }
+  if (elements.metricProfit) {
+    elements.metricProfit.textContent = "Прибыль: " + formatSheetNumber(metrics.profit, 4);
+  }
 }
 
 function buildLoadedStatus() {

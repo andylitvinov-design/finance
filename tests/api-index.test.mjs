@@ -642,6 +642,16 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
 
     const totalBalanceRow = findBalanceRow("Итого");
     assert.notEqual(totalBalanceRow?.[2], "0,0000");
+    const ostatokRow = findBalanceRow("ОСТАТОК");
+    const vsegoRow = findBalanceRow("ВСЕГО");
+    assert.equal(ostatokRow?.[1], totalBalanceRow?.[1]);
+    assert.equal(ostatokRow?.[2], "");
+    assert.equal(vsegoRow?.[1], "");
+    assert.equal(
+      parseFloat(String(vsegoRow?.[2]).replace(",", ".")),
+      parseFloat(String(totalBalanceRow?.[1]).replace(",", ".")) +
+        parseFloat(String(totalBalanceRow?.[2]).replace(",", "."))
+    );
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {
