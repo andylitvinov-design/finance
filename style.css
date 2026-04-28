@@ -154,6 +154,54 @@ tr:nth-child(even) td { background: #fffcf7; }
 .mobile-card-value { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
 .desktop-table { display: block; }
 .mobile-table { display: none; }
+.expense-subtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.expense-subtab { background: #efe3d3; color: #503b2f; }
+.expense-subtab.active { background: var(--accent-2); color: #f5fbf8; }
+.expense-upload {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fffdf9;
+}
+.expense-feed { display: grid; gap: 16px; }
+.expense-day { display: grid; gap: 8px; }
+.expense-day-title { font-size: 15px; font-weight: 700; color: var(--accent-2); }
+.expense-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(96px, 0.8fr) minmax(120px, 0.9fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee3d5;
+}
+.expense-row:last-child { border-bottom: 0; }
+.expense-amount { text-align: right; font-weight: 700; }
+.expense-usd { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.expense-org { grid-column: 1 / -1; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.expense-select {
+  width: 100%;
+  padding: 9px 10px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+}
+.expense-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.expense-summary-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(247,239,230,0.88));
+}
+.expense-summary-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.expense-summary-value { margin-top: 8px; font-size: 22px; font-weight: 700; }
 .analytics-section + .analytics-section { margin-top: 18px; }
 .movement-summary {
   margin-top: 16px;
@@ -188,7 +236,8 @@ tr:nth-child(even) td { background: #fffcf7; }
   .config-note, .tab-note { font-size: 13px; }
   .movement-export-actions,
   .finance-actions,
-  .tab-actions { display: grid; grid-template-columns: 1fr; }
+  .tab-actions,
+  .expense-subtabs { display: grid; grid-template-columns: 1fr; }
   .tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -207,6 +256,9 @@ tr:nth-child(even) td { background: #fffcf7; }
   .mobile-table table { min-width: unset; width: 100%; }
   th, td { padding: 8px 9px; font-size: 12px; }
   .finance-input { min-width: 84px; padding: 8px 10px; font-size: 12px; }
+  .expense-row { grid-template-columns: minmax(0, 1fr) minmax(96px, auto); }
+  .expense-row .expense-select { grid-column: 1 / -1; }
+  .expense-summary-grid { grid-template-columns: 1fr; }
   .table-wrap { -webkit-overflow-scrolling: touch; }
   .table-wrap table tr > :first-child {
     position: sticky;

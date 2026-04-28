@@ -14,6 +14,12 @@ if [[ -d "reconcile-v2" && "$PWD" == */reconcile-v2 ]]; then
   exit 1
 fi
 
+if [[ -n "$(git ls-files 'reconcile-v2/*')" ]]; then
+  echo "release-guard: this branch reintroduces legacy reconcile-v2 files." >&2
+  echo "Port production changes into the repository root on top of origin/main." >&2
+  exit 1
+fi
+
 git fetch origin main --quiet
 
 if ! git merge-base --is-ancestor origin/main HEAD; then

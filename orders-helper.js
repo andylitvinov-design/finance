@@ -99,6 +99,22 @@
     return String(value || "").replace(/^\d+\)\s*/, "").trim();
   }
 
+  function splitNumberedItems(lines) {
+    const items = [];
+    let current = [];
+    (lines || []).forEach((line) => {
+      const raw = String(line || "").trim();
+      if (!raw) return;
+      if (/^\d+\)\s*/.test(raw) && current.length) {
+        items.push(current.join(" ").trim());
+        current = [];
+      }
+      current.push(stripLeadingNumbering(raw));
+    });
+    if (current.length) items.push(current.join(" ").trim());
+    return items.filter(Boolean);
+  }
+
   function buildRow(date, name, orderText, cost) {
     return [date || "", name || "", orderText || "", cost || ""];
   }
@@ -122,17 +138,19 @@
 
     const header = splitHeaderLine(lines[0], fallbackYearSource);
     if (header) {
-      const detailLines = lines.slice(1).map(stripLeadingNumbering).filter(Boolean);
-      if (!detailLines.length) return [buildRow(header.date, header.name, "", "")];
-
-      const parsed = extractTrailingCost(detailLines.join(" "));
-      return [buildRow(header.date, header.name, parsed.text, parsed.cost)];
+      const detailItems = splitNumberedItems(lines.slice(1));
+      if (!detailItems.length) return [buildRow(header.date, header.name, "", "")];
+      return detailItems.map((item) => {
+        const parsed = extractTrailingCost(item);
+        return buildRow(header.date, header.name, parsed.text, parsed.cost);
+      });
     }
 
-    const merged = lines.join(" ");
-    const nameSplit = splitNameAndDescription(merged);
-    const parsed = extractTrailingCost(nameSplit.description);
-    return [buildRow("", nameSplit.name, parsed.text, parsed.cost)];
+    return splitNumberedItems(lines).map((item) => {
+      const nameSplit = splitNameAndDescription(item);
+      const parsed = extractTrailingCost(nameSplit.description);
+      return buildRow("", nameSplit.name, parsed.text, parsed.cost);
+    });
   }
 
   function mapLegacyOrdersValues(values) {

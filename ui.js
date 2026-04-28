@@ -15,7 +15,9 @@ function renderTabs() {
 
     const panel = document.createElement("section");
     panel.className = "tab-panel" + (tab.id === state.activeTab ? " active" : "");
-    if (tab.id === "manualFinance") {
+    if (tab.id === "expenseAccounting") {
+      panel.appendChild(renderExpenseAccountingBlock());
+    } else if (tab.id === "manualFinance") {
       panel.appendChild(renderManualFinanceBlock());
     } else if (tab.id === "savings") {
       panel.appendChild(renderManualTransfersBlock());
@@ -203,6 +205,492 @@ function renderMobileCards(values) {
     container.appendChild(card);
   });
   return container;
+}
+
+function renderExpenseAccountingBlock() {
+  const shell = document.createElement("div");
+  shell.className = "finance-shell";
+
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  header.innerHTML = `<div><h2>Учет расходов</h2><div class="tab-note">Загрузка скриншотов с телефона, проверка ленты и запись агрегированных расходов в репозиторий.</div></div>`;
+  shell.appendChild(header);
+
+  const subtabs = document.createElement("div");
+  subtabs.className = "expense-subtabs";
+  [["list", "список затрат"], ["analysis", "анализ финансов"]].forEach(([id, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "expense-subtab" + (state.expenseAccounting.activeSubtab === id ? " active" : "");
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      state.expenseAccounting.activeSubtab = id;
+      renderTabs();
+    });
+    subtabs.appendChild(button);
+  });
+  shell.appendChild(subtabs);
+
+  const status = document.createElement("div");
+  status.className = `finance-status${state.expenseAccounting.error ? " error" : ""}`;
+  status.textContent = state.expenseAccounting.status || "Выберите скриншоты расходов для разбора.";
+  shell.appendChild(status);
+
+  if (state.expenseAccounting.activeSubtab === "analysis") {
+    shell.appendChild(renderExpenseFinancialAnalysis());
+    return shell;
+  }
+
+  const upload = document.createElement("div");
+  upload.className = "expense-upload";
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/webp";
+  input.multiple = true;
+  input.disabled = state.expenseAccounting.loading;
+  const parseButton = document.createElement("button");
+  parseButton.type = "button";
+  parseButton.className = "primary";
+  parseButton.textContent = state.expenseAccounting.loading ? "Разбираю..." : "Разобрать скриншоты";
+  parseButton.disabled = state.expenseAccounting.loading;
+  parseButton.addEventListener("click", async () => {
+    await parseExpenseScreenshotFiles(Array.from(input.files || []));
+  });
+  upload.append(input, parseButton);
+  shell.appendChild(upload);
+
+  const topSave = renderExpenseAccountingSaveButton();
+  if (topSave) shell.appendChild(topSave);
+  shell.appendChild(renderExpenseAccountingFeed());
+  const bottomSave = renderExpenseAccountingSaveButton();
+  if (bottomSave) shell.appendChild(bottomSave);
+  return shell;
+}
+
+function renderExpenseAccountingSaveButton() {
+  if (!state.expenseAccounting.entries.length) return null;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary";
+  button.textContent = "внести значения";
+  button.disabled = state.expenseAccounting.loading;
+  button.addEventListener("click", saveExpenseAccountingEntries);
+  return button;
+}
+
+function renderExpenseAccountingFeed() {
+  const feed = document.createElement("div");
+  feed.className = "expense-feed";
+  if (!state.expenseAccounting.entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "После разбора здесь появится лента расходов.";
+    feed.appendChild(empty);
+    return feed;
+  }
+  const grouped = new Map();
+  state.expenseAccounting.entries
+    .slice()
+    .sort((left, right) => String(right.date).localeCompare(String(left.date)))
+    .forEach((entry) => {
+      if (!grouped.has(entry.date)) grouped.set(entry.date, []);
+      grouped.get(entry.date).push(entry);
+    });
+  grouped.forEach((entries, date) => {
+    const day = document.createElement("section");
+    day.className = "expense-day";
+    const title = document.createElement("div");
+    title.className = "expense-day-title";
+    title.textContent = date;
+    day.appendChild(title);
+    entries.forEach((entry) => day.appendChild(renderExpenseAccountingRow(entry)));
+    feed.appendChild(day);
+  });
+  return feed;
+}
+
+function renderExpenseAccountingRow(entry) {
+  const row = document.createElement("article");
+  row.className = "expense-row";
+  const channel = document.createElement("div");
+  channel.textContent = entry.channel || "";
+  const amount = document.createElement("div");
+  amount.className = "expense-amount";
+  amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
+  const select = document.createElement("select");
+  select.className = "expense-select";
+  MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    option.selected = entry.category === category;
+    select.appendChild(option);
+  });
+  select.addEventListener("change", (event) => {
+    entry.category = event.target.value;
+  });
+  const org = document.createElement("div");
+  org.className = "expense-org";
+  org.textContent = entry.organization || "Организация не распознана";
+  row.append(channel, amount, select, org);
+  return row;
+}
+
+function renderExpenseFinancialAnalysis() {
+  const block = document.createElement("div");
+  block.className = "finance-shell";
+  const manualRows = getCurrentAnalyticsManualRows();
+  const usdRateLookup = buildManualFinanceUsdRateLookup(
+    state.manualFinance.data?.transferRows || state.manualTransfers.data?.transferRows || [],
+    state.data?.tabs?.movement?.values || []
+  );
+  const expenseUsd = Object.fromEntries(MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, 0]));
+  manualRows.forEach((row) => {
+    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return;
+    expenseUsd.business += getManualFinanceFieldUsdNumber(row, "business", usdRateLookup);
+    expenseUsd.flat += getManualFinanceFieldUsdNumber(row, "flat", usdRateLookup);
+    expenseUsd.food += getManualFinanceFieldUsdNumber(row, "food", usdRateLookup);
+    expenseUsd.fun += getManualFinanceFieldUsdNumber(row, "fun", usdRateLookup);
+    expenseUsd.travel += getManualFinanceFieldUsdNumber(row, "travel", usdRateLookup);
+    expenseUsd.study += getManualFinanceFieldUsdNumber(row, "study", usdRateLookup);
+  });
+  const incomeUsd = manualRows.reduce((sum, row) => {
+    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
+    return sum + getManualFinanceFieldUsdNumber(row, "serviceIncome", usdRateLookup);
+  }, 0);
+  const movementStats = calculateMovementChannelStats(state.data?.tabs?.movement?.values || []);
+  const movementIncomeUsd = Object.values(movementStats.usdByChannel || {}).reduce((sum, value) => sum + parseLooseNumber(value), 0);
+  const totalExpensesUsd = Object.values(expenseUsd).reduce((sum, value) => sum + value, 0);
+  const totalIncomeUsd = incomeUsd + movementIncomeUsd;
+  const cards = document.createElement("div");
+  cards.className = "expense-summary-grid";
+  [["прибыль", totalIncomeUsd - totalExpensesUsd], ["приход", totalIncomeUsd], ["расходы", totalExpensesUsd]]
+    .forEach(([label, value]) => cards.appendChild(renderExpenseSummaryCard(label, `${formatSheetNumber(value)} USD`)));
+  block.appendChild(cards);
+  const rows = [
+    ["тип расходов", "USD"],
+    ...MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, formatSheetNumber(expenseUsd[category])])
+  ];
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.appendChild(renderPlainTable(rows));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderExpenseSummaryCard(label, value) {
+  const card = document.createElement("div");
+  card.className = "expense-summary-card";
+  card.innerHTML = `<div class="expense-summary-label">${escapeHtml(label)}</div><div class="expense-summary-value">${escapeHtml(value)}</div>`;
+  return card;
+}
+
+async function parseExpenseScreenshotFiles(files) {
+  if (!files.length) {
+    setExpenseAccountingStatus("Выберите один или несколько скриншотов.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.loading = true;
+  setExpenseAccountingStatus("Подготавливаю скриншоты...", false);
+  renderTabs();
+  let images = [];
+  try {
+    images = await Promise.all(files.map((file) => prepareExpenseScreenshotImage(file)));
+    setExpenseAccountingStatus("Отправляю скриншоты на разбор...", false);
+    renderTabs();
+    const response = await fetch("./api/expense-screenshots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        periodStart: elements.startDate.value,
+        periodEnd: elements.endDate.value,
+        channels: getManualFinanceChannels(),
+        categories: MANUAL_EXPENSE_ACCOUNTING_CATEGORIES,
+        images
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `Разбор скриншотов не удался (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    const needsBrowserOcr = payload.source === "browser-ocr-required" || (!entries.length && (payload.warnings || []).some((warning) => /browser OCR/i.test(String(warning))));
+    if (needsBrowserOcr) {
+      const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
+      state.expenseAccounting.entries = fallback.entries;
+      state.expenseAccounting.warnings = [...(payload.warnings || []), ...fallback.warnings];
+    } else {
+      state.expenseAccounting.entries = entries;
+      state.expenseAccounting.warnings = payload.warnings || [];
+    }
+    setExpenseAccountingStatus(
+      state.expenseAccounting.entries.length
+        ? `Распознано строк: ${state.expenseAccounting.entries.length}. Проверьте категории перед внесением.`
+        : "Скриншоты разобраны, но расходов не найдено.",
+      false
+    );
+  } catch (error) {
+    try {
+      if (!images.length) images = await Promise.all(files.map((file) => prepareExpenseScreenshotImage(file)));
+      const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
+      state.expenseAccounting.entries = fallback.entries;
+      state.expenseAccounting.warnings = [String(error.message || error), ...fallback.warnings];
+      setExpenseAccountingStatus(
+        state.expenseAccounting.entries.length
+          ? `Серверный разбор недоступен, использован OCR в браузере. Найдено строк: ${state.expenseAccounting.entries.length}.`
+          : "OCR в браузере завершен, но строки расходов не найдены.",
+        !state.expenseAccounting.entries.length
+      );
+    } catch (fallbackError) {
+      setExpenseAccountingStatus(fallbackError.message || "Не удалось разобрать скриншоты.", true);
+    }
+  } finally {
+    state.expenseAccounting.loading = false;
+    renderTabs();
+  }
+}
+
+async function parseExpenseScreenshotsWithBrowserOcr(images) {
+  if (!window.Tesseract?.recognize) {
+    throw new Error("OCR в браузере недоступен: Tesseract.js не загрузился.");
+  }
+  const entries = [];
+  const warnings = [];
+  for (const [imageIndex, image] of images.entries()) {
+    setExpenseAccountingStatus(`OCR в браузере: скриншот ${imageIndex + 1} из ${images.length}...`, false);
+    renderTabs();
+    const result = await window.Tesseract.recognize(image.dataUrl, "eng+rus+ukr", { logger: () => {} });
+    const parsed = parseExpenseOcrText(result?.data?.text || "", imageIndex);
+    entries.push(...parsed.entries);
+    warnings.push(...parsed.warnings);
+  }
+  if (!entries.length) warnings.push("Browser OCR did not find expense-like rows.");
+  return { entries, warnings };
+}
+
+function parseExpenseOcrText(text, sourceImageIndex = 0) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const entries = [];
+  const warnings = [];
+  let currentDate = elements.endDate.value;
+  lines.forEach((line) => {
+    const date = extractExpenseOcrDate(line);
+    if (date) currentDate = date;
+    const amountInfo = extractExpenseOcrAmount(line);
+    if (!amountInfo || !currentDate) return;
+    entries.push(normalizeExpenseAccountingEntry({
+      date: currentDate,
+      channel: inferExpenseOcrChannel(line),
+      direction: inferExpenseOcrDirection(line),
+      localAmount: amountInfo.amount,
+      currency: amountInfo.currency,
+      usdAmount: null,
+      suggestedCategory: inferExpenseOcrCategory(line),
+      organization: cleanupExpenseOcrOrganization(line),
+      confidence: 0.45,
+      sourceImageIndex
+    }, entries.length));
+  });
+  if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no amount/date pairs were recognized.`);
+  return { entries, warnings };
+}
+
+function extractExpenseOcrDate(line) {
+  const raw = String(line || "");
+  const iso = raw.match(/\b(20\d{2})[-./](\d{1,2})[-./](\d{1,2})\b/);
+  if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, "0")}-${String(iso[3]).padStart(2, "0")}`;
+  const dotted = raw.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](20\d{2}))?\b/);
+  if (!dotted) return "";
+  const year = dotted[3] || String(elements.endDate.value || "").slice(0, 4);
+  return year ? `${year}-${String(dotted[2]).padStart(2, "0")}-${String(dotted[1]).padStart(2, "0")}` : "";
+}
+
+function extractExpenseOcrAmount(line) {
+  const amountMatch = String(line || "").replace(/\s+/g, " ").match(/([+-]?\s?\d[\d\s.,]*)(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/i);
+  if (!amountMatch) return null;
+  const amount = Math.abs(parseLooseNumber(amountMatch[1]));
+  if (!amount) return null;
+  return { amount, currency: normalizeExpenseOcrCurrency(amountMatch[2] || line) };
+}
+
+function normalizeExpenseOcrCurrency(value) {
+  const raw = String(value || "").toLowerCase();
+  if (/uah|грн/.test(raw)) return "UAH";
+  if (/rub|руб/.test(raw)) return "RUB";
+  if (/eur|евро/.test(raw)) return "EUR";
+  if (/cad|c\$|канада/.test(raw)) return "CAD";
+  if (/usd|дол|\$/.test(raw)) return "USD";
+  return inferManualFinanceChannelCurrency(getManualFinanceChannels()[0]);
+}
+
+function inferExpenseOcrDirection(line) {
+  const raw = String(line || "").toLowerCase();
+  return /[+]\s?\d|зачисл|поступ|income|received|приход/.test(raw) ? "income" : "expense";
+}
+
+function inferExpenseOcrChannel(line) {
+  const normalized = normalizeLookupText(line);
+  const direct = getManualFinanceChannels().find((channel) => normalized.includes(normalizeLookupText(channel)));
+  if (direct) return direct;
+  const currency = normalizeExpenseOcrCurrency(line);
+  return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) === currency) || getManualFinanceChannels()[0];
+}
+
+function inferExpenseOcrCategory(line) {
+  const normalized = normalizeLookupText(line);
+  if (/курс|обуч|учеб|school|course|study/.test(normalized)) return "study";
+  if (/еда|food|продукт|кафе|coffee|restaurant|маркет/.test(normalized)) return "food";
+  if (/кварт|аренд|rent|flat|house|дом/.test(normalized)) return "flat";
+  if (/такси|hotel|flight|travel|поезд|билет/.test(normalized)) return "travel";
+  if (/кино|бар|game|fun|развлеч/.test(normalized)) return "fun";
+  return "business";
+}
+
+function cleanupExpenseOcrOrganization(line) {
+  return String(line || "")
+    .replace(/\b(20\d{2}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[./-]\d{1,2}(?:[./-]20\d{2})?)\b/g, "")
+    .replace(/[+-]?\s?\d[\d\s.,]*(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/ig, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 140);
+}
+
+function prepareExpenseScreenshotImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\/(png|jpeg|webp)$/i.test(file.type || "")) {
+      reject(new Error(`Файл ${file.name || ""} должен быть PNG, JPEG или WEBP.`));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Не удалось прочитать ${file.name || "скриншот"}.`));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error(`Не удалось открыть ${file.name || "скриншот"}.`));
+      image.onload = () => {
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(image.width || maxSide, image.height || maxSide));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round((image.width || maxSide) * scale));
+        canvas.height = Math.max(1, Math.round((image.height || maxSide) * scale));
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve({ name: file.name || "screenshot", dataUrl: canvas.toDataURL("image/jpeg", 0.82) });
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function normalizeExpenseAccountingEntry(entry, index = 0) {
+  return {
+    id: `expense-${Date.now()}-${index}`,
+    date: normalizeIncomingSheetDateValue(entry.date) || elements.endDate.value,
+    channel: canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0],
+    direction: entry.direction === "income" ? "income" : "expense",
+    localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
+    currency: String(entry.currency || inferManualFinanceChannelCurrency(entry.channel)).trim().toUpperCase(),
+    usdAmount: parseLooseNumber(entry.usdAmount),
+    category: normalizeManualExpenseCategory(entry.suggestedCategory || entry.category) || "business",
+    organization: String(entry.organization || "").trim(),
+    confidence: Number(entry.confidence || 0),
+    sourceImageIndex: Number(entry.sourceImageIndex || 0)
+  };
+}
+
+async function saveExpenseAccountingEntries() {
+  const entries = state.expenseAccounting.entries.filter((entry) => entry.direction !== "income" && entry.date && entry.channel && entry.localAmount > 0);
+  if (!entries.length) {
+    setExpenseAccountingStatus("Нет расходных строк для внесения.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.loading = true;
+  renderTabs();
+  try {
+    if (!hasConfiguredManualFinanceEndpoint() && hasManualFinanceEndpointConfig()) {
+      await ensureGoogleAccess(true);
+    }
+    if (!hasConfiguredManualFinanceEndpoint()) {
+      throw new Error(getManualFinanceUnavailableMessage());
+    }
+    const response = await saveExpenseAccountingEntriesDirect(entries);
+    setExpenseAccountingStatus(`Расходы внесены: ${response.rowCount} агрегированных строк. ${response.savedAt || ""}`.trim(), false);
+    state.expenseAccounting.entries = [];
+    await loadDashboardData();
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось внести расходы.", true);
+  } finally {
+    state.expenseAccounting.loading = false;
+    renderTabs();
+  }
+}
+
+async function saveExpenseAccountingEntriesDirect(entries) {
+  const metadata = await getManualSpreadsheetMetadata();
+  const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
+  const existingExpenses = titles.has(getManualExpensesSheetName())
+    ? parseIncomingExpenseSheetValues(await getSheetValuesByTitle(getManualExpensesSheetName()))
+    : [];
+  const replacementRows = buildExpenseRowsFromAccountingEntries(entries);
+  const dates = replacementRows.map((row) => row.date).filter(Boolean).sort();
+  const mergedExpenses = replaceManualRowsForDateRange(existingExpenses, replacementRows, dates[0], dates[dates.length - 1], "date");
+  await ensureSheetExists(getManualExpensesSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(getManualExpensesSheetName(), buildIncomingExpenseSheetValues(mergedExpenses), getManualFinanceSpreadsheetId());
+  return { rowCount: replacementRows.length, savedAt: new Date().toLocaleString("ru-RU") };
+}
+
+function buildExpenseRowsFromAccountingEntries(entries) {
+  const lookup = new Map();
+  entries.forEach((entry) => {
+    const category = normalizeManualExpenseCategory(entry.category);
+    if (!MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.includes(category)) return;
+    const date = normalizeIncomingSheetDateValue(entry.date);
+    const channel = canonicalManualFinanceChannel(entry.channel || "");
+    if (!date || !channel) return;
+    const key = `${date}|${category}`;
+    if (!lookup.has(key)) lookup.set(key, createManualFinanceExpenseRow(date, category));
+    const row = lookup.get(key);
+    row.amounts[channel] = formatSheetNumber(parseLooseNumber(row.amounts[channel]) + parseLooseNumber(entry.localAmount));
+  });
+  return Array.from(lookup.values()).sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    return MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.indexOf(left.category) - MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.indexOf(right.category);
+  });
+}
+
+function getCurrentAnalyticsManualRows() {
+  if (state.manualFinance.data?.moneyRows?.length) {
+    return buildAnalyticsManualRowsFromFactMoneyRows(state.manualFinance.data.moneyRows, state.manualFinance.data.transferRows || []);
+  }
+  const analyticsValues = getAnalyticsMergedValues();
+  const sections = splitAnalyticsSections(extractAnalyticsTopTables(analyticsValues));
+  const rows = sections[0]?.rows || [];
+  const header = rows[0] || [];
+  const studyIndex = findHeaderIndexByAliases(header, ["spent for study", "study"]);
+  const travelIndex = findHeaderIndexByAliases(header, ["spent for travel", "travel"]);
+  const totalIndex = findHeaderIndexByAliases(header, ["затраты-мои", "total"]);
+  return rows.slice(1).filter((row) => hasAnyValue(row)).map((row) => ({
+    channel: row[0] || "",
+    now: row[1] || "",
+    serviceIncome: row[2] || "",
+    business: row[3] || "",
+    flat: row[4] || "",
+    food: row[5] || "",
+    fun: row[6] || "",
+    study: studyIndex === -1 ? "" : row[studyIndex] || "",
+    travel: travelIndex === -1 ? "" : row[travelIndex] || "",
+    total: totalIndex === -1 ? "" : row[totalIndex] || ""
+  }));
+}
+
+function setExpenseAccountingStatus(message, isError = false) {
+  state.expenseAccounting.status = message;
+  state.expenseAccounting.error = Boolean(isError);
 }
 
 function renderManualFinanceBlock() {
