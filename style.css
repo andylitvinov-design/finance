@@ -169,6 +169,11 @@ tr:nth-child(even) td { background: #fffcf7; }
   border-radius: 18px;
   background: #fffdf9;
 }
+.expense-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .expense-feed { display: grid; gap: 16px; }
 .expense-day { display: grid; gap: 8px; }
 .expense-day-title { font-size: 15px; font-weight: 700; color: var(--accent-2); }
@@ -202,6 +207,7 @@ tr:nth-child(even) td { background: #fffcf7; }
 }
 .expense-summary-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .expense-summary-value { margin-top: 8px; font-size: 22px; font-weight: 700; }
+.expense-currency-line + .expense-currency-line { margin-top: 4px; }
 .analytics-section + .analytics-section { margin-top: 18px; }
 .movement-summary {
   margin-top: 16px;
@@ -237,7 +243,8 @@ tr:nth-child(even) td { background: #fffcf7; }
   .movement-export-actions,
   .finance-actions,
   .tab-actions,
-  .expense-subtabs { display: grid; grid-template-columns: 1fr; }
+  .expense-subtabs,
+  .expense-actions { display: grid; grid-template-columns: 1fr; }
   .tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

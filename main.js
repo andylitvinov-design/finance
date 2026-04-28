@@ -202,6 +202,7 @@ function buildPreparedDashboardData(data, startDate, endDate) {
   }
   return {
     period: data?.period || { startDate: formatDisplayDate(startDate), endDate: formatDisplayDate(endDate) },
+    manual: data?.manual || null,
     tabs,
     fetchedAt: data?.fetchedAt || new Date().toLocaleString("ru-RU"),
     ordersSummary: data?.ordersSummary || undefined
@@ -245,6 +246,9 @@ async function applyClientSideDerivedData(startDate, endDate) {
       transferRows: buildAnalyticsTransfersFromFactRows(state.manualFinance.data.transferRows || []),
       selectedSheets: [state.manualFinance.data.sourceSheetName || MANUAL_INCOMING_TITLE]
     };
+  }
+  if (!aggregatedManual && state.data.manual) {
+    aggregatedManual = buildAggregatedManualDataFromServerPayload(state.data.manual, startDate, endDate);
   }
 
   const payoutsValues = state.data.tabs.payouts?.values || [];

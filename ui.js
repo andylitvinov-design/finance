@@ -256,7 +256,22 @@ function renderExpenseAccountingBlock() {
   parseButton.addEventListener("click", async () => {
     await parseExpenseScreenshotFiles(Array.from(input.files || []));
   });
-  upload.append(input, parseButton);
+  const actions = document.createElement("div");
+  actions.className = "expense-actions";
+  const paypalButton = document.createElement("button");
+  paypalButton.type = "button";
+  paypalButton.className = "secondary";
+  paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
+  paypalButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading;
+  paypalButton.addEventListener("click", loadPayPalExpenseStatement);
+  const wiseButton = document.createElement("button");
+  wiseButton.type = "button";
+  wiseButton.className = "secondary";
+  wiseButton.textContent = state.expenseAccounting.wiseLoading ? "Загружаю Wise..." : "Подтянуть Wise";
+  wiseButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading;
+  wiseButton.addEventListener("click", loadWiseExpenseStatement);
+  actions.append(parseButton, paypalButton, wiseButton);
+  upload.append(input, actions);
   shell.appendChild(upload);
 
   const topSave = renderExpenseAccountingSaveButton();
@@ -319,7 +334,7 @@ function renderExpenseAccountingRow(entry) {
   amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
   const select = document.createElement("select");
   select.className = "expense-select";
-  MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.forEach((category) => {
+  MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.forEach((category) => {
     const option = document.createElement("option");
     option.value = category;
     option.textContent = category;
@@ -339,6 +354,14 @@ function renderExpenseAccountingRow(entry) {
 function renderExpenseFinancialAnalysis() {
   const block = document.createElement("div");
   block.className = "finance-shell";
+  const paypalSummary = getActivePayPalSummary();
+  if (hasProviderSummaryData(paypalSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
+  }
+  const wiseSummary = getActiveWiseSummary();
+  if (hasProviderSummaryData(wiseSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
+  }
   const manualRows = getCurrentAnalyticsManualRows();
   const usdRateLookup = buildManualFinanceUsdRateLookup(
     state.manualFinance.data?.transferRows || state.manualTransfers.data?.transferRows || [],
@@ -376,6 +399,144 @@ function renderExpenseFinancialAnalysis() {
   wrap.appendChild(renderPlainTable(rows));
   block.appendChild(wrap);
   return block;
+}
+
+function renderProviderMonthlyStatement(titleText, summary) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = titleText;
+  block.appendChild(title);
+
+  const cards = document.createElement("div");
+  cards.className = "expense-summary-grid";
+  cards.appendChild(renderProviderSummaryCard("приход", summary.totalsByCurrency, "income"));
+  cards.appendChild(renderProviderSummaryCard("расход", summary.totalsByCurrency, "expense"));
+  cards.appendChild(renderProviderSummaryCard("итог", summary.totalsByCurrency, "net"));
+  block.appendChild(cards);
+
+  const rows = [["месяц", "валюта", "приход", "расход", "обмен", "итог"]];
+  (summary.months || []).forEach((monthRow) => {
+    Object.entries(monthRow.totalsByCurrency || {}).forEach(([currency, totals]) => {
+      rows.push([
+        monthRow.month,
+        currency,
+        formatProviderSummaryValue(totals.income, currency),
+        formatProviderSummaryValue(totals.expense, currency),
+        formatProviderSummaryValue(totals.exchange || 0, currency),
+        formatProviderSummaryValue(totals.net, currency)
+      ]);
+    });
+  });
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.appendChild(renderResponsiveDataView(rows, { mobileTableColumnCount: 2 }));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderProviderSummaryCard(label, totalsByCurrency, key) {
+  const card = document.createElement("div");
+  card.className = "expense-summary-card";
+  const labelNode = document.createElement("div");
+  labelNode.className = "expense-summary-label";
+  labelNode.textContent = label;
+  const valueNode = document.createElement("div");
+  valueNode.className = "expense-summary-value";
+  const entries = Object.entries(totalsByCurrency || {});
+  if (!entries.length) {
+    valueNode.textContent = "0,0000";
+  } else {
+    entries.forEach(([currency, totals]) => {
+      const line = document.createElement("div");
+      line.className = "expense-currency-line";
+      line.textContent = formatProviderSummaryValue(totals?.[key], currency);
+      valueNode.appendChild(line);
+    });
+  }
+  card.append(labelNode, valueNode);
+  return card;
+}
+
+function getActivePayPalSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.paypalSummary)) return state.expenseAccounting.paypalSummary;
+  const paypalEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "paypal");
+  return buildProviderExpenseSummary(paypalEntries);
+}
+
+function getActiveWiseSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.wiseSummary)) return state.expenseAccounting.wiseSummary;
+  const wiseEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "wise");
+  return buildProviderExpenseSummary(wiseEntries);
+}
+
+function hasProviderSummaryData(summary) {
+  return Boolean((summary?.months || []).some((monthRow) => Object.keys(monthRow.totalsByCurrency || {}).length));
+}
+
+function buildProviderExpenseSummary(entries) {
+  const monthLookup = new Map();
+  const totalLookup = new Map();
+  entries.forEach((entry) => {
+    const date = normalizeIncomingSheetDateValue(entry.date);
+    const currency = String(entry.currency || "").trim().toUpperCase();
+    const amount = Math.abs(parseLooseNumber(entry.localAmount));
+    if (!date || !currency || !amount) return;
+    const month = date.slice(0, 7);
+    if (!monthLookup.has(month)) monthLookup.set(month, new Map());
+    addProviderSummaryAmount(monthLookup.get(month), currency, entry.direction, amount);
+    addProviderSummaryAmount(totalLookup, currency, entry.direction, amount);
+  });
+  return {
+    months: Array.from(monthLookup.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([month, currencyLookup]) => ({
+        month,
+        totalsByCurrency: serializeProviderSummaryCurrencyTotals(currencyLookup)
+      })),
+    totalsByCurrency: serializeProviderSummaryCurrencyTotals(totalLookup)
+  };
+}
+
+function addProviderSummaryAmount(lookup, currency, direction, amount) {
+  if (!lookup.has(currency)) lookup.set(currency, { income: 0, expense: 0, exchange: 0, net: 0 });
+  const totals = lookup.get(currency);
+  if (direction === "income") {
+    totals.income += amount;
+    totals.net += amount;
+  } else if (direction === "expense") {
+    totals.expense += amount;
+    totals.net -= amount;
+  } else if (direction === "exchange") {
+    totals.exchange += amount;
+  }
+}
+
+function serializeProviderSummaryCurrencyTotals(lookup) {
+  return Object.fromEntries(
+    Array.from(lookup.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([currency, totals]) => [
+        currency,
+        {
+          income: roundProviderSummaryAmount(totals.income),
+          expense: roundProviderSummaryAmount(totals.expense),
+          ...(totals.exchange ? { exchange: roundProviderSummaryAmount(totals.exchange) } : {}),
+          net: roundProviderSummaryAmount(totals.net)
+        }
+      ])
+  );
+}
+
+function roundProviderSummaryAmount(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function formatProviderSummaryValue(value, currency) {
+  return `${formatSheetNumber(value)} ${currency}`;
 }
 
 function renderExpenseSummaryCard(label, value) {
@@ -419,9 +580,13 @@ async function parseExpenseScreenshotFiles(files) {
     if (needsBrowserOcr) {
       const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
       state.expenseAccounting.entries = fallback.entries;
+      state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.warnings = [...(payload.warnings || []), ...fallback.warnings];
     } else {
       state.expenseAccounting.entries = entries;
+      state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.warnings = payload.warnings || [];
     }
     setExpenseAccountingStatus(
@@ -435,6 +600,8 @@ async function parseExpenseScreenshotFiles(files) {
       if (!images.length) images = await Promise.all(files.map((file) => prepareExpenseScreenshotImage(file)));
       const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
       state.expenseAccounting.entries = fallback.entries;
+      state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.warnings = [String(error.message || error), ...fallback.warnings];
       setExpenseAccountingStatus(
         state.expenseAccounting.entries.length
@@ -467,6 +634,94 @@ async function parseExpenseScreenshotsWithBrowserOcr(images) {
   }
   if (!entries.length) warnings.push("Browser OCR did not find expense-like rows.");
   return { entries, warnings };
+}
+
+async function loadPayPalExpenseStatement() {
+  const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
+  if (!startDate || !endDate) {
+    setExpenseAccountingStatus("Выберите период для PayPal-выписки.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.paypalLoading = true;
+  setExpenseAccountingStatus("Запрашиваю PayPal-выписку за выбранный период...", false);
+  renderTabs();
+  try {
+    const response = await fetch("./api/paypal-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate, endDate })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `PayPal вернул ошибку (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "paypal"),
+      ...entries
+    ];
+    state.expenseAccounting.paypalSummary = hasProviderSummaryData(payload.summary)
+      ? payload.summary
+      : buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = payload.warnings || [];
+    setExpenseAccountingStatus(
+      entries.length
+        ? `PayPal-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.`
+        : "PayPal-выписка загружена, но расходных строк за период не найдено.",
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось загрузить PayPal-выписку.", true);
+  } finally {
+    state.expenseAccounting.paypalLoading = false;
+    renderTabs();
+  }
+}
+
+async function loadWiseExpenseStatement() {
+  const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
+  if (!startDate || !endDate) {
+    setExpenseAccountingStatus("Выберите период для Wise-выписки.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.wiseLoading = true;
+  setExpenseAccountingStatus("Запрашиваю Wise-выписку за выбранный период...", false);
+  renderTabs();
+  try {
+    const response = await fetch("./api/wise-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate, endDate })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `Wise вернул ошибку (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "wise"),
+      ...entries
+    ];
+    state.expenseAccounting.wiseSummary = hasProviderSummaryData(payload.summary)
+      ? payload.summary
+      : buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = payload.warnings || [];
+    setExpenseAccountingStatus(
+      entries.length
+        ? `Wise-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.`
+        : "Wise-выписка загружена, но строк за период не найдено.",
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось загрузить Wise-выписку.", true);
+  } finally {
+    state.expenseAccounting.wiseLoading = false;
+    renderTabs();
+  }
 }
 
 function parseExpenseOcrText(text, sourceImageIndex = 0) {
@@ -591,21 +846,23 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     id: `expense-${Date.now()}-${index}`,
     date: normalizeIncomingSheetDateValue(entry.date) || elements.endDate.value,
     channel: canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0],
-    direction: entry.direction === "income" ? "income" : "expense",
+    direction: entry.direction === "income" || entry.direction === "exchange" ? entry.direction : "expense",
     localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
     currency: String(entry.currency || inferManualFinanceChannelCurrency(entry.channel)).trim().toUpperCase(),
     usdAmount: parseLooseNumber(entry.usdAmount),
     category: normalizeManualExpenseCategory(entry.suggestedCategory || entry.category) || "business",
     organization: String(entry.organization || "").trim(),
     confidence: Number(entry.confidence || 0),
-    sourceImageIndex: Number(entry.sourceImageIndex || 0)
+    sourceImageIndex: Number(entry.sourceImageIndex || 0),
+    source: String(entry.source || "").trim(),
+    sourceTransactionId: String(entry.sourceTransactionId || "").trim()
   };
 }
 
 async function saveExpenseAccountingEntries() {
-  const entries = state.expenseAccounting.entries.filter((entry) => entry.direction !== "income" && entry.date && entry.channel && entry.localAmount > 0);
+  const entries = state.expenseAccounting.entries.filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
   if (!entries.length) {
-    setExpenseAccountingStatus("Нет расходных строк для внесения.", true);
+    setExpenseAccountingStatus("Нет строк для внесения.", true);
     renderTabs();
     return;
   }
@@ -619,8 +876,10 @@ async function saveExpenseAccountingEntries() {
       throw new Error(getManualFinanceUnavailableMessage());
     }
     const response = await saveExpenseAccountingEntriesDirect(entries);
-    setExpenseAccountingStatus(`Расходы внесены: ${response.rowCount} агрегированных строк. ${response.savedAt || ""}`.trim(), false);
+    setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк. ${response.savedAt || ""}`.trim(), false);
     state.expenseAccounting.entries = [];
+    state.expenseAccounting.paypalSummary = null;
+    state.expenseAccounting.wiseSummary = null;
     await loadDashboardData();
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось внести расходы.", true);
@@ -648,7 +907,7 @@ function buildExpenseRowsFromAccountingEntries(entries) {
   const lookup = new Map();
   entries.forEach((entry) => {
     const category = normalizeManualExpenseCategory(entry.category);
-    if (!MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.includes(category)) return;
+    if (!MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.includes(category)) return;
     const date = normalizeIncomingSheetDateValue(entry.date);
     const channel = canonicalManualFinanceChannel(entry.channel || "");
     if (!date || !channel) return;
@@ -659,7 +918,7 @@ function buildExpenseRowsFromAccountingEntries(entries) {
   });
   return Array.from(lookup.values()).sort((left, right) => {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
-    return MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.indexOf(left.category) - MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.indexOf(right.category);
+    return MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.indexOf(left.category) - MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.indexOf(right.category);
   });
 }
 
