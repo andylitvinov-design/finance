@@ -498,3 +498,156 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
     }
   }
 });
+
+test("GET getDashboardData restores balances and current Plan layout from legacy upstream analytics", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL =
+    "https://script.google.com/macros/s/example/exec";
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-04-01",
+                  endDate: "2026-04-28",
+                  timeZone: "Europe/Kyiv"
+                },
+                manual: {
+                  balances: [],
+                  transfers: [],
+                  notes: "",
+                  checkDate: "2026-04-28",
+                  status: "saved",
+                  compatibilityMode: "incoming-repository"
+                },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["NUMBER", "DATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"]
+                    ]
+                  },
+                  analytics: {
+                    sheetName: "аналитика",
+                    values: [
+                      ["Личные расходы", "", "", "", "", "", "", "", "", "display_name", "income_source_key", "expense_source_key", "past_usd_source_key", "currency_type"],
+                      ["валюта", "now", "spent for business", "spent for food", "spent for house", "spent for study", "spent for travel/ fun", "затраты-мои", "now_usd"],
+                      ["пейпал дол", "648,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
+                      ["приват 24-грн", "11480,00", "8740,00", "2665,00", "0,00", "0,00", "0,00", "0,00", "2665"],
+                      ["Бинанс spot", "1689,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
+                      ["binance save", "7425,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
+                      ["БАНК КАНАДА cad", "10078,00", "1000,00", "190,00", "238,00", "1000,00", "18,00", "300,00", "1746"],
+                      ["Итого", "30631,00", "9740,00", "2855,00", "238,00", "1000,00", "18,00", "300,00", "4411"],
+                      [],
+                      ["Plan"],
+                      ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "комиссии", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
+                      ["пейпал дол", "0", "369", "0", "", "369", "0", "0", "369"],
+                      ["приват 24-грн", "0", "0", "0", "", "0", "0", "0", "0"],
+                      ["Бинанс spot", "0", "108,15", "0", "", "108,15", "0", "0", "108,15"],
+                      ["binance save", "0", "0", "0", "", "0", "0", "0", "0"],
+                      ["БАНК КАНАДА cad", "0", "0", "0", "", "0", "0", "0", "0"],
+                      ["Итого", "0", "477,15", "0", "", "477,15", "0", "0", "477,15"],
+                      [],
+                      ["БАЛАНС"],
+                      ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+                      ["пейпал дол", "1849", "0", "-1849", "369", "-2218", "0", "-2218", "369"],
+                      ["приват 24-грн", "123,3789954", "0", "-123,3789954", "0", "-123,3789954", "2917,2", "-3040,578995", "0"],
+                      ["Бинанс spot", "904", "0", "-904", "108,15", "-1012,15", "0", "-1012,15", "108,15"],
+                      ["binance save", "7421", "0", "-7421", "0", "-7421", "0", "-7421", "0"],
+                      ["БАНК КАНАДА cad", "8891,1", "0", "-8891,1", "0", "-8891,1", "0", "-8891,1", "0"],
+                      ["Итого", "19188,4789954", "0", "-19188,4789954", "477,15", "-19665,6289954", "2917,2", "-22582,828995", "477,15"]
+                    ]
+                  },
+                  orders: {
+                    sheetName: "список моих заказы",
+                    values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return [
+              ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,",
+              ",,,,,,,,-,,,,-,-,,,курс,курс,курс,3%,3%,3%,3%,,,-,План,План,План,доп,Реал,Реал,Реал,Реал,-,дата,время,-,-,-,-,-,,,,,-,-,-,-,-",
+              ",,Дата ,Клиент,Название заказа,Коммент/ остаток,Прайс база,25% акция,кол-во,всего,пр+3%,,%а,%б,,,руб,евр,грн,к-р,к-гр,к-р,к-гр,к-евро,метод оплаты,валюта,дол,руб,грн, +,дол,евро,руб,грн,КАРТА грн,дата,время,хвост,готовность ,ОТЗЫВ?,отчет,Тип/карта,руб,грн,,,Примечание,ВК,№К,Отзыв был?,емейл"
+            ].join("\n");
+          }
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const request = {
+      method: "GET",
+      query: {
+        action: "getDashboardData",
+        startDate: "2026-04-01",
+        endDate: "2026-04-28"
+      }
+    };
+    const response = createResponseRecorder();
+
+    await handler(request, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+
+    const balances = response.body?.data?.manual?.balances || [];
+    assert.ok(balances.length > 0);
+    assert.equal(balances.find((row) => row.channel === "пейпал дол")?.amount, "648,00");
+
+    const analyticsRows = response.body?.data?.tabs?.analytics?.values || [];
+    const planIndex = analyticsRows.findIndex((row) => row?.[0] === "Plan");
+    const balanceIndex = analyticsRows.findIndex((row) => row?.[0] === "БАЛАНС");
+    assert.deepEqual(analyticsRows[planIndex + 1], [
+      "валюта",
+      "пришло в местной валюте",
+      "пришло в долларах",
+      "затраты-мои",
+      "затраты-мои-дол",
+      "ушло",
+      "обмен",
+      "обмен_usd",
+      "план-рост",
+      "plan-profit"
+    ]);
+    assert.equal(analyticsRows[planIndex + 1].includes("комиссии"), false);
+
+    const findBalanceRow = (channel) =>
+      analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);
+    assert.equal(findBalanceRow("пейпал дол")?.[2], "648,0000");
+    assert.notEqual(findBalanceRow("приват 24-грн")?.[2], "0,0000");
+    assert.equal(findBalanceRow("Бинанс spot")?.[2], "1689,0000");
+    assert.equal(findBalanceRow("binance save")?.[2], "7425,0000");
+    assert.equal(findBalanceRow("БАНК КАНАДА cad")?.[2], "7457,7200");
+
+    const totalBalanceRow = findBalanceRow("Итого");
+    assert.notEqual(totalBalanceRow?.[2], "0,0000");
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) {
+      delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    } else {
+      process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    }
+  }
+});

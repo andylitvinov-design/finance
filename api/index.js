@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { normalizeServerAnalyticsPayload } from "./analytics-normalizer.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
@@ -225,7 +226,9 @@ async function pipeResponse(response, upstreamResponse, action) {
     });
   }
 
-  const data = payload.ok ? await maybeOverlayFreshSourceData(payload.data) : payload.data;
+  const data = payload.ok
+    ? normalizeServerAnalyticsPayload(await maybeOverlayFreshSourceData(payload.data))
+    : payload.data;
 
   return response.status(payload.ok ? 200 : 502).json({
     ok: Boolean(payload.ok),
