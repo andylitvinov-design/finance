@@ -21,12 +21,12 @@ const MANUAL_FINANCE_FALLBACK_USD_RATES = {
 };
 const MANUAL_FINANCE_HEADERS = [
   "канал", "now", "service income", "spent for business", "spent for flat", "spent for food", "spent for fun",
-  "spent for travel", "затраты-мои", "обмен"
+  "spent for study", "spent for travel", "затраты-мои", "обмен"
 ];
 const MANUAL_TRANSFER_HEADERS = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
 const MANUAL_BALANCE_HEADERS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
 const MANUAL_COMMISSION_HEADERS = ["дата", "канал", "сумма в долларах", "комментарий"];
-const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "travel"];
+const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "study", "travel"];
 const MANUAL_NOW_CATEGORY = "now";
 const MANUAL_EXCHANGE_CATEGORY = "exchange";
 const MANUAL_INPUT_CATEGORIES = [...MANUAL_EXPENSE_TYPES, MANUAL_EXCHANGE_CATEGORY];

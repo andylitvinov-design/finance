@@ -78,7 +78,7 @@ function getManualFinanceChannels() {
 }
 
 function getManualStoredExpenseTypes() {
-  return ["now", "serviceIncome", "business", "flat", "food", "fun", "travel", "exchange"];
+  return ["now", "serviceIncome", "business", "flat", "food", "fun", "study", "travel", "exchange"];
 }
 
 function getManualFinanceComputedAmount(value) {
@@ -279,4 +279,10 @@ test("filterManualFlowExpenseRows keeps Расходы free of now rows for new 
   ];
 
   assert.deepEqual(context.filterManualFlowExpenseRows(rows).map((row) => row.category), ["food", "exchange"]);
+});
+
+test("normalizeManualExpenseCategory keeps study separate from fun", () => {
+  assert.equal(context.normalizeManualExpenseCategory("spent for study"), "study");
+  assert.equal(context.normalizeManualExpenseCategory("учеба"), "study");
+  assert.equal(context.normalizeManualExpenseCategory("spent for fun"), "fun");
 });

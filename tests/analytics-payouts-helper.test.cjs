@@ -36,8 +36,9 @@ test("mapAnalyticsTopRows uses now value in the now column", () => {
         flat: "20",
         food: "30",
         fun: "40",
+        study: "45",
         travel: "50",
-        total: "150",
+        total: "195",
         exchange: "12",
         exchangeUsd: "0.14",
         totalUsd: "1.5",
@@ -46,7 +47,7 @@ test("mapAnalyticsTopRows uses now value in the now column", () => {
     ]
   );
 
-  assert.deepEqual(rows[0], ["Яндекс руб", "900", "77", "10", "20", "30", "40", "50", "150", "12", "0.14", "1.5", "900"]);
+  assert.deepEqual(rows[0], ["Яндекс руб", "900", "77", "10", "20", "30", "40", "45", "50", "195", "12", "0.14", "1.5", "900"]);
 });
 
 test("calculatePayoutUsdTotalFromTable prefers summary row total", () => {
