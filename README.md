@@ -81,6 +81,7 @@ npm run release-guard
 - `/api/expense-screenshots`
 
 Required or optional deploy env vars are listed in [.env.example](/Users/andriilitvinov/projects/MYPROJECTS/finance/.env.example).
+Production env checklist and manual Google OAuth verification steps are documented in [docs/env.md](/Users/andriilitvinov/projects/MYPROJECTS/finance/docs/env.md).
 
 Current env inventory:
 
@@ -96,6 +97,12 @@ Current env inventory:
 - `WISE_API_BASE`
 - `OPENAI_API_KEY`
 - `OPENAI_EXPENSE_MODEL`
+
+Operational notes:
+
+- `EZOHATA_V2_APPS_SCRIPT_URL` remains the primary server-side upstream for dashboard data.
+- `/api/legacy` is retained only as a deprecated compatibility proxy. The current root frontend does not call `/api/legacy`; `fact` and `orders` use browser Google OAuth plus direct Sheets access.
+- `OPENAI_API_KEY` enables server-side OCR for `/api/expense-screenshots`, but expense screenshots still work without it because the UI falls back to browser OCR.
 
 PayPal live app setup:
 [PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live)
