@@ -38,11 +38,29 @@ export default async function handler(request, response) {
     });
     return response.status(200).json({ ok: true, ...result });
   } catch (error) {
+    if (shouldFallbackToBrowserOcr(error)) {
+      return response.status(200).json({
+        ok: true,
+        source: "browser-ocr-required",
+        entries: [],
+        warnings: [buildBrowserOcrFallbackWarning(error)]
+      });
+    }
     return response.status(400).json({
       ok: false,
       error: String(error && error.message ? error.message : error)
     });
   }
+}
+
+function shouldFallbackToBrowserOcr(error) {
+  const message = String(error && error.message ? error.message : error || "");
+  return /openai|quota|rate limit|billing|insufficient_quota|invalid api key|authentication/i.test(message);
+}
+
+function buildBrowserOcrFallbackWarning(error) {
+  const message = String(error && error.message ? error.message : error || "OpenAI OCR request failed.");
+  return `${message} Falling back to browser OCR.`;
 }
 
 export function validateImages(images) {
