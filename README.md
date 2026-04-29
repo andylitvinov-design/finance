@@ -7,8 +7,8 @@ Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-inc
 ## Canonical Repository
 
 - canonical repo: [andylitvinov-design/finance](https://github.com/andylitvinov-design/finance)
-- legacy read-only repo: [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger)
-- deploy source of truth: root of this repository
+- deprecated read-only repo: [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger)
+- deploy source of truth: root of this repository, Vercel project `finance`, branch `main`
 
 Не использовать `reconcile-v2/` как отдельный source root. Эта ветка миграции закрыта; production-коммиты, PR и деплои идут только из `finance`.
 
@@ -101,6 +101,7 @@ PayPal live app setup:
 ## Deploy Flow
 
 Production must be wired to GitHub integration from `andylitvinov-design/finance`.
+The canonical Vercel project is `finance`; `ezohata-incoming-ledger.vercel.app` is the production alias.
 
 Standard flow:
 
@@ -118,10 +119,10 @@ gh pr create --base main --head codex/my-change
 Rules:
 
 - do not push normal changes directly to `origin/main`
-- `old-origin` is read-only fallback only
-- if `origin/main` is not created yet during bootstrap, release guard temporarily falls back to `old-origin/main`
+- legacy repos and deploy projects are deprecated read-only references only
+- release guard requires `origin/main` from `andylitvinov-design/finance`
 
 ## Versioning
 
-- UI build version is stored in `APP_BUILD_VERSION` in `config.js`
-- `sheet-config.json` stores `appVersion` shown in the dashboard status
+- release version is stored in `package.json` and `sheet-config.json`
+- UI build marker is stored in `APP_BUILD_VERSION` in `config.js`

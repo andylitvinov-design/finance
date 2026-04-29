@@ -1,5 +1,5 @@
 {
-  "app": "ezohata-incoming-ledger",
+  "app": "finance",
   "repository": {
     "canonical": "https://github.com/andylitvinov-design/finance.git",
     "legacy": "https://github.com/andylitvinov-design/ezohata-incoming-ledger.git",
@@ -8,8 +8,8 @@
   },
   "deploy": {
     "provider": "vercel",
-    "projectName": "ezohata-incoming-ledger",
-    "projectId": "prj_jnM1b4M941qFXzz0F31oDTeYNO84",
+    "projectName": "finance",
+    "projectId": "prj_xH0BeTQZo694kf9EZ3hFioStTUQg",
     "teamId": "team_OSf690d0nxRHWVMXCElA8i95",
     "productionUrl": "https://ezohata-incoming-ledger.vercel.app/"
   },

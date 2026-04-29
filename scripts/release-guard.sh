@@ -29,12 +29,8 @@ fi
 base_ref="origin/main"
 if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
   git fetch origin main --quiet
-elif git remote get-url old-origin >/dev/null 2>&1; then
-  git fetch old-origin main --quiet
-  base_ref="old-origin/main"
-  echo "release-guard: origin/main not found yet, using old-origin/main bootstrap check." >&2
 else
-  echo "release-guard: neither origin/main nor old-origin/main is available." >&2
+  echo "release-guard: origin/main is required for production releases." >&2
   exit 1
 fi
 
