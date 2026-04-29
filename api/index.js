@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "./analytics-normalizer.js";
+import {
+  fetchPayPalStatementEntries,
+  fetchPayPalStatementEntriesFromMcp,
+} from "./paypal-transactions.js";
+import { fetchWiseStatementEntries } from "./wise-transactions.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
@@ -10,6 +15,28 @@ const SOURCE_SPREADSHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/export?format=csv&gid=${SOURCE_SPREADSHEET_GID}`;
 const SOURCE_SPREADSHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/edit#gid=${SOURCE_SPREADSHEET_GID}`;
+const REAL_INCOME_COLUMN_HEADER = "РЕАЛЬНЫЕ ПРИХОДЫ";
+const REAL_INCOME_CHANNELS = [
+  "пейпал дол",
+  "пейпал евр",
+  "пейпал сad",
+  "трансервайз дол",
+  "трансервайз евро",
+];
+const REAL_INCOME_CHANNEL_CURRENCY = {
+  "пейпал дол": "USD",
+  "пейпал евр": "EUR",
+  "пейпал сad": "CAD",
+  "трансервайз дол": "USD",
+  "трансервайз евро": "EUR",
+};
+const REAL_INCOME_FALLBACK_USD_RATES = {
+  RUB: 1 / 84.5563,
+  UAH: 1 / 43.86,
+  EUR: 1.16,
+  CAD: 0.74,
+  LOCAL: 1 / 18,
+};
 const FRESH_MOVEMENT_HEADER = [
   "NUMBER",
   "DATE",
@@ -30,6 +57,7 @@ const FRESH_MOVEMENT_HEADER = [
   "ПОЛУЧЕНО В РУБЛЯХ",
   "ПОЛУЧЕНО В ГРИВНАХ",
   "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)",
+  REAL_INCOME_COLUMN_HEADER,
   "BALANCE",
   "STATUS",
   "REVIEW NOTE",
@@ -70,7 +98,6 @@ const SOURCE_RECEIVED_AMOUNT_CORRECTIONS = {
     reason: "source missing 515 USD UAH equivalent"
   }
 };
-
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -247,14 +274,17 @@ async function maybeOverlayFreshSourceData(data) {
     const freshMovement = buildFreshMovementTableFromRows(sourceRows, data.period, movementSummaryRows);
     if (!freshMovement) return data;
     const freshPayouts = buildFreshPayoutsTableFromRows(sourceRows, data.period);
+    const realIncome = await buildRealIncomePayload(data.period, freshMovement.values);
+    const enrichedMovement = applyRealIncomeToMovementTable(freshMovement, realIncome);
     return {
       ...data,
       tabs: {
         ...data.tabs,
-        movement: freshMovement,
-        orders: buildFreshOrdersTable(freshMovement),
+        movement: enrichedMovement,
+        orders: buildFreshOrdersTable(enrichedMovement),
         ...(freshPayouts ? { payouts: freshPayouts } : {})
-      }
+      },
+      ...(realIncome ? { realIncome } : {})
     };
   } catch (error) {
     console.warn("Fresh source overlay failed, using upstream dashboard data.", error);
@@ -365,6 +395,408 @@ function buildFreshOrdersTable(movementTable) {
   };
 }
 
+async function buildRealIncomePayload(period, movementValues) {
+  const startDate = normalizeIsoDate(period?.startDate);
+  const endDate = normalizeIsoDate(period?.endDate);
+  if (!startDate || !endDate || !Array.isArray(movementValues) || movementValues.length < 4) {
+    return null;
+  }
+
+  const warnings = [];
+  const providerEntries = [];
+  const providerResults = await Promise.all([
+    loadPayPalProviderEntries(startDate, endDate),
+    loadWiseProviderEntries(startDate, endDate),
+  ]);
+  for (const result of providerResults) {
+    if (!result) continue;
+    providerEntries.push(...(result.entries || []));
+    warnings.push(...(result.warnings || []));
+  }
+  if (!providerEntries.length && !warnings.length) return null;
+
+  const movementRateLookup = buildMovementUsdRateLookup(movementValues, endDate);
+  const entries = providerEntries
+    .filter((entry) => entry?.direction === "income" && entry?.date && entry?.channel && Number(entry?.localAmount || 0) > 0)
+    .map((entry, index) => normalizeRealIncomeEntry(entry, movementRateLookup, index))
+    .filter((entry) => entry.realNetUsd > 0);
+
+  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(entries, movementValues);
+  warnings.push(...matchWarnings);
+  return {
+    entries,
+    rowMatches,
+    summaryByChannel: summarizeRealIncomeByChannel(entries, movementValues),
+    summaryTotals: summarizeRealIncomeTotals(entries, movementValues),
+    warnings: [...new Set(warnings.filter(Boolean))],
+  };
+}
+
+async function loadPayPalProviderEntries(startDate, endDate) {
+  const clientId = String(process.env.PAYPAL_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.PAYPAL_CLIENT_SECRET || "").trim();
+  const mcpClientId = String(process.env.PAYPAL_MCP_CLIENT_ID || "").trim();
+  const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
+  if (!((clientId && clientSecret) || (mcpClientId && mcpRefreshToken))) {
+    return null;
+  }
+
+  try {
+    if (clientId && clientSecret) {
+      const result = await fetchPayPalStatementEntries({
+        startDate,
+        endDate,
+        clientId,
+        clientSecret,
+        environment: process.env.PAYPAL_ENVIRONMENT || "live",
+        fetchImpl: fetch,
+      });
+      return { entries: result.entries || [], warnings: [] };
+    }
+    const result = await fetchPayPalStatementEntriesFromMcp({
+      startDate,
+      endDate,
+      clientId: mcpClientId,
+      refreshToken: mcpRefreshToken,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: [] };
+  } catch (error) {
+    return { entries: [], warnings: [`PayPal real income: ${String(error?.message || error)}`] };
+  }
+}
+
+async function loadWiseProviderEntries(startDate, endDate) {
+  const apiToken = String(process.env.WISE_API_TOKEN || "").trim();
+  if (!apiToken) return null;
+  try {
+    const result = await fetchWiseStatementEntries({
+      startDate,
+      endDate,
+      apiToken,
+      profileId: process.env.WISE_PROFILE_ID,
+      baseUrl: process.env.WISE_API_BASE,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: result.warnings || [] };
+  } catch (error) {
+    return { entries: [], warnings: [`Wise real income: ${String(error?.message || error)}`] };
+  }
+}
+
+function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
+  const currency = String(entry?.currency || inferChannelCurrency(entry?.channel)).trim().toUpperCase();
+  const feeCurrency = String(entry?.feeCurrency || currency).trim().toUpperCase();
+  const realGrossLocal = Math.abs(Number(entry?.localAmount || 0));
+  const realFeeLocal = Math.abs(Number(entry?.feeAmount || 0));
+  const realNetLocal = Math.max(0, realGrossLocal - realFeeLocal);
+  const realGrossUsd = convertLocalAmountToUsd(realGrossLocal, currency, movementRateLookup, entry?.channel);
+  const realFeeUsd = convertLocalAmountToUsd(realFeeLocal, feeCurrency, movementRateLookup, entry?.channel);
+  const realNetUsd = Math.max(0, roundNumber(realGrossUsd - realFeeUsd));
+  return {
+    id: String(entry?.id || `${entry?.source || "provider"}-${entry?.sourceTransactionId || index}`),
+    source: String(entry?.source || "").trim(),
+    sourceTransactionId: String(entry?.sourceTransactionId || "").trim(),
+    date: normalizeIsoDate(entry?.date),
+    channel: String(entry?.channel || "").trim(),
+    currency,
+    feeCurrency,
+    organization: String(entry?.organization || "").trim(),
+    realGrossLocal: roundNumber(realGrossLocal),
+    realFeeLocal: roundNumber(realFeeLocal),
+    realNetLocal: roundNumber(realNetLocal),
+    realGrossUsd,
+    realFeeUsd,
+    realNetUsd,
+  };
+}
+
+function summarizeRealIncomeByChannel(entries, movementValues) {
+  const movementStats = summarizeMovementChannels(movementValues);
+  return Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
+    const channelEntries = entries.filter((entry) => entry.channel === channel);
+    const grossUsd = sumBy(channelEntries, "realGrossUsd");
+    const feeUsd = sumBy(channelEntries, "realFeeUsd");
+    const netUsd = sumBy(channelEntries, "realNetUsd");
+    const plannedReceivedUsd = roundNumber(movementStats.plannedReceivedUsdByChannel[channel] || 0);
+    const differenceUsd = roundNumber(plannedReceivedUsd - netUsd);
+    return [channel, {
+      channel,
+      currency: inferChannelCurrency(channel),
+      plannedReceivedUsd,
+      realGrossUsd: grossUsd,
+      realFeeUsd: feeUsd,
+      realNetUsd: netUsd,
+      differenceUsd,
+      differencePct: calculateDifferencePct(differenceUsd, netUsd),
+    }];
+  }));
+}
+
+function summarizeRealIncomeTotals(entries, movementValues) {
+  const summaryByChannel = summarizeRealIncomeByChannel(entries, movementValues);
+  const totals = Object.values(summaryByChannel).reduce((acc, row) => ({
+    plannedReceivedUsd: acc.plannedReceivedUsd + row.plannedReceivedUsd,
+    realGrossUsd: acc.realGrossUsd + row.realGrossUsd,
+    realFeeUsd: acc.realFeeUsd + row.realFeeUsd,
+    realNetUsd: acc.realNetUsd + row.realNetUsd,
+    differenceUsd: acc.differenceUsd + row.differenceUsd,
+  }), { plannedReceivedUsd: 0, realGrossUsd: 0, realFeeUsd: 0, realNetUsd: 0, differenceUsd: 0 });
+  return {
+    plannedReceivedUsd: roundNumber(totals.plannedReceivedUsd),
+    realGrossUsd: roundNumber(totals.realGrossUsd),
+    realFeeUsd: roundNumber(totals.realFeeUsd),
+    realNetUsd: roundNumber(totals.realNetUsd),
+    differenceUsd: roundNumber(totals.differenceUsd),
+    differencePct: calculateDifferencePct(totals.differenceUsd, totals.realNetUsd),
+  };
+}
+
+function applyRealIncomeToMovementTable(movementTable, realIncome) {
+  if (!movementTable?.values?.length || !realIncome?.entries?.length) return movementTable;
+  const values = movementTable.values.map((row) => row.slice());
+  const header = values[2] || [];
+  const realIncomeIndex = header.findIndex((cell) => normalizeSummaryText(cell) === normalizeSummaryText(REAL_INCOME_COLUMN_HEADER));
+  const reviewNoteIndex = header.findIndex((cell) => normalizeSummaryText(cell) === normalizeSummaryText("REVIEW NOTE"));
+  if (realIncomeIndex === -1) return movementTable;
+  const matchedByRow = new Map((realIncome.rowMatches || []).map((match) => [match.rowNumber, match]));
+  for (let index = 3; index < values.length; index += 1) {
+    const row = values[index] || [];
+    const number = String(row[0] || "").trim();
+    if (!matchedByRow.has(number)) continue;
+    const match = matchedByRow.get(number);
+    row[realIncomeIndex] = formatDisplayNumber(match.realNetUsd);
+    row[reviewNoteIndex] = joinReviewParts([
+      row[reviewNoteIndex],
+      `real income matched: ${match.matchedProvider}`,
+      `real income diff ${formatDisplayNumber(match.differencePct)}%`,
+    ]);
+  }
+  values[values.length - 1] = buildFreshMovementTotalRow(values.slice(3, -1));
+  if (movementTable.summaryRows?.length) {
+    const nextSummaryRows = movementTable.summaryRows
+      .filter((row) => normalizeSummaryText(row?.[0]) !== normalizeSummaryText("реально получено net"));
+    nextSummaryRows.push(["реально получено net", formatTableNumber(realIncome.summaryTotals?.realNetUsd || 0)]);
+    movementTable = { ...movementTable, summaryRows: nextSummaryRows };
+  }
+  return { ...movementTable, values };
+}
+
+function matchRealIncomeEntriesToMovement(entries, movementValues) {
+  const warnings = [];
+  const rowMatches = [];
+  const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  const matchedByRow = new Map();
+  for (const entry of entries) {
+    const candidates = rows
+      .map((row) => buildRealIncomeMatchCandidate(entry, row))
+      .filter(Boolean)
+      .sort((left, right) => compareMatchScore(left.score, right.score));
+    if (!candidates.length) {
+      warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: no movement row match`);
+      continue;
+    }
+    if (candidates.length > 1 && compareMatchScore(candidates[0].score, candidates[1].score) === 0) {
+      warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: ambiguous movement match`);
+      continue;
+    }
+    const best = candidates[0];
+    const existing = matchedByRow.get(best.rowNumber);
+    if (existing && compareMatchScore(best.score, existing.score) >= 0) continue;
+    if (existing) {
+      const existingIndex = rowMatches.findIndex((row) => row.rowNumber === best.rowNumber);
+      if (existingIndex !== -1) rowMatches.splice(existingIndex, 1);
+    }
+    matchedByRow.set(best.rowNumber, best);
+    rowMatches.push({
+      rowNumber: best.rowNumber,
+      matchedProvider: entry.source,
+      matchedTransactionId: entry.sourceTransactionId,
+      channel: entry.channel,
+      movementDate: best.movementDate,
+      movementReceivedUsd: best.plannedReceivedUsd,
+      realGrossUsd: entry.realGrossUsd,
+      realFeeUsd: entry.realFeeUsd,
+      realNetUsd: entry.realNetUsd,
+      differenceUsd: roundNumber(best.plannedReceivedUsd - entry.realNetUsd),
+      differencePct: calculateDifferencePct(best.plannedReceivedUsd - entry.realNetUsd, entry.realNetUsd),
+      score: best.score,
+    });
+  }
+  rowMatches.sort((left, right) => left.rowNumber.localeCompare(right.rowNumber, "en", { numeric: true }));
+  return { rowMatches, warnings };
+}
+
+function buildRealIncomeMatchCandidate(entry, row) {
+  const rowNumber = String(row?.[0] || "").trim();
+  const movementDate = normalizeDisplayDate(row?.[1]);
+  const movementChannel = resolveMovementRowChannel(row);
+  if (!rowNumber || !movementDate || movementChannel !== entry.channel) return null;
+  const dayDistance = Math.abs(dayDiff(entry.date, movementDate));
+  if (dayDistance > 3) return null;
+  const plannedReceivedUsd = parseLooseNumber(row?.[18]);
+  const grossDiff = Math.abs(plannedReceivedUsd - entry.realGrossUsd);
+  const netDiff = Math.abs(plannedReceivedUsd - entry.realNetUsd);
+  return {
+    rowNumber,
+    movementDate,
+    plannedReceivedUsd: roundNumber(plannedReceivedUsd),
+    score: {
+      dayDistance,
+      netDiff: roundNumber(netDiff),
+      grossDiff: roundNumber(grossDiff),
+    }
+  };
+}
+
+function compareMatchScore(left, right) {
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  if (left.dayDistance !== right.dayDistance) return left.dayDistance - right.dayDistance;
+  if (left.netDiff !== right.netDiff) return left.netDiff - right.netDiff;
+  if (left.grossDiff !== right.grossDiff) return left.grossDiff - right.grossDiff;
+  return 0;
+}
+
+function summarizeMovementChannels(values) {
+  const plannedReceivedUsdByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
+  const rows = (values || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  for (const row of rows) {
+    const channel = resolveMovementRowChannel(row);
+    if (!channel || !Object.prototype.hasOwnProperty.call(plannedReceivedUsdByChannel, channel)) continue;
+    plannedReceivedUsdByChannel[channel] += parseLooseNumber(row?.[18]);
+  }
+  return {
+    plannedReceivedUsdByChannel: Object.fromEntries(
+      Object.entries(plannedReceivedUsdByChannel).map(([channel, value]) => [channel, roundNumber(value)])
+    )
+  };
+}
+
+function resolveMovementRowChannel(row) {
+  const paymentMethod = String(row?.[14] || "").trim();
+  const client = String(row?.[2] || "").trim();
+  const inferredPaymentMethod = !paymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
+  const cardFallbackChannel = paymentMethod && isAmbiguousPersonalCardPayment(paymentMethod)
+    ? inferFallbackPaymentChannelFromClient(client)
+    : "";
+  return cardFallbackChannel || resolvePaymentChannel(paymentMethod) || resolvePaymentChannel(inferredPaymentMethod);
+}
+
+function resolvePaymentChannel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = normalizeLookupText(raw);
+  if (normalized === normalizeLookupText("binance save")) return "Бинанс spot";
+  const exact = REAL_INCOME_CHANNELS.find((channel) => normalizeLookupText(channel) === normalized);
+  if (exact) return exact;
+  if (/сайт.*пейпэл.*дол|сайт.*дол.*пейпэл|paypal.*usd|пейпал.*дол/.test(normalized)) return "пейпал дол";
+  if (/paypal.*eur|пейпал.*евр|пейпал.*euro/.test(normalized)) return "пейпал евр";
+  if (/paypal.*cad|пейпал.*cad|пейпал.*канада/.test(normalized)) return "пейпал сad";
+  if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
+  if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
+  return "";
+}
+
+function inferFallbackPaymentChannelFromClient(client) {
+  const text = `${normalizeLookupText(client)} ${getClientPaymentLookupKeys(client).join(" ")}`;
+  if (/(william|вильям|вилл)/i.test(text)) return "трансервайз дол";
+  if (/игнат/i.test(text)) return "пейпал дол";
+  return "";
+}
+
+function getClientPaymentLookupKeys(client) {
+  const normalized = normalizeLookupText(client);
+  if (!normalized) return [];
+  const relationWords = new Set(["сын", "дочь", "мать", "отец", "мама", "папа", "жена", "муж"]);
+  const tokens = normalized.split(" ").filter((token) => token && !relationWords.has(token));
+  const keys = [normalized];
+  const familyToken = normalizeClientFamilyToken(tokens.at(-1) || "");
+  if (familyToken) keys.push(`family:${familyToken}`);
+  return [...new Set(keys)];
+}
+
+function normalizeClientFamilyToken(value) {
+  const token = normalizeLookupText(value);
+  if (!token || token.length < 4) return "";
+  return token
+    .replace(/(ого|его|ой|ая|яя|ый|ий|ые|ие|ых|их|а|я|ы|и)$/i, "")
+    .replace(/(ов|ев|ин|ын)$/i, (ending) => (/^(ин|ын)$/i.test(ending) ? ending : ""));
+}
+
+function isAmbiguousPersonalCardPayment(value) {
+  return /андрей.*карта|карта.*андрей/.test(normalizeLookupText(value));
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferChannelCurrency(channel) {
+  return REAL_INCOME_CHANNEL_CURRENCY[String(channel || "").trim()] || "USD";
+}
+
+function buildMovementUsdRateLookup(movementValues = [], endDate = "") {
+  if (!Array.isArray(movementValues) || !movementValues.length) return {};
+  const cutoff = endDate ? new Date(`${endDate}T00:00:00Z`) : null;
+  const latest = {};
+  for (const row of movementValues.slice(3)) {
+    if (!hasAnyValue(row) || !/^\d+$/.test(String(row?.[0] || "").trim())) continue;
+    const parsedDate = parseDisplayDate(row?.[1]);
+    if (cutoff && parsedDate && parsedDate > cutoff) continue;
+    const timestamp = parsedDate ? parsedDate.getTime() : 0;
+    addMovementRate(latest, "RUB", row?.[12], timestamp);
+    addMovementRate(latest, "UAH", row?.[13], timestamp);
+  }
+  return {
+    ...REAL_INCOME_FALLBACK_USD_RATES,
+    ...Object.fromEntries(Object.entries(latest).map(([currency, row]) => [currency, row.usdPerLocal])),
+  };
+}
+
+function addMovementRate(lookup, currency, value, timestamp) {
+  const localPerUsd = parseLooseNumber(value);
+  if (!localPerUsd) return;
+  if (lookup[currency] && lookup[currency].timestamp > timestamp) return;
+  lookup[currency] = { timestamp, usdPerLocal: 1 / localPerUsd };
+}
+
+function convertLocalAmountToUsd(amount, currency, rateLookup, channel = "") {
+  const numeric = Math.abs(Number(amount || 0));
+  if (!numeric) return 0;
+  const normalizedCurrency = String(currency || inferChannelCurrency(channel)).trim().toUpperCase();
+  if (normalizedCurrency === "USD") return roundNumber(numeric);
+  const usdPerLocal = Number(rateLookup?.[normalizedCurrency] || 0);
+  return usdPerLocal > 0 ? roundNumber(numeric * usdPerLocal) : 0;
+}
+
+function calculateDifferencePct(differenceUsd, realNetUsd) {
+  const net = Number(realNetUsd || 0);
+  if (!net) return 0;
+  return roundNumber((Number(differenceUsd || 0) / net) * 100);
+}
+
+function sumBy(rows, key) {
+  return roundNumber((rows || []).reduce((sum, row) => sum + Number(row?.[key] || 0), 0));
+}
+
+function roundNumber(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function dayDiff(leftDate, rightDate) {
+  const left = new Date(`${leftDate}T00:00:00Z`);
+  const right = new Date(`${rightDate}T00:00:00Z`);
+  return Math.round((left - right) / 86400000);
+}
+
 function buildMovementRowsFromSource(rows, period) {
   const output = [];
   const seenNumbers = new Set();
@@ -408,6 +840,7 @@ function buildFreshMovementTotalRow(rows) {
     "ПОЛУЧЕНО В РУБЛЯХ",
     "ПОЛУЧЕНО В ГРИВНАХ",
     "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)",
+    REAL_INCOME_COLUMN_HEADER,
     "BALANCE",
     "AMOUNT (USD)",
   ]);
@@ -476,6 +909,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     receivedRub,
     receivedUah,
     totalUsd,
+    "",
     balance,
     statusInfo.status,
     joinReviewParts([statusInfo.reviewNote, correctedContext.correctionNote]),
@@ -897,6 +1331,11 @@ function normalizeDisplayDate(value) {
   return normalizeIsoDate(raw);
 }
 
+function parseDisplayDate(value) {
+  const normalized = normalizeDisplayDate(value);
+  return normalized ? new Date(`${normalized}T00:00:00Z`) : null;
+}
+
 function formatDisplayDate(isoDate) {
   const normalized = normalizeIsoDate(isoDate);
   if (!normalized) return "";
@@ -963,6 +1402,10 @@ function firstNonEmpty(values) {
     if (String(value || "").trim()) return value;
   }
   return "";
+}
+
+function hasAnyValue(row) {
+  return Array.isArray(row) && row.some((cell) => String(cell || "").trim());
 }
 
 function joinReviewParts(parts) {

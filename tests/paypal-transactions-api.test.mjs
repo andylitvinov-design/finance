@@ -76,6 +76,24 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[2].direction, "income");
   assert.equal(entries[2].suggestedCategory, "serviceIncome");
   assert.equal(entries[2].channel, "пейпал евр");
+  assert.equal(entries[2].feeAmount, null);
+});
+
+test("normalizePayPalTransactionDetails keeps fee metadata on income entries", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "TXN-INCOME",
+        transaction_initiation_date: "2026-04-22T12:00:00Z",
+        transaction_amount: { value: "324.00", currency_code: "USD" },
+        fee_amount: { value: "-12.94", currency_code: "USD" }
+      }
+    }
+  ]);
+
+  const income = entries.find((entry) => entry.direction === "income");
+  assert.equal(income?.feeAmount, 12.94);
+  assert.equal(income?.feeCurrency, "USD");
 });
 
 test("normalizePayPalTransactionDetails classifies currency conversion legs as exchange", () => {
