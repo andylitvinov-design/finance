@@ -1,6 +1,6 @@
 // config.js — все настройки проекта в одном месте
 
-const APP_BUILD_VERSION = "2026.04.28.6";
+const APP_BUILD_VERSION = "2026.04.29.1";
 const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
 const URL_PARAMS = new URLSearchParams(location.search);
 const MANUAL_INCOMING_TITLE = "fact";

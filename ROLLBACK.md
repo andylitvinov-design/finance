@@ -15,5 +15,5 @@
 
 ## Legacy fallback
 
-- Old GitHub repo remains available as `old-origin` for history lookup only.
+- Deprecated GitHub repo remains available for history lookup only.
 - Do not restore deploy integration back to the old repo unless the finance repo is unavailable.
