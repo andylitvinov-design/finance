@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 
 import handler from "../api/index.js";
 
@@ -501,13 +502,69 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
 
 test("GET getDashboardData restores balances and current Plan layout from legacy upstream analytics", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   const previousFetch = global.fetch;
   process.env.EZOHATA_V2_APPS_SCRIPT_URL =
     "https://script.google.com/macros/s/example/exec";
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-overlay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
 
   try {
     global.fetch = async (url) => {
       const value = String(url);
+      if (value.includes("oauth2.googleapis.com/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "test-access-token" };
+          }
+        };
+      }
+
+      if (value.includes("sheets.googleapis.com") && value.includes("values:batchGet")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              valueRanges: [
+                {
+                  range: "'Расходы'!A1:V",
+                  values: [
+                    ["дата", "категория", "пейпал дол", "приват 24-грн"],
+                    ["2026-04-10", "exchange", "10", ""],
+                    ["2026-04-12", "обмен", "", "4300"],
+                    ["2026-05-01", "exchange", "999", "999"]
+                  ]
+                },
+                {
+                  range: "'Остатки'!A1:G",
+                  values: [
+                    ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                    ["2026-04-28", "пейпал дол", "648,00", "USD", "", "648", ""],
+                    ["2026-04-28", "приват 24-грн", "11480,00", "UAH", "43", "266,9767", ""]
+                  ]
+                },
+                {
+                  range: "'Переводы'!A1:G",
+                  values: [
+                    ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+                    ["2026-04-12", "test", "4300", "UAH", "приват 24-грн", "43", "100"]
+                  ]
+                },
+                {
+                  range: "'Комиссии'!A1:D",
+                  values: [["дата", "канал", "сумма в долларах", "комментарий"]]
+                }
+              ]
+            };
+          }
+        };
+      }
+
       if (value.includes("script.google.com")) {
         return {
           ok: true,
@@ -631,6 +688,16 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
       "plan-profit"
     ]);
     assert.equal(analyticsRows[planIndex + 1].includes("комиссии"), false);
+    const paypalPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "пейпал дол");
+    const privatPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "приват 24-грн");
+    assert.equal(paypalPlanRow?.[6], "10,0000");
+    assert.equal(paypalPlanRow?.[7], "10,0000");
+    assert.equal(paypalPlanRow?.[8], "379,0000");
+    assert.equal(paypalPlanRow?.[9], "379,0000");
+    assert.equal(privatPlanRow?.[6], "4300,0000");
+    assert.equal(privatPlanRow?.[7], "100,0000");
+    assert.equal(privatPlanRow?.[8], "100,0000");
+    assert.equal(privatPlanRow?.[9], "100,0000");
 
     const findBalanceRow = (channel) =>
       analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);
@@ -658,6 +725,101 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
       delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
     } else {
       process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    }
+    if (previousServiceEmail === undefined) {
+      delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    } else {
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousServiceEmail;
+    }
+    if (previousPrivateKey === undefined) {
+      delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    } else {
+      process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousPrivateKey;
+    }
+  }
+});
+
+test("GET getDashboardData warns but keeps analytics when manual service account is missing", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  const previousFetch = global.fetch;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL =
+    "https://script.google.com/macros/s/example/exec";
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-04-01", endDate: "2026-04-28" },
+                manual: { balances: [] },
+                tabs: {
+                  movement: { sheetName: "движение средства", values: [["NUMBER", "DATE"]] },
+                  analytics: {
+                    sheetName: "аналитика",
+                    values: [
+                      ["Личные расходы"],
+                      ["валюта", "now", "затраты-мои", "now_usd"],
+                      ["пейпал дол", "648,00", "0,00", "648"],
+                      [],
+                      ["Plan"],
+                      ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "комиссии", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
+                      ["пейпал дол", "0", "369", "0", "", "369", "0", "0", "369"],
+                      ["Итого", "0", "369", "0", "", "369", "0", "0", "369"],
+                      [],
+                      ["БАЛАНС"],
+                      ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+                      ["пейпал дол", "1849", "0", "-1849", "369", "-2218", "0", "-2218", "369"]
+                    ]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return { ok: true, status: 200, async text() { return ""; } };
+      }
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({
+      method: "GET",
+      query: { action: "getDashboardData", startDate: "2026-04-01", endDate: "2026-04-28" }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.ok(response.body?.data?.tabs?.analytics?.values?.length > 0);
+    assert.match(response.body?.data?.manual?.warnings?.[0] || "", /service account credentials are not configured/);
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) {
+      delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    } else {
+      process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    }
+    if (previousServiceEmail === undefined) {
+      delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    } else {
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousServiceEmail;
+    }
+    if (previousPrivateKey === undefined) {
+      delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    } else {
+      process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousPrivateKey;
     }
   }
 });
