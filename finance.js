@@ -2700,17 +2700,19 @@ function extractLegacyBalanceExtraLookup(sections) {
 
 function calculateMovementChannelStats(values) {
   if (!values.length) {
-    return { localByChannel: {}, usdByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
+    return { localByChannel: {}, usdByChannel: {}, accruedPlusByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
   }
   const header = values[0] || [];
   const paymentMethodIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD"]);
   const clientIndex = findHeaderIndexByAliases(header, ["CLIENT", "КЛИЕНТ"]);
+  const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
   const receivedRubIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В РУБЛЯХ"]);
   const receivedUahIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ГРИВНАХ"]);
   const receivedUsdIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
   const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
   const localByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const usdByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+  const accruedPlusByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const balanceByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const localByCurrency = {};
   const dataRows = values.slice(1);
@@ -2754,11 +2756,14 @@ function calculateMovementChannelStats(values) {
     if (receivedUsdIndex !== -1 && receivedUsdIndex < row.length) {
       usdByChannel[channel] += parseLooseNumber(row[receivedUsdIndex]);
     }
+    if (accruedPlusIndex !== -1 && accruedPlusIndex < row.length) {
+      accruedPlusByChannel[channel] += parseLooseNumber(row[accruedPlusIndex]);
+    }
     if (balanceIndex !== -1 && balanceIndex < row.length) {
       balanceByChannel[channel] += parseLooseNumber(row[balanceIndex]);
     }
   });
-  return { localByChannel, usdByChannel, balanceByChannel, localByCurrency };
+  return { localByChannel, usdByChannel, accruedPlusByChannel, balanceByChannel, localByCurrency };
 }
 
 

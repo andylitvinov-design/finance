@@ -151,6 +151,67 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   ]);
 });
 
+test("calculateMovementChannelStats returns accrued plus totals by channel for expense analysis plan orders", () => {
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "пейпал евр", "пейпал сad"],
+    findHeaderIndexByAliases(header, aliases) {
+      const normalizedAliases = aliases.map((value) => String(value).trim().toLowerCase());
+      return header.findIndex((cell) => normalizedAliases.includes(String(cell || "").trim().toLowerCase()));
+    },
+    hasAnyValue(row) {
+      return (row || []).some((cell) => String(cell || "").trim());
+    },
+    isTableTotalRow(row) {
+      return String(row?.[0] || "").trim().toLowerCase() === "итого";
+    },
+    getClientPaymentLookupKeys(client) {
+      return [String(client || "").trim().toLowerCase()];
+    },
+    inferFallbackPaymentChannelFromClient() {
+      return "";
+    },
+    isAmbiguousPersonalCardPayment() {
+      return false;
+    },
+    resolvePaymentChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "paypal usd") return "пейпал дол";
+      if (normalized === "paypal eur") return "пейпал евр";
+      return "";
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (channel === "пейпал евр") return "EUR";
+      return "USD";
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "calculateMovementChannelStats")}\n` +
+    "this.calculateMovementChannelStats = calculateMovementChannelStats;",
+    context
+  );
+
+  const stats = plain(context.calculateMovementChannelStats([
+    ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+    ["1", "Client A", "paypal usd", "103", "100", "-3"],
+    ["2", "Client B", "paypal eur", "206", "200", "-6"],
+    ["ИТОГО", "", "", "309", "300", "-9"],
+  ]));
+
+  assert.deepEqual(stats.accruedPlusByChannel, {
+    "пейпал дол": 103,
+    "пейпал евр": 206,
+    "пейпал сad": 0,
+  });
+});
+
 test("buildPreparedDashboardData keeps real income payload for expense analysis", () => {
   const mainJs = fs.readFileSync(path.join(root, "main.js"), "utf8");
   const context = {
