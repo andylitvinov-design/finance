@@ -37,6 +37,8 @@ function plain(value) {
 test("expense UI exposes TD Bank helper wiring", () => {
   assert.match(uiJs, /TD Bank import helper/);
   assert.match(uiJs, /loadTdBankExpenseStatementFromClipboard/);
+  assert.match(uiJs, /readTdBankPayloadText/);
+  assert.match(uiJs, /window\.prompt\("Вставьте TD Bank JSON из буфера обмена"/);
   assert.match(uiJs, /td-easyweb-importer\.js/);
   assert.match(uiJs, /state\.expenseAccounting\.tdBankLoading/);
   assert.match(uiJs, /state\.expenseAccounting\.tdBankSummary/);

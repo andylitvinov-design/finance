@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
+const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
 
 function extractFunction(source, name) {
   let start = source.indexOf(`function ${name}`);
@@ -35,6 +36,15 @@ function extractFunction(source, name) {
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+test("expense analysis UI keeps refresh action and scrollable tables", () => {
+  assert.match(uiJs, /refreshExpenseFinancialAnalysis/);
+  assert.match(uiJs, /refreshButton\.textContent = state\.expenseAccounting\.loading \? "Обновляю\.\.\." : "Обновить"/);
+  assert.match(uiJs, /analysis-table-wrap/);
+  assert.match(uiJs, /renderPlainTable\(rows\)/);
+  assert.doesNotMatch(uiJs, /renderResponsiveDataView\(rows, \{ mobileTableColumnCount: 2 \}\)/);
+  assert.match(styleCss, /\.analysis-table-wrap table \{ min-width: 640px; \}/);
+});
 
 test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual rows for services/spend", () => {
   const context = {
