@@ -29,6 +29,8 @@ const state = {
     paypalSummary: null,
     wiseLoading: false,
     wiseSummary: null,
+    tdBankLoading: false,
+    tdBankSummary: null,
     entries: [],
     warnings: [],
     status: "",

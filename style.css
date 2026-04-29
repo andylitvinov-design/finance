@@ -174,6 +174,36 @@ tr:nth-child(even) td { background: #fffcf7; }
   gap: 10px;
   flex-wrap: wrap;
 }
+.expense-helper {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(247,239,230,0.88));
+}
+.expense-helper summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+}
+.expense-helper summary::-webkit-details-marker { display: none; }
+.expense-helper-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.expense-helper textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf9;
+  color: var(--ink);
+  resize: vertical;
+}
 .expense-feed { display: grid; gap: 16px; }
 .expense-day { display: grid; gap: 8px; }
 .expense-day-title { font-size: 15px; font-weight: 700; color: var(--accent-2); }

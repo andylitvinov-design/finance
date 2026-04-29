@@ -262,17 +262,24 @@ function renderExpenseAccountingBlock() {
   paypalButton.type = "button";
   paypalButton.className = "secondary";
   paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
-  paypalButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading;
+  paypalButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.tdBankLoading;
   paypalButton.addEventListener("click", loadPayPalExpenseStatement);
   const wiseButton = document.createElement("button");
   wiseButton.type = "button";
   wiseButton.className = "secondary";
   wiseButton.textContent = state.expenseAccounting.wiseLoading ? "Загружаю Wise..." : "Подтянуть Wise";
-  wiseButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading;
+  wiseButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.tdBankLoading;
   wiseButton.addEventListener("click", loadWiseExpenseStatement);
-  actions.append(parseButton, paypalButton, wiseButton);
+  const tdBankButton = document.createElement("button");
+  tdBankButton.type = "button";
+  tdBankButton.className = "secondary";
+  tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Подтянуть TD Bank";
+  tdBankButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.tdBankLoading;
+  tdBankButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
+  actions.append(parseButton, paypalButton, wiseButton, tdBankButton);
   upload.append(input, actions);
   shell.appendChild(upload);
+  shell.appendChild(renderTdBankExpenseHelper());
 
   const topSave = renderExpenseAccountingSaveButton();
   if (topSave) shell.appendChild(topSave);
@@ -361,6 +368,10 @@ function renderExpenseFinancialAnalysis() {
   const wiseSummary = getActiveWiseSummary();
   if (hasProviderSummaryData(wiseSummary)) {
     block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
+  }
+  const tdBankSummary = getActiveTdBankSummary();
+  if (hasProviderSummaryData(tdBankSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
   }
   const manualRows = getCurrentAnalyticsManualRows();
   const usdRateLookup = buildManualFinanceUsdRateLookup(
@@ -473,6 +484,58 @@ function getActiveWiseSummary() {
   return buildProviderExpenseSummary(wiseEntries);
 }
 
+function getActiveTdBankSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.tdBankSummary)) return state.expenseAccounting.tdBankSummary;
+  const tdBankEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "tdbank");
+  return buildProviderExpenseSummary(tdBankEntries);
+}
+
+function renderTdBankExpenseHelper() {
+  const helper = document.createElement("details");
+  helper.className = "expense-helper";
+  const summary = document.createElement("summary");
+  summary.textContent = "TD Bank import helper";
+  const note = document.createElement("div");
+  note.className = "tab-note";
+  note.textContent = "Откройте TD EasyWeb activity за тот же период, скопируйте bookmarklet, запустите его на странице TD и затем нажмите импорт из буфера.";
+  const runner = document.createElement("textarea");
+  runner.readOnly = true;
+  runner.spellcheck = false;
+  runner.value = buildTdBankBookmarklet();
+  const actions = document.createElement("div");
+  actions.className = "expense-helper-actions";
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "ghost";
+  copyButton.textContent = "Скопировать bookmarklet";
+  copyButton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(runner.value);
+      setExpenseAccountingStatus("TD Bank bookmarklet скопирован. Запустите его на странице TD EasyWeb activity.", false);
+    } catch (error) {
+      setExpenseAccountingStatus(error.message || "Не удалось скопировать TD Bank bookmarklet.", true);
+    }
+    renderTabs();
+  });
+  const importButton = document.createElement("button");
+  importButton.type = "button";
+  importButton.className = "ghost";
+  importButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Импортировать TD из буфера";
+  importButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.tdBankLoading;
+  importButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
+  actions.append(copyButton, importButton);
+  helper.append(summary, note, runner, actions);
+  return helper;
+}
+
+function buildTdBankBookmarklet() {
+  const startDate = normalizeIncomingSheetDateValue(elements.startDate?.value) || "";
+  const endDate = normalizeIncomingSheetDateValue(elements.endDate?.value) || "";
+  const origin = window.location.origin.replace(/\/+$/, "");
+  const payload = JSON.stringify({ startDate, endDate, importerUrl: `${origin}/td-easyweb-importer.js` });
+  return `javascript:(async()=>{const cfg=${payload};const s=document.createElement('script');s.src=cfg.importerUrl+'?ts='+Date.now();document.body.appendChild(s);await new Promise((r,e)=>{s.onload=r;s.onerror=e});const out=window.TD_EASYWEB_IMPORTER.collect({from:cfg.startDate,to:cfg.endDate});await navigator.clipboard.writeText(JSON.stringify(out));alert('TD Bank rows copied: '+(out.items||[]).length+'. Return to ledger and import from clipboard.');})().catch(e=>alert(e.message||e))`;
+}
+
 function hasProviderSummaryData(summary) {
   return Boolean((summary?.months || []).some((monthRow) => Object.keys(monthRow.totalsByCurrency || {}).length));
 }
@@ -582,11 +645,13 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.entries = fallback.entries;
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
+      state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = [...(payload.warnings || []), ...fallback.warnings];
     } else {
       state.expenseAccounting.entries = entries;
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
+      state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = payload.warnings || [];
     }
     setExpenseAccountingStatus(
@@ -602,6 +667,7 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.entries = fallback.entries;
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
+      state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = [String(error.message || error), ...fallback.warnings];
       setExpenseAccountingStatus(
         state.expenseAccounting.entries.length
@@ -722,6 +788,68 @@ async function loadWiseExpenseStatement() {
     state.expenseAccounting.wiseLoading = false;
     renderTabs();
   }
+}
+
+async function loadTdBankExpenseStatementFromClipboard() {
+  state.expenseAccounting.tdBankLoading = true;
+  setExpenseAccountingStatus("Читаю TD Bank JSON из буфера обмена...", false);
+  renderTabs();
+  try {
+    const raw = await navigator.clipboard.readText();
+    if (!raw.trim()) {
+      throw new Error("Буфер обмена пуст. Сначала запустите TD Bank bookmarklet на странице EasyWeb activity.");
+    }
+    const payload = JSON.parse(raw);
+    if (String(payload?.source?.provider || "").trim() !== "tdbank") {
+      throw new Error("В буфере нет TD Bank payload. Скопируйте его bookmarklet-ом из TD EasyWeb.");
+    }
+    const entries = normalizeTdBankClipboardEntries(payload);
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "tdbank"),
+      ...entries
+    ];
+    state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = [];
+    setExpenseAccountingStatus(
+      entries.length
+        ? `TD Bank импортирован: ${entries.length} строк. Проверьте категории перед внесением.`
+        : "TD Bank импортирован, но строки за выбранный период не найдены.",
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось импортировать TD Bank из буфера.", true);
+  } finally {
+    state.expenseAccounting.tdBankLoading = false;
+    renderTabs();
+  }
+}
+
+function normalizeTdBankClipboardEntries(payload) {
+  const requestedStart = normalizeIncomingSheetDateValue(payload?.source?.requestedStartDate || payload?.startDate || elements.startDate.value);
+  const requestedEnd = normalizeIncomingSheetDateValue(payload?.source?.requestedEndDate || payload?.endDate || elements.endDate.value);
+  return (Array.isArray(payload?.items) ? payload.items : [])
+    .map((entry, index) => normalizeExpenseAccountingEntry({
+      date: entry.occurredAt,
+      channel: "БАНК КАНАДА cad",
+      direction: entry.direction,
+      localAmount: entry.amount,
+      currency: entry.currency || "CAD",
+      usdAmount: null,
+      suggestedCategory: entry.direction === "income" ? "serviceIncome" : "business",
+      organization: compactTdBankDescription(entry),
+      confidence: 0.95,
+      source: "tdbank",
+      sourceTransactionId: String(entry.providerTransactionId || `${entry.accountId || "tdbank"}-${entry.occurredAt || index}`),
+    }, index))
+    .filter((entry) => entry.date && (!requestedStart || entry.date >= requestedStart) && (!requestedEnd || entry.date <= requestedEnd));
+}
+
+function compactTdBankDescription(entry) {
+  return [
+    String(entry?.name || "").trim(),
+    entry?.accountName ? `account ${entry.accountName}` : "",
+    entry?.runningBalance ? `balance ${entry.runningBalance} ${entry.runningBalanceCurrency || entry.currency || "CAD"}` : ""
+  ].filter(Boolean).join(" | ").slice(0, 240);
 }
 
 function parseExpenseOcrText(text, sourceImageIndex = 0) {
@@ -880,6 +1008,7 @@ async function saveExpenseAccountingEntries() {
     state.expenseAccounting.entries = [];
     state.expenseAccounting.paypalSummary = null;
     state.expenseAccounting.wiseSummary = null;
+    state.expenseAccounting.tdBankSummary = null;
     await loadDashboardData();
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось внести расходы.", true);
