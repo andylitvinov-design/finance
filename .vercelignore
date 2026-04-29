@@ -4,7 +4,6 @@ data/
 archive/
 node_modules/
 tests/
-scripts/
 .playwright-cli/
 .tmp-*
 *.log
