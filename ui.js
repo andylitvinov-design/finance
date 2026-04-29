@@ -361,6 +361,8 @@ function renderExpenseAccountingRow(entry) {
 function renderExpenseFinancialAnalysis() {
   const block = document.createElement("div");
   block.className = "finance-shell";
+  const channelReconciliation = getExpenseAnalysisChannelSummary();
+  block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
   const paypalSummary = getActivePayPalSummary();
   if (hasProviderSummaryData(paypalSummary)) {
     block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
@@ -374,32 +376,6 @@ function renderExpenseFinancialAnalysis() {
     block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
   }
   const manualRows = getCurrentAnalyticsManualRows();
-  if (hasProviderSummaryData(paypalSummary)) {
-    const compareRows = buildExpenseAnalysisProviderRows(
-      paypalSummary,
-      manualRows,
-      state.data?.tabs?.movement?.values || [],
-      { USD: "пейпал дол", EUR: "пейпал евр", CAD: "пейпал сad" }
-    );
-    if (compareRows.length) {
-      const compareBlock = document.createElement("div");
-      compareBlock.className = "analytics-section";
-      const title = document.createElement("div");
-      title.className = "tab-note";
-      title.style.marginBottom = "10px";
-      title.style.fontWeight = "700";
-      title.textContent = "PayPal план vs факт";
-      compareBlock.appendChild(title);
-      const wrap = document.createElement("div");
-      wrap.className = "table-wrap";
-      wrap.appendChild(renderPlainTable([
-        ["канал", "план заказы", "план услуги", "план всего пришло", "реально пришло", "план потрачено", "реально потрачено"],
-        ...compareRows
-      ]));
-      compareBlock.appendChild(wrap);
-      block.appendChild(compareBlock);
-    }
-  }
   const usdRateLookup = buildManualFinanceUsdRateLookup(
     state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
     state.data?.tabs?.movement?.values || []
@@ -436,6 +412,83 @@ function renderExpenseFinancialAnalysis() {
   wrap.appendChild(renderPlainTable(rows));
   block.appendChild(wrap);
   return block;
+}
+
+function renderExpenseAnalysisChannelBlock(summary) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Сверка по каналам";
+  block.appendChild(title);
+  const cards = document.createElement("div");
+  cards.className = "expense-summary-grid";
+  cards.appendChild(renderExpenseSummaryCard("план заказы", `${formatSheetNumber(summary.incomeTotals.ordersPlanUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("план услуги", `${formatSheetNumber(summary.incomeTotals.servicePlanUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("план всего", `${formatSheetNumber(summary.incomeTotals.plannedUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("пришло реально", `${formatSheetNumber(summary.incomeTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("потрачено план", `${formatSheetNumber(summary.expenseTotals.plannedUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("потрачено реал", `${formatSheetNumber(summary.expenseTotals.realUsd)} USD`));
+  block.appendChild(cards);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.appendChild(renderPlainTable(summary.rows));
+  block.appendChild(wrap);
+  return block;
+}
+
+function getExpenseAnalysisChannelSummary() {
+  const manualRows = getCurrentAnalyticsManualRows();
+  const usdRateLookup = buildManualFinanceUsdRateLookup(
+    state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
+    state.data?.tabs?.movement?.values || []
+  );
+  return buildExpenseAnalysisChannelSummary({
+    manualRows,
+    movementValues: state.data?.tabs?.movement?.values || [],
+    realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
+    providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
+    usdRateLookup
+  });
+}
+
+function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
+  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+  (state.expenseAccounting.entries || []).forEach((entry) => {
+    if (!entry?.channel || entry.direction !== "expense") return;
+    const channel = canonicalManualFinanceChannel(entry.channel);
+    if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
+    const usdAmount = parseLooseNumber(entry.usdAmount);
+    const convertedUsd = usdAmount || getManualFinanceFieldUsdNumber({
+      channel,
+      business: entry.localAmount,
+      currency: entry.currency,
+      localAmount: entry.localAmount
+    }, "business", rateLookup);
+    totals[channel] += convertedUsd;
+  });
+  if ((state.expenseAccounting.entries || []).length) {
+    return Object.fromEntries(
+      Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
+    );
+  }
+
+  [
+    [getActivePayPalSummary(), { USD: "пейпал дол", EUR: "пейпал евр", CAD: "пейпал сad" }],
+    [getActiveWiseSummary(), { USD: "трансервайз дол", EUR: "трансервайз евро" }]
+  ].forEach(([summary, channelByCurrency]) => {
+    Object.entries(summary?.totalsByCurrency || {}).forEach(([currency, currencyTotals]) => {
+      const channel = channelByCurrency[String(currency || "").trim().toUpperCase()];
+      if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
+      totals[channel] += parseLooseNumber(currencyTotals?.expense);
+    });
+  });
+
+  return Object.fromEntries(
+    Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
+  );
 }
 
 function renderProviderMonthlyStatement(titleText, summary) {
