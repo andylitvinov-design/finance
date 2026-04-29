@@ -87,6 +87,107 @@ test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual
   ]);
 });
 
+test("buildExpenseAnalysisChannelSummary restores full channel reconciliation table with difference columns", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "пейпал евр"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: {
+        "пейпал дол": 350,
+        "пейпал евр": 0
+      }
+    }),
+    sumManualFinanceFieldUsdNumber(rows, key) {
+      return rows.reduce((sum, row) => sum + context.getManualFinanceFieldUsdNumber(row, key), 0);
+    },
+    getManualFinanceFieldUsdNumber(row, key) {
+      const value = row?.[key];
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      return Number(raw.replace(",", "."));
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [
+      { channel: "пейпал дол", serviceIncome: "360,5000", business: "10,0000", flat: "15,0000", food: "0", fun: "0", study: "5,0000", travel: "0" },
+      { channel: "пейпал евр", serviceIncome: "222,7500", business: "20,0000", flat: "0", food: "0", fun: "0", study: "0", travel: "12,5000" },
+    ],
+    movementValues: [],
+    realIncomeSummaryByChannel: {
+      "пейпал дол": { realNetUsd: 311.06 },
+      "пейпал евр": { realNetUsd: 222.75 },
+    },
+    providerExpenseByChannel: {
+      "пейпал дол": 120.5,
+      "пейпал евр": 80.25,
+    },
+    usdRateLookup: {}
+  }));
+
+  assert.deepEqual(summary.rows, [
+    ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал", "разница"],
+    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000"],
+    ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500"],
+    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500"],
+  ]);
+});
+
+test("buildPreparedDashboardData keeps real income payload for expense analysis", () => {
+  const mainJs = fs.readFileSync(path.join(root, "main.js"), "utf8");
+  const context = {
+    state: {
+      config: {
+        tabs: [
+          { id: "movement", sheetName: "movement" }
+        ]
+      }
+    },
+    formatDisplayDate(value) {
+      return value;
+    },
+    prepareTabValues(_id, values) {
+      return { values, summaryRows: [], headerRowIndex: 0 };
+    },
+    Date,
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(mainJs, "buildPreparedDashboardData")}\n` +
+    "this.buildPreparedDashboardData = buildPreparedDashboardData;",
+    context
+  );
+
+  const result = plain(context.buildPreparedDashboardData({
+    realIncome: { summaryByChannel: { "пейпал дол": { realNetUsd: 123 } } },
+    tabs: {
+      movement: {
+        values: [["header"], ["row"]]
+      }
+    }
+  }, "2026-04-01", "2026-04-30"));
+
+  assert.equal(result.realIncome.summaryByChannel["пейпал дол"].realNetUsd, 123);
+});
+
 test("getCurrentAnalyticsManualRows prefers aggregated period rows over end-date fact snapshot", () => {
   const context = {
     state: {

@@ -660,6 +660,23 @@ function getManualRowLocalSpendTotal(row) {
   );
 }
 
+function roundExpenseAnalysisAmount(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function getManualFinancePlannedExpenseUsdNumber(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
+  const storedTotalUsd = String(row?.totalUsd ?? "").trim();
+  if (storedTotalUsd) return parseLooseNumber(storedTotalUsd);
+  return (
+    getManualFinanceFieldUsdNumber(row, "business", rateLookup) +
+    getManualFinanceFieldUsdNumber({ ...row, flat: row?.flat ?? row?.house }, "flat", rateLookup) +
+    getManualFinanceFieldUsdNumber(row, "food", rateLookup) +
+    getManualFinanceFieldUsdNumber(row, "fun", rateLookup) +
+    getManualFinanceFieldUsdNumber(row, "study", rateLookup) +
+    getManualFinanceFieldUsdNumber({ ...row, travel: row?.travel ?? row?.travelFun }, "travel", rateLookup)
+  );
+}
+
 function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [], movementValues = [], channelByCurrency = {}) {
   const output = [];
   const manualLookup = Object.fromEntries(
@@ -698,6 +715,93 @@ function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [],
     ]);
   });
   return output;
+}
+
+function buildExpenseAnalysisChannelSummary({
+  manualRows = [],
+  movementValues = [],
+  realIncomeSummaryByChannel = {},
+  providerExpenseByChannel = {},
+  usdRateLookup = { byChannel: {}, byCurrency: {} }
+} = {}) {
+  const rows = [[
+    "канал",
+    "план заказы",
+    "план услуги",
+    "план всего",
+    "пришло реально",
+    "разница",
+    "потрачено план",
+    "потрачено реал",
+    "разница"
+  ]];
+  const incomeTotals = { ordersPlanUsd: 0, servicePlanUsd: 0, plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
+  const expenseTotals = { plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
+  const movementStats = calculateMovementChannelStats(movementValues || []);
+
+  MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
+    const channelRows = (manualRows || []).filter((row) => row?.channel === channel);
+    const manualRow = channelRows[0] || { channel };
+    const ordersPlanUsd = roundExpenseAnalysisAmount(movementStats.accruedPlusByChannel?.[channel]);
+    const servicePlanUsd = roundExpenseAnalysisAmount(
+      sumManualFinanceFieldUsdNumber(channelRows, "serviceIncome", usdRateLookup)
+    );
+    const plannedIncomeUsd = roundExpenseAnalysisAmount(ordersPlanUsd + servicePlanUsd);
+    const realIncomeUsd = roundExpenseAnalysisAmount(realIncomeSummaryByChannel?.[channel]?.realNetUsd);
+    const incomeDifferenceUsd = roundExpenseAnalysisAmount(plannedIncomeUsd - realIncomeUsd);
+    const plannedExpenseUsd = roundExpenseAnalysisAmount(getManualFinancePlannedExpenseUsdNumber(manualRow, usdRateLookup));
+    const realExpenseUsd = roundExpenseAnalysisAmount(providerExpenseByChannel?.[channel]);
+    const expenseDifferenceUsd = roundExpenseAnalysisAmount(plannedExpenseUsd - realExpenseUsd);
+
+    rows.push([
+      channel,
+      formatSheetNumber(ordersPlanUsd),
+      formatSheetNumber(servicePlanUsd),
+      formatSheetNumber(plannedIncomeUsd),
+      formatSheetNumber(realIncomeUsd),
+      formatSheetNumber(incomeDifferenceUsd),
+      formatSheetNumber(plannedExpenseUsd),
+      formatSheetNumber(realExpenseUsd),
+      formatSheetNumber(expenseDifferenceUsd)
+    ]);
+
+    incomeTotals.ordersPlanUsd += ordersPlanUsd;
+    incomeTotals.servicePlanUsd += servicePlanUsd;
+    incomeTotals.plannedUsd += plannedIncomeUsd;
+    incomeTotals.realUsd += realIncomeUsd;
+    incomeTotals.differenceUsd += incomeDifferenceUsd;
+    expenseTotals.plannedUsd += plannedExpenseUsd;
+    expenseTotals.realUsd += realExpenseUsd;
+    expenseTotals.differenceUsd += expenseDifferenceUsd;
+  });
+
+  rows.push([
+    MANUAL_FINANCE_TOTAL_LABEL,
+    formatSheetNumber(incomeTotals.ordersPlanUsd),
+    formatSheetNumber(incomeTotals.servicePlanUsd),
+    formatSheetNumber(incomeTotals.plannedUsd),
+    formatSheetNumber(incomeTotals.realUsd),
+    formatSheetNumber(incomeTotals.differenceUsd),
+    formatSheetNumber(expenseTotals.plannedUsd),
+    formatSheetNumber(expenseTotals.realUsd),
+    formatSheetNumber(expenseTotals.differenceUsd)
+  ]);
+
+  return {
+    rows,
+    incomeTotals: {
+      ordersPlanUsd: roundExpenseAnalysisAmount(incomeTotals.ordersPlanUsd),
+      servicePlanUsd: roundExpenseAnalysisAmount(incomeTotals.servicePlanUsd),
+      plannedUsd: roundExpenseAnalysisAmount(incomeTotals.plannedUsd),
+      realUsd: roundExpenseAnalysisAmount(incomeTotals.realUsd),
+      differenceUsd: roundExpenseAnalysisAmount(incomeTotals.differenceUsd)
+    },
+    expenseTotals: {
+      plannedUsd: roundExpenseAnalysisAmount(expenseTotals.plannedUsd),
+      realUsd: roundExpenseAnalysisAmount(expenseTotals.realUsd),
+      differenceUsd: roundExpenseAnalysisAmount(expenseTotals.differenceUsd)
+    }
+  };
 }
 
 function getLatestFactNowLookup() {

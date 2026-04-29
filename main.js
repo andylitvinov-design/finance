@@ -203,6 +203,7 @@ function buildPreparedDashboardData(data, startDate, endDate) {
   return {
     period: data?.period || { startDate: formatDisplayDate(startDate), endDate: formatDisplayDate(endDate) },
     manual: data?.manual || null,
+    realIncome: data?.realIncome || null,
     tabs,
     fetchedAt: data?.fetchedAt || new Date().toLocaleString("ru-RU"),
     ordersSummary: data?.ordersSummary || undefined
