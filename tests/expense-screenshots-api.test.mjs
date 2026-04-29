@@ -38,6 +38,14 @@ test("validateImages rejects invalid and oversized screenshots", () => {
   );
 });
 
+test("validateImages keeps upload fallback dates when provided", () => {
+  const [image] = validateImages([{
+    dataUrl: "data:image/png;base64,abcd",
+    uploadedAtDate: "2026-04-29"
+  }]);
+  assert.equal(image.uploadedAtDate, "2026-04-29");
+});
+
 test("normalizeVisionResult keeps study as a separate category", () => {
   const result = normalizeVisionResult(
     {
@@ -68,10 +76,64 @@ test("normalizeVisionResult keeps study as a separate category", () => {
   assert.equal(result.entries[0].usdAmount, 30);
 });
 
+test("normalizeVisionResult splits received and spent and falls back to upload date", () => {
+  const result = normalizeVisionResult(
+    {
+      entries: [
+        {
+          date: "",
+          dateSource: "upload_fallback",
+          channel: "пейпал дол",
+          direction: "income",
+          localAmount: 230,
+          currency: "usd",
+          usdAmount: 230,
+          counterparty: "EzoFact",
+          organization: "EzoFact",
+          receivedType: "ezofact",
+          suggestedCategory: "",
+          confidence: 0.91,
+          sourceImageIndex: 0
+        },
+        {
+          date: "2026-04-28",
+          dateSource: "screenshot",
+          channel: "монобанк грн",
+          direction: "expense",
+          localAmount: 1200,
+          currency: "uah",
+          usdAmount: 30,
+          counterparty: "Silpo",
+          organization: "Silpo",
+          receivedType: "",
+          suggestedCategory: "food",
+          confidence: 0.82,
+          sourceImageIndex: 1
+        }
+      ],
+      warnings: []
+    },
+    {
+      channels: ["пейпал дол", "монобанк грн"],
+      categories: ["business", "flat", "food", "fun", "travel", "study"],
+      uploadDates: ["2026-04-29", "2026-04-29"]
+    }
+  );
+
+  assert.equal(result.entries.length, 2);
+  assert.equal(result.received.length, 1);
+  assert.equal(result.spent.length, 1);
+  assert.equal(result.received[0].date, "2026-04-29");
+  assert.equal(result.received[0].dateSource, "upload_fallback");
+  assert.equal(result.received[0].receivedType, "ezofact");
+  assert.equal(result.received[0].suggestedCategory, "serviceIncome");
+  assert.match(result.warnings.join("\n"), /upload date/i);
+});
+
 test("parseExpenseScreenshots sends images to OpenAI and parses JSON output", async () => {
   const calls = [];
   const result = await parseExpenseScreenshots(
-    [{ dataUrl: "data:image/jpeg;base64,abcd", sourceImageIndex: 0 }],
+    [{ dataUrl: "data:image/jpeg;base64,abcd", uploadedAtDate: "2026-04-29", sourceImageIndex: 0 }],
     {
       apiKey: "test-key",
       model: "test-model",
@@ -88,12 +150,15 @@ test("parseExpenseScreenshots sends images to OpenAI and parses JSON output", as
                 entries: [
                   {
                     date: "2026-04-21",
+                    dateSource: "screenshot",
                     channel: "Яндекс руб",
                     direction: "expense",
                     localAmount: 500,
                     currency: "RUB",
                     usdAmount: null,
+                    counterparty: "Store",
                     organization: "Store",
+                    receivedType: "",
                     suggestedCategory: "food",
                     confidence: 0.8,
                     sourceImageIndex: 0
@@ -112,6 +177,12 @@ test("parseExpenseScreenshots sends images to OpenAI and parses JSON output", as
   assert.equal(calls[0].url, "https://api.openai.com/v1/responses");
   assert.match(calls[0].options.headers.Authorization, /Bearer test-key/);
   assert.equal(result.entries[0].suggestedCategory, "food");
+  assert.equal(result.spent.length, 1);
+  const requestBody = JSON.parse(calls[0].options.body);
+  const prompt = requestBody.input[0].content[0].text;
+  assert.match(prompt, /Extract the operation date from the screenshot itself/i);
+  assert.match(prompt, /Choose the transaction amount, not the balance/i);
+  assert.match(prompt, /ezofact, serviceincome, exchange_in/i);
 });
 
 test("handler requests browser OCR fallback when OpenAI key is missing", async () => {
@@ -132,6 +203,8 @@ test("handler requests browser OCR fallback when OpenAI key is missing", async (
     assert.equal(response.body?.ok, true);
     assert.equal(response.body?.source, "browser-ocr-required");
     assert.deepEqual(response.body?.entries, []);
+    assert.deepEqual(response.body?.received, []);
+    assert.deepEqual(response.body?.spent, []);
   } finally {
     if (previous === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previous;

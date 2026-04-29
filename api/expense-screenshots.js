@@ -1,7 +1,8 @@
 const MAX_IMAGE_COUNT = 8;
 const MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const CATEGORY_SET = new Set(["business", "flat", "food", "fun", "travel", "study", "serviceIncome"]);
+const CATEGORY_SET = new Set(["business", "flat", "food", "fun", "travel", "study", "serviceIncome", "exchange"]);
+const RECEIVED_TYPE_SET = new Set(["ezofact", "serviceincome", "exchange_in"]);
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -24,6 +25,8 @@ export default async function handler(request, response) {
         ok: true,
         source: "browser-ocr-required",
         entries: [],
+        received: [],
+        spent: [],
         warnings: ["OPENAI_API_KEY is not configured. Falling back to browser OCR."]
       });
     }
@@ -63,6 +66,7 @@ export function validateImages(images) {
     return {
       dataUrl,
       name: String(image?.name || `screenshot-${index + 1}`).slice(0, 120),
+      uploadedAtDate: normalizeIsoDate(image?.uploadedAtDate),
       sourceImageIndex: index
     };
   });
@@ -106,24 +110,30 @@ export async function parseExpenseScreenshots(images, options = {}) {
                   additionalProperties: false,
                   properties: {
                     date: { type: "string" },
+                    dateSource: { type: "string", enum: ["screenshot", "upload_fallback", ""] },
                     channel: { type: "string" },
                     direction: { type: "string", enum: ["expense", "income"] },
                     localAmount: { type: "number" },
                     currency: { type: "string" },
                     usdAmount: { type: ["number", "null"] },
+                    counterparty: { type: "string" },
                     organization: { type: "string" },
+                    receivedType: { type: "string" },
                     suggestedCategory: { type: "string" },
                     confidence: { type: "number" },
                     sourceImageIndex: { type: "integer" }
                   },
                   required: [
                     "date",
+                    "dateSource",
                     "channel",
                     "direction",
                     "localAmount",
                     "currency",
                     "usdAmount",
+                    "counterparty",
                     "organization",
+                    "receivedType",
                     "suggestedCategory",
                     "confidence",
                     "sourceImageIndex"
@@ -146,7 +156,10 @@ export async function parseExpenseScreenshots(images, options = {}) {
     throw new Error(payload?.error?.message || `OpenAI returned HTTP ${upstream.status}.`);
   }
   const parsed = parseOpenAiJsonPayload(payload);
-  return normalizeVisionResult(parsed, options);
+  return normalizeVisionResult(parsed, {
+    ...options,
+    uploadDates: images.map((image) => normalizeIsoDate(image.uploadedAtDate))
+  });
 }
 
 export function parseOpenAiJsonPayload(payload) {
@@ -168,25 +181,45 @@ export function normalizeVisionResult(result, options = {}) {
       .map((item) => normalizeCategory(item))
       .filter(Boolean)
   );
+  categories.add("serviceIncome");
+  categories.add("exchange");
   const warnings = Array.isArray(result?.warnings) ? result.warnings.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const uploadDates = Array.isArray(options.uploadDates) ? options.uploadDates : [];
   const entries = (Array.isArray(result?.entries) ? result.entries : []).map((entry, index) => {
     const channel = normalizeChannel(entry.channel, channels);
-    const category = normalizeCategory(entry.suggestedCategory);
     const direction = entry.direction === "income" ? "income" : "expense";
+    const receivedType = normalizeReceivedType(entry.receivedType, entry.counterparty || entry.organization || "", channel);
+    const category = direction === "income"
+      ? mapReceivedTypeToCategory(receivedType)
+      : normalizeCategory(entry.suggestedCategory);
+    const screenshotDate = normalizeIsoDate(entry.date);
+    const fallbackDate = uploadDates[Number.isInteger(entry.sourceImageIndex) ? entry.sourceImageIndex : index] || "";
+    const date = screenshotDate || fallbackDate;
     return {
-      date: normalizeIsoDate(entry.date),
+      date,
+      dateSource: screenshotDate ? "screenshot" : (fallbackDate ? "upload_fallback" : ""),
       channel,
       direction,
       localAmount: Math.abs(Number(entry.localAmount || 0)),
       currency: String(entry.currency || "").trim().toUpperCase(),
       usdAmount: Number.isFinite(Number(entry.usdAmount)) ? Math.abs(Number(entry.usdAmount)) : null,
-      organization: String(entry.organization || "").trim(),
+      counterparty: String(entry.counterparty || entry.organization || "").trim(),
+      organization: String(entry.organization || entry.counterparty || "").trim(),
+      receivedType,
       suggestedCategory: categories.has(category) ? category : "business",
       confidence: clamp(Number(entry.confidence || 0), 0, 1),
       sourceImageIndex: Number.isInteger(entry.sourceImageIndex) ? entry.sourceImageIndex : index
     };
   }).filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
-  return { entries, warnings };
+  if (entries.some((entry) => entry.dateSource === "upload_fallback")) {
+    warnings.push("Some operations used the screenshot upload date because the transaction date was not readable.");
+  }
+  return {
+    entries,
+    received: entries.filter((entry) => entry.direction === "income"),
+    spent: entries.filter((entry) => entry.direction !== "income"),
+    warnings
+  };
 }
 
 function buildPrompt(options = {}) {
@@ -197,10 +230,13 @@ function buildPrompt(options = {}) {
     "Return only JSON matching the schema.",
     `Allowed channels: ${channels || "infer from screenshot"}.`,
     `Allowed categories: ${categories || "business, flat, food, fun, travel, study"}.`,
-    "Use ISO date YYYY-MM-DD. If year is missing, infer the year from the selected period.",
+    "Use ISO date YYYY-MM-DD. Extract the operation date from the screenshot itself: incoming transfers use the received/transferred date, expenses use the charged/paid date.",
+    "If the screenshot date is unreadable, leave date empty and set dateSource to upload_fallback.",
     `Selected period: ${options.periodStart || "unknown"} to ${options.periodEnd || "unknown"}.`,
     "For expenses use direction expense. For incoming money use direction income.",
-    "Choose the nearest matching channel and category. Put merchant/payee in organization.",
+    "For incoming money set receivedType to one of: ezofact, serviceincome, exchange_in. Use exchange_in only for exchange/crypto/top-up inflows. Use ezofact when the screenshot indicates EzoFact. Otherwise use serviceincome.",
+    "Choose the transaction amount, not the balance, fee, subtotal, running total, or any intermediate amount. Preserve the visible currency.",
+    "Choose the nearest matching channel and identify the real counterparty or merchant precisely. Put sender/payee/merchant in both counterparty and organization.",
     "Do not invent entries for unclear rows; add warnings instead."
   ].join("\n");
 }
@@ -221,6 +257,7 @@ function normalizeChannel(value, channels) {
 function normalizeCategory(value) {
   const normalized = String(value || "").trim().toLowerCase().replace(/ё/g, "е");
   if (!normalized) return "";
+  if (/exchange|обмен/.test(normalized)) return "exchange";
   if (/service|income|приход/.test(normalized)) return "serviceIncome";
   if (/business|бизнес|работ/.test(normalized)) return "business";
   if (/flat|house|кварт|дом|аренд/.test(normalized)) return "flat";
@@ -229,6 +266,19 @@ function normalizeCategory(value) {
   if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
   if (/fun|развлеч|кино|бар/.test(normalized)) return "fun";
   return CATEGORY_SET.has(normalized) ? normalized : "";
+}
+
+function normalizeReceivedType(value, organization = "", channel = "") {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  if (RECEIVED_TYPE_SET.has(normalized)) return normalized;
+  const probe = `${organization} ${channel} ${value}`.toLowerCase();
+  if (/ezo\s*fact|ezofact/.test(probe)) return "ezofact";
+  if (/exchange|обмен|binance|crypto|крипт|p2p/.test(probe)) return "exchange_in";
+  return "serviceincome";
+}
+
+function mapReceivedTypeToCategory(value) {
+  return normalizeReceivedType(value) === "exchange_in" ? "exchange" : "serviceIncome";
 }
 
 function clamp(value, min, max) {

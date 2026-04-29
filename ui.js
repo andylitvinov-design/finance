@@ -280,6 +280,7 @@ function renderExpenseAccountingBlock() {
   upload.append(input, actions);
   shell.appendChild(upload);
   shell.appendChild(renderTdBankExpenseHelper());
+  shell.appendChild(renderExpenseAccountingResultTabs());
 
   const topSave = renderExpenseAccountingSaveButton();
   if (topSave) shell.appendChild(topSave);
@@ -300,18 +301,39 @@ function renderExpenseAccountingSaveButton() {
   return button;
 }
 
+function renderExpenseAccountingResultTabs() {
+  const wrap = document.createElement("div");
+  wrap.className = "expense-result-tabs";
+  const counts = getExpenseAccountingDirectionCounts();
+  [["spent", `Spent (${counts.spent})`], ["received", `Received (${counts.received})`]].forEach(([id, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "expense-subtab" + (state.expenseAccounting.resultTab === id ? " active" : "");
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      state.expenseAccounting.resultTab = id;
+      renderTabs();
+    });
+    wrap.appendChild(button);
+  });
+  return wrap;
+}
+
 function renderExpenseAccountingFeed() {
   const feed = document.createElement("div");
   feed.className = "expense-feed";
-  if (!state.expenseAccounting.entries.length) {
+  const visibleEntries = getExpenseAccountingVisibleEntries();
+  if (!visibleEntries.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "После разбора здесь появится лента расходов.";
+    empty.textContent = state.expenseAccounting.resultTab === "received"
+      ? "После разбора здесь появятся входящие поступления."
+      : "После разбора здесь появится лента расходов.";
     feed.appendChild(empty);
     return feed;
   }
   const grouped = new Map();
-  state.expenseAccounting.entries
+  visibleEntries
     .slice()
     .sort((left, right) => String(right.date).localeCompare(String(left.date)))
     .forEach((entry) => {
@@ -335,32 +357,70 @@ function renderExpenseAccountingRow(entry) {
   const row = document.createElement("article");
   row.className = "expense-row";
   const channel = document.createElement("div");
-  channel.textContent = entry.channel || "";
+  channel.className = "expense-primary";
+  const title = document.createElement("div");
+  title.textContent = entry.channel || "";
+  const meta = document.createElement("div");
+  meta.className = "expense-meta";
+  meta.textContent = buildExpenseAccountingMeta(entry);
+  channel.append(title, meta);
   const amount = document.createElement("div");
   amount.className = "expense-amount";
   amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
   const select = document.createElement("select");
   select.className = "expense-select";
-  MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.forEach((category) => {
-    const option = document.createElement("option");
-    option.value = category;
-    option.textContent = category;
-    option.selected = entry.category === category;
-    select.appendChild(option);
-  });
+  if (entry.direction === "income") {
+    MANUAL_RECEIVED_ENTRY_TYPES.forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category;
+      option.selected = entry.receivedType === category;
+      select.appendChild(option);
+    });
+  } else {
+    MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.forEach((category) => {
+      if (!MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.includes(category)) return;
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category;
+      option.selected = entry.category === category;
+      select.appendChild(option);
+    });
+  }
   select.addEventListener("change", (event) => {
+    if (entry.direction === "income") {
+      entry.receivedType = normalizeReceivedEntryType(event.target.value);
+      entry.category = mapReceivedTypeToAccountingCategory(entry.receivedType);
+      return;
+    }
     entry.category = event.target.value;
   });
   const org = document.createElement("div");
   org.className = "expense-org";
-  org.textContent = entry.organization || "Организация не распознана";
+  org.textContent = entry.counterparty || entry.organization || (
+    entry.direction === "income" ? "Источник поступления не распознан" : "Получатель платежа не распознан"
+  );
   row.append(channel, amount, select, org);
   return row;
 }
 
 function renderExpenseFinancialAnalysis() {
   const block = document.createElement("div");
-  block.className = "finance-shell";
+  block.className = "finance-shell expense-analysis-shell";
+  const header = document.createElement("div");
+  header.className = "tab-header";
+  header.innerHTML = `<div><div class="tab-note">Сводка по расходам, приходам и сверка по каналам за выбранный период.</div></div>`;
+  const headerActions = document.createElement("div");
+  headerActions.className = "finance-actions";
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "secondary";
+  refreshButton.textContent = state.expenseAccounting.loading ? "Обновляю..." : "Обновить";
+  refreshButton.disabled = state.expenseAccounting.loading;
+  refreshButton.addEventListener("click", refreshExpenseFinancialAnalysis);
+  headerActions.appendChild(refreshButton);
+  header.appendChild(headerActions);
+  block.appendChild(header);
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
   const paypalSummary = getActivePayPalSummary();
@@ -408,7 +468,7 @@ function renderExpenseFinancialAnalysis() {
     ...MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, formatSheetNumber(expenseUsd[category])])
   ];
   const wrap = document.createElement("div");
-  wrap.className = "table-wrap";
+  wrap.className = "table-wrap analysis-table-wrap";
   wrap.appendChild(renderPlainTable(rows));
   block.appendChild(wrap);
   return block;
@@ -433,7 +493,7 @@ function renderExpenseAnalysisChannelBlock(summary) {
   cards.appendChild(renderExpenseSummaryCard("потрачено реал", `${formatSheetNumber(summary.expenseTotals.realUsd)} USD`));
   block.appendChild(cards);
   const wrap = document.createElement("div");
-  wrap.className = "table-wrap";
+  wrap.className = "table-wrap analysis-table-wrap";
   wrap.appendChild(renderPlainTable(summary.rows));
   block.appendChild(wrap);
   return block;
@@ -522,8 +582,8 @@ function renderProviderMonthlyStatement(titleText, summary) {
     });
   });
   const wrap = document.createElement("div");
-  wrap.className = "table-wrap";
-  wrap.appendChild(renderResponsiveDataView(rows, { mobileTableColumnCount: 2 }));
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderPlainTable(rows));
   block.appendChild(wrap);
   return block;
 }
@@ -688,6 +748,46 @@ function renderExpenseSummaryCard(label, value) {
   return card;
 }
 
+function getExpenseAccountingDirectionCounts() {
+  return (state.expenseAccounting.entries || []).reduce((acc, entry) => {
+    if (entry?.direction === "income") acc.received += 1;
+    else acc.spent += 1;
+    return acc;
+  }, { received: 0, spent: 0 });
+}
+
+function getExpenseAccountingVisibleEntries() {
+  const expectedDirection = state.expenseAccounting.resultTab === "received" ? "income" : "spent";
+  return (state.expenseAccounting.entries || []).filter((entry) => {
+    if (expectedDirection === "income") return entry.direction === "income";
+    return entry.direction === "expense" || entry.direction === "exchange" || !entry.direction;
+  });
+}
+
+function buildExpenseAccountingMeta(entry) {
+  const parts = [entry.date || ""];
+  if (entry.dateSource === "upload_fallback") parts.push("дата = fallback по загрузке");
+  parts.push(entry.direction === "income" ? "Received" : "Spent");
+  return parts.filter(Boolean).join(" · ");
+}
+
+function normalizeReceivedEntryType(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  if (MANUAL_RECEIVED_ENTRY_TYPES.includes(normalized)) return normalized;
+  if (/ezo\s*fact|ezofact/.test(normalized)) return "ezofact";
+  if (/exchange|обмен|crypto|крипт|p2p|binance/.test(normalized)) return "exchange_in";
+  return DEFAULT_MANUAL_RECEIVED_ENTRY_TYPE;
+}
+
+function mapReceivedTypeToAccountingCategory(value) {
+  return normalizeReceivedEntryType(value) === "exchange_in" ? "exchange" : "serviceIncome";
+}
+
+function buildLocalTodayIsoDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 async function parseExpenseScreenshotFiles(files) {
   if (!files.length) {
     setExpenseAccountingStatus("Выберите один или несколько скриншотов.", true);
@@ -733,9 +833,11 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = payload.warnings || [];
     }
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    const counts = getExpenseAccountingDirectionCounts();
     setExpenseAccountingStatus(
       state.expenseAccounting.entries.length
-        ? `Распознано строк: ${state.expenseAccounting.entries.length}. Проверьте категории перед внесением.`
+        ? `Распознано строк: ${state.expenseAccounting.entries.length} (Spent: ${counts.spent}, Received: ${counts.received}). Проверьте значения перед внесением.`
         : "Скриншоты разобраны, но расходов не найдено.",
       false
     );
@@ -748,9 +850,11 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = [String(error.message || error), ...fallback.warnings];
+      state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+      const counts = getExpenseAccountingDirectionCounts();
       setExpenseAccountingStatus(
         state.expenseAccounting.entries.length
-          ? `Серверный разбор недоступен, использован OCR в браузере. Найдено строк: ${state.expenseAccounting.entries.length}.`
+          ? `Серверный разбор недоступен, использован OCR в браузере. Найдено строк: ${state.expenseAccounting.entries.length} (Spent: ${counts.spent}, Received: ${counts.received}).`
           : "OCR в браузере завершен, но строки расходов не найдены.",
         !state.expenseAccounting.entries.length
       );
@@ -811,6 +915,7 @@ async function loadPayPalExpenseStatement() {
       ? payload.summary
       : buildProviderExpenseSummary(entries);
     state.expenseAccounting.warnings = payload.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
     setExpenseAccountingStatus(
       entries.length
         ? `PayPal-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.`
@@ -855,6 +960,7 @@ async function loadWiseExpenseStatement() {
       ? payload.summary
       : buildProviderExpenseSummary(entries);
     state.expenseAccounting.warnings = payload.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
     setExpenseAccountingStatus(
       entries.length
         ? `Wise-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.`
@@ -874,7 +980,7 @@ async function loadTdBankExpenseStatementFromClipboard() {
   setExpenseAccountingStatus("Читаю TD Bank JSON из буфера обмена...", false);
   renderTabs();
   try {
-    const raw = await navigator.clipboard.readText();
+    const raw = await readTdBankPayloadText();
     if (!raw.trim()) {
       throw new Error("Буфер обмена пуст. Сначала запустите TD Bank bookmarklet на странице EasyWeb activity.");
     }
@@ -889,6 +995,7 @@ async function loadTdBankExpenseStatementFromClipboard() {
     ];
     state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
     state.expenseAccounting.warnings = [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
     setExpenseAccountingStatus(
       entries.length
         ? `TD Bank импортирован: ${entries.length} строк. Проверьте категории перед внесением.`
@@ -899,6 +1006,46 @@ async function loadTdBankExpenseStatementFromClipboard() {
     setExpenseAccountingStatus(error.message || "Не удалось импортировать TD Bank из буфера.", true);
   } finally {
     state.expenseAccounting.tdBankLoading = false;
+    renderTabs();
+  }
+}
+
+async function readTdBankPayloadText() {
+  let clipboardError = null;
+  if (navigator.clipboard?.readText) {
+    try {
+      return await navigator.clipboard.readText();
+    } catch (error) {
+      clipboardError = error;
+    }
+  }
+  const prompted = typeof window.prompt === "function"
+    ? window.prompt("Вставьте TD Bank JSON из буфера обмена", "")
+    : "";
+  if (typeof prompted === "string" && prompted.trim()) {
+    return prompted.trim();
+  }
+  if (clipboardError) {
+    throw new Error(`Не удалось прочитать буфер обмена. Вставьте TD Bank JSON вручную. ${clipboardError.message || clipboardError}`);
+  }
+  throw new Error("Буфер обмена недоступен. Вставьте TD Bank JSON вручную.");
+}
+
+async function refreshExpenseFinancialAnalysis() {
+  state.expenseAccounting.loading = true;
+  setExpenseAccountingStatus("Обновляю анализ финансов...", false);
+  renderTabs();
+  try {
+    if (state.googleAuth.accessToken) {
+      await connectGoogle(false);
+    } else {
+      await loadDashboardData();
+      setExpenseAccountingStatus("Анализ финансов обновлён. Активной Google-сессии не было, обновлены серверные данные.", false);
+    }
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось обновить анализ финансов.", true);
+  } finally {
+    state.expenseAccounting.loading = false;
     renderTabs();
   }
 }
@@ -938,7 +1085,7 @@ function parseExpenseOcrText(text, sourceImageIndex = 0) {
     .filter(Boolean);
   const entries = [];
   const warnings = [];
-  let currentDate = elements.endDate.value;
+  let currentDate = "";
   lines.forEach((line) => {
     const date = extractExpenseOcrDate(line);
     if (date) currentDate = date;
@@ -953,6 +1100,7 @@ function parseExpenseOcrText(text, sourceImageIndex = 0) {
       usdAmount: null,
       suggestedCategory: inferExpenseOcrCategory(line),
       organization: cleanupExpenseOcrOrganization(line),
+      counterparty: cleanupExpenseOcrOrganization(line),
       confidence: 0.45,
       sourceImageIndex
     }, entries.length));
@@ -972,11 +1120,18 @@ function extractExpenseOcrDate(line) {
 }
 
 function extractExpenseOcrAmount(line) {
-  const amountMatch = String(line || "").replace(/\s+/g, " ").match(/([+-]?\s?\d[\d\s.,]*)(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/i);
-  if (!amountMatch) return null;
-  const amount = Math.abs(parseLooseNumber(amountMatch[1]));
+  const normalizedLine = String(line || "").replace(/\s+/g, " ").trim();
+  const matches = Array.from(normalizedLine.matchAll(/([+-]?\s?\d[\d\s.,]*)(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/ig));
+  if (!matches.length) return null;
+  const filtered = matches.filter((match) => {
+    const around = normalizedLine.slice(Math.max(0, match.index - 20), Math.min(normalizedLine.length, match.index + match[0].length + 20)).toLowerCase();
+    return !/balance|available|остат|комисс|fee|итог|total/.test(around);
+  });
+  const candidates = filtered.length ? filtered : matches;
+  const chosen = candidates.find((match) => /[+-]/.test(match[1])) || candidates[candidates.length - 1];
+  const amount = Math.abs(parseLooseNumber(chosen?.[1]));
   if (!amount) return null;
-  return { amount, currency: normalizeExpenseOcrCurrency(amountMatch[2] || line) };
+  return { amount, currency: normalizeExpenseOcrCurrency(chosen?.[2] || normalizedLine) };
 }
 
 function normalizeExpenseOcrCurrency(value) {
@@ -1040,7 +1195,11 @@ function prepareExpenseScreenshotImage(file) {
         canvas.height = Math.max(1, Math.round((image.height || maxSide) * scale));
         const context = canvas.getContext("2d");
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve({ name: file.name || "screenshot", dataUrl: canvas.toDataURL("image/jpeg", 0.82) });
+        resolve({
+          name: file.name || "screenshot",
+          dataUrl: canvas.toDataURL("image/jpeg", 0.82),
+          uploadedAtDate: buildLocalTodayIsoDate()
+        });
       };
       image.src = String(reader.result || "");
     };
@@ -1049,16 +1208,25 @@ function prepareExpenseScreenshotImage(file) {
 }
 
 function normalizeExpenseAccountingEntry(entry, index = 0) {
+  const normalizedDate = normalizeIncomingSheetDateValue(entry.date);
+  const fallbackDate = normalizeIncomingSheetDateValue(entry.uploadedAtDate) || elements.endDate.value;
+  const direction = entry.direction === "income" || entry.direction === "exchange" ? entry.direction : "expense";
+  const receivedType = direction === "income" ? normalizeReceivedEntryType(entry.receivedType || entry.suggestedCategory || entry.category) : "";
   return {
     id: `expense-${Date.now()}-${index}`,
-    date: normalizeIncomingSheetDateValue(entry.date) || elements.endDate.value,
+    date: normalizedDate || fallbackDate,
+    dateSource: entry.dateSource === "screenshot" || normalizedDate ? "screenshot" : "upload_fallback",
     channel: canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0],
-    direction: entry.direction === "income" || entry.direction === "exchange" ? entry.direction : "expense",
+    direction,
     localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
     currency: String(entry.currency || inferManualFinanceChannelCurrency(entry.channel)).trim().toUpperCase(),
     usdAmount: parseLooseNumber(entry.usdAmount),
-    category: normalizeManualExpenseCategory(entry.suggestedCategory || entry.category) || "business",
-    organization: String(entry.organization || "").trim(),
+    category: direction === "income"
+      ? mapReceivedTypeToAccountingCategory(receivedType)
+      : (normalizeManualExpenseCategory(entry.suggestedCategory || entry.category) || "business"),
+    receivedType,
+    organization: String(entry.organization || entry.counterparty || "").trim(),
+    counterparty: String(entry.counterparty || entry.organization || "").trim(),
     confidence: Number(entry.confidence || 0),
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),

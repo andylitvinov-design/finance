@@ -25,6 +25,7 @@ const state = {
   },
   expenseAccounting: {
     activeSubtab: "list",
+    resultTab: "spent",
     loading: false,
     paypalLoading: false,
     paypalSummary: null,
