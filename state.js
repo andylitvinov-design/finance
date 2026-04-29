@@ -4,6 +4,7 @@ const state = {
   activeTab: "movement",
   loading: false,
   data: null,
+  aggregatedManualRange: null,
   googleAuth: {
     clientId: "",
     scopes: "",

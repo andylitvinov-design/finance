@@ -374,8 +374,34 @@ function renderExpenseFinancialAnalysis() {
     block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
   }
   const manualRows = getCurrentAnalyticsManualRows();
+  if (hasProviderSummaryData(paypalSummary)) {
+    const compareRows = buildExpenseAnalysisProviderRows(
+      paypalSummary,
+      manualRows,
+      state.data?.tabs?.movement?.values || [],
+      { USD: "пейпал дол", EUR: "пейпал евр", CAD: "пейпал сad" }
+    );
+    if (compareRows.length) {
+      const compareBlock = document.createElement("div");
+      compareBlock.className = "analytics-section";
+      const title = document.createElement("div");
+      title.className = "tab-note";
+      title.style.marginBottom = "10px";
+      title.style.fontWeight = "700";
+      title.textContent = "PayPal план vs факт";
+      compareBlock.appendChild(title);
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      wrap.appendChild(renderPlainTable([
+        ["канал", "план заказы", "план услуги", "план всего пришло", "реально пришло", "план потрачено", "реально потрачено"],
+        ...compareRows
+      ]));
+      compareBlock.appendChild(wrap);
+      block.appendChild(compareBlock);
+    }
+  }
   const usdRateLookup = buildManualFinanceUsdRateLookup(
-    state.manualFinance.data?.transferRows || state.manualTransfers.data?.transferRows || [],
+    state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
     state.data?.tabs?.movement?.values || []
   );
   const expenseUsd = Object.fromEntries(MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, 0]));
@@ -1052,6 +1078,20 @@ function buildExpenseRowsFromAccountingEntries(entries) {
 }
 
 function getCurrentAnalyticsManualRows() {
+  if (state.aggregatedManualRange?.rows?.length) {
+    return state.aggregatedManualRange.rows.map((row) => ({
+      channel: row.channel || "",
+      now: row.now || "",
+      serviceIncome: row.serviceIncome || "",
+      business: row.business || "",
+      flat: row.flat || "",
+      food: row.food || "",
+      fun: row.fun || "",
+      study: row.study || "",
+      travel: row.travel || "",
+      total: row.total || ""
+    }));
+  }
   if (state.manualFinance.data?.moneyRows?.length) {
     return buildAnalyticsManualRowsFromFactMoneyRows(state.manualFinance.data.moneyRows, state.manualFinance.data.transferRows || []);
   }

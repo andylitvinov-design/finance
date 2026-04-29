@@ -250,6 +250,7 @@ async function applyClientSideDerivedData(startDate, endDate) {
   if (!aggregatedManual && state.data.manual) {
     aggregatedManual = buildAggregatedManualDataFromServerPayload(state.data.manual, startDate, endDate);
   }
+  state.aggregatedManualRange = aggregatedManual || null;
 
   const payoutsValues = state.data.tabs.payouts?.values || [];
   if (state.data.tabs.payouts) {

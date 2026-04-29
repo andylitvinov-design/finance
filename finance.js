@@ -653,6 +653,53 @@ function buildAnalyticsManualRowsFromFactMoneyRows(moneyRows, transferRows = [])
   }));
 }
 
+function getManualRowLocalSpendTotal(row) {
+  return ["business", "flat", "food", "fun", "study", "travel"].reduce(
+    (sum, key) => sum + parseLooseNumber(row?.[key]),
+    0
+  );
+}
+
+function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [], movementValues = [], channelByCurrency = {}) {
+  const output = [];
+  const manualLookup = Object.fromEntries(
+    (manualRows || [])
+      .filter((row) => row?.channel && row.channel !== MANUAL_FINANCE_TOTAL_LABEL)
+      .map((row) => [row.channel, row])
+  );
+  const movementSummaryRows = ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows
+    ? ANALYTICS_PAYOUTS_HELPER.buildMovementPaymentSummaryRows(
+        movementValues || [],
+        MANUAL_FINANCE_MONEY_CHANNELS,
+        ANALYTICS_PAYMENT_RULES
+      )
+    : [];
+  const ordersPlanLookup = {};
+  movementSummaryRows.forEach((row) => {
+    const channel = String(row?.[0] || "").trim();
+    if (!channel || channel === MANUAL_FINANCE_TOTAL_LABEL) return;
+    ordersPlanLookup[channel] = parseLooseNumber(row[2] || "");
+  });
+  Object.entries(providerSummary?.totalsByCurrency || {}).forEach(([currency, totals]) => {
+    const channel = channelByCurrency[String(currency || "").trim().toUpperCase()];
+    if (!channel) return;
+    const manualRow = manualLookup[channel] || {};
+    const planOrders = ordersPlanLookup[channel] || 0;
+    const planServices = parseLooseNumber(manualRow.serviceIncome);
+    const planSpent = getManualRowLocalSpendTotal(manualRow);
+    output.push([
+      channel,
+      formatSheetNumber(planOrders),
+      formatSheetNumber(planServices),
+      formatSheetNumber(planOrders + planServices),
+      formatSheetNumber(totals?.income || 0),
+      formatSheetNumber(planSpent),
+      formatSheetNumber(totals?.expense || 0)
+    ]);
+  });
+  return output;
+}
+
 function getLatestFactNowLookup() {
   const lookup = {};
   if (state.data?.tabs?.savings?.values?.length) {
@@ -2909,28 +2956,39 @@ function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0,
 }
 
 function getCurrentFactMetricRows() {
+  if (state.aggregatedManualRange?.rows?.length) return state.aggregatedManualRange.rows;
   if (state.manualFinance.data?.moneyRows?.length) return state.manualFinance.data.moneyRows;
   if (state.analyticsFact?.moneyRows?.length) return state.analyticsFact.moneyRows;
   return [];
 }
 
 function getCurrentFactMetricTransfers() {
+  if (state.aggregatedManualRange?.transferRows?.length) return state.aggregatedManualRange.transferRows;
   if (state.manualFinance.data?.transferRows?.length) return state.manualFinance.data.transferRows;
   if (state.analyticsFact?.transferRows?.length) return state.analyticsFact.transferRows;
   return [];
 }
 
 function getCurrentFactMetricTotals() {
-  const moneyRows = getCurrentFactMetricRows();
-  if (!moneyRows.length) return { myServices: 0, myCosts: 0 };
+  const manualRows = getCurrentAnalyticsManualRows();
+  if (!manualRows.length) return { myServices: 0, myCosts: 0 };
   const rateLookup = buildManualFinanceUsdRateLookup(
     getCurrentFactMetricTransfers(),
     state.data?.tabs?.movement?.values || [],
     { endDate: elements.endDate?.value || state.analyticsFact?.periodEnd || "" }
   );
   return {
-    myServices: sumManualFinanceFieldUsdNumber(moneyRows, "serviceIncome", rateLookup),
-    myCosts: sumManualFinanceSpendUsdNumber(moneyRows, rateLookup)
+    myServices: manualRows.reduce((sum, row) => {
+      if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
+      return sum + getManualFinanceFieldUsdNumber(row, "serviceIncome", rateLookup);
+    }, 0),
+    myCosts: manualRows.reduce((sum, row) => {
+      if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
+      return sum + ["business", "flat", "food", "fun", "study", "travel"].reduce(
+        (rowSum, key) => rowSum + getManualFinanceFieldUsdNumber(row, key, rateLookup),
+        0
+      );
+    }, 0)
   };
 }
 
