@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+if [[ "$remote_name" == "old-origin" ]]; then
+  echo "pre-push: refusing to push to old-origin." >&2
+  exit 1
+fi
+
+if [[ "$remote_name" == "origin" && "$remote_url" != "https://github.com/andylitvinov-design/finance.git" ]]; then
+  echo "pre-push: origin must point to andylitvinov-design/finance.git." >&2
+  exit 1
+fi
+
+bootstrap_main_allowed=0
+if [[ "$remote_name" == "origin" && -z "$(git ls-remote --heads origin main 2>/dev/null)" ]]; then
+  bootstrap_main_allowed=1
+fi
+
+while read -r local_ref _ remote_ref _; do
+  if [[ "$remote_name" == "origin" && "$remote_ref" == "refs/heads/main" && "$bootstrap_main_allowed" -ne 1 ]]; then
+    echo "pre-push: direct pushes to origin/main are blocked. Push a branch and open a PR." >&2
+    exit 1
+  fi
+done
+
+exit 0

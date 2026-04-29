@@ -1,107 +1,127 @@
 # EzoHata Incoming Ledger
 
-Веб-приложение для учёта входящих платежей, расходов и балансов по каналам.
+Веб-приложение для учёта входящих платежей, расходов, факта и аналитики по каналам EzoHata.
 
 Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app)
 
-## Стек
+## Canonical Repository
 
-- Чистый HTML/CSS/JS (без фреймворков)
-- Google Sheets API (через OAuth2, токен в памяти браузера)
-- xlsx.js для экспорта
-- Vercel для хостинга
-- Vercel `/api` serverless endpoint для dashboard fallback/proxy
+- canonical repo: [andylitvinov-design/finance](https://github.com/andylitvinov-design/finance)
+- legacy read-only repo: [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger)
+- deploy source of truth: root of this repository
 
-## Файловая структура
+Не использовать `reconcile-v2/` как отдельный source root. Эта ветка миграции закрыта; production-коммиты, PR и деплои идут только из `finance`.
 
-| Файл | Назначение |
-|------|-----------|
-| `index.html` | HTML-разметка, подключение стилей и скриптов |
-| `style.css` | Все стили, CSS-переменные, адаптив |
-| `config.js` | Константы и настройки, используемые клиентским кодом |
-| `state.js` | Глобальные объекты `state` и `elements` |
-| `google-auth.js` | Google OAuth: connect/disconnect, токены |
-| `google-sheets.js` | Чтение и запись листов Google Sheets |
-| `finance.js` | Расчёты курсов валют, балансов, сумм |
-| `orders.js` | Вкладка "Мои заказы" |
-| `ui.js` | Рендер таблиц, вкладок, метрик |
-| `export.js` | Экспорт в CSV / XLSX / TSV |
-| `main.js` | Точка входа, `init()`, слушатели событий |
-| `sheet-config.json` | Runtime config: app version, endpoint, OAuth, spreadsheet IDs, tabs |
-| `api/index.js` | Vercel API endpoint для dashboard data и snapshot fallback |
-| `analytics-payouts-helper.js` | Вспомогательная логика аналитики выплат |
-| `manual-finance-formulas.js` | Формулы ручных финансов |
-| `orders-helper.js` | Вспомогательная логика заказов |
+## Stack
 
-## Google Sheets
+- static HTML/CSS/JS frontend in repo root
+- Google Sheets API via browser OAuth
+- Vercel hosting
+- Vercel `api/` functions for dashboard fallback/proxy and statement imports
+- node built-in test runner for regression coverage
+
+## Repository Layout
+
+| Path | Purpose |
+|------|---------|
+| `index.html` | main UI shell |
+| `style.css` | styles and responsive layout |
+| `config.js` | frontend constants and spreadsheet defaults |
+| `main.js` | app bootstrap and runtime orchestration |
+| `finance.js` | balances, analytics, totals, provider calculations |
+| `orders.js` / `orders-helper.js` | orders tab and summaries |
+| `ui.js` | rendering, tabs, metrics, expense analysis |
+| `google-auth.js` / `google-sheets.js` | Google OAuth and Sheets I/O |
+| `sheet-config.json` | runtime app config, endpoint, OAuth client metadata |
+| `sheet-snapshot.json` | snapshot fallback for standard tabs |
+| `api/` | Vercel serverless routes |
+| `tests/` | node regression tests |
+| `scripts/build-check.mjs` | static bundle validation for `npm run build` |
+| `scripts/release-guard.sh` | release safety guard before push/PR |
+
+## Local Validation
+
+This repo now exposes a minimal npm wrapper without changing the static architecture:
+
+```bash
+npm install
+npm test
+npm run build
+npm run release-guard
+```
+
+- `npm test` runs `node --test tests/*.test.*`
+- `npm run build` validates the static bundle, required JSON files, and local asset references
+- `npm run release-guard` checks remote safety, branch ancestry, clean tree, and legacy-source regressions
+
+## Google Sheets Model
 
 Проект работает с двумя Google Spreadsheets:
 
-**1. Основная таблица (аналитика + snapshot)**
+1. Основная таблица для аналитики и snapshot.
+2. Таблица ручных данных для `fact`, `Расходы`, `Остатки`, `Переводы`, `Комиссии`, `Мои заказы`.
 
-- URL задаётся через `sheet-config.json`, интерфейс или URL-параметр
-- Содержит лист `MANUAL_INPUTS_IMPORT` для синхронизации fact
+Основные runtime-настройки остаются в `sheet-config.json`:
 
-**2. Таблица ручных данных (fact, расходы, переводы)**
+- OAuth client ID and allowed origins
+- dashboard `/api` endpoint
+- spreadsheet IDs
+- visible dashboard tabs
 
-- URL: см. `MOVEMENT_SOURCE_SPREADSHEET_FALLBACK_URL` в `config.js`
-- Листы: `fact`, `расходы по каналам`, `Переводы`, `Расходы`, `Остатки`, `Комиссии`, `Мои заказы`
-- Структура листов: даты в формате `YYYY-MM-DD ~ YYYY-MM-DD` как имена листов
+Константы бизнес-логики остаются в `config.js`, включая каналы, fallback rates и sheet titles.
 
-## Настройка (для Claude / Codex)
+## Provider Integrations
 
-Основные изменяемые параметры находятся в `config.js`:
-
-- Курсы валют → `MANUAL_FINANCE_FALLBACK_USD_RATES`
-- Каналы оплаты → `MANUAL_FINANCE_MONEY_CHANNELS`
-- Имена листов → константы `MANUAL_*_TITLE`
-- URL основной таблицы → `MOVEMENT_SOURCE_SPREADSHEET_FALLBACK_URL`
-
-Runtime-параметры окружения остаются в `sheet-config.json`:
-
-- OAuth client ID и разрешённые origins
-- `/api` endpoint
-- Spreadsheet IDs
-- Набор dashboard tabs
-
-## PayPal / Wise
-
-Вкладка `Учет расходов` умеет подтягивать выписки за выбранный период через Vercel Functions:
+`Учет расходов` uses Vercel API routes:
 
 - `/api/paypal-transactions`
 - `/api/wise-transactions`
+- `/api/expense-screenshots`
 
-Production env vars:
+Required or optional deploy env vars are listed in [.env.example](/Users/andriilitvinov/projects/MYPROJECTS/finance/.env.example).
 
+Current env inventory:
+
+- `EZOHATA_V2_APPS_SCRIPT_URL`
+- `EZOHATA_LEGACY_MANUAL_FINANCE_URL`
 - `PAYPAL_CLIENT_ID`
 - `PAYPAL_CLIENT_SECRET`
-- `PAYPAL_ENVIRONMENT=live`
-- optional fallback: `PAYPAL_MCP_CLIENT_ID`, `PAYPAL_MCP_REFRESH_TOKEN`
+- `PAYPAL_ENVIRONMENT`
+- `PAYPAL_MCP_CLIENT_ID`
+- `PAYPAL_MCP_REFRESH_TOKEN`
 - `WISE_API_TOKEN`
-- optional: `WISE_PROFILE_ID`, `WISE_ENVIRONMENT=live`
+- `WISE_PROFILE_ID`
+- `WISE_API_BASE`
+- `OPENAI_API_KEY`
+- `OPENAI_EXPENSE_MODEL`
 
-PayPal REST app must have Transaction Search enabled. Official setup:
-[PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live).
+PayPal live app setup:
+[PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live)
 
-## Деплой
+## Deploy Flow
 
-Production деплоится из GitHub через Vercel Git Integration после merge в `main`.
+Production must be wired to GitHub integration from `andylitvinov-design/finance`.
+
+Standard flow:
 
 ```bash
 git switch -c codex/my-change origin/main
-# внести изменения
 git add .
-git commit -m "описание изменений"
-bash scripts/release-guard.sh
+git commit -m "describe change"
+npm test
+npm run build
+npm run release-guard
 git push -u origin codex/my-change
 gh pr create --base main --head codex/my-change
 ```
 
-Активный источник деплоя - корень этого репозитория на ветке от `origin/main`. Старый `reconcile-v2/` не использовать как источник новых production-коммитов: такие ветки могут не иметь общей истории с `main`, из-за чего PR и автодеплой зависают.
+Rules:
 
-## Версия
+- do not push normal changes directly to `origin/main`
+- `old-origin` is read-only fallback only
+- if `origin/main` is not created yet during bootstrap, release guard temporarily falls back to `old-origin/main`
 
-Версия интерфейса хранится в `APP_BUILD_VERSION` в `config.js`.
-Формат: `YYYY.MM.DD.HH` — обновлять вручную при каждом релизе.
+## Versioning
 
-`sheet-config.json` также содержит `appVersion`, который отображается в dashboard status.
+- UI build version is stored in `APP_BUILD_VERSION` in `config.js`
+- `sheet-config.json` stores `appVersion` shown in the dashboard status

@@ -1,0 +1,36 @@
+{
+  "app": "ezohata-incoming-ledger",
+  "repository": {
+    "canonical": "https://github.com/andylitvinov-design/finance.git",
+    "legacy": "https://github.com/andylitvinov-design/ezohata-incoming-ledger.git",
+    "rootDirectory": ".",
+    "defaultBranch": "main"
+  },
+  "deploy": {
+    "provider": "vercel",
+    "projectName": "ezohata-incoming-ledger",
+    "projectId": "prj_jnM1b4M941qFXzz0F31oDTeYNO84",
+    "teamId": "team_OSf690d0nxRHWVMXCElA8i95",
+    "productionUrl": "https://ezohata-incoming-ledger.vercel.app/"
+  },
+  "validation": {
+    "install": "npm install",
+    "test": "npm test",
+    "build": "npm run build",
+    "releaseGuard": "npm run release-guard"
+  },
+  "env": [
+    "EZOHATA_V2_APPS_SCRIPT_URL",
+    "EZOHATA_LEGACY_MANUAL_FINANCE_URL",
+    "PAYPAL_CLIENT_ID",
+    "PAYPAL_CLIENT_SECRET",
+    "PAYPAL_ENVIRONMENT",
+    "PAYPAL_MCP_CLIENT_ID",
+    "PAYPAL_MCP_REFRESH_TOKEN",
+    "WISE_API_TOKEN",
+    "WISE_PROFILE_ID",
+    "WISE_API_BASE",
+    "OPENAI_API_KEY",
+    "OPENAI_EXPENSE_MODEL"
+  ]
+}
