@@ -52,8 +52,11 @@ export function normalizeServerAnalyticsPayload(data) {
   if (!data?.tabs?.analytics?.values?.length) return data;
 
   const values = data.tabs.analytics.values;
-  const manualRows = extractManualRows(values);
-  const existingBalances = Array.isArray(data.manual?.balances) ? data.manual.balances : [];
+  const manualRows = buildManualRowsForPeriod(extractManualRows(values), data.manual || {}, data.period || {});
+  const existingBalances = getPeriodBalanceRows(
+    Array.isArray(data.manual?.balances) ? data.manual.balances : [],
+    data.period || {}
+  );
   const fallbackBalances = existingBalances.length ? existingBalances : buildBalancesFromManualRows(manualRows, data.period);
   const closingUsdLookup = buildClosingUsdLookup(fallbackBalances, manualRows);
   const normalizedAnalyticsValues = rebuildAnalyticsValues(values, manualRows, closingUsdLookup);
@@ -167,21 +170,37 @@ export function rebuildAnalyticsValues(values, manualRows, closingUsdLookup) {
 
 function rebuildPlanSection(section, manualRows) {
   const rows = section.rows.map((row) => row.slice());
+  const header = section.header || [];
+  const localIndex = findHeaderIndex(header, ["пришло в местной валюте"]);
+  const usdIndex = findHeaderIndex(header, ["пришло в долларах"]);
+  const paidOutIndex = findHeaderIndex(header, ["ушло"]);
+  const ownCostIndex = findHeaderIndex(header, ["затраты-мои"]);
+  const ownCostUsdIndex = findHeaderIndex(header, ["затраты-мои-дол"]);
+  const planGrowthIndex = findHeaderIndex(header, ["план-рост"]);
+  const planProfitIndex = findHeaderIndex(header, ["plan-profit"]);
   const exchangeLookup = Object.fromEntries((manualRows || []).map((row) => [row.channel, row]));
+  const exchangeTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchange), 0);
+  const exchangeUsdTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchangeUsd), 0);
   const rebuiltRows = rows.map((row) => {
     const channel = String(row[0] || "").trim();
-    const manual = exchangeLookup[channel] || {};
+    const manual = normalizeCell(channel) === normalizeCell(TOTAL_LABEL)
+      ? { exchange: exchangeTotal, exchangeUsd: exchangeUsdTotal }
+      : (exchangeLookup[channel] || {});
+    const exchange = parseLooseNumber(manual.exchange);
+    const exchangeUsd = parseLooseNumber(manual.exchangeUsd);
+    const existingPlanGrowth = readPlanNumber(row, planGrowthIndex, 5);
+    const existingPlanProfit = readPlanNumber(row, planProfitIndex, 8);
     return [
       row[0] || "",
-      row[1] || "",
-      row[2] || "",
-      row[6] || "",
-      row[7] || "",
-      row[3] || "",
-      manual.exchange || "",
-      manual.exchangeUsd || "",
-      row[5] || "",
-      row[8] || "",
+      readPlanCell(row, localIndex, 1),
+      readPlanCell(row, usdIndex, 2),
+      readPlanCell(row, ownCostIndex, 6),
+      readPlanCell(row, ownCostUsdIndex, 7),
+      readPlanCell(row, paidOutIndex, 3),
+      exchange ? formatNumber(exchange) : "",
+      exchangeUsd ? formatNumber(exchangeUsd) : "",
+      formatNumber(existingPlanGrowth + exchangeUsd),
+      formatNumber(existingPlanProfit + exchangeUsd),
     ];
   });
   return {
@@ -189,6 +208,139 @@ function rebuildPlanSection(section, manualRows) {
     header: PLAN_HEADER,
     rows: rebuiltRows,
   };
+}
+
+function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
+  const startDate = normalizeDate(period.startDate);
+  const endDate = normalizeDate(period.endDate);
+  const lookup = new Map((legacyRows || []).map((row) => [row.channel, { ...row }]));
+  const rateLookup = buildManualRateLookup(manual?.transfers || [], endDate);
+
+  for (const row of manual?.expenseRows || []) {
+    const date = normalizeDate(row?.date);
+    if (!isDateInRange(date, startDate, endDate)) continue;
+    const category = normalizeManualCategory(row?.category);
+    if (category !== "exchange" && category !== "now") continue;
+
+    for (const [channel, rawAmount] of Object.entries(row.amounts || {})) {
+      const amount = parseLooseNumber(rawAmount);
+      if (!amount) continue;
+      const target = ensureManualRow(lookup, channel);
+      if (category === "exchange") {
+        const exchange = parseLooseNumber(target.exchange) + amount;
+        target.exchange = formatNumber(exchange);
+        target.exchangeUsd = formatNumber(deriveManualUsdAmount(exchange, channel, rateLookup));
+      } else if (!String(target.now || "").trim()) {
+        target.now = rawAmount;
+      }
+    }
+  }
+
+  return Array.from(lookup.values());
+}
+
+function ensureManualRow(lookup, channel) {
+  const normalizedChannel = String(channel || "").trim();
+  if (!lookup.has(normalizedChannel)) {
+    lookup.set(normalizedChannel, {
+      channel: normalizedChannel,
+      now: "",
+      business: "",
+      food: "",
+      flat: "",
+      fun: "",
+      study: "",
+      travel: "",
+      total: "",
+      nowUsd: "",
+      exchange: "",
+      exchangeUsd: "",
+      currency: inferChannelCurrency(normalizedChannel),
+    });
+  }
+  return lookup.get(normalizedChannel);
+}
+
+function buildManualRateLookup(transfers, endDate) {
+  const byChannel = {};
+  const byCurrency = {};
+  for (const row of transfers || []) {
+    const date = normalizeDate(row?.transferDate || row?.date);
+    if (endDate && date && date > endDate) continue;
+    const amount = parseLooseNumber(row?.amount);
+    const usdAmount = parseLooseNumber(row?.usdAmount);
+    if (!amount || !usdAmount) continue;
+    const channel = String(row?.channel || row?.destination || "").trim();
+    const currency = String(row?.currency || row?.localCurrency || inferChannelCurrency(channel)).trim().toUpperCase();
+    const usdPerLocal = usdAmount / amount;
+    if (channel) addRate(byChannel, channel, usdPerLocal);
+    if (currency) addRate(byCurrency, currency, usdPerLocal);
+  }
+  return {
+    byChannel: averageRates(byChannel),
+    byCurrency: { ...FALLBACK_USD_RATES, ...averageRates(byCurrency) },
+  };
+}
+
+function addRate(lookup, key, rate) {
+  if (!key || !Number.isFinite(rate) || rate <= 0) return;
+  if (!lookup[key]) lookup[key] = [];
+  lookup[key].push(rate);
+}
+
+function averageRates(lookup) {
+  return Object.fromEntries(
+    Object.entries(lookup).map(([key, values]) => [key, values.reduce((sum, value) => sum + value, 0) / values.length])
+  );
+}
+
+function deriveManualUsdAmount(amount, channel, rateLookup) {
+  const currency = inferChannelCurrency(channel);
+  if (currency === "USD") return amount;
+  const rate = parseLooseNumber(rateLookup.byChannel?.[channel]) ||
+    parseLooseNumber(rateLookup.byCurrency?.[currency]) ||
+    FALLBACK_USD_RATES[currency] ||
+    FALLBACK_USD_RATES.LOCAL;
+  return amount * rate;
+}
+
+function getPeriodBalanceRows(balances, period = {}) {
+  const endDate = normalizeDate(period.endDate);
+  const latestByChannel = new Map();
+  for (const row of balances || []) {
+    const date = normalizeDate(row?.date);
+    if (endDate && date && date > endDate) continue;
+    const channel = String(row?.channel || row?.accountName || "").trim();
+    if (!channel) continue;
+    const previous = latestByChannel.get(channel);
+    if (!previous || String(date).localeCompare(String(normalizeDate(previous.date))) >= 0) {
+      latestByChannel.set(channel, row);
+    }
+  }
+  return Array.from(latestByChannel.values());
+}
+
+function normalizeManualCategory(value) {
+  const normalized = normalizeCell(value);
+  if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return "now";
+  if (/exchange|обмен/.test(normalized)) return "exchange";
+  return normalized;
+}
+
+function isDateInRange(date, startDate, endDate) {
+  if (!date) return false;
+  if (startDate && date < startDate) return false;
+  if (endDate && date > endDate) return false;
+  return true;
+}
+
+function readPlanCell(row, index, fallbackIndex) {
+  const value = index === -1 ? row[fallbackIndex] : row[index];
+  return value || "";
+}
+
+function readPlanNumber(row, index, fallbackIndex) {
+  return parseLooseNumber(readPlanCell(row, index, fallbackIndex));
 }
 
 function rebuildBalanceSection(section, closingUsdLookup) {

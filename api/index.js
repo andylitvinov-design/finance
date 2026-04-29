@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "./analytics-normalizer.js";
+import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import {
   fetchPayPalStatementEntries,
   fetchPayPalStatementEntriesFromMcp,
@@ -254,7 +255,7 @@ async function pipeResponse(response, upstreamResponse, action) {
   }
 
   const data = payload.ok
-    ? normalizeServerAnalyticsPayload(await maybeOverlayFreshSourceData(payload.data))
+    ? normalizeServerAnalyticsPayload(await maybeOverlayManualRepositoryData(await maybeOverlayFreshSourceData(payload.data)))
     : payload.data;
 
   return response.status(payload.ok ? 200 : 502).json({
@@ -290,6 +291,44 @@ async function maybeOverlayFreshSourceData(data) {
     console.warn("Fresh source overlay failed, using upstream dashboard data.", error);
     return data;
   }
+}
+
+async function maybeOverlayManualRepositoryData(data) {
+  if (!data?.period || !data?.tabs?.analytics?.values?.length) return data;
+  const manualRepository = await loadManualRepositoryFromGoogleSheets();
+  if (!manualRepository.ok) {
+    return appendManualWarning(data, manualRepository.warning);
+  }
+  return {
+    ...data,
+    manual: {
+      ...(data.manual || {}),
+      expenseRows: manualRepository.expenseRows,
+      balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
+      balanceRows: manualRepository.balances,
+      transfers: manualRepository.transfers,
+      commissionRows: manualRepository.commissionRows,
+      sourceType: "manual-google-sheets",
+      manualSpreadsheetId: manualRepository.spreadsheetId,
+    },
+  };
+}
+
+function appendManualWarning(data, warning) {
+  if (!warning) return data;
+  const warnings = [
+    ...new Set([
+      ...((Array.isArray(data?.manual?.warnings) ? data.manual.warnings : [])),
+      warning,
+    ]),
+  ];
+  return {
+    ...data,
+    manual: {
+      ...(data.manual || {}),
+      warnings,
+    },
+  };
 }
 
 async function loadSourceRows() {
