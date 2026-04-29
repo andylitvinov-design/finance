@@ -4,8 +4,8 @@ set -euo pipefail
 remote_name="${1:-}"
 remote_url="${2:-}"
 
-if [[ "$remote_name" == "old-origin" ]]; then
-  echo "pre-push: refusing to push to old-origin." >&2
+if [[ "$remote_name" != "origin" ]]; then
+  echo "pre-push: refusing to push to non-origin remote ${remote_name:-unknown}." >&2
   exit 1
 fi
 

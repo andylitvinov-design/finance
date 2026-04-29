@@ -7,10 +7,10 @@ Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-inc
 ## Canonical Repository
 
 - canonical repo: [andylitvinov-design/finance](https://github.com/andylitvinov-design/finance)
-- deprecated read-only repo: [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger)
-- deploy source of truth: root of this repository, Vercel project `finance`, branch `main`
+- deploy source of truth: root of this repository, Vercel project `ezohata-incoming-ledger`, branch `main`
 
 Не использовать `reconcile-v2/` как отдельный source root. Эта ветка миграции закрыта; production-коммиты, PR и деплои идут только из `finance`.
+This repository is the single source of truth for ezohata-incoming-ledger production.
 
 ## Stack
 
@@ -45,6 +45,7 @@ This repo now exposes a minimal npm wrapper without changing the static architec
 
 ```bash
 npm install
+npm run migration:check
 npm test
 npm run build
 npm run release-guard
@@ -52,6 +53,7 @@ npm run release-guard
 
 - `npm test` runs `node --test tests/*.test.*`
 - `npm run build` validates the static bundle, required JSON files, and local asset references
+- `npm run migration:check` verifies the Git remote and Vercel project lock
 - `npm run release-guard` checks remote safety, branch ancestry, clean tree, and legacy-source regressions
 
 ## Google Sheets Model
@@ -101,7 +103,7 @@ PayPal live app setup:
 ## Deploy Flow
 
 Production must be wired to GitHub integration from `andylitvinov-design/finance`.
-The canonical Vercel project is `finance`; `ezohata-incoming-ledger.vercel.app` is the production alias.
+The canonical Vercel project is `ezohata-incoming-ledger`; `ezohata-incoming-ledger.vercel.app` is the production alias.
 
 Standard flow:
 
