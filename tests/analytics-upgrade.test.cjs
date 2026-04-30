@@ -117,6 +117,13 @@ test("analytics balance and period sections use two mobile columns", () => {
   assert.match(styleCss, /\.mobile-table table \{ min-width: unset; width: 100%; \}/);
 });
 
+test("analytics UI shows explicit authorization warning instead of misleading Plan and Balance zeros", () => {
+  assert.match(uiJs, /function getManualOverlayUnavailableMessage\(\)/);
+  assert.match(uiJs, /Plan \/ Balance \/ Fact требуют авторизацию или server-side manual overlay/);
+  assert.match(uiJs, /shouldShowManualOverlayWarningInsteadOfSection\(section\.title\)/);
+  assert.match(uiJs, /warning\.textContent = manualOverlayWarning/);
+});
+
 test("balance analytics appends OSTATOK and VSEGO rows", () => {
   assert.match(financeJs, /"ОСТАТОК"[\s\S]*formatSheetNumber\(totalOpeningBalance\)/);
   assert.match(financeJs, /"ВСЕГО"[\s\S]*formatSheetNumber\(totalClosingBalance \+ totalOpeningBalance\)/);

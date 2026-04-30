@@ -1339,7 +1339,7 @@ function deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, 
 function deriveBalance(totalUsd, accruedPlus3) {
   const total = parseLooseNumber(totalUsd);
   const accrued = parseLooseNumber(accruedPlus3);
-  if (total === null || accrued === null) return total === null && accrued !== null ? formatDisplayNumber(-accrued) : "";
+  if (total === null || accrued === null) return "";
   return formatDisplayNumber(total - accrued);
 }
 
@@ -1363,6 +1363,7 @@ function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlu
         "manual review",
         !paymentMethod ? "payment channel missing" : "",
         "received amount missing",
+        "balance not calculated from incomplete source row",
         ...commentParts,
       ]),
     };
