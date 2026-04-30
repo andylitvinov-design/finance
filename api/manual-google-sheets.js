@@ -97,7 +97,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     });
     const ledgerRepository = parseExpenseRepository(valuesBySheet[LEDGER_SHEET_NAME] || []);
     const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || []);
-    const repository = ledgerRepository.operations.length ? ledgerRepository : legacyRepository;
+    const repository = ledgerRepository.schema.startsWith("ledger-v1") ? ledgerRepository : legacyRepository;
     return {
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
@@ -105,7 +105,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers: parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []),
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
-      fallbackSchema: ledgerRepository.operations.length ? legacyRepository.schema : null,
+      fallbackSchema: ledgerRepository.schema.startsWith("ledger-v1") ? legacyRepository.schema : null,
     };
   } catch (error) {
     return {
@@ -160,7 +160,11 @@ function base64UrlEncode(value) {
 
 async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fetchImpl }) {
   const url = new URL(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values:batchGet`);
-  sheetNames.forEach((name) => url.searchParams.append("ranges", `'${name.replace(/'/g, "''")}'`));
+  sheetNames.forEach((name) => {
+    const escaped = name.replace(/'/g, "''");
+    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:O` : `'${escaped}'`;
+    url.searchParams.append("ranges", range);
+  });
   const response = await fetchImpl(url.toString(), {
     method: "GET",
     headers: {
@@ -188,6 +192,18 @@ function extractSheetTitle(range) {
 }
 
 function parseExpenseRepository(values) {
+  const headerState = getNormalizedLedgerHeaderState(values);
+  if (headerState === "empty") {
+    return {
+      schema: "ledger-v1-empty",
+      operations: [],
+      expenseRows: [],
+      views: {
+        byDateChannel: [],
+        byCategory: [],
+      },
+    };
+  }
   const normalizedOperations = parseNormalizedOperationRows(values);
   if (normalizedOperations) {
     return {
@@ -206,6 +222,13 @@ function parseExpenseRepository(values) {
     expenseRows: parseLegacyExpenseRows(values),
     views: null,
   };
+}
+
+function getNormalizedLedgerHeaderState(values) {
+  const { header, rows } = splitHeaderRows(values);
+  if (!looksLikeNormalizedOperationsHeader(header)) return "";
+  const hasDataRows = rows.some((row) => row.some((cell) => String(cell || "").trim()));
+  return hasDataRows ? "data" : "empty";
 }
 
 function parseLegacyExpenseRows(values) {

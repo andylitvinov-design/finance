@@ -260,3 +260,57 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
   }
 });
+
+test("loadManualRepositoryFromGoogleSheets keeps empty Ledger as explicit ledger-v1-empty schema", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const fetchCalls = [];
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        fetchCalls.push(String(url));
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:O",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                ],
+              },
+              {
+                range: "'Расходы'!A1:Z10",
+                values: [
+                  ["дата", "категория", "Яндекс руб"],
+                  ["2026-04-24", "exchange", "-74669"],
+                ],
+              },
+              { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
+              { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
+              { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.schema, "ledger-v1-empty");
+    assert.deepEqual(repository.operations, []);
+    assert.deepEqual(repository.expenseRows, []);
+    assert.equal(repository.fallbackSchema, "legacy-expense-grid");
+    assert.match(fetchCalls[1], /ranges=%27Ledger%27%21A%3AO/);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
