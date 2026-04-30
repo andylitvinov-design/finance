@@ -312,21 +312,32 @@ async function maybeOverlayManualRepositoryData(data) {
   if (!manualRepository.ok) {
     return appendManualWarning(data, manualRepository.warning);
   }
+
+  const isLedgerRepository = String(manualRepository.schema || "").startsWith("ledger-v1");
+  const nextManual = {
+    ...(data.manual || {}),
+    schema: manualRepository.schema,
+    warnings: [],
+    expenseRows: manualRepository.expenseRows,
+    balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
+    balanceRows: manualRepository.balances,
+    transfers: manualRepository.transfers,
+    commissionRows: manualRepository.commissionRows,
+    views: manualRepository.views,
+    sourceType: "manual-google-sheets",
+    manualSpreadsheetId: manualRepository.spreadsheetId,
+    fallbackSchema: manualRepository.fallbackSchema || null,
+  };
+
+  if (isLedgerRepository) {
+    nextManual.primarySource = "ledger";
+    nextManual.operations = manualRepository.operations;
+    delete nextManual.compatibilityMode;
+  }
+
   return {
     ...data,
-    manual: {
-      ...(data.manual || {}),
-      schema: manualRepository.schema,
-      operations: manualRepository.operations,
-      expenseRows: manualRepository.expenseRows,
-      balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
-      balanceRows: manualRepository.balances,
-      transfers: manualRepository.transfers,
-      commissionRows: manualRepository.commissionRows,
-      views: manualRepository.views,
-      sourceType: "manual-google-sheets",
-      manualSpreadsheetId: manualRepository.spreadsheetId,
-    },
+    manual: nextManual,
   };
 }
 

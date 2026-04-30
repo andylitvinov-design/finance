@@ -766,19 +766,63 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
   }
 });
 
-test("GET getDashboardData warns but keeps analytics when manual service account is missing", async () => {
+test("GET getDashboardData exposes ledger-v1 manual metadata without fallback-looking compatibility mode", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   const previousFetch = global.fetch;
-  process.env.EZOHATA_V2_APPS_SCRIPT_URL =
-    "https://script.google.com/macros/s/example/exec";
-  delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-overlay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
 
   try {
     global.fetch = async (url) => {
       const value = String(url);
+      if (value.includes("oauth2.googleapis.com/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "test-access-token" };
+          }
+        };
+      }
+      if (value.includes("sheets.googleapis.com") && value.includes("values:batchGet")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              valueRanges: [
+                {
+                  range: "'Ledger'!A:O",
+                  values: [
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                    ["2026-04-25", "income", "", "paypal usd", "369", "USD", "369", "serviceincome", "", "", "income", "raw-1", "", "2026-04-25T09:00:00.000Z", "2026-04-25T09:00:00.000Z"],
+                  ]
+                },
+                {
+                  range: "'Расходы'!A1:Z10",
+                  values: [["дата", "категория", "Яндекс руб"]]
+                },
+                {
+                  range: "'Остатки'!A1:G",
+                  values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]]
+                },
+                {
+                  range: "'Переводы'!A1:G",
+                  values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]]
+                },
+                {
+                  range: "'Комиссии'!A1:D",
+                  values: [["дата", "канал", "сумма в долларах", "комментарий"]]
+                }
+              ]
+            };
+          }
+        };
+      }
       if (value.includes("script.google.com")) {
         return {
           ok: true,
@@ -788,16 +832,30 @@ test("GET getDashboardData warns but keeps analytics when manual service account
               ok: true,
               action: "calculatePeriod",
               data: {
-                period: { startDate: "2026-04-01", endDate: "2026-04-28" },
-                manual: { balances: [] },
+                period: {
+                  startDate: "2026-04-01",
+                  endDate: "2026-04-28",
+                  timeZone: "Europe/Kyiv"
+                },
+                manual: {
+                  balances: [],
+                  transfers: [],
+                  notes: "",
+                  checkDate: "2026-04-28",
+                  status: "saved",
+                  compatibilityMode: "incoming-repository"
+                },
                 tabs: {
-                  movement: { sheetName: "движение средства", values: [["NUMBER", "DATE"]] },
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [["NUMBER", "DATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"]]
+                  },
                   analytics: {
                     sheetName: "аналитика",
                     values: [
-                      ["Личные расходы"],
-                      ["валюта", "now", "затраты-мои", "now_usd"],
-                      ["пейпал дол", "648,00", "0,00", "648"],
+                      ["Личные расходы", "", "", "", "", "", "", "", "", "display_name", "income_source_key", "expense_source_key", "past_usd_source_key", "currency_type"],
+                      ["валюта", "now", "spent for business", "затраты-мои", "now_usd"],
+                      ["пейпал дол", "648,00", "0,00", "0,00", "648"],
                       [],
                       ["Plan"],
                       ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "комиссии", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
@@ -829,8 +887,11 @@ test("GET getDashboardData warns but keeps analytics when manual service account
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
-    assert.ok(response.body?.data?.tabs?.analytics?.values?.length > 0);
-    assert.match(response.body?.data?.manual?.warnings?.[0] || "", /service account credentials are not configured/);
+    assert.equal(response.body?.data?.manual?.schema, "ledger-v1");
+    assert.equal(response.body?.data?.manual?.primarySource, "ledger");
+    assert.equal(response.body?.data?.manual?.compatibilityMode, undefined);
+    assert.deepEqual(response.body?.data?.manual?.warnings || [], []);
+    assert.ok((response.body?.data?.manual?.operations || []).length > 0);
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {
