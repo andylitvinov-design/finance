@@ -24,6 +24,10 @@ function formatSheetNumber(value, digits = 4) {
   return Number(value || 0).toFixed(digits).replace(".", ",");
 }
 
+function normalizeCell(value) {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+}
+
 function extractFunction(source, name) {
   let start = source.indexOf(`function ${name}`);
   if (start === -1) throw new Error(`${name} was not found`);
@@ -122,6 +126,177 @@ test("analytics UI shows explicit authorization warning instead of misleading Pl
   assert.match(uiJs, /Plan \/ Balance \/ Fact требуют авторизацию или server-side manual overlay/);
   assert.match(uiJs, /shouldShowManualOverlayWarningInsteadOfSection\(section\.title\)/);
   assert.match(uiJs, /warning\.textContent = manualOverlayWarning/);
+});
+
+test("analytics UI keeps Movement summary and personal ledger table under different display titles", () => {
+  const context = {
+    normalizeCell,
+    findHeaderIndexByAliases(header, aliases) {
+      return header.findIndex((cell) => aliases.some((alias) => normalizeCell(cell) === normalizeCell(alias)));
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "isAnalyticsPersonalSection")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionDisplayTitle")}\n` +
+    "this.isAnalyticsPersonalSection = isAnalyticsPersonalSection;\n" +
+    "this.getAnalyticsSectionDisplayTitle = getAnalyticsSectionDisplayTitle;",
+    context
+  );
+
+  const movementSummarySection = {
+    title: "движение 1",
+    rows: [[
+      "канал переводов",
+      "план = ACCRUED",
+      "план плюс процент начислено = ACCRUED +3%",
+      "70% OF +3%",
+      "ДОШЛО ДО НАС USD",
+      "BALANCE"
+    ]]
+  };
+  const personalSection = {
+    title: "Личные расходы",
+    rows: [[
+      "валюта",
+      "now",
+      "приход от услуг",
+      "spent for business",
+      "spent for flat",
+      "spent for food",
+      "spent for fun",
+      "spent for study",
+      "spent for travel",
+      "затраты-мои",
+      "обмен",
+      "обмен_usd",
+      "затраты-мои usd",
+      "now_usd"
+    ]]
+  };
+
+  assert.equal(context.isAnalyticsPersonalSection(movementSummarySection), false);
+  assert.equal(context.isAnalyticsPersonalSection(personalSection), true);
+  assert.equal(context.getAnalyticsSectionDisplayTitle(movementSummarySection), "Сверка Movement по каналам");
+  assert.equal(context.getAnalyticsSectionDisplayTitle(personalSection), "Движение 1");
+});
+
+test("analytics manual row fallback selects personal ledger section instead of the first analytics section", () => {
+  const context = {
+    state: {
+      aggregatedManualRange: null,
+      manualFinance: { data: {} },
+      analyticsFact: {}
+    },
+    getAnalyticsMergedValues() {
+      return [["ignored"]];
+    },
+    splitAnalyticsSections() {
+      return [
+        {
+          title: "Сверка Movement по каналам",
+          rows: [[
+            "канал переводов",
+            "план = ACCRUED",
+            "план плюс процент начислено = ACCRUED +3%",
+            "70% OF +3%",
+            "ДОШЛО ДО НАС USD",
+            "BALANCE"
+          ], ["paypal", "1", "2", "3", "4", "5"]]
+        },
+        {
+          title: "Личные расходы",
+          rows: [[
+            "валюта",
+            "now",
+            "приход от услуг",
+            "spent for business",
+            "spent for flat",
+            "spent for food",
+            "spent for fun",
+            "spent for study",
+            "spent for travel",
+            "затраты-мои",
+            "обмен",
+            "обмен_usd",
+            "затраты-мои usd",
+            "now_usd"
+          ], ["Яндекс руб", "139786", "200", "11287", "", "", "", "", "", "11287", "-74669", "-883", "133", "1653"]]
+        }
+      ];
+    },
+    extractAnalyticsTopTables(values) {
+      return values;
+    },
+    findHeaderIndexByAliases(header, aliases) {
+      return header.findIndex((cell) => aliases.some((alias) => normalizeCell(cell) === normalizeCell(alias)));
+    },
+    hasAnyValue(row) {
+      return (row || []).some((cell) => String(cell || "").trim());
+    },
+    normalizeCell
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "isAnalyticsPersonalSection")}\n` +
+    `${extractFunction(financeJs, "getAnalyticsPersonalSection")}\n` +
+    `${extractFunction(uiJs, "getCurrentAnalyticsManualRows")}\n` +
+    "this.getCurrentAnalyticsManualRows = getCurrentAnalyticsManualRows;",
+    context
+  );
+
+  assert.deepEqual(plain(context.getCurrentAnalyticsManualRows()), [{
+    channel: "Яндекс руб",
+    now: "139786",
+    serviceIncome: "200",
+    business: "11287",
+    flat: "",
+    food: "",
+    fun: "",
+    study: "",
+    travel: "",
+    total: "11287",
+    exchange: "-74669",
+    exchangeUsd: "-883",
+    totalUsd: "133",
+    nowUsd: "1653"
+  }]);
+});
+
+test("fact metrics use the same personal ledger rows for my services and my costs", () => {
+  const context = {
+    elements: { endDate: { value: "2026-04-30" } },
+    state: { data: { tabs: { movement: { values: [] } } }, analyticsFact: { periodEnd: "2026-04-30" } },
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    parseLooseNumber,
+    getCurrentAnalyticsManualRows() {
+      return [
+        { channel: "Яндекс руб", serviceIncome: "200", business: "11287", flat: "", food: "", fun: "", study: "", travel: "" },
+        { channel: "пейпал евр", serviceIncome: "300", business: "", flat: "239", food: "", fun: "", study: "", travel: "780" },
+        { channel: "Итого", serviceIncome: "500", business: "11287", flat: "239", food: "", fun: "", study: "", travel: "780" }
+      ];
+    },
+    getCurrentFactMetricTransfers() {
+      return [];
+    },
+    buildManualFinanceUsdRateLookup() {
+      return {};
+    },
+    getManualFinanceFieldUsdNumber(row, key) {
+      return parseLooseNumber(row?.[key]);
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "getCurrentFactMetricTotals")}\n` +
+    "this.getCurrentFactMetricTotals = getCurrentFactMetricTotals;",
+    context
+  );
+
+  assert.deepEqual(plain(context.getCurrentFactMetricTotals()), {
+    myServices: 500,
+    myCosts: 12306
+  });
 });
 
 test("balance analytics appends OSTATOK and VSEGO rows", () => {

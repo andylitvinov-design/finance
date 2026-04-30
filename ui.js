@@ -1691,7 +1691,10 @@ function getCurrentAnalyticsManualRows() {
   }
   const analyticsValues = getAnalyticsMergedValues();
   const sections = splitAnalyticsSections(extractAnalyticsTopTables(analyticsValues));
-  const rows = sections[0]?.rows || [];
+  const personalSection = (typeof getAnalyticsPersonalSection === "function")
+    ? getAnalyticsPersonalSection(sections)
+    : sections[0];
+  const rows = personalSection?.rows || [];
   const header = rows[0] || [];
   const studyIndex = findHeaderIndexByAliases(header, ["spent for study", "study"]);
   const travelIndex = findHeaderIndexByAliases(header, ["spent for travel", "travel"]);
@@ -1716,6 +1719,16 @@ function getCurrentAnalyticsManualRows() {
     totalUsd: totalUsdIndex === -1 ? "" : row[totalUsdIndex] || "",
     nowUsd: nowUsdIndex === -1 ? "" : row[nowUsdIndex] || "",
   }));
+}
+
+function getAnalyticsSectionDisplayTitle(section) {
+  if ((typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section)) {
+    return "Движение 1";
+  }
+  if (normalizeCell(section?.title) === normalizeCell("движение 1")) {
+    return "Сверка Movement по каналам";
+  }
+  return String(section?.title || "").trim();
 }
 
 function setExpenseAccountingStatus(message, isError = false) {
@@ -2280,20 +2293,22 @@ function renderAnalyticsSections(container, values) {
     container.appendChild(warning);
   }
   sections.forEach((section) => {
+    const displayTitle = getAnalyticsSectionDisplayTitle(section);
+    const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
     const block = document.createElement("div");
     block.className = "analytics-section";
     const title = document.createElement("div");
     title.className = "tab-note";
     title.style.marginBottom = "10px";
     title.style.fontWeight = "700";
-    title.textContent = section.title;
+    title.textContent = displayTitle;
     block.appendChild(title);
     if (shouldShowManualOverlayWarningInsteadOfSection(section.title)) {
       const warning = document.createElement("div");
       warning.className = "config-note";
       warning.textContent = manualOverlayWarning;
       block.appendChild(warning);
-    } else if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
+    } else if (isPersonalSection) {
       appendCollapsibleZeroAnalyticsTable(block, section.rows);
     } else if (
       normalizeCell(section.title) === normalizeCell("ИТОГО ЗА ПЕРИОД USD") ||
