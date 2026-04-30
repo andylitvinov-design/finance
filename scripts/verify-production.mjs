@@ -11,9 +11,9 @@ if (!statusResponse.ok) {
 }
 
 const statusPayload = await statusResponse.json();
-const liveSha = normalizeSha(statusPayload.commitSha);
+const liveSha = normalizeSha(statusPayload.commitSha === "unknown" ? "" : statusPayload.commitSha);
 if (!liveSha) {
-  throw new Error("Status endpoint does not expose a live commit SHA.");
+  throw new Error(`Status endpoint does not expose a live commit SHA (${statusPayload.status || "unknown"}${statusPayload.error ? `: ${statusPayload.error}` : ""}).`);
 }
 
 if (expectedSha && liveSha !== expectedSha) {

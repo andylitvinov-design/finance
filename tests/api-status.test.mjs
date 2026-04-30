@@ -84,12 +84,15 @@ test("GET /api/status returns build metadata when generated file exists", async 
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.status, "ok");
     assert.equal(response.body?.commitSha, "vercelsha789");
     assert.equal(response.body?.appVersion, "9.9.9");
     assert.equal(response.body?.appBuildVersion, "2026.04.30.99");
     assert.equal(response.body?.deploymentEnvironment, "production");
     assert.equal(response.body?.vercel?.deploymentUrl, "ezohata-incoming-ledger.vercel.app");
     assert.equal(response.body?.observability?.hasGitMetadata, true);
+    assert.equal(response.body?.observability?.metadataSource, "generated");
+    assert.equal(response.body?.error, null);
   } finally {
     await restoreFile(buildMetaPath, originalText);
     await restoreFile(overridePath, originalOverrideText);
@@ -130,9 +133,56 @@ test("GET /api/status falls back safely when build metadata file is missing", as
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.status, "degraded");
     assert.equal(response.body?.deploymentEnvironment, "preview");
-    assert.equal(response.body?.commitSha, null);
+    assert.equal(response.body?.commitSha, "unknown");
     assert.equal(response.body?.observability?.hasGitMetadata, false);
+    assert.equal(response.body?.observability?.metadataSource, "missing");
+    assert.equal(response.body?.error, "metadata_unavailable");
+  } finally {
+    await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
+    restoreEnv(envBackup);
+  }
+});
+
+test("GET /api/status returns degraded JSON when build metadata is malformed", async () => {
+  const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
+  const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
+  const envBackup = snapshotEnv([
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG"
+  ]);
+
+  await mkdir(path.dirname(overridePath), { recursive: true });
+  await writeFile(overridePath, "{not-json}\n", "utf8");
+  delete process.env.VERCEL_GIT_COMMIT_SHA;
+  delete process.env.VERCEL_GIT_COMMIT_REF;
+  delete process.env.VERCEL_GIT_PROVIDER;
+  delete process.env.VERCEL_GIT_REPO_SLUG;
+  process.env.VERCEL = "1";
+  process.env.VERCEL_ENV = "production";
+  process.env.VERCEL_URL = "ezohata-incoming-ledger.vercel.app";
+  process.env.VERCEL_PROJECT_PRODUCTION_URL = "ezohata-incoming-ledger.vercel.app";
+
+  try {
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: {} }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.status, "degraded");
+    assert.equal(response.body?.commitSha, "unknown");
+    assert.equal(response.body?.error, "metadata_generated_invalid");
+    assert.equal(response.body?.observability?.metadataSource, "generated");
   } finally {
     await restoreFile(buildMetaPath, originalText);
     await restoreFile(overridePath, originalOverrideText);
