@@ -113,7 +113,7 @@ function renderStandardTab(tabId, label) {
   } else {
     wrap.appendChild(renderResponsiveDataView(
       values,
-      tabId === "movement" ? { mobileTableColumnCount: 7 } : { mobileTableColumnCount: 1 }
+      tabId === "movement" ? {} : { mobileTableColumnCount: 1 }
     ));
   }
   block.appendChild(wrap);

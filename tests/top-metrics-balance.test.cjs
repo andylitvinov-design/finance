@@ -90,3 +90,27 @@ test("top metrics balance uses explicit balance columns for movement and orders"
 
   assert.equal(context.buildTopMetricsSummary().balance, 175);
 });
+
+test("getMovementTotalsFromTable prefers net received over client-paid gross", () => {
+  const context = {
+    parseLooseNumber,
+    normalizeCell,
+    findHeaderIndexByAliases,
+    hasAnyValue,
+    isTableTotalRow,
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "getMovementTotalsFromTable")}\n` +
+    "this.getMovementTotalsFromTable = getMovementTotalsFromTable;",
+    context
+  );
+
+  const totals = context.getMovementTotalsFromTable([
+    ["NUMBER", "ACCRUED +3%", "ОПЛАЧЕНО КЛИЕНТОМ USD", "ДОШЛО ДО НАС USD", "BALANCE"],
+    ["1", "103", "120", "110", "7"]
+  ]);
+
+  assert.equal(totals.receivedUsdTotal, 110);
+  assert.equal(totals.balanceTotal, 7);
+});

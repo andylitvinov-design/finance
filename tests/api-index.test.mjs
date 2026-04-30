@@ -236,28 +236,28 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(cryptoRow?.[11], "70,7");
     assert.equal(correctedLozinaRow?.[17], "14870");
     assert.equal(correctedLozinaRow?.[18], "339,8857");
-    assert.match(correctedLozinaRow?.[22], /source duplicate 14870 UAH/);
+    assert.match(correctedLozinaRow?.[24], /source duplicate 14870 UAH/);
     assert.equal(correctedAccruedRow?.[8], "200");
     assert.equal(correctedAccruedRow?.[9], "206");
     assert.equal(correctedAccruedRow?.[17], "45175,8");
     assert.equal(correctedAccruedRow?.[18], "1030");
-    assert.equal(correctedAccruedRow?.[20], "824");
+    assert.equal(correctedAccruedRow?.[22], "824");
     assert.equal(correctedKovalevRow?.[17], "22490,05");
     assert.equal(correctedKovalevRow?.[18], "515");
-    assert.equal(correctedKovalevRow?.[20], "0");
-    assert.match(correctedKovalevRow?.[22], /source missing 515 USD UAH equivalent/);
+    assert.equal(correctedKovalevRow?.[22], "0");
+    assert.match(correctedKovalevRow?.[24], /source missing 515 USD UAH equivalent/);
     assert.equal(mixedRateUahRow?.[12], "84,5563");
     assert.equal(mixedRateUahRow?.[13], "43,67");
     assert.equal(mixedRateUahRow?.[18], "206");
-    assert.equal(mixedRateUahRow?.[20], "0");
+    assert.equal(mixedRateUahRow?.[22], "0");
     assert.equal(fallbackUahRateRow?.[13], "43,67");
     assert.equal(fallbackUahRateRow?.[18], "10,3449");
     assert.equal(quantityRow?.[8], "200");
     assert.equal(quantityRow?.[9], "206");
     assert.deepEqual(movementSummaryRows, [
-      ["2) начислено прайс +%", "4874,0000"],
-      ["4) получено в долларах", "4939,2400"],
-      ["6) 70% от прайс+%", "3411,8100"]
+      ["2) начислено прайс +%", "1440,0000"],
+      ["4) получено в долларах", "2307,2306"],
+      ["6) 70% от прайс+%", "1008,0000"]
     ]);
     assert.deepEqual(positions, [
       "дата 1",
@@ -491,11 +491,11 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
       "18108",
       "Итого"
     ]);
-    assert.equal(missingPaymentRow?.[20], "");
-    assert.equal(missingPaymentRow?.[21], "CHECK REQUIRED");
-    assert.match(String(missingPaymentRow?.[22] || ""), /balance not calculated from incomplete source row/i);
-    assert.equal(fullyMissingRow?.[20], "");
-    assert.equal(fullyMissingRow?.[21], "CHECK REQUIRED");
+    assert.equal(missingPaymentRow?.[22], "");
+    assert.equal(missingPaymentRow?.[23], "CHECK REQUIRED");
+    assert.match(String(missingPaymentRow?.[24] || ""), /balance not calculated from incomplete source row/i);
+    assert.equal(fullyMissingRow?.[22], "");
+    assert.equal(fullyMissingRow?.[23], "CHECK REQUIRED");
     assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
     global.fetch = previousFetch;
@@ -1116,11 +1116,23 @@ test("GET getDashboardData adds real income payload and movement net-income colu
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
-    assert.equal(response.body?.data?.tabs?.movement?.values?.[2]?.[19], "РЕАЛЬНЫЕ ПРИХОДЫ");
+    const movementHeader = response.body?.data?.tabs?.movement?.values?.[2] || [];
+    assert.equal(movementHeader[18], "ОПЛАЧЕНО КЛИЕНТОМ USD");
+    assert.equal(movementHeader[19], "КОМИССИЯ ПРОВАЙДЕРА USD");
+    assert.equal(movementHeader[20], "ДОШЛО ДО НАС USD");
+    assert.equal(movementHeader[21], "ДОШЛО ФАКТ / PROVIDER NET");
     const paypalRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18111");
     const wiseRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18112");
-    assert.equal(paypalRow?.[19], "311,06");
-    assert.equal(wiseRow?.[19], "110,2");
+    assert.equal(paypalRow?.[18], "315");
+    assert.equal(paypalRow?.[19], "12,94");
+    assert.equal(paypalRow?.[20], "311,06");
+    assert.equal(paypalRow?.[21], "311,06");
+    assert.equal(paypalRow?.[22], "105,06");
+    assert.equal(wiseRow?.[18], "120");
+    assert.equal(wiseRow?.[19], "5,8");
+    assert.equal(wiseRow?.[20], "110,2");
+    assert.equal(wiseRow?.[21], "110,2");
+    assert.equal(wiseRow?.[22], "7,2");
     assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 2);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 110.2);
@@ -1134,5 +1146,147 @@ test("GET getDashboardData adds real income payload and movement net-income colu
     else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
     if (previousWiseToken === undefined) delete process.env.WISE_API_TOKEN;
     else process.env.WISE_API_TOKEN = previousWiseToken;
+  }
+});
+
+test("GET getDashboardData marks PayPal rows as needs verification when provider net is unavailable", async () => {
+  const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousPayPalClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousPayPalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.PAYPAL_CLIENT_ID = "client";
+  process.env.PAYPAL_CLIENT_SECRET = "secret";
+
+  const makeSourceRow = ({ number, date, client, service, priceBase, accruedPlus, paymentMethod, receivedUsd }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = date;
+    row[3] = client;
+    row[4] = service;
+    row[6] = String(priceBase);
+    row[9] = String(priceBase);
+    row[10] = String(accruedPlus);
+    row[24] = paymentMethod;
+    row[30] = String(receivedUsd);
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-04-01",
+                  endDate: "2026-04-30",
+                  timeZone: "Europe/Kiev",
+                },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.04.2026", "дата 2", "30.04.2026"],
+                      [""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
+                    ],
+                  },
+                  orders: {
+                    sheetName: "список моих заказы",
+                    values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]],
+                  },
+                },
+              },
+            });
+          },
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        const rows = [
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          makeSourceRow({
+            number: "18129",
+            date: "2026-04-18",
+            client: "Олеся Сандырева",
+            service: "Динамика",
+            priceBase: 100,
+            accruedPlus: 206,
+            paymentMethod: "сайт, дол, пэйпэл",
+            receivedUsd: 206,
+          }),
+        ];
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return rows.map((row) => row.join(",")).join("\n");
+          },
+        };
+      }
+
+      if (value.endsWith("/v1/oauth2/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "paypal-token" };
+          },
+        };
+      }
+
+      if (value.includes("/v1/reporting/transactions")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { total_pages: 1, transaction_details: [] };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const request = {
+      method: "GET",
+      query: {
+        action: "getDashboardData",
+        startDate: "2026-04-01",
+        endDate: "2026-04-30",
+      },
+    };
+    const response = createResponseRecorder();
+
+    await handler(request, response);
+
+    assert.equal(response.statusCode, 200);
+    const paypalRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18129");
+    assert.equal(paypalRow?.[18], "206");
+    assert.equal(paypalRow?.[19], "");
+    assert.equal(paypalRow?.[20], "");
+    assert.equal(paypalRow?.[21], "");
+    assert.equal(paypalRow?.[22], "");
+    assert.equal(paypalRow?.[23], "NEEDS VERIFICATION");
+    assert.match(String(paypalRow?.[24] || ""), /needs verification/i);
+    assert.match(String(paypalRow?.[24] || ""), /provider fee\/net missing/i);
+    assert.match((response.body?.data?.realIncome?.warnings || []).join(" | "), /needs verification/i);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
+    if (previousPayPalClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousPayPalClientId;
+    if (previousPayPalClientSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
   }
 });
