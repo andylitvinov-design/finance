@@ -132,3 +132,66 @@ test("normalizeServerAnalyticsPayload rebuilds Plan rows for canonical manual ch
   assert.equal(total["обмен"], "90,0000");
   assert.equal(total["обмен_usd"], "48,5750");
 });
+
+test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the full inclusive period", () => {
+  const values = [
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["Яндекс руб", "", "", "", "", "0", "", "", "0", "0"],
+    ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
+    ["Итого", "", "", "", "", "0", "", "", "0", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["Яндекс руб", "0", "", "", "0", "", "", "", "", ""],
+    ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
+    ["Итого", "0", "", "", "0", "", "", "", "", ""],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 10 } },
+    manual: {
+      expenseRows: [
+        {
+          date: "2026-03-31 00:00:00",
+          category: "exchange",
+          amounts: { "Яндекс руб": "-111" }
+        },
+        {
+          date: "2026-04-24 00:00:00",
+          category: "exchange",
+          amounts: { "Яндекс руб": "-74669", "Бинанс spot": "874" }
+        },
+        {
+          date: "2026-04-25 00:00:00",
+          category: "exchange",
+          amounts: { "privat 24 грн": "-4916", "binance save": "-950" }
+        },
+        {
+          date: "2026-04-30",
+          category: "exchange",
+          amounts: { "приват 24-грн": "-4916" }
+        },
+        {
+          date: "2026-05-01 00:00:00",
+          category: "exchange",
+          amounts: { "Бинанс spot": "222" }
+        }
+      ],
+      transfers: [],
+      balances: []
+    }
+  });
+
+  const plan = sectionRows(payload.tabs.analytics.values, "Plan");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен"], "-74669,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "-76,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен"], "-9832,0000");
+
+  const total = rowByChannel(plan.header, plan.rows, "Итого");
+  assert.equal(total["обмен"], "-84577,0000");
+});
