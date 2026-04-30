@@ -535,8 +535,11 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
                   range: "'Расходы'!A1:V",
                   values: [
                     ["дата", "категория", "пейпал дол", "приват 24-грн"],
+                    ["2026-04-08", "business", "15", ""],
+                    ["2026-04-11", "еда", "", "860"],
                     ["2026-04-10", "exchange", "10", ""],
                     ["2026-04-12", "обмен", "", "4300"],
+                    ["2026-04-15", "study", "", "430"],
                     ["2026-05-01", "exchange", "999", "999"]
                   ]
                 },
@@ -692,12 +695,25 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
     const privatPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "приват 24-грн");
     assert.equal(paypalPlanRow?.[6], "10,0000");
     assert.equal(paypalPlanRow?.[7], "10,0000");
+    assert.equal(paypalPlanRow?.[3], "15,0000");
+    assert.equal(paypalPlanRow?.[4], "15,0000");
     assert.equal(paypalPlanRow?.[8], "379,0000");
-    assert.equal(paypalPlanRow?.[9], "379,0000");
+    assert.equal(paypalPlanRow?.[9], "364,0000");
+    assert.equal(privatPlanRow?.[3], "1290,0000");
+    assert.equal(privatPlanRow?.[4], "30,0000");
     assert.equal(privatPlanRow?.[6], "4300,0000");
     assert.equal(privatPlanRow?.[7], "100,0000");
     assert.equal(privatPlanRow?.[8], "100,0000");
-    assert.equal(privatPlanRow?.[9], "100,0000");
+    assert.equal(privatPlanRow?.[9], "70,0000");
+    const canadaPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "БАНК КАНАДА cad");
+    assert.equal(canadaPlanRow?.[3], "300,0000");
+    const totalPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "Итого");
+    assert.equal(totalPlanRow?.[3], "1605,0000");
+    assert.equal(totalPlanRow?.[4], "45,0000");
+    assert.equal(totalPlanRow?.[6], "4310,0000");
+    assert.equal(totalPlanRow?.[7], "110,0000");
+    assert.equal(totalPlanRow?.[8], "587,1500");
+    assert.equal(totalPlanRow?.[9], "542,1500");
 
     const findBalanceRow = (channel) =>
       analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);
