@@ -211,6 +211,26 @@ function buildPreparedDashboardData(data, startDate, endDate) {
   };
 }
 
+function hasAggregatedManualActivity(aggregatedManual) {
+  const rows = aggregatedManual?.rows || [];
+  return rows.some((row) => {
+    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return false;
+    return [
+      "serviceIncome",
+      "business",
+      "flat",
+      "house",
+      "food",
+      "fun",
+      "study",
+      "travel",
+      "travelFun",
+      "exchange",
+      "total"
+    ].some((key) => parseLooseNumber(row?.[key]) !== 0);
+  });
+}
+
 
 // ============================================================
 // HELPERS
@@ -232,6 +252,9 @@ async function applyClientSideDerivedData(startDate, endDate) {
   if (!state.data?.tabs) return;
   applyManualOrdersToDashboard(startDate, endDate);
   let aggregatedManual = null;
+  const serverAggregatedManual = state.data.manual
+    ? buildAggregatedManualDataFromServerPayload(state.data.manual, startDate, endDate)
+    : null;
   if (hasConfiguredManualFinanceEndpoint()) {
     try {
       aggregatedManual = await aggregateClosedManualPeriodDataDirect(startDate, endDate);
@@ -239,7 +262,7 @@ async function applyClientSideDerivedData(startDate, endDate) {
       setManualFinanceStatus(error.message || "Не удалось собрать агрегированные входящие данные.", true);
     }
   }
-  if (!aggregatedManual && state.manualFinance.data) {
+  if ((!aggregatedManual || !hasAggregatedManualActivity(aggregatedManual)) && state.manualFinance.data) {
     aggregatedManual = {
       rows: buildAnalyticsManualRowsFromFactMoneyRows(
         state.manualFinance.data.moneyRows || [],
@@ -249,8 +272,8 @@ async function applyClientSideDerivedData(startDate, endDate) {
       selectedSheets: [state.manualFinance.data.sourceSheetName || MANUAL_INCOMING_TITLE]
     };
   }
-  if (!aggregatedManual && state.data.manual) {
-    aggregatedManual = buildAggregatedManualDataFromServerPayload(state.data.manual, startDate, endDate);
+  if ((!aggregatedManual || !hasAggregatedManualActivity(aggregatedManual)) && serverAggregatedManual) {
+    aggregatedManual = serverAggregatedManual;
   }
   state.aggregatedManualRange = aggregatedManual || null;
 
