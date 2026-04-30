@@ -467,6 +467,8 @@ function parseDisplayDate(value) {
   if (!raw) return null;
   if (/^\d{5}$/.test(raw)) return excelSerialToDate(Number(raw));
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return parseIsoDate(raw);
+  const isoTimestampMatch = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/);
+  if (isoTimestampMatch) return parseIsoDate(isoTimestampMatch[1]);
   const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (!match) return null;
   return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
