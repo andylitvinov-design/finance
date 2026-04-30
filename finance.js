@@ -248,7 +248,6 @@ function normalizePlanGrowthFormula(values) {
     if (normalizeCell(output[index]?.[0]) !== normalizeCell("Plan")) continue;
     const header = output[index + 1] || [];
     let exchangeIndex = findHeaderIndexByAliases(header, ["обмен", "exchange", "комиссии"]);
-    const hadLegacyCommissionColumn = exchangeIndex !== -1 && normalizeCell(header[exchangeIndex]) === normalizeCell("комиссии");
     if (exchangeIndex !== -1) header[exchangeIndex] = "обмен";
     if (exchangeIndex === -1) {
       const planGrowthIndex = findHeaderIndexByAliases(header, ["план-рост"]);
@@ -277,10 +276,10 @@ function normalizePlanGrowthFormula(values) {
       if (label !== normalizeCell("Итого движение")) {
         const channel = String(row[0] || "").trim();
         const lookup = exchangeLookup[channel] || {};
-        if ((hadLegacyCommissionColumn || !String(row[exchangeIndex] ?? "").trim()) && lookup.exchange !== undefined) {
+        if (!String(row[exchangeIndex] ?? "").trim() && lookup.exchange !== undefined) {
           row[exchangeIndex] = formatSheetNumber(lookup.exchange);
         }
-        if ((hadLegacyCommissionColumn || !String(row[exchangeUsdIndex] ?? "").trim()) && lookup.exchangeUsd !== undefined) {
+        if (!String(row[exchangeUsdIndex] ?? "").trim() && lookup.exchangeUsd !== undefined) {
           row[exchangeUsdIndex] = formatSheetNumber(lookup.exchangeUsd);
         }
         const exchange = parseLooseNumber(row[exchangeIndex]);
