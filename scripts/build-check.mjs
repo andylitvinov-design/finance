@@ -15,6 +15,9 @@ const requiredFiles = [
   "api/index.js",
   "api/paypal-transactions.js",
   "api/wise-transactions.js",
+  "api/monobank-transactions.js",
+  "api/privatbank-transactions.js",
+  "api/yoomoney-transactions.js",
 ];
 
 for (const relativePath of requiredFiles) {

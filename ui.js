@@ -258,31 +258,49 @@ function renderExpenseAccountingBlock() {
   });
   const actions = document.createElement("div");
   actions.className = "expense-actions";
+  const statementLoading = state.expenseAccounting.paypalLoading
+    || state.expenseAccounting.wiseLoading
+    || state.expenseAccounting.yoomoneyLoading
+    || state.expenseAccounting.monobankLoading
+    || state.expenseAccounting.privatBankLoading
+    || state.expenseAccounting.tdBankLoading;
   const paypalButton = document.createElement("button");
   paypalButton.type = "button";
   paypalButton.className = "secondary";
   paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
-  paypalButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.yoomoneyLoading || state.expenseAccounting.tdBankLoading;
+  paypalButton.disabled = state.expenseAccounting.loading || statementLoading;
   paypalButton.addEventListener("click", loadPayPalExpenseStatement);
   const wiseButton = document.createElement("button");
   wiseButton.type = "button";
   wiseButton.className = "secondary";
   wiseButton.textContent = state.expenseAccounting.wiseLoading ? "Загружаю Wise..." : "Подтянуть Wise";
-  wiseButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.yoomoneyLoading || state.expenseAccounting.tdBankLoading;
+  wiseButton.disabled = state.expenseAccounting.loading || statementLoading;
   wiseButton.addEventListener("click", loadWiseExpenseStatement);
   const yoomoneyButton = document.createElement("button");
   yoomoneyButton.type = "button";
   yoomoneyButton.className = "secondary";
   yoomoneyButton.textContent = state.expenseAccounting.yoomoneyLoading ? "Загружаю ЮMoney..." : "Подтянуть ЮMoney";
-  yoomoneyButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.yoomoneyLoading || state.expenseAccounting.tdBankLoading;
+  yoomoneyButton.disabled = state.expenseAccounting.loading || statementLoading;
   yoomoneyButton.addEventListener("click", loadYooMoneyExpenseStatement);
+  const monobankButton = document.createElement("button");
+  monobankButton.type = "button";
+  monobankButton.className = "secondary";
+  monobankButton.textContent = state.expenseAccounting.monobankLoading ? "Загружаю Mono..." : "Подтянуть Mono";
+  monobankButton.disabled = state.expenseAccounting.loading || statementLoading;
+  monobankButton.addEventListener("click", loadMonobankExpenseStatement);
+  const privatBankButton = document.createElement("button");
+  privatBankButton.type = "button";
+  privatBankButton.className = "secondary";
+  privatBankButton.textContent = state.expenseAccounting.privatBankLoading ? "Загружаю Privat..." : "Подтянуть Privat";
+  privatBankButton.disabled = state.expenseAccounting.loading || statementLoading;
+  privatBankButton.addEventListener("click", loadPrivatBankExpenseStatement);
   const tdBankButton = document.createElement("button");
   tdBankButton.type = "button";
   tdBankButton.className = "secondary";
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Подтянуть TD Bank";
-  tdBankButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.yoomoneyLoading || state.expenseAccounting.tdBankLoading;
+  tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
-  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, tdBankButton);
+  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankButton, privatBankButton, tdBankButton);
   upload.append(input, actions);
   shell.appendChild(upload);
   shell.appendChild(renderTdBankExpenseHelper());
@@ -456,6 +474,14 @@ function renderExpenseFinancialAnalysis() {
   if (hasProviderSummaryData(yoomoneySummary)) {
     block.appendChild(renderProviderMonthlyStatement("ЮMoney за месяц", yoomoneySummary));
   }
+  const monobankSummary = getActiveMonobankSummary();
+  if (hasProviderSummaryData(monobankSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("Monobank за месяц", monobankSummary));
+  }
+  const privatBankSummary = getActivePrivatBankSummary();
+  if (hasProviderSummaryData(privatBankSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("PrivatBank за месяц", privatBankSummary));
+  }
   const tdBankSummary = getActiveTdBankSummary();
   if (hasProviderSummaryData(tdBankSummary)) {
     block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
@@ -563,7 +589,9 @@ function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
   [
     [getActivePayPalSummary(), { USD: "пейпал дол", EUR: "пейпал евр", CAD: "пейпал сad" }],
     [getActiveWiseSummary(), { USD: "трансервайз дол", EUR: "трансервайз евро" }],
-    [getActiveYooMoneySummary(), { RUB: "Яндекс руб" }]
+    [getActiveYooMoneySummary(), { RUB: "Яндекс руб" }],
+    [getActiveMonobankSummary(), { UAH: "монобанк грн" }],
+    [getActivePrivatBankSummary(), { USD: "приват 24-дол", EUR: "приват 24-евро", UAH: "приват 24-грн" }]
   ].forEach(([summary, channelByCurrency]) => {
     Object.entries(summary?.totalsByCurrency || {}).forEach(([currency, currencyTotals]) => {
       const channel = channelByCurrency[String(currency || "").trim().toUpperCase()];
@@ -653,6 +681,18 @@ function getActiveYooMoneySummary() {
   if (hasProviderSummaryData(state.expenseAccounting.yoomoneySummary)) return state.expenseAccounting.yoomoneySummary;
   const yoomoneyEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "yoomoney");
   return buildProviderExpenseSummary(yoomoneyEntries);
+}
+
+function getActiveMonobankSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.monobankSummary)) return state.expenseAccounting.monobankSummary;
+  const monobankEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "monobank");
+  return buildProviderExpenseSummary(monobankEntries);
+}
+
+function getActivePrivatBankSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.privatBankSummary)) return state.expenseAccounting.privatBankSummary;
+  const privatBankEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "privatbank");
+  return buildProviderExpenseSummary(privatBankEntries);
 }
 
 function getActiveTdBankSummary() {
@@ -893,6 +933,9 @@ function buildExpenseAccountingCounterpartyDetails(entry) {
     entry.payeeEmail && entry.payeeEmail !== entry.counterpartyEmail ? `payee email: ${entry.payeeEmail}` : "",
     entry.merchantName && entry.merchantName !== entry.counterpartyName ? `merchant: ${entry.merchantName}` : "",
     entry.transactionSubject ? `subject: ${entry.transactionSubject}` : "",
+    entry.counterIban ? `iban: ${entry.counterIban}` : "",
+    entry.counterEdrpou ? `edrpou: ${entry.counterEdrpou}` : "",
+    entry.mcc ? `mcc: ${entry.mcc}` : "",
     entry.description ? `details: ${entry.description}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
@@ -951,6 +994,8 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
+      state.expenseAccounting.monobankSummary = null;
+      state.expenseAccounting.privatBankSummary = null;
       state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = [...(payload.warnings || []), ...fallback.warnings];
     } else {
@@ -958,6 +1003,8 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
+      state.expenseAccounting.monobankSummary = null;
+      state.expenseAccounting.privatBankSummary = null;
       state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = payload.warnings || [];
     }
@@ -977,6 +1024,8 @@ async function parseExpenseScreenshotFiles(files) {
       state.expenseAccounting.paypalSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
+      state.expenseAccounting.monobankSummary = null;
+      state.expenseAccounting.privatBankSummary = null;
       state.expenseAccounting.tdBankSummary = null;
       state.expenseAccounting.warnings = [String(error.message || error), ...fallback.warnings];
       state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
@@ -1145,6 +1194,75 @@ async function loadYooMoneyExpenseStatement() {
     setExpenseAccountingStatus(error.message || "Не удалось загрузить ЮMoney-выписку.", true);
   } finally {
     state.expenseAccounting.yoomoneyLoading = false;
+    renderTabs();
+  }
+}
+
+async function loadMonobankExpenseStatement() {
+  await loadBankExpenseStatement({
+    provider: "monobank",
+    apiPath: "./api/monobank-transactions",
+    loadingKey: "monobankLoading",
+    summaryKey: "monobankSummary",
+    title: "Monobank",
+    progressMessage: "Запрашиваю Monobank-выписку за выбранный период...",
+    emptyMessage: "Monobank-выписка загружена, но строк за период не найдено."
+  });
+}
+
+async function loadPrivatBankExpenseStatement() {
+  await loadBankExpenseStatement({
+    provider: "privatbank",
+    apiPath: "./api/privatbank-transactions",
+    loadingKey: "privatBankLoading",
+    summaryKey: "privatBankSummary",
+    title: "PrivatBank",
+    progressMessage: "Запрашиваю PrivatBank-выписку за выбранный период...",
+    emptyMessage: "PrivatBank-выписка загружена, но строк за период не найдено."
+  });
+}
+
+async function loadBankExpenseStatement(config) {
+  const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
+  if (!startDate || !endDate) {
+    setExpenseAccountingStatus(`Выберите период для ${config.title}-выписки.`, true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting[config.loadingKey] = true;
+  setExpenseAccountingStatus(config.progressMessage, false);
+  renderTabs();
+  try {
+    const response = await fetch(config.apiPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate, endDate })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `${config.title} вернул ошибку (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== config.provider),
+      ...entries
+    ];
+    state.expenseAccounting[config.summaryKey] = hasProviderSummaryData(payload.summary)
+      ? payload.summary
+      : buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = payload.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    setExpenseAccountingStatus(
+      entries.length
+        ? `${config.title}-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} операций. Проверьте категории перед внесением.`
+        : config.emptyMessage,
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || `Не удалось загрузить ${config.title}-выписку.`, true);
+  } finally {
+    state.expenseAccounting[config.loadingKey] = false;
     renderTabs();
   }
 }
@@ -1421,6 +1539,9 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     transactionEventCode: String(entry.transactionEventCode || "").trim(),
     referenceNumber: String(entry.referenceNumber || "").trim(),
     transferType: String(entry.transferType || "").trim(),
+    counterIban: String(entry.counterIban || "").trim(),
+    counterEdrpou: String(entry.counterEdrpou || "").trim(),
+    mcc: String(entry.mcc || "").trim(),
     confidence: Number(entry.confidence || 0),
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),
@@ -1450,6 +1571,8 @@ async function saveExpenseAccountingEntries() {
     state.expenseAccounting.paypalSummary = null;
     state.expenseAccounting.wiseSummary = null;
     state.expenseAccounting.yoomoneySummary = null;
+    state.expenseAccounting.monobankSummary = null;
+    state.expenseAccounting.privatBankSummary = null;
     state.expenseAccounting.tdBankSummary = null;
     await loadDashboardData();
   } catch (error) {

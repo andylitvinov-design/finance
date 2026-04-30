@@ -1,0 +1,84 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  fetchPrivatBankStatementEntries,
+  normalizePrivatBankStatementItem,
+  summarizePrivatBankStatementEntries,
+} from "../api/privatbank-transactions.js";
+
+test("normalizePrivatBankStatementItem maps common statement rows to ledger entries", () => {
+  const entry = normalizePrivatBankStatementItem(
+    {
+      id: "PB-1",
+      date: "20.04.2026",
+      amount: "-4517.60",
+      currency: "UAH",
+      description: "Оплата сервісу",
+      counterparty: "ТОВ Сервіс",
+      counterpartyIban: "UA999",
+      purpose: "рахунок 44"
+    },
+    { accountId: "UA111", currency: "UAH" },
+    0
+  );
+
+  assert.equal(entry.date, "2026-04-20");
+  assert.equal(entry.channel, "приват 24-грн");
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.localAmount, 4517.6);
+  assert.equal(entry.currency, "UAH");
+  assert.equal(entry.organization, "Оплата сервісу | рахунок 44 | account UA111");
+  assert.equal(entry.counterpartyName, "ТОВ Сервіс");
+  assert.equal(entry.counterpartyLabel, "Кому: ТОВ Сервіс");
+  assert.equal(entry.counterIban, "UA999");
+  assert.equal(entry.source, "privatbank");
+  assert.equal(entry.sourceTransactionId, "PB-1");
+});
+
+test("summarizePrivatBankStatementEntries groups totals by currency", () => {
+  const summary = summarizePrivatBankStatementEntries([
+    { date: "2026-04-01", direction: "income", localAmount: 10, currency: "UAH" },
+    { date: "2026-04-02", direction: "expense", localAmount: 3, currency: "UAH" }
+  ]);
+
+  assert.deepEqual(summary.totalsByCurrency.UAH, { income: 10, expense: 3, net: 7 });
+});
+
+test("fetchPrivatBankStatementEntries calls configured endpoint with date range", async () => {
+  const result = await fetchPrivatBankStatementEntries({
+    startDate: "2026-04-01",
+    endDate: "2026-04-02",
+    apiToken: "privat-token",
+    accountId: "UA111",
+    baseUrl: "https://privat.example.com/statements",
+    fetchImpl: async (url, options) => {
+      assert.match(String(url), /^https:\/\/privat\.example\.com\/statements\?/);
+      assert.match(String(url), /startDate=2026-04-01/);
+      assert.match(String(url), /endDate=2026-04-02/);
+      assert.match(String(url), /account=UA111/);
+      assert.equal(options.headers.Authorization, "Bearer privat-token");
+      return {
+        ok: true,
+        async json() {
+          return {
+            statements: [
+              {
+                id: "PB-2",
+                date: "2026-04-01",
+                amount: "100.00",
+                currency: "UAH",
+                description: "Incoming payment"
+              }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].direction, "income");
+  assert.equal(result.transactionCount, 1);
+  assert.equal(result.source, "privatbank");
+});
