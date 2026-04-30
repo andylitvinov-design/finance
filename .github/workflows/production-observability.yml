@@ -27,7 +27,18 @@ jobs:
           started_observing=0
 
           for attempt in $(seq 1 "$attempts"); do
-            status_json="$(curl -fsSL --retry 2 --retry-delay 2 "$STATUS_URL")"
+            status_file="$(mktemp)"
+            status_code="$(curl -sS --retry 2 --retry-delay 2 -o "$status_file" -w '%{http_code}' "$STATUS_URL" || true)"
+
+            if [ "$status_code" != "200" ]; then
+              echo "Attempt $attempt/$attempts: status endpoint HTTP ${status_code:-unknown}; waiting for production deploy."
+              rm -f "$status_file"
+              sleep "$sleep_seconds"
+              continue
+            fi
+
+            status_json="$(cat "$status_file")"
+            rm -f "$status_file"
             live_sha="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commitSha") or "").strip())')"
             build_time="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("buildTime") or "").strip())')"
             deploy_env="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("deploymentEnvironment") or "").strip())')"
