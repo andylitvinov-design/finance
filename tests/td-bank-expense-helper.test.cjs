@@ -105,6 +105,62 @@ test("normalizeTdBankClipboardEntries maps clipboard payload into ledger entries
   ]);
 });
 
+test("browser OCR parser keeps amount rows with upload date fallback", () => {
+  const context = {
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim();
+    },
+    extractExpenseOcrDate(line) {
+      const match = String(line || "").match(/^DATE:(.+)$/);
+      return match ? match[1].trim() : "";
+    },
+    extractExpenseOcrAmount(line) {
+      const match = String(line || "").match(/^AMOUNT:(\d+(?:\.\d+)?)\s+([A-Z]{3})$/);
+      return match ? { amount: Number(match[1]), currency: match[2] } : null;
+    },
+    inferExpenseOcrChannel() {
+      return "монобанк грн";
+    },
+    inferExpenseOcrDirection() {
+      return "expense";
+    },
+    inferExpenseOcrCategory() {
+      return "business";
+    },
+    cleanupExpenseOcrOrganization(line) {
+      return String(line || "").trim();
+    },
+    normalizeExpenseAccountingEntry(entry) {
+      return entry;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "parseExpenseOcrText")}\n` +
+    "this.parseExpenseOcrText = parseExpenseOcrText;",
+    context
+  );
+
+  const parsed = plain(context.parseExpenseOcrText("AMOUNT:120.5 USD", 2, "2026-04-30"));
+  assert.deepEqual(parsed.entries, [
+    {
+      date: "2026-04-30",
+      dateSource: "upload_fallback",
+      uploadedAtDate: "2026-04-30",
+      channel: "монобанк грн",
+      direction: "expense",
+      localAmount: 120.5,
+      currency: "USD",
+      usdAmount: null,
+      suggestedCategory: "business",
+      organization: "AMOUNT:120.5 USD",
+      counterparty: "AMOUNT:120.5 USD",
+      confidence: 0.45,
+      sourceImageIndex: 2,
+    },
+  ]);
+});
+
 test("td easyweb importer exposes collect helper", () => {
   assert.match(importerJs, /window\.TD_EASYWEB_IMPORTER = \{ collect \}/);
   assert.match(importerJs, /provider: "tdbank"/);
