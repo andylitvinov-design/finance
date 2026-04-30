@@ -98,8 +98,8 @@ const SUMMARY_LABELS = {
 const ANALYTICS_PAYMENT_RULES = {
   "Яндекс руб": {
     currency: "RUB",
-    localPatterns: [/сайт, рубли|сайт рубли/i],
-    usdPatterns: [/сайт, рубли|сайт рубли/i]
+    localPatterns: [/сайт, рубли|сайт рубли|yoomoney|юmoney|юмани|юмоней/i],
+    usdPatterns: [/сайт, рубли|сайт рубли|yoomoney|юmoney|юмани|юмоней/i]
   },
   "пейпал дол": {
     currency: "USD",

@@ -53,7 +53,7 @@ function resolveManualChannelAlias(value) {
   if (!raw) return "";
   const normalized = normalizeCell(raw).replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
   const aliases = [
-    { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
+    { pattern: /^(яндекс|yandex|yoomoney|юmoney|юмани|юмоней)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
     { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
     { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
     { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },

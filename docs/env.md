@@ -15,6 +15,8 @@ Required only when the corresponding provider import is used:
   Primary PayPal REST credentials for `/api/paypal-transactions`.
 - `WISE_API_TOKEN`
   Wise statement/balance access for `/api/wise-transactions`.
+- `YOOMONEY_ACCESS_TOKEN`
+  YooMoney wallet token with `operation-history` scope for `/api/yoomoney-transactions`.
 
 ## Optional
 
@@ -27,6 +29,21 @@ Required only when the corresponding provider import is used:
   Optional if the token can access only one usable Wise profile.
 - `WISE_API_BASE`
   Defaults to `https://api.wise.com`.
+- `YOOMONEY_CLIENT_ID`
+- `YOOMONEY_CLIENT_SECRET`
+- `YOOMONEY_REDIRECT_URI`
+  Optional OAuth exchange settings if a short-lived authorization code is used instead of a pre-provisioned `YOOMONEY_ACCESS_TOKEN`.
+- `YOOMONEY_API_BASE`
+  Defaults to `https://yoomoney.ru`.
+- `YOOMONEY_CURRENCY`
+  Defaults to `RUB`; YooMoney wallet `operation-history` does not always include a per-operation currency field.
+
+YooMoney notes:
+
+- Use the YooMoney wallet API, not YooKassa business API.
+- Required OAuth scope: `operation-history`.
+- Official authorization docs: [YooMoney wallet authorization](https://yoomoney.ru/docs/wallet/using-api/authorization/request-access-token)
+- Official history method docs: [operation-history](https://yoomoney.ru/docs/wallet/user-account/operation-history)
 
 ## OCR
 
@@ -116,5 +133,6 @@ After adding or adjusting envs in Vercel production:
 
 1. Open `/api?health=1` on production and confirm the main API is healthy.
 2. If `EZOHATA_LEGACY_MANUAL_FINANCE_URL` was intentionally added, open `/api/legacy?health=1` and expect `configured: true`.
-3. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
-4. Manually run the Google OAuth flow from the production app as described above.
+3. If `YOOMONEY_ACCESS_TOKEN` was added, open `Учет расходов`, select a period, click `Подтянуть ЮMoney`, and confirm the monthly provider block appears with RUB income/expense totals.
+4. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
+5. Manually run the Google OAuth flow from the production app as described above.

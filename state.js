@@ -31,6 +31,8 @@ const state = {
     paypalSummary: null,
     wiseLoading: false,
     wiseSummary: null,
+    yoomoneyLoading: false,
+    yoomoneySummary: null,
     tdBankLoading: false,
     tdBankSummary: null,
     entries: [],

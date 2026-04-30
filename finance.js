@@ -409,7 +409,7 @@ function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChan
   const normalizeToken = (item) => normalizeLookupText(item).replace(/_/g, " ");
   const normalized = normalizeToken(raw);
   const defaultChannelMap = {
-    "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли"],
+    "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли", "yoomoney", "yoomoney rub", "юmoney", "юmoney руб", "юмани", "юмани руб", "юмоней", "юмоней руб"],
     "пейпал дол": ["paypal", "paypal usd", "пейпал", "пейпал дол"],
     "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
     "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
