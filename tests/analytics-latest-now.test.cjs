@@ -30,6 +30,13 @@ const summaryRowsMatch = [extractFunction("buildManualFinanceSummaryRows")];
 const usdPerLocalMatch = [extractFunction("getManualFinanceUsdPerLocalRate")];
 const nowUsdMatch = [extractFunction("getManualFinanceNowUsdValue")];
 const latestNowUsdMatch = [extractFunction("buildLatestNowUsdLookup")];
+const aliasMatch = [extractFunction("resolveManualFinanceChannelAlias")];
+const canonicalChannelMatch = [extractFunction("canonicalManualFinanceChannel")];
+const canonicalKeyMatch = [extractFunction("getCanonicalManualChannelKey")];
+const emptyAmountsMatch = [extractFunction("buildEmptyExpenseAmounts")];
+const canonicalAmountsMatch = [extractFunction("getCanonicalManualExpenseAmounts")];
+const canonicalRawAmountsMatch = [extractFunction("getCanonicalManualExpenseRawAmounts")];
+const normalizeLookupTextMatch = [extractFunction("normalizeLookupText")];
 
 function parseLooseNumber(value) {
   const raw = String(value ?? "").trim();
@@ -111,7 +118,7 @@ const context = {
   formatSheetNumber,
 };
 vm.createContext(context);
-vm.runInContext(`${categoryMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;`, context);
+vm.runInContext(`${normalizeLookupTextMatch[0]}\n${aliasMatch[0]}\n${canonicalChannelMatch[0]}\n${canonicalKeyMatch[0]}\n${emptyAmountsMatch[0]}\n${canonicalAmountsMatch[0]}\n${canonicalRawAmountsMatch[0]}\n${categoryMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;`, context);
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));

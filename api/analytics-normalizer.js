@@ -48,6 +48,46 @@ const PAYMENT_RULE_CURRENCIES = {
   "БАНК КАНАДА cad": "CAD",
 };
 
+function resolveManualChannelAlias(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = normalizeCell(raw).replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  const aliases = [
+    { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
+    { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
+    { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
+    { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
+    { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+    { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
+    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
+  ];
+  return aliases.find((entry) => entry.pattern.test(normalized))?.channel || "";
+}
+
+function canonicalManualFinanceChannel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return Object.keys(PAYMENT_RULE_CURRENCIES).find((channel) => normalizeCell(channel) === normalizeCell(raw))
+    || resolveManualChannelAlias(raw)
+    || raw;
+}
+
+function getCanonicalManualChannelKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return canonicalManualFinanceChannel(raw) || raw;
+}
+
+function getCanonicalManualAmounts(amounts = {}) {
+  const canonical = {};
+  Object.entries(amounts || {}).forEach(([channel, value]) => {
+    const canonicalChannel = getCanonicalManualChannelKey(channel);
+    if (!canonicalChannel) return;
+    canonical[canonicalChannel] = (canonical[canonicalChannel] || 0) + parseLooseNumber(value);
+  });
+  return canonical;
+}
+
 export function normalizeServerAnalyticsPayload(data) {
   if (!data?.tabs?.analytics?.values?.length) return data;
 
@@ -92,7 +132,7 @@ export function extractManualRows(values) {
     const row = values[index] || [];
     if (!hasAnyValue(row)) break;
 
-    const channel = String(row[0] || "").trim();
+    const channel = getCanonicalManualChannelKey(row[0]);
     if (!channel || normalizeCell(channel) === normalizeCell(TOTAL_LABEL)) continue;
 
     rows.push({
@@ -132,14 +172,14 @@ export function buildBalancesFromManualRows(manualRows, period = {}) {
 }
 
 export function buildClosingUsdLookup(balances, manualRows = []) {
-  const manualLookup = new Map((manualRows || []).map((row) => [normalizeCell(row.channel), row]));
+  const manualLookup = new Map((manualRows || []).map((row) => [getCanonicalManualChannelKey(row.channel), row]));
   const lookup = {};
 
   (balances || []).forEach((entry) => {
-    const channel = String(entry.channel || entry.accountName || "").trim();
+    const channel = getCanonicalManualChannelKey(entry.channel || entry.accountName || "");
     if (!channel || normalizeCell(channel) === normalizeCell(TOTAL_LABEL)) return;
 
-    const manualRow = manualLookup.get(normalizeCell(channel));
+    const manualRow = manualLookup.get(channel);
     const amount = entry.amount ?? entry.balanceAmount ?? manualRow?.now ?? "";
     const currency = String(entry.currency || manualRow?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
     const isAnalyticsFallback = entry.source === "analytics-now-fallback";
@@ -150,12 +190,13 @@ export function buildClosingUsdLookup(balances, manualRows = []) {
   });
 
   (manualRows || []).forEach((row) => {
-    if (Object.prototype.hasOwnProperty.call(lookup, row.channel)) return;
-    const value = deriveUsdAmount(row.now, row.currency || inferChannelCurrency(row.channel), {
+    const channel = getCanonicalManualChannelKey(row.channel);
+    if (Object.prototype.hasOwnProperty.call(lookup, channel)) return;
+    const value = deriveUsdAmount(row.now, row.currency || inferChannelCurrency(channel), {
       usdAmount: 0,
       localPerUsd: 0,
     });
-    if (value) lookup[row.channel] = value;
+    if (value) lookup[channel] = value;
   });
 
   return lookup;
@@ -178,13 +219,13 @@ function rebuildPlanSection(section, manualRows) {
   const ownCostUsdIndex = findHeaderIndex(header, ["затраты-мои-дол"]);
   const planGrowthIndex = findHeaderIndex(header, ["план-рост"]);
   const planProfitIndex = findHeaderIndex(header, ["plan-profit"]);
-  const exchangeLookup = Object.fromEntries((manualRows || []).map((row) => [row.channel, row]));
+  const exchangeLookup = Object.fromEntries((manualRows || []).map((row) => [getCanonicalManualChannelKey(row.channel), row]));
   const ownCostTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.total), 0);
   const ownCostUsdTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.totalUsd), 0);
   const exchangeTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchange), 0);
   const exchangeUsdTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchangeUsd), 0);
   const rebuiltRows = rows.map((row) => {
-    const channel = String(row[0] || "").trim();
+    const channel = getCanonicalManualChannelKey(row[0]);
     const manual = normalizeCell(channel) === normalizeCell(TOTAL_LABEL)
       ? { total: ownCostTotal, totalUsd: ownCostUsdTotal, exchange: exchangeTotal, exchangeUsd: exchangeUsdTotal }
       : (exchangeLookup[channel] || {});
@@ -222,7 +263,7 @@ function rebuildPlanSection(section, manualRows) {
 function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
   const startDate = normalizeDate(period.startDate);
   const endDate = normalizeDate(period.endDate);
-  const lookup = new Map((legacyRows || []).map((row) => [row.channel, { ...row }]));
+  const lookup = new Map((legacyRows || []).map((row) => [getCanonicalManualChannelKey(row.channel), { ...row, channel: getCanonicalManualChannelKey(row.channel) }]));
   const rateLookup = buildManualRateLookup(manual?.transfers || [], endDate);
 
   for (const row of manual?.expenseRows || []) {
@@ -231,17 +272,16 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
     const category = normalizeManualCategory(row?.category);
     if (!category) continue;
 
-    for (const [channel, rawAmount] of Object.entries(row.amounts || {})) {
-      const amount = parseLooseNumber(rawAmount);
+    for (const [channel, amount] of Object.entries(getCanonicalManualAmounts(row.amounts || {}))) {
       if (!amount) continue;
       const target = ensureManualRow(lookup, channel);
-      if (category === "exchange") {
+      if (category === "now") {
+        target.now = formatNumber(amount);
+      } else if (category === "exchange") {
         const exchange = parseLooseNumber(target.exchange) + amount;
         target.exchange = formatNumber(exchange);
         const exchangeUsd = parseLooseNumber(target.exchangeUsd) + deriveManualUsdAmount(amount, channel, rateLookup);
         target.exchangeUsd = formatNumber(exchangeUsd);
-      } else if (!String(target.now || "").trim()) {
-        target.now = rawAmount;
       } else if (MANUAL_EXPENSE_CATEGORIES.has(category)) {
         const current = parseLooseNumber(target[category]);
         target[category] = formatNumber(current + amount);
@@ -259,7 +299,7 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
 const MANUAL_EXPENSE_CATEGORIES = new Set(["business", "flat", "food", "fun", "study", "travel"]);
 
 function ensureManualRow(lookup, channel) {
-  const normalizedChannel = String(channel || "").trim();
+  const normalizedChannel = getCanonicalManualChannelKey(channel);
   if (!lookup.has(normalizedChannel)) {
     lookup.set(normalizedChannel, {
       channel: normalizedChannel,
@@ -290,7 +330,7 @@ function buildManualRateLookup(transfers, endDate) {
     const amount = parseLooseNumber(row?.amount);
     const usdAmount = parseLooseNumber(row?.usdAmount);
     if (!amount || !usdAmount) continue;
-    const channel = String(row?.channel || row?.destination || "").trim();
+    const channel = getCanonicalManualChannelKey(row?.channel || row?.destination || "");
     const currency = String(row?.currency || row?.localCurrency || inferChannelCurrency(channel)).trim().toUpperCase();
     const usdPerLocal = usdAmount / amount;
     if (channel) addRate(byChannel, channel, usdPerLocal);
@@ -330,11 +370,15 @@ function getPeriodBalanceRows(balances, period = {}) {
   for (const row of balances || []) {
     const date = normalizeDate(row?.date);
     if (endDate && date && date > endDate) continue;
-    const channel = String(row?.channel || row?.accountName || "").trim();
+    const channel = getCanonicalManualChannelKey(row?.channel || row?.accountName || "");
     if (!channel) continue;
     const previous = latestByChannel.get(channel);
     if (!previous || String(date).localeCompare(String(normalizeDate(previous.date))) >= 0) {
-      latestByChannel.set(channel, row);
+      latestByChannel.set(channel, {
+        ...row,
+        channel,
+        accountName: channel
+      });
     }
   }
   return Array.from(latestByChannel.values());
@@ -372,11 +416,11 @@ function readPlanNumber(row, index, fallbackIndex) {
 
 function rebuildBalanceSection(section, closingUsdLookup) {
   const sourceRows = section.rows.filter((row) => {
-    const channel = String(row[0] || "").trim();
+    const channel = getCanonicalManualChannelKey(row[0]);
     return channel && normalizeCell(channel) !== normalizeCell(TOTAL_LABEL);
   });
   const rows = sourceRows.map((row) => {
-    const channel = String(row[0] || "").trim();
+    const channel = getCanonicalManualChannelKey(row[0]);
     const opening = parseLooseNumber(row[1]);
     const closing = Object.prototype.hasOwnProperty.call(closingUsdLookup, channel)
       ? closingUsdLookup[channel]
