@@ -133,6 +133,99 @@ test("normalizeServerAnalyticsPayload rebuilds Plan rows for canonical manual ch
   assert.equal(total["обмен_usd"], "48,5750");
 });
 
+test("normalizeServerAnalyticsPayload rebuilds movement period columns from ledger rows", () => {
+  const values = [
+    ["Личные расходы"],
+    ["валюта", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+    ["Яндекс руб", "139786", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+    ["пейпал дол", "648", "0", "999", "0", "0", "0", "0", "0", "999", "0", "0", "999", "648"],
+    ["пейпал евр", "208", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "241,28"],
+    ["приват 24-грн", "11480", "8740", "2664", "0", "0", "0", "0", "0", "0", "0", "0", "0", "259,435"],
+    ["Бинанс spot", "1689", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "1689"],
+    ["binance save", "7425", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "7425"],
+    ["Итого", "161236", "8740", "3663", "0", "0", "0", "0", "0", "999", "0", "0", "999", "10262,715"],
+    [],
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["Яндекс руб", "", "", "", "", "0", "", "", "0", "0"],
+    ["пейпал дол", "", "", "", "", "0", "", "", "0", "0"],
+    ["пейпал евр", "", "", "", "", "0", "", "", "0", "0"],
+    ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
+    ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["binance save", "", "", "", "", "0", "", "", "0", "0"],
+    ["Итого", "", "", "", "", "0", "", "", "0", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["Яндекс руб", "0", "", "", "0", "", "", "", "", ""],
+    ["пейпал дол", "0", "", "", "0", "", "", "", "", ""],
+    ["пейпал евр", "0", "", "", "0", "", "", "", "", ""],
+    ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
+    ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["binance save", "0", "", "", "0", "", "", "", "", ""],
+    ["Итого", "0", "", "", "0", "", "", "", "", ""],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 14 } },
+    manual: {
+      operations: [
+        { date: "2026-04-24", operation: "business_expense", fromChannel: "Яндекс руб", amount: "11287", currency: "RUB", amountUsd: "133.4850", category: "business" },
+        { date: "2026-04-24", operation: "exchange_out", fromChannel: "Яндекс руб", amount: "74669", currency: "RUB", amountUsd: "883.0684", category: "exchange" },
+        { date: "2026-04-24", operation: "business_expense", fromChannel: "paypal usd", amount: "33", currency: "USD", amountUsd: "33", category: "business" },
+        { date: "2026-04-24", operation: "income", toChannel: "paypal eur", amount: "200", currency: "EUR", amountUsd: "232", category: "servicein" },
+        { date: "2026-04-24", operation: "personal_expense", fromChannel: "paypal eur", amount: "239", currency: "EUR", amountUsd: "277.24", category: "flat" },
+        { date: "2026-04-24", operation: "exchange_in", toChannel: "Бинанс spot", amount: "874", currency: "USD", amountUsd: "874", category: "exchange" },
+        { date: "2026-04-25", operation: "exchange_out", fromChannel: "binance save", amount: "950", currency: "USD", amountUsd: "950", category: "exchange" },
+        { date: "2026-04-25", operation: "income", toChannel: "privat 24 грн", amount: "8740", currency: "UAH", amountUsd: "199.2704", category: "servicein" },
+        { date: "2026-04-25", operation: "business_expense", fromChannel: "privat 24 грн", amount: "2665", currency: "UAH", amountUsd: "60.7615", category: "business" },
+        { date: "2026-04-30", operation: "business_expense", fromChannel: "приват 24-грн", amount: "2664", currency: "UAH", amountUsd: "60.7387", category: "business" },
+        { date: "2026-04-30", operation: "exchange_out", fromChannel: "приват 24-грн", amount: "4916", currency: "UAH", amountUsd: "112.0839", category: "exchange" },
+        { date: "2026-05-01", operation: "business_expense", fromChannel: "Яндекс руб", amount: "99999", currency: "RUB", amountUsd: "1000", category: "business" }
+      ],
+      expenseRows: [],
+      transfers: [],
+      balances: []
+    }
+  });
+
+  const movement = sectionRows(payload.tabs.analytics.values, "Личные расходы");
+  const yandex = rowByChannel(movement.header, movement.rows, "Яндекс руб");
+  assert.equal(yandex["now"], "139786");
+  assert.equal(yandex["spent for business"], "11287,0000");
+  assert.equal(yandex["затраты-мои"], "11287,0000");
+  assert.equal(yandex["обмен"], "-74669,0000");
+
+  const paypalUsd = rowByChannel(movement.header, movement.rows, "пейпал дол");
+  assert.equal(paypalUsd["now"], "648");
+  assert.equal(paypalUsd["spent for business"], "33,0000");
+  assert.equal(paypalUsd["затраты-мои"], "33,0000");
+
+  const paypalEur = rowByChannel(movement.header, movement.rows, "пейпал евр");
+  assert.equal(paypalEur["приход от услуг"], "200,0000");
+  assert.equal(paypalEur["spent for flat"], "239,0000");
+  assert.equal(paypalEur["затраты-мои"], "239,0000");
+
+  assert.equal(rowByChannel(movement.header, movement.rows, "Бинанс spot")["обмен"], "874,0000");
+  assert.equal(rowByChannel(movement.header, movement.rows, "binance save")["обмен"], "-950,0000");
+
+  const privat = rowByChannel(movement.header, movement.rows, "приват 24-грн");
+  assert.equal(privat["приход от услуг"], "8740,0000");
+  assert.equal(privat["spent for business"], "5329,0000");
+  assert.equal(privat["затраты-мои"], "5329,0000");
+  assert.equal(privat["обмен"], "-4916,0000");
+
+  const plan = sectionRows(payload.tabs.analytics.values, "Plan");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["затраты-мои"], "11287,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен"], "-74669,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "пейпал дол")["затраты-мои"], "33,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "пейпал евр")["затраты-мои"], "239,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["затраты-мои"], "5329,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "-950,0000");
+});
+
 test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the full inclusive period", () => {
   const values = [
     ["Plan"],

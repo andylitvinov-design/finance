@@ -26,6 +26,23 @@ const BALANCE_HEADER = [
   "Extra",
 ];
 
+const MANUAL_MOVEMENT_HEADER = [
+  "валюта",
+  "now",
+  "приход от услуг",
+  "spent for business",
+  "spent for flat",
+  "spent for food",
+  "spent for fun",
+  "spent for study",
+  "spent for travel",
+  "затраты-мои",
+  "обмен",
+  "обмен_usd",
+  "затраты-мои usd",
+  "now_usd",
+];
+
 const FALLBACK_USD_RATES = {
   RUB: 1 / 84.5563,
   UAH: 1 / 43.86,
@@ -210,9 +227,57 @@ export function buildClosingUsdLookup(balances, manualRows = []) {
 
 export function rebuildAnalyticsValues(values, manualRows, closingUsdLookup) {
   let output = values.map((row) => row.slice());
+  output = replaceSection(output, "Личные расходы", (section) => rebuildManualMovementSection(section, manualRows));
   output = replaceSection(output, "Plan", (section) => rebuildPlanSection(section, manualRows));
   output = replaceSection(output, "БАЛАНС", (section) => rebuildBalanceSection(section, closingUsdLookup));
   return output;
+}
+
+function rebuildManualMovementSection(section, manualRows) {
+  const sourceChannels = section.rows
+    .map((row) => getCanonicalManualChannelKey(row[0]))
+    .filter((channel) => channel && normalizeCell(channel) !== normalizeCell(TOTAL_LABEL));
+  const manualByChannel = new Map((manualRows || []).map((row) => [getCanonicalManualChannelKey(row.channel), row]));
+  const channels = [...new Set([
+    ...sourceChannels,
+    ...(manualRows || [])
+      .map((row) => getCanonicalManualChannelKey(row.channel))
+      .filter((channel) => channel && normalizeCell(channel) !== normalizeCell(TOTAL_LABEL))
+  ])];
+  const rows = channels.map((channel) => {
+    const row = manualByChannel.get(channel) || {};
+    return [
+      channel,
+      row.now || "",
+      row.serviceIncome || "",
+      row.business || "",
+      row.flat || "",
+      row.food || "",
+      row.fun || "",
+      row.study || "",
+      row.travel || "",
+      row.total || "",
+      row.exchange || "",
+      row.exchangeUsd || "",
+      row.totalUsd || "",
+      row.nowUsd || "",
+    ];
+  });
+  const totalRow = rows.reduce(
+    (total, row) => {
+      for (let index = 1; index < MANUAL_MOVEMENT_HEADER.length; index += 1) {
+        total[index] += parseLooseNumber(row[index]);
+      }
+      return total;
+    },
+    [TOTAL_LABEL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  );
+  rows.push(totalRow.map((value, index) => (index === 0 ? value : formatNumber(value))));
+  return {
+    title: section.title,
+    header: MANUAL_MOVEMENT_HEADER,
+    rows,
+  };
 }
 
 function rebuildPlanSection(section, manualRows) {
@@ -269,7 +334,11 @@ function rebuildPlanSection(section, manualRows) {
 function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
   const startDate = normalizeDate(period.startDate);
   const endDate = normalizeDate(period.endDate);
-  const lookup = new Map((legacyRows || []).map((row) => [getCanonicalManualChannelKey(row.channel), { ...row, channel: getCanonicalManualChannelKey(row.channel) }]));
+  const manualPeriodChannels = collectManualPeriodChannels(manual, { startDate, endDate });
+  const lookup = new Map((legacyRows || []).map((row) => {
+    const channel = getCanonicalManualChannelKey(row.channel);
+    return [channel, manualPeriodChannels.has(channel) ? resetManualPeriodFields(row, channel) : { ...row, channel }];
+  }));
   const rateLookup = buildManualRateLookup(manual?.transfers || [], endDate);
 
   if (Array.isArray(manual?.operations) && manual.operations.length) {
@@ -328,6 +397,55 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
   }
 
   return Array.from(lookup.values());
+}
+
+function collectManualPeriodChannels(manual, period = {}) {
+  const startDate = normalizeDate(period.startDate);
+  const endDate = normalizeDate(period.endDate);
+  const channels = new Set();
+  if (Array.isArray(manual?.operations) && manual.operations.length) {
+    for (const operation of manual.operations) {
+      const date = normalizeDate(operation?.date);
+      if (!isDateInRange(date, startDate, endDate)) continue;
+      const category = mapOperationToManualCategory(operation);
+      if (!category || category === "now") continue;
+      const channel = mapOperationToManualChannel(operation, category);
+      const amount = mapOperationToManualAmount(operation, category);
+      if (!channel || amount === null) continue;
+      channels.add(channel);
+    }
+    return channels;
+  }
+  for (const row of manual?.expenseRows || []) {
+    const date = normalizeDate(row?.date);
+    if (!isDateInRange(date, startDate, endDate)) continue;
+    const category = normalizeManualCategory(row?.category);
+    if (!category || category === "now") continue;
+    for (const [channel, amount] of Object.entries(getCanonicalManualAmounts(row.amounts || {}))) {
+      if (amount) channels.add(channel);
+    }
+  }
+  return channels;
+}
+
+function resetManualPeriodFields(row, channel) {
+  return {
+    channel,
+    now: row?.now || "",
+    nowUsd: row?.nowUsd || "",
+    currency: row?.currency || inferChannelCurrency(channel),
+    serviceIncome: "",
+    business: "",
+    food: "",
+    flat: "",
+    fun: "",
+    study: "",
+    travel: "",
+    total: "",
+    totalUsd: "",
+    exchange: "",
+    exchangeUsd: "",
+  };
 }
 
 const MANUAL_EXPENSE_CATEGORIES = new Set(["business", "flat", "food", "fun", "study", "travel"]);
