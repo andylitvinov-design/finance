@@ -1,3 +1,8 @@
+import {
+  normalizeManualLedgerCategory,
+  normalizeManualLedgerChannel,
+} from "./manual-ledger-maps.js";
+
 const MAX_IMAGE_COUNT = 8;
 const MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;
 const DEFAULT_MODEL = "gpt-4.1-mini";
@@ -268,21 +273,11 @@ function normalizeIsoDate(value) {
 function normalizeChannel(value, channels) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  const exact = channels.find((channel) => channel.toLowerCase() === raw.toLowerCase());
-  return exact || raw;
+  return normalizeManualLedgerChannel(raw, channels);
 }
 
 function normalizeCategory(value) {
-  const normalized = String(value || "").trim().toLowerCase().replace(/ё/g, "е");
-  if (!normalized) return "";
-  if (/exchange|обмен/.test(normalized)) return "exchange";
-  if (/service|income|приход/.test(normalized)) return "serviceIncome";
-  if (/business|бизнес|работ/.test(normalized)) return "business";
-  if (/flat|house|кварт|дом|аренд/.test(normalized)) return "flat";
-  if (/food|еда|продукт|кафе|ресторан/.test(normalized)) return "food";
-  if (/travel|путеш|такси|hotel|flight|airbnb/.test(normalized)) return "travel";
-  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
-  if (/fun|развлеч|кино|бар/.test(normalized)) return "fun";
+  const normalized = normalizeManualLedgerCategory(value, "");
   return CATEGORY_SET.has(normalized) ? normalized : "";
 }
 

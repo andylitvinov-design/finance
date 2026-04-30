@@ -399,22 +399,28 @@ function getManualFinanceChannels() {
     : MANUAL_FINANCE_MONEY_CHANNELS.slice();
 }
 
+function getManualCategoryMap() {
+  return state.config?.manualFinance?.categoryMap || DEFAULT_MANUAL_CATEGORY_MAP;
+}
+
+function getManualChannelMap() {
+  return state.config?.manualFinance?.channelMap || DEFAULT_MANUAL_CHANNEL_MAP;
+}
+
+function normalizeManualMapToken(value) {
+  return normalizeLookupText(value).replace(/_/g, " ");
+}
+
 function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChannels()) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  const normalized = normalizeLookupText(raw);
-  const aliases = [
-    { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
-    { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
-    { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
-    { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
-    { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
-    { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
-    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
-  ];
-  const match = aliases.find((entry) => entry.pattern.test(normalized));
-  if (!match) return "";
-  return channels.find((channel) => normalizeCell(channel) === normalizeCell(match.channel)) || match.channel;
+  const normalized = normalizeManualMapToken(raw);
+  for (const [channel, aliases] of Object.entries(getManualChannelMap() || {})) {
+    const knownTokens = [channel, ...(aliases || [])].map((item) => normalizeManualMapToken(item));
+    if (!knownTokens.includes(normalized)) continue;
+    return channels.find((item) => normalizeCell(item) === normalizeCell(channel)) || channel;
+  }
+  return "";
 }
 
 function canonicalManualFinanceChannel(value) {
@@ -2684,14 +2690,12 @@ function normalizeManualExpenseCategory(value) {
   const normalized = normalizeCell(value).replace(/ё/g, "е");
   if (!normalized) return "";
   if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return MANUAL_NOW_CATEGORY;
-  if (/service|приход/.test(normalized)) return "serviceIncome";
-  if (/business|бизнес/.test(normalized)) return "business";
-  if (/flat|house|кварт|дом/.test(normalized)) return "flat";
-  if (/food|еда/.test(normalized)) return "food";
-  if (/travel|путеш/.test(normalized)) return "travel";
-  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
-  if (/fun|развлеч/.test(normalized)) return "fun";
-  if (/exchange|обмен/.test(normalized)) return MANUAL_EXCHANGE_CATEGORY;
+  const normalizedToken = normalizeManualMapToken(normalized);
+  for (const [category, aliases] of Object.entries(getManualCategoryMap() || {})) {
+    const knownTokens = [category, ...(aliases || [])].map((item) => normalizeManualMapToken(item));
+    if (!knownTokens.includes(normalizedToken)) continue;
+    return category === "exchange" ? MANUAL_EXCHANGE_CATEGORY : category;
+  }
   return String(value || "").trim();
 }
 

@@ -76,6 +76,46 @@ test("normalizeVisionResult keeps study as a separate category", () => {
   assert.equal(result.entries[0].usdAmount, 30);
 });
 
+test("normalizeVisionResult maps beauty and events aliases to fun", () => {
+  const result = normalizeVisionResult(
+    {
+      entries: [
+        {
+          date: "2026-04-20",
+          channel: "монобанк грн",
+          direction: "expense",
+          localAmount: 800,
+          currency: "uah",
+          usdAmount: 20,
+          organization: "Beauty salon",
+          suggestedCategory: "beauty",
+          confidence: 0.77,
+          sourceImageIndex: 0
+        },
+        {
+          date: "2026-04-21",
+          channel: "монобанк грн",
+          direction: "expense",
+          localAmount: 600,
+          currency: "uah",
+          usdAmount: 15,
+          organization: "Concert",
+          suggestedCategory: "events",
+          confidence: 0.77,
+          sourceImageIndex: 0
+        }
+      ],
+      warnings: []
+    },
+    {
+      channels: ["монобанк грн"],
+      categories: ["business", "flat", "food", "fun", "travel", "study", "exchange"]
+    }
+  );
+
+  assert.deepEqual(result.entries.map((entry) => entry.suggestedCategory), ["fun", "fun"]);
+});
+
 test("normalizeVisionResult splits received and spent and falls back to upload date", () => {
   const result = normalizeVisionResult(
     {

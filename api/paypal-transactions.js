@@ -1,6 +1,8 @@
 const DEFAULT_PAYPAL_ENVIRONMENT = "live";
 const MAX_RANGE_DAYS = 366;
 const PAYPAL_PAGE_SIZE = 500;
+import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
+
 const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
@@ -458,9 +460,9 @@ function getPayPalEntryDirection(info, amount) {
 }
 
 function getPayPalSuggestedCategory(direction) {
-  if (direction === "income") return "serviceIncome";
-  if (direction === "exchange") return "exchange";
-  return "business";
+  if (direction === "income") return normalizeManualLedgerCategory("serviceIncome", "serviceIncome");
+  if (direction === "exchange") return normalizeManualLedgerCategory("exchange", "exchange");
+  return normalizeManualLedgerCategory("business", "business");
 }
 
 function getPayPalEntryKind(detail, info, amount) {

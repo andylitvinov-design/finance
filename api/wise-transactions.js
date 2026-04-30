@@ -1,3 +1,5 @@
+import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
+
 const WISE_LIVE_BASE = "https://api.wise.com";
 const WISE_MAX_RANGE_DAYS = 469;
 const WISE_CHANNEL_BY_CURRENCY = {
@@ -134,7 +136,7 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     localAmount: Math.abs(amount.value),
     currency: amount.currency || String(balance?.currency || "").toUpperCase(),
     usdAmount: (amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null,
-    suggestedCategory: direction === "income" ? "serviceIncome" : "business",
+    suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
     organization: buildWiseDescription(transaction, balance, profileId),
     ...counterparty,
     confidence: 0.95,

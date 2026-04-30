@@ -532,7 +532,7 @@ function getExpenseAnalysisChannelSummary() {
 function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (state.expenseAccounting.entries || []).forEach((entry) => {
-    if (!entry?.channel || entry.direction !== "expense") return;
+    if (!entry?.channel || !["expense", "exchange"].includes(entry.direction)) return;
     const channel = canonicalManualFinanceChannel(entry.channel);
     if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
     const usdAmount = parseLooseNumber(entry.usdAmount);
@@ -557,7 +557,7 @@ function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
     Object.entries(summary?.totalsByCurrency || {}).forEach(([currency, currencyTotals]) => {
       const channel = channelByCurrency[String(currency || "").trim().toUpperCase()];
       if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
-      totals[channel] += parseLooseNumber(currencyTotals?.expense);
+      totals[channel] += parseLooseNumber(currencyTotals?.expense) + parseLooseNumber(currencyTotals?.exchange);
     });
   });
 
