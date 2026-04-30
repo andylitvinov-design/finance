@@ -1,0 +1,60 @@
+name: Production Observability
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for production alias to serve merged commit
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          STATUS_URL: https://ezohata-incoming-ledger.vercel.app/api/status
+          HEALTH_URL: https://ezohata-incoming-ledger.vercel.app/api/index?health=1
+        run: |
+          set -euo pipefail
+
+          attempts=48
+          sleep_seconds=15
+          started_observing=0
+
+          for attempt in $(seq 1 "$attempts"); do
+            status_json="$(curl -fsSL --retry 2 --retry-delay 2 "$STATUS_URL")"
+            live_sha="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commitSha") or "").strip())')"
+            build_time="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("buildTime") or "").strip())')"
+            deploy_env="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("deploymentEnvironment") or "").strip())')"
+
+            echo "Attempt $attempt/$attempts: live_sha=${live_sha:-missing} expected_sha=$EXPECTED_SHA env=${deploy_env:-missing} build_time=${build_time:-missing}"
+
+            if [ -n "$live_sha" ] && [ "$live_sha" != "$EXPECTED_SHA" ]; then
+              started_observing=1
+            fi
+
+            if [ "$live_sha" = "$EXPECTED_SHA" ]; then
+              curl -fsSL "$HEALTH_URL" >/dev/null
+              {
+                echo "## Production observability"
+                echo ""
+                echo "- expected commit: \`$EXPECTED_SHA\`"
+                echo "- live commit: \`$live_sha\`"
+                echo "- build time: \`${build_time:-missing}\`"
+                echo "- environment: \`${deploy_env:-missing}\`"
+                echo "- alias: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app)"
+                echo "- deploy observed after merge: \`$started_observing\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+
+            sleep "$sleep_seconds"
+          done
+
+          echo "Production alias did not reach commit $EXPECTED_SHA within $((attempts * sleep_seconds)) seconds." >&2
+          exit 1
