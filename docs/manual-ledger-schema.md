@@ -1,162 +1,192 @@
 # Manual Ledger Schema
 
-## Purpose
+## Canonical Source
 
-This document defines the current live manual-ledger contract, the minimal safe fix now used by the app, and the target normalized ledger model for the next architecture step.
+The primary manual-finance source is the `Ledger` sheet in the `EzoHata Manual Inputs` workbook.
 
-## Current Live Contract
+Legacy tabs are retained for compatibility and report views:
 
-The live workflow is still hybrid:
+- `Расходы`: derived wide daily summary, `date | category | channel...`
+- `Переводы`: compatibility transfer/rate rows
+- `Остатки`: compatibility balance rows
+- `Комиссии`: compatibility commission rows
+- UI `fact`: legacy editor that now also writes normalized ledger rows
 
-- UI `fact` editor works as a legacy snapshot editor for the selected period end date.
-- Hidden Google Sheets tabs store operational data:
-  - `Переводы`
-  - `Расходы`
-  - `Остатки`
-  - `Комиссии`
-- Analytics is rebuilt client-side from:
-  - dashboard snapshot / upstream API payload
-  - manual expense rows
-  - manual transfers
-  - manual balances
-  - manual commissions
+Analytics should prefer `Ledger`. If `Ledger` is missing or empty, the app falls back to the legacy wide tabs.
 
-`Расходы` currently uses a wide daily summary shape:
+## Schema
+
+`Ledger` headers:
 
 ```text
-date | category | channel1 | channel2 | channel3 ...
+date | operation | from_channel | to_channel | amount | currency | amount_usd | category | subcategory | direction | comment | raw_source_id | transfer_group_id | created_at | updated_at
 ```
 
-This remains the persisted compatibility layer for the minimal fix.
-
-## Minimal Fix Contract
-
-### Canonical categories
-
-- `serviceIncome`
-- `business`
-- `flat`
-- `food`
-- `fun`
-- `study`
-- `travel`
-- `exchange`
-
-### Accepted aliases
-
-- `house` -> `flat`
-- `events` -> `fun`
-- `beauty` -> `fun`
-- `serviceincome` / `service income` / `servicein` -> `serviceIncome`
-- `travelFun` / `travel fun` -> `travel`
-- `exchange_in` -> `exchange`
-- legacy `комиссии` in analytics plan sections is normalized to `exchange`
-
-Reserved but not yet written at runtime:
-
-- `ezoin`
-- `partnerTransfer`
-- `extra`
-- `unclear`
-
-### Canonical channels
-
-The app continues to use the configured manual-finance channel list from `sheet-config.json`.
-
-Known aliases include:
-
-- `binance save` -> `Бинанс spot`
-- `paypal usd` -> `пейпал дол`
-- `paypal eur` -> `пейпал евр`
-- `monobank` / `mono` -> `монобанк грн`
-- `yandex rub` -> `Яндекс руб`
-
-### Minimal-fix guarantees
-
-- Duplicate wide-table rows with the same `date + category` are merged by channel instead of overwritten during rebuild.
-- `exchange` is visible in both analytics surfaces.
-- `exchangeUsd` stays derived from rates/transfers and survives rebuild.
-- The current snapshot-style `fact` save flow remains unchanged.
-
-## Exchange Handling
-
-### Current minimal-fix behavior
-
-`exchange` can still be represented in the compatibility sheet as one wide-row category:
+Allowed `operation` values:
 
 ```text
-2026-04-24 | exchange | Яндекс руб=-74669 | Бинанс spot=874
+income | expense | exchange_in | exchange_out | partner_transfer | business_expense | personal_expense | correction
 ```
 
-That row is now preserved through:
-
-- sheet parse
-- range aggregation
-- analytics rebuild
-- expense-analysis provider view
-
-### Target behavior
-
-In the normalized ledger, exchange must not be stored as one ambiguous row.
-
-Use two linked rows:
+Allowed `direction` values:
 
 ```text
-1) expense | from_channel=Яндекс руб | amount=-74669 | currency=RUB | category=exchange
-2) income  | to_channel=Бинанс spot | amount=874 | currency=USD | category=exchange
+in | out | neutral
 ```
 
-Both rows should share:
+Validation rules:
 
-- `exchange_group_id`
-- common source metadata
-- optional free-text comment
+- Empty `date`: skip the row and warn.
+- Unknown `category`: store as `extra`, preserve the raw value in warning/comment.
+- Unknown channel: preserve the raw value and warn.
+- Empty or invalid `amount`: skip from sums and warn.
+- Missing `amount_usd`: derive only when a defensible rate exists; otherwise keep blank/null.
+- Duplicate `raw_source_id`: keep the first imported row and skip duplicates.
 
-## Target Normalized Ledger
+## Category Mapping
 
-Preferred canonical schema:
+Canonical categories:
 
 ```text
-date | operation | direction | from_channel | to_channel | amount | currency | amount_usd | category | source | comment
+servicein | ezoin | exchange | partner | business | house | food | fun | travel | extra
 ```
 
-Recommended notes:
+Required aliases:
 
-- `operation`: semantic operation type such as `income`, `expense`, `exchange`, `transfer`
-- `direction`: normalized money direction for the row itself
-- `from_channel` and `to_channel`: both optional except for transfers/exchanges where they should be explicit
-- `amount_usd`: stable analytics amount after conversion
-- `source`: `manual_fact`, `paypal`, `wise`, `tdbank`, `ocr`, etc.
+- `serviceIncome`, `services`, `service income` -> `servicein`
+- `ezohata`, `ezofact` -> `ezoin`
+- `exchangeUsd`, `exchange_usd`, `exchange_in`, `обмен` -> `exchange`
+- `partnerTransfer`, `partner transfer` -> `partner`
+- `flat`, `rent`, `квартира`, `дом` -> `house`
+- `events`, `beauty`, `развлечения` -> `fun`
+- `study`, `travel/study`, `обучение`, `курс` -> `travel`
+- `unclear`, `other`, `misc` -> `extra`
 
-## Derived Daily Summary
-
-The compatibility summary should eventually be generated from the normalized ledger:
+Legacy report adapters map canonical categories back to old columns:
 
 ```text
-date | category | channel1 | channel2 | channel3 ...
+servicein -> serviceIncome
+house -> flat
+travel -> travel
+exchange -> exchange
+extra -> business fallback until legacy report views add an explicit extra column
 ```
 
-Rules:
+## Channel Mapping
 
-- derived only
-- never edited as the primary source of truth
-- safe to rebuild at any time from normalized rows
+Canonical channels are the 20 configured manual-finance channels:
 
-## Analytics Contract
+```text
+Яндекс руб
+пейпал дол
+пейпал евр
+пейпал сad
+приват 24-дол
+приват 24-евро
+приват 24-грн
+монобанк грн
+трансервайз дол
+трансервайз евро
+REVOLUT дол
+Payoneer - eur
+Payoneer - dol
+Бинанс spot
+binance save
+Налично -я-евр
+местная валюты
+БАНК КАНАДА cad
+нал-мам-евро
+нал-мам-дол
+```
 
-The end-state contract should be one of:
+Known aliases include `paypal usd`, `paypal eur`, `paypal cad`, `privat 24 uah`, `mono uah`, `monobank`, `wise usd`, `wise eur`, `binance save`, `binance spot`, `yandex rub`.
 
-1. Analytics reads normalized ledger rows directly.
-2. Analytics reads one stable derived daily summary generated from normalized rows.
+## Exchange Model
 
-It should not mix:
+Exchange is represented by linked ledger rows.
 
-- legacy `fact` snapshot rows
-- manual wide rows
-- ad-hoc client-side inferred columns
+Out row:
 
-## Migration Notes
+```text
+operation=exchange_out
+direction=out
+from_channel=<source channel>
+to_channel=<destination channel>
+category=exchange
+amount=<source amount>
+currency=<source currency>
+```
 
-- The current live fix is intentionally additive and compatibility-first.
-- `fact` remains snapshot-oriented until a dedicated normalized-ledger migration is implemented.
-- Any future migration should backfill `exchange_group_id` for existing exchange rows where linkage can be inferred safely.
+In row:
+
+```text
+operation=exchange_in
+direction=in
+from_channel=<source channel>
+to_channel=<destination channel>
+category=exchange
+amount=<received amount>
+currency=<received currency>
+```
+
+Both rows share `transfer_group_id` or a related `raw_source_id`.
+
+Legacy wide summary may still show:
+
+```text
+date | exchange | Яндекс руб=-74669 | Бинанс spot=874
+```
+
+That row is derived from the two ledger rows and must not be treated as the source of truth.
+
+## Data Flow
+
+Raw imported transactions:
+
+```text
+PayPal / Wise / Binance / bank statements / OCR / manual fact
+```
+
+Normalized ledger:
+
+```text
+Raw source -> category/channel normalization -> Ledger rows
+```
+
+Compatibility views:
+
+```text
+Ledger -> Расходы / Переводы / Остатки / Комиссии
+```
+
+Analytics:
+
+```text
+Ledger-derived daily summary -> Аналитика
+Ledger-derived channel/category totals -> Учет расходов / анализ финансов
+Legacy fallback only when Ledger is unavailable or empty
+```
+
+## Migration
+
+Use the dry-run helper:
+
+```bash
+node scripts/migrate-manual-ledger.mjs --expenses legacy-expenses.csv
+```
+
+The helper:
+
+- reads an exported legacy wide table
+- generates normalized ledger preview rows
+- does not write to Google Sheets
+- logs created row count, skipped rows, unknown categories, unknown channels, and a sample
+
+No destructive migration is run automatically.
+
+## Risks
+
+- Existing `fact` remains a legacy editor, so its layout still limits what can be entered directly.
+- `extra` is canonical in `Ledger`, but old wide report views do not yet have a dedicated `extra` column.
+- Provider exchange imports without a destination channel can only create `exchange_out` until the paired in-row is known.
+- Historical backfill should be reviewed before writing because old exchange rows may not always identify both sides.

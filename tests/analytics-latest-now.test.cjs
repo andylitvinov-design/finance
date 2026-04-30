@@ -291,9 +291,9 @@ test("filterManualFlowExpenseRows keeps Расходы free of now rows for new 
   assert.deepEqual(context.filterManualFlowExpenseRows(rows).map((row) => row.category), ["food", "exchange"]);
 });
 
-test("normalizeManualExpenseCategory keeps study separate from fun", () => {
-  assert.equal(context.normalizeManualExpenseCategory("spent for study"), "study");
-  assert.equal(context.normalizeManualExpenseCategory("учеба"), "study");
+test("normalizeManualExpenseCategory maps study into travel and keeps fun separate", () => {
+  assert.equal(context.normalizeManualExpenseCategory("spent for study"), "travel");
+  assert.equal(context.normalizeManualExpenseCategory("учеба"), "travel");
   assert.equal(context.normalizeManualExpenseCategory("spent for fun"), "fun");
 });
 

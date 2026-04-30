@@ -1397,15 +1397,31 @@ async function saveExpenseAccountingEntries() {
 async function saveExpenseAccountingEntriesDirect(entries) {
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
+  const existingLedgerParse = titles.has(getManualLedgerSheetName())
+    ? parseManualLedgerSheetValues(await getSheetValuesByTitle(getManualLedgerSheetName()))
+    : { rows: [], warnings: [] };
   const existingExpenses = titles.has(getManualExpensesSheetName())
     ? parseIncomingExpenseSheetValues(await getSheetValuesByTitle(getManualExpensesSheetName()))
     : [];
   const replacementRows = buildExpenseRowsFromAccountingEntries(entries);
+  const ledgerRows = buildLedgerRowsFromAccountingEntries(entries);
+  const ledgerSave = normalizeManualLedgerRowsForSave(ledgerRows, existingLedgerParse.rows);
   const dates = replacementRows.map((row) => row.date).filter(Boolean).sort();
   const mergedExpenses = replaceManualRowsForDateRange(existingExpenses, replacementRows, dates[0], dates[dates.length - 1], "date");
+  await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualExpensesSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(
+    getManualLedgerSheetName(),
+    buildManualLedgerSheetValues([...(existingLedgerParse.rows || []), ...ledgerSave.rows]),
+    getManualFinanceSpreadsheetId()
+  );
   await overwriteSheetValues(getManualExpensesSheetName(), buildIncomingExpenseSheetValues(mergedExpenses), getManualFinanceSpreadsheetId());
-  return { rowCount: replacementRows.length, savedAt: new Date().toLocaleString("ru-RU") };
+  return {
+    rowCount: replacementRows.length,
+    ledgerRowCount: ledgerSave.rows.length,
+    warnings: [...existingLedgerParse.warnings, ...ledgerSave.warnings],
+    savedAt: new Date().toLocaleString("ru-RU")
+  };
 }
 
 function buildExpenseRowsFromAccountingEntries(entries) {

@@ -402,6 +402,10 @@ function getManualFinanceChannels() {
 function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChannels()) {
   const raw = String(value || "").trim();
   if (!raw) return "";
+  if (((typeof window !== "undefined" ? window.EzohataManualLedgerContract : null))?.normalizeManualLedgerChannel) {
+    const mapped = window.EzohataManualLedgerContract.normalizeManualLedgerChannel(raw, channels);
+    if (mapped && mapped !== raw) return mapped;
+  }
   const normalizeToken = (item) => normalizeLookupText(item).replace(/_/g, " ");
   const normalized = normalizeToken(raw);
   const defaultChannelMap = {
@@ -420,6 +424,72 @@ function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChan
     return channels.find((item) => normalizeCell(item) === normalizeCell(channel)) || channel;
   }
   return "";
+}
+
+function normalizeManualLedgerCategoryForStorage(value, fallback = "extra") {
+  if (((typeof window !== "undefined" ? window.EzohataManualLedgerContract : null))?.normalizeManualLedgerCategory) {
+    return window.EzohataManualLedgerContract.normalizeManualLedgerCategory(value, fallback);
+  }
+  const normalized = normalizeCell(value).replace(/ё/g, "е");
+  if (!normalized) return fallback;
+  if (/service|приход/.test(normalized)) return "servicein";
+  if (/ezo/.test(normalized)) return "ezoin";
+  if (/exchange|обмен|комис/.test(normalized)) return "exchange";
+  if (/partner|партнер/.test(normalized)) return "partner";
+  if (/business|бизнес/.test(normalized)) return "business";
+  if (/flat|house|rent|кварт|дом|аренд/.test(normalized)) return "house";
+  if (/food|еда|продукт/.test(normalized)) return "food";
+  if (/fun|event|beauty|развлеч/.test(normalized)) return "fun";
+  if (/travel|study|учеб|обуч|курс|школ|путеш/.test(normalized)) return "travel";
+  return fallback;
+}
+
+function mapManualLedgerCategoryToLegacy(category) {
+  const canonical = normalizeManualLedgerCategoryForStorage(category);
+  if (((typeof window !== "undefined" ? window.EzohataManualLedgerContract : null))?.mapLedgerCategoryToLegacy) {
+    return window.EzohataManualLedgerContract.mapLedgerCategoryToLegacy(canonical);
+  }
+  return ({
+    servicein: "serviceIncome",
+    ezoin: "serviceIncome",
+    exchange: "exchange",
+    partner: "exchange",
+    business: "business",
+    house: "flat",
+    food: "food",
+    fun: "fun",
+    travel: "travel",
+    extra: "business"
+  })[canonical] || "business";
+}
+
+function normalizeManualLedgerOperation(value, category = "") {
+  if (((typeof window !== "undefined" ? window.EzohataManualLedgerContract : null))?.normalizeManualLedgerOperation) {
+    return window.EzohataManualLedgerContract.normalizeManualLedgerOperation(value, category);
+  }
+  const normalized = normalizeLookupText(value).replace(/_/g, " ");
+  if (["income", "expense", "exchange in", "exchange out", "partner transfer", "business expense", "personal expense", "correction"].includes(normalized)) {
+    return normalized.replace(/\s/g, "_");
+  }
+  const canonical = normalizeManualLedgerCategoryForStorage(category);
+  if (canonical === "exchange") return "exchange_out";
+  if (canonical === "servicein" || canonical === "ezoin") return "income";
+  if (canonical === "partner") return "partner_transfer";
+  if (canonical === "business") return "business_expense";
+  if (["house", "food", "fun", "travel", "extra"].includes(canonical)) return "personal_expense";
+  return "correction";
+}
+
+function normalizeManualLedgerDirection(value, operation = "") {
+  if (((typeof window !== "undefined" ? window.EzohataManualLedgerContract : null))?.normalizeManualLedgerDirection) {
+    return window.EzohataManualLedgerContract.normalizeManualLedgerDirection(value, operation);
+  }
+  const normalized = normalizeCell(value);
+  if (["in", "out", "neutral"].includes(normalized)) return normalized;
+  const op = normalizeManualLedgerOperation(operation);
+  if (op === "income" || op === "exchange_in") return "in";
+  if (op === "correction") return "neutral";
+  return "out";
 }
 
 function canonicalManualFinanceChannel(value) {
@@ -1430,6 +1500,9 @@ function buildManualFinanceStateFromPayload(data, startDate, endDate) {
     transferTitle: data.transferTitle || MANUAL_FINANCE_TRANSFER_TITLE,
     transferHeaders: Array.isArray(data.transferHeaders) && data.transferHeaders.length ? data.transferHeaders : MANUAL_TRANSFER_HEADERS,
     transferRows: normalizeManualFinanceTransferRows(data.transferRows),
+    ledgerTitle: data.ledgerTitle || MANUAL_FINANCE_LEDGER_TITLE,
+    ledgerRows: Array.isArray(data.ledgerRows) ? data.ledgerRows.map((row) => ({ ...row })) : [],
+    ledgerWarnings: Array.isArray(data.ledgerWarnings) ? data.ledgerWarnings.slice() : [],
     expenseTitle: data.expenseTitle || MANUAL_FINANCE_EXPENSE_TITLE,
     expenseHeaders: Array.isArray(data.expenseHeaders) && data.expenseHeaders.length ? data.expenseHeaders : buildManualExpenseHeaders(),
     expenseRows
@@ -1986,7 +2059,10 @@ function formatSummaryNumber(value) {
 async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-  const [transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+  const [ledgerValues, transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+    titles.has(getManualLedgerSheetName())
+      ? getSheetValuesByTitle(getManualLedgerSheetName())
+      : Promise.resolve(buildManualLedgerSheetValues([])),
     titles.has(getManualTransfersSheetName())
       ? getSheetValuesByTitle(getManualTransfersSheetName())
       : Promise.resolve(buildIncomingTransferSheetValues([])),
@@ -2011,7 +2087,9 @@ async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
       usdAmount: row.usdAmount || "",
       destination: row.channel || ""
     }));
-  const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
+  const ledgerParse = parseManualLedgerSheetValues(ledgerValues);
+  const ledgerExpenseRows = buildExpenseRowsFromLedgerRows(ledgerParse.rows, startDate, endDate);
+  const parsedExpenseRows = ledgerExpenseRows.length ? ledgerExpenseRows : parseIncomingExpenseSheetValues(expenseValues);
   const expenseRows = normalizeManualFinanceExpenseRows(
     filterManualFlowExpenseRows(parsedExpenseRows).filter((row) => row.date && row.date >= startDate && row.date <= endDate),
     startDate,
@@ -2031,7 +2109,11 @@ async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
       Object.entries(latestNowEntriesByChannel).map(([channel, row]) => [channel, row.value])
     ),
     latestNowEntriesByChannel,
-    selectedSheets: [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
+    ledgerRows: ledgerParse.rows,
+    ledgerWarnings: ledgerParse.warnings,
+    selectedSheets: ledgerExpenseRows.length
+      ? [getManualLedgerSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
+      : [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
   };
 }
 
@@ -2686,6 +2768,21 @@ function buildLatestBalanceEntriesByChannel(balanceRows, endDate) {
 }
 
 function normalizeManualExpenseCategory(value) {
+  const normalized = normalizeCell(value).replace(/ё/g, "е");
+  if (!normalized) return "";
+  if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return MANUAL_NOW_CATEGORY;
+  if (typeof mapManualLedgerCategoryToLegacy === "function") return mapManualLedgerCategoryToLegacy(value);
+  if (/service|приход/.test(normalized)) return "serviceIncome";
+  if (/business|бизнес/.test(normalized)) return "business";
+  if (/flat|house|rent|кварт|дом|аренд/.test(normalized)) return "flat";
+  if (/food|еда/.test(normalized)) return "food";
+  if (/travel|study|учеб|обуч|курс|школ|путеш/.test(normalized)) return "travel";
+  if (/fun|event|beauty|развлеч/.test(normalized)) return "fun";
+  if (/exchange|обмен/.test(normalized)) return "exchange";
+  return "business";
+}
+
+function normalizeManualExpenseCategoryLegacy(value) {
   const normalized = normalizeCell(value).replace(/ё/g, "е");
   if (!normalized) return "";
   if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return MANUAL_NOW_CATEGORY;

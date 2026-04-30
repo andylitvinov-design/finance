@@ -194,6 +194,10 @@ function getManualCommissionsSheetName() {
   return String(state.config?.manualFinance?.commissionsSheetName || MANUAL_FINANCE_COMMISSION_TITLE).trim() || MANUAL_FINANCE_COMMISSION_TITLE;
 }
 
+function getManualLedgerSheetName() {
+  return String(state.config?.manualFinance?.ledgerSheetName || MANUAL_FINANCE_LEDGER_TITLE).trim() || MANUAL_FINANCE_LEDGER_TITLE;
+}
+
 function assertIncomingTransferHeaders(values) {
   const rows = values || [];
   if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
@@ -233,6 +237,15 @@ function assertIncomingCommissionHeaders(values) {
   const actual = MANUAL_COMMISSION_HEADERS.map((_, index) => String(rows[0]?.[index] || "").trim());
   if (JSON.stringify(actual) !== JSON.stringify(MANUAL_COMMISSION_HEADERS)) {
     throw new Error(`Commission sheet header mismatch. Expected ${MANUAL_COMMISSION_HEADERS.join(" | ")}, got ${actual.join(" | ")}`);
+  }
+}
+
+function assertManualLedgerHeaders(values) {
+  const rows = values || [];
+  if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
+  const actual = MANUAL_LEDGER_HEADERS.map((_, index) => String(rows[0]?.[index] || "").trim());
+  if (JSON.stringify(actual) !== JSON.stringify(MANUAL_LEDGER_HEADERS)) {
+    throw new Error(`Ledger sheet header mismatch. Expected ${MANUAL_LEDGER_HEADERS.join(" | ")}, got ${actual.join(" | ")}`);
   }
 }
 
@@ -344,6 +357,71 @@ function parseIncomingCommissionSheetValues(values) {
   return commissionRows;
 }
 
+function parseManualLedgerSheetValues(values) {
+  const rows = values || [];
+  assertManualLedgerHeaders(rows);
+  const header = rows[0] || MANUAL_LEDGER_HEADERS;
+  const indexByName = Object.fromEntries(MANUAL_LEDGER_HEADERS.map((name) => [name, findHeaderIndexByAliases(header, [name])]));
+  const warnings = [];
+  const seenRawSourceIds = new Set();
+  const ledgerRows = [];
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] || [];
+    if (!row.some((cell) => String(cell || "").trim())) continue;
+    const read = (key) => row[indexByName[key]] ?? "";
+    const date = normalizeIncomingSheetDateValue(read("date"));
+    if (!date) {
+      warnings.push(`Ledger row ${rowIndex + 1}: skipped empty date.`);
+      continue;
+    }
+    const amount = normalizeManualFinancePersistedNumberInput(read("amount"));
+    if (!String(amount || "").trim() || !Number.isFinite(parseLooseNumber(amount))) {
+      warnings.push(`Ledger row ${rowIndex + 1}: skipped invalid amount.`);
+      continue;
+    }
+    const rawCategory = String(read("category") || "").trim();
+    const category = normalizeManualLedgerCategoryForStorage(rawCategory, "extra");
+    const warningParts = [];
+    if (rawCategory && category === "extra" && normalizeCell(rawCategory) !== "extra") {
+      warningParts.push(`unknown category: ${rawCategory}`);
+    }
+    const rawFrom = String(read("from_channel") || "").trim();
+    const rawTo = String(read("to_channel") || "").trim();
+    const fromChannel = canonicalManualFinanceChannel(rawFrom);
+    const toChannel = canonicalManualFinanceChannel(rawTo);
+    if (rawFrom && fromChannel === rawFrom && !getManualFinanceChannels().includes(fromChannel)) warningParts.push(`unknown from_channel: ${rawFrom}`);
+    if (rawTo && toChannel === rawTo && !getManualFinanceChannels().includes(toChannel)) warningParts.push(`unknown to_channel: ${rawTo}`);
+    const rawSourceId = String(read("raw_source_id") || "").trim();
+    if (rawSourceId) {
+      if (seenRawSourceIds.has(rawSourceId)) {
+        warnings.push(`Ledger row ${rowIndex + 1}: skipped duplicate raw_source_id ${rawSourceId}.`);
+        continue;
+      }
+      seenRawSourceIds.add(rawSourceId);
+    }
+    if (warningParts.length) warnings.push(`Ledger row ${rowIndex + 1}: ${warningParts.join("; ")}.`);
+    const operation = normalizeManualLedgerOperation(read("operation"), category);
+    ledgerRows.push({
+      date,
+      operation,
+      fromChannel,
+      toChannel,
+      amount,
+      currency: String(read("currency") || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase(),
+      amountUsd: normalizeManualFinancePersistedNumberInput(read("amount_usd")),
+      category,
+      subcategory: String(read("subcategory") || "").trim(),
+      direction: normalizeManualLedgerDirection(read("direction"), operation),
+      comment: [String(read("comment") || "").trim(), ...warningParts].filter(Boolean).join(" | "),
+      rawSourceId,
+      transferGroupId: String(read("transfer_group_id") || "").trim(),
+      createdAt: String(read("created_at") || "").trim(),
+      updatedAt: String(read("updated_at") || "").trim()
+    });
+  }
+  return { rows: ledgerRows, warnings };
+}
+
 function normalizeIncomingSheetDateValue(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -410,6 +488,260 @@ function buildIncomingBalanceSheetValues(rows) {
   ];
 }
 
+function buildManualLedgerSheetValues(rows) {
+  return [
+    MANUAL_LEDGER_HEADERS.slice(),
+    ...(rows || []).map((row) => [
+      row.date || "",
+      row.operation || "",
+      row.fromChannel || row.from_channel || "",
+      row.toChannel || row.to_channel || "",
+      row.amount || "",
+      row.currency || "",
+      row.amountUsd || row.amount_usd || "",
+      row.category || "",
+      row.subcategory || "",
+      row.direction || "",
+      row.comment || "",
+      row.rawSourceId || row.raw_source_id || "",
+      row.transferGroupId || row.transfer_group_id || "",
+      row.createdAt || row.created_at || "",
+      row.updatedAt || row.updated_at || ""
+    ])
+  ];
+}
+
+function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
+  const warnings = [];
+  const seen = new Set((existingRows || []).map((row) => String(row.rawSourceId || "").trim()).filter(Boolean));
+  const timestamp = new Date().toISOString();
+  const output = [];
+  (rows || []).forEach((row, index) => {
+    const date = normalizeIncomingSheetDateValue(row?.date);
+    if (!date) {
+      warnings.push(`Ledger save row ${index + 1}: skipped empty date.`);
+      return;
+    }
+    const amount = normalizeManualFinancePersistedNumberInput(row?.amount);
+    const amountNumber = parseLooseNumber(amount);
+    if (!String(amount || "").trim() || !Number.isFinite(amountNumber)) {
+      warnings.push(`Ledger save row ${index + 1}: skipped invalid amount.`);
+      return;
+    }
+    const category = normalizeManualLedgerCategoryForStorage(row?.category, "extra");
+    const fromChannel = canonicalManualFinanceChannel(row?.fromChannel || row?.from_channel || "");
+    const toChannel = canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || "");
+    const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || "").trim();
+    if (rawSourceId && seen.has(rawSourceId)) {
+      warnings.push(`Ledger save row ${index + 1}: skipped duplicate raw_source_id ${rawSourceId}.`);
+      return;
+    }
+    if (rawSourceId) seen.add(rawSourceId);
+    const operation = normalizeManualLedgerOperation(row?.operation, category);
+    const amountUsd = normalizeManualFinancePersistedNumberInput(row?.amountUsd ?? row?.amount_usd ?? "");
+    output.push({
+      date,
+      operation,
+      fromChannel,
+      toChannel,
+      amount,
+      currency: String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase(),
+      amountUsd,
+      category,
+      subcategory: String(row?.subcategory || "").trim(),
+      direction: normalizeManualLedgerDirection(row?.direction, operation),
+      comment: String(row?.comment || "").trim(),
+      rawSourceId,
+      transferGroupId: String(row?.transferGroupId || row?.transfer_group_id || "").trim(),
+      createdAt: String(row?.createdAt || row?.created_at || "").trim() || timestamp,
+      updatedAt: timestamp
+    });
+  });
+  return { rows: output, warnings };
+}
+
+function buildLedgerRowsFromExpenseRows(expenseRows, options = {}) {
+  const rows = [];
+  const timestamp = options.timestamp || new Date().toISOString();
+  (expenseRows || []).forEach((expenseRow, rowIndex) => {
+    const date = normalizeIncomingSheetDateValue(expenseRow?.date || options.date);
+    if (!date) return;
+    const legacyCategory = normalizeManualExpenseCategory(expenseRow?.category);
+    if (!legacyCategory || legacyCategory === MANUAL_NOW_CATEGORY) return;
+    const category = normalizeManualLedgerCategoryForStorage(legacyCategory, "extra");
+    const canonicalAmounts = getCanonicalManualExpenseAmounts(expenseRow.amounts || {});
+    const exchangeEntries = [];
+    Object.entries(canonicalAmounts).forEach(([channel, rawAmount]) => {
+      const amount = parseLooseNumber(rawAmount);
+      if (!amount) return;
+      if (category === "exchange") {
+        exchangeEntries.push({ channel, amount });
+        return;
+      }
+      const isIncome = category === "servicein" || category === "ezoin";
+      const operation = isIncome ? "income" : (category === "business" ? "business_expense" : "personal_expense");
+      rows.push({
+        date,
+        operation,
+        fromChannel: isIncome ? "" : channel,
+        toChannel: isIncome ? channel : "",
+        amount: formatSheetNumber(Math.abs(amount)),
+        currency: inferManualFinanceChannelCurrency(channel),
+        amountUsd: "",
+        category,
+        subcategory: "",
+        direction: isIncome ? "in" : "out",
+        comment: options.comment || "legacy fact save",
+        rawSourceId: `${options.source || "legacy"}:${date}:${legacyCategory}:${channel}:${rowIndex}`,
+        transferGroupId: "",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    });
+    if (exchangeEntries.length) {
+      const groupId = `${options.source || "legacy"}:exchange:${date}:${rowIndex}`;
+      const firstOut = exchangeEntries.find((entry) => entry.amount < 0);
+      const firstIn = exchangeEntries.find((entry) => entry.amount > 0);
+      exchangeEntries.forEach((entry, entryIndex) => {
+        const isIn = entry.amount > 0;
+        rows.push({
+          date,
+          operation: isIn ? "exchange_in" : "exchange_out",
+          fromChannel: isIn ? (firstOut?.channel || "") : entry.channel,
+          toChannel: isIn ? entry.channel : (firstIn?.channel || ""),
+          amount: formatSheetNumber(Math.abs(entry.amount)),
+          currency: inferManualFinanceChannelCurrency(entry.channel),
+          amountUsd: "",
+          category: "exchange",
+          subcategory: "",
+          direction: isIn ? "in" : "out",
+          comment: options.comment || "legacy exchange save",
+          rawSourceId: `${groupId}:${entry.channel}:${entryIndex}`,
+          transferGroupId: groupId,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+      });
+    }
+  });
+  return rows;
+}
+
+function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
+  const lookup = new Map();
+  (ledgerRows || []).forEach((row) => {
+    const date = normalizeIncomingSheetDateValue(row?.date);
+    if (!date || date < startDate || date > endDate) return;
+    const legacyCategory = mapManualLedgerCategoryToLegacy(row?.category);
+    if (!legacyCategory || legacyCategory === MANUAL_NOW_CATEGORY) return;
+    const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
+    const channel = operation === "income" || operation === "exchange_in"
+      ? canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "")
+      : canonicalManualFinanceChannel(row?.fromChannel || row?.from_channel || row?.toChannel || row?.to_channel || "");
+    if (!channel) return;
+    const rawAmount = parseLooseNumber(row?.amount);
+    if (!rawAmount) return;
+    const signedAmount = legacyCategory === "exchange" && operation === "exchange_out"
+      ? -Math.abs(rawAmount)
+      : Math.abs(rawAmount);
+    const key = `${date}|${legacyCategory}`;
+    if (!lookup.has(key)) lookup.set(key, createManualFinanceExpenseRow(date, legacyCategory));
+    const expenseRow = lookup.get(key);
+    expenseRow.amounts[channel] = formatSheetNumber(parseLooseNumber(expenseRow.amounts[channel]) + signedAmount);
+  });
+  return Array.from(lookup.values()).sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    return String(left.category).localeCompare(String(right.category));
+  });
+}
+
+function buildLedgerRowsFromAccountingEntries(entries) {
+  const timestamp = new Date().toISOString();
+  const rows = [];
+  (entries || []).forEach((entry, index) => {
+    const date = normalizeIncomingSheetDateValue(entry.date);
+    const channel = canonicalManualFinanceChannel(entry.channel || "");
+    const amount = Math.abs(parseLooseNumber(entry.localAmount));
+    if (!date || !channel || !amount) return;
+    const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
+    const rawSourceId = String(entry.sourceTransactionId || entry.id || `expense-accounting:${date}:${channel}:${index}`).trim();
+    if (entry.direction === "income") {
+      rows.push({
+        date,
+        operation: category === "ezoin" ? "income" : "income",
+        fromChannel: "",
+        toChannel: channel,
+        amount: formatSheetNumber(amount),
+        currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
+        amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+        category: category === "extra" ? "servicein" : category,
+        direction: "in",
+        comment: entry.description || entry.transactionSubject || entry.organization || "",
+        rawSourceId,
+        transferGroupId: "",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      return;
+    }
+    if (entry.direction === "exchange") {
+      rows.push({
+        date,
+        operation: "exchange_out",
+        fromChannel: channel,
+        toChannel: canonicalManualFinanceChannel(entry.toChannel || ""),
+        amount: formatSheetNumber(amount),
+        currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
+        amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+        category: "exchange",
+        direction: "out",
+        comment: entry.description || entry.transactionSubject || "exchange import without paired in-row",
+        rawSourceId,
+        transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      if (entry.toChannel && parseLooseNumber(entry.toAmount || entry.receivedAmount)) {
+        const toChannel = canonicalManualFinanceChannel(entry.toChannel);
+        rows.push({
+          date,
+          operation: "exchange_in",
+          fromChannel: channel,
+          toChannel,
+          amount: formatSheetNumber(Math.abs(parseLooseNumber(entry.toAmount || entry.receivedAmount))),
+          currency: String(entry.toCurrency || inferManualFinanceChannelCurrency(toChannel)).trim().toUpperCase(),
+          amountUsd: entry.toUsdAmount ? formatSheetNumber(parseLooseNumber(entry.toUsdAmount)) : "",
+          category: "exchange",
+          direction: "in",
+          comment: entry.description || entry.transactionSubject || "exchange paired in-row",
+          rawSourceId: `${rawSourceId}:in`,
+          transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
+          createdAt: timestamp,
+          updatedAt: timestamp
+        });
+      }
+      return;
+    }
+    rows.push({
+      date,
+      operation: category === "business" ? "business_expense" : "personal_expense",
+      fromChannel: channel,
+      toChannel: "",
+      amount: formatSheetNumber(amount),
+      currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
+      amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+      category,
+      direction: "out",
+      comment: entry.description || entry.transactionSubject || entry.organization || "",
+      rawSourceId,
+      transferGroupId: "",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  });
+  return rows;
+}
+
 function replaceManualRowsForDateRange(existingRows, replacementRows, startDate, endDate, dateKey) {
   const preserved = (existingRows || []).filter((row) => {
     const rowDate = normalizeIncomingSheetDateValue(row?.[dateKey] || "");
@@ -464,7 +796,11 @@ async function listManualSheetDatesDirect() {
   const commissionValues = titles.has(getManualCommissionsSheetName())
     ? await getSheetValuesByTitle(getManualCommissionsSheetName())
     : [];
+  const ledgerValues = titles.has(getManualLedgerSheetName())
+    ? await getSheetValuesByTitle(getManualLedgerSheetName())
+    : [];
   const dates = new Set();
+  parseManualLedgerSheetValues(ledgerValues).rows.forEach((row) => row.date && dates.add(row.date));
   parseIncomingTransferSheetValues(transferValues).forEach((row) => row.transferDate && dates.add(row.transferDate));
   parseIncomingExpenseSheetValues(expenseValues).forEach((row) => row.date && dates.add(row.date));
   parseIncomingBalanceSheetValues(balanceValues).forEach((row) => row.date && dates.add(row.date));
@@ -482,7 +818,10 @@ async function getManualSheetDirect(startDate, endDate) {
   const snapshotDate = period.endDate;
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-  const [transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+  const [ledgerValues, transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+    titles.has(getManualLedgerSheetName())
+      ? getSheetValuesByTitle(getManualLedgerSheetName())
+      : Promise.resolve(buildManualLedgerSheetValues([])),
     titles.has(getManualTransfersSheetName())
       ? getSheetValuesByTitle(getManualTransfersSheetName())
       : Promise.resolve(buildIncomingTransferSheetValues([])),
@@ -496,11 +835,13 @@ async function getManualSheetDirect(startDate, endDate) {
       ? getSheetValuesByTitle(getManualCommissionsSheetName())
       : Promise.resolve(buildIncomingCommissionSheetValues([]))
   ]);
+  const ledgerParse = parseManualLedgerSheetValues(ledgerValues);
+  const ledgerExpenseRows = buildExpenseRowsFromLedgerRows(ledgerParse.rows, snapshotDate, snapshotDate);
   const transferRows = parseIncomingTransferSheetValues(transferValues).filter((row) => {
     return row.transferDate && row.transferDate === snapshotDate;
   });
   const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
-  const expenseRows = parsedExpenseRows.filter((row) => {
+  const expenseRows = (ledgerExpenseRows.length ? ledgerExpenseRows : parsedExpenseRows).filter((row) => {
     return row.date && row.date === snapshotDate;
   });
   const flowExpenseRows = filterManualFlowExpenseRows(expenseRows);
@@ -511,7 +852,9 @@ async function getManualSheetDirect(startDate, endDate) {
   return {
     sheetName: MANUAL_INCOMING_TITLE,
     displayName: `${MANUAL_INCOMING_TITLE}: ${snapshotDate}`,
-    sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
+    sourceSheetName: ledgerExpenseRows.length
+      ? `${getManualLedgerSheetName()} + legacy views`
+      : `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
     created: false,
     virtual: false,
     sourceType: "incoming-repository",
@@ -533,6 +876,9 @@ async function getManualSheetDirect(startDate, endDate) {
     transferTitle: getManualTransfersSheetName(),
     transferHeaders: MANUAL_TRANSFER_HEADERS,
     transferRows,
+    ledgerTitle: getManualLedgerSheetName(),
+    ledgerRows: ledgerParse.rows,
+    ledgerWarnings: ledgerParse.warnings,
     emptyFact: !expenseRows.length && !Object.keys(latestNowEntriesByChannel).length,
     expenseTitle: getManualExpensesSheetName(),
     expenseHeaders: buildManualExpenseHeaders(),
@@ -645,6 +991,9 @@ async function saveManualSheetDirect(params) {
   const existingExpenses = titles.has(getManualExpensesSheetName())
     ? parseIncomingExpenseSheetValues(await getSheetValuesByTitle(getManualExpensesSheetName()))
     : [];
+  const existingLedgerParse = titles.has(getManualLedgerSheetName())
+    ? parseManualLedgerSheetValues(await getSheetValuesByTitle(getManualLedgerSheetName()))
+    : { rows: [], warnings: [] };
   const existingBalances = titles.has(getManualBalancesSheetName())
     ? parseIncomingBalanceSheetValues(await getSheetValuesByTitle(getManualBalancesSheetName()))
     : [];
@@ -680,9 +1029,22 @@ async function saveManualSheetDirect(params) {
   const mergedTransfers = replaceManualRowsForDateRange(existingTransfers, transferRows, snapshotDate, snapshotDate, "transferDate");
   const mergedExpenses = replaceManualRowsForDateRange(existingExpenses, expenseRows, expenseReplaceStart, expenseReplaceEnd, "date");
   const mergedBalances = mergeManualBalanceRows(existingBalances, balanceRows);
+  const factLedgerRows = buildLedgerRowsFromExpenseRows(rawExpenseRows, {
+    date: snapshotDate,
+    source: "fact",
+    comment: `fact ${snapshotDate}`
+  });
+  const preservedLedgerRows = (existingLedgerParse.rows || []).filter((row) => {
+    if (row.date !== snapshotDate) return true;
+    return !String(row.rawSourceId || "").startsWith(`fact:${snapshotDate}:`) &&
+      !String(row.rawSourceId || "").startsWith(`fact:exchange:${snapshotDate}:`);
+  });
+  const ledgerSave = normalizeManualLedgerRowsForSave([...preservedLedgerRows, ...factLedgerRows]);
   await ensureSheetExists(getManualTransfersSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualExpensesSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualBalancesSheetName(), getManualFinanceSpreadsheetId());
+  await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(getManualLedgerSheetName(), buildManualLedgerSheetValues(ledgerSave.rows), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualTransfersSheetName(), buildIncomingTransferSheetValues(mergedTransfers), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualExpensesSheetName(), buildIncomingExpenseSheetValues(mergedExpenses), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualBalancesSheetName(), buildIncomingBalanceSheetValues(mergedBalances), getManualFinanceSpreadsheetId());
@@ -690,7 +1052,8 @@ async function saveManualSheetDirect(params) {
     periodStart: snapshotDate,
     periodEnd: snapshotDate,
     status: "saved",
-    sourceSheetName: `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
+    sourceSheetName: `${getManualLedgerSheetName()} + ${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
+    ledgerWarnings: [...existingLedgerParse.warnings, ...ledgerSave.warnings],
     savedAt: new Date().toLocaleString("ru-RU"),
     writeEnabled: true
   };
