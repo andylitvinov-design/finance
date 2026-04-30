@@ -10,6 +10,45 @@ const BALANCE_SHEET_NAME = "Остатки";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
 
+function normalizeCell(value) {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function canonicalManualFinanceChannel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const exact = MANUAL_FINANCE_CHANNELS.find((channel) => normalizeCell(channel) === normalizeCell(raw));
+  if (exact) return exact;
+  const normalized = normalizeLookupText(raw);
+  const aliases = [
+    { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
+    { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
+    { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
+    { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
+    { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+    { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
+    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" },
+  ];
+  const match = aliases.find((entry) => entry.pattern.test(normalized));
+  return match?.channel || raw;
+}
+
+const MANUAL_FINANCE_CHANNELS = [
+  "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн",
+  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
+  "Бинанс spot","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
+];
+
 export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch } = {}) {
   const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
   const privateKey = normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
@@ -122,7 +161,7 @@ function parseExpenseRows(values) {
   const categoryIndex = findHeaderIndex(header, ["категория", "category"]);
   if (dateIndex === -1 || categoryIndex === -1) return [];
   const channelIndexes = header
-    .map((cell, index) => ({ channel: String(cell || "").trim(), index }))
+    .map((cell, index) => ({ channel: canonicalManualFinanceChannel(cell), index }))
     .filter((item) => item.channel && item.index !== dateIndex && item.index !== categoryIndex);
   return rows
     .map((row) => ({
@@ -230,8 +269,4 @@ function normalizeDate(value) {
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
   }
   return "";
-}
-
-function normalizeCell(value) {
-  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
 }

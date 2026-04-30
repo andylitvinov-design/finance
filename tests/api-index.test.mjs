@@ -534,13 +534,15 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
                 {
                   range: "'Расходы'!A1:V",
                   values: [
-                    ["дата", "категория", "пейпал дол", "приват 24-грн"],
-                    ["2026-04-08", "business", "15", ""],
-                    ["2026-04-11", "еда", "", "860"],
-                    ["2026-04-10", "exchange", "10", ""],
-                    ["2026-04-12", "обмен", "", "4300"],
-                    ["2026-04-15", "study", "", "430"],
-                    ["2026-05-01", "exchange", "999", "999"]
+                    ["дата", "категория", "яндекс", "пейпал дол", "приват 24-грн"],
+                    ["2026-04-24", "business", "74669", "", ""],
+                    ["2026-04-24", "exchange", "-74669", "", ""],
+                    ["2026-04-08", "business", "", "15", ""],
+                    ["2026-04-11", "еда", "", "", "860"],
+                    ["2026-04-10", "exchange", "", "10", ""],
+                    ["2026-04-12", "обмен", "", "", "4300"],
+                    ["2026-04-15", "study", "", "", "430"],
+                    ["2026-05-01", "exchange", "", "999", "999"]
                   ]
                 },
                 {
@@ -602,6 +604,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
                     values: [
                       ["Личные расходы", "", "", "", "", "", "", "", "", "display_name", "income_source_key", "expense_source_key", "past_usd_source_key", "currency_type"],
                       ["валюта", "now", "spent for business", "spent for food", "spent for house", "spent for study", "spent for travel/ fun", "затраты-мои", "now_usd"],
+                      ["Яндекс руб", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
                       ["пейпал дол", "648,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
                       ["приват 24-грн", "11480,00", "8740,00", "2665,00", "0,00", "0,00", "0,00", "0,00", "2665"],
                       ["Бинанс spot", "1689,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0,00", "0"],
@@ -611,6 +614,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
                       [],
                       ["Plan"],
                       ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "комиссии", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
+                      ["Яндекс руб", "0", "0", "0", "", "0", "0", "0", "0"],
                       ["пейпал дол", "0", "369", "0", "", "369", "0", "0", "369"],
                       ["приват 24-грн", "0", "0", "0", "", "0", "0", "0", "0"],
                       ["Бинанс spot", "0", "108,15", "0", "", "108,15", "0", "0", "108,15"],
@@ -693,6 +697,13 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
     assert.equal(analyticsRows[planIndex + 1].includes("комиссии"), false);
     const paypalPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "пейпал дол");
     const privatPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "приват 24-грн");
+    const yandexPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "Яндекс руб");
+    assert.equal(yandexPlanRow?.[3], "74669,0000");
+    assert.equal(yandexPlanRow?.[4], "883,0684");
+    assert.equal(yandexPlanRow?.[6], "-74669,0000");
+    assert.equal(yandexPlanRow?.[7], "-883,0684");
+    assert.equal(yandexPlanRow?.[8], "-883,0684");
+    assert.equal(yandexPlanRow?.[9], "-1766,1368");
     assert.equal(paypalPlanRow?.[6], "10,0000");
     assert.equal(paypalPlanRow?.[7], "10,0000");
     assert.equal(paypalPlanRow?.[3], "15,0000");
@@ -708,12 +719,12 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
     const canadaPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "БАНК КАНАДА cad");
     assert.equal(canadaPlanRow?.[3], "300,0000");
     const totalPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "Итого");
-    assert.equal(totalPlanRow?.[3], "1605,0000");
-    assert.equal(totalPlanRow?.[4], "45,0000");
-    assert.equal(totalPlanRow?.[6], "4310,0000");
-    assert.equal(totalPlanRow?.[7], "110,0000");
-    assert.equal(totalPlanRow?.[8], "587,1500");
-    assert.equal(totalPlanRow?.[9], "542,1500");
+    assert.equal(totalPlanRow?.[3], "76274,0000");
+    assert.equal(totalPlanRow?.[4], "928,0684");
+    assert.equal(totalPlanRow?.[6], "-70359,0000");
+    assert.equal(totalPlanRow?.[7], "-773,0684");
+    assert.equal(totalPlanRow?.[8], "-295,9184");
+    assert.equal(totalPlanRow?.[9], "-1223,9868");
 
     const findBalanceRow = (channel) =>
       analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);
