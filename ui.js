@@ -460,6 +460,41 @@ function renderExpenseFinancialAnalysis() {
   headerActions.appendChild(refreshButton);
   header.appendChild(headerActions);
   block.appendChild(header);
+  const manualOverlayWarning = getManualOverlayUnavailableMessage();
+  if (manualOverlayWarning) {
+    const warning = document.createElement("div");
+    warning.className = "config-note";
+    warning.style.marginBottom = "12px";
+    warning.textContent = manualOverlayWarning;
+    block.appendChild(warning);
+  }
+  if (manualOverlayWarning) {
+    const paypalSummary = getActivePayPalSummary();
+    if (hasProviderSummaryData(paypalSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
+    }
+    const wiseSummary = getActiveWiseSummary();
+    if (hasProviderSummaryData(wiseSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
+    }
+    const yoomoneySummary = getActiveYooMoneySummary();
+    if (hasProviderSummaryData(yoomoneySummary)) {
+      block.appendChild(renderProviderMonthlyStatement("ЮMoney за месяц", yoomoneySummary));
+    }
+    const monobankSummary = getActiveMonobankSummary();
+    if (hasProviderSummaryData(monobankSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("Monobank за месяц", monobankSummary));
+    }
+    const privatBankSummary = getActivePrivatBankSummary();
+    if (hasProviderSummaryData(privatBankSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("PrivatBank за месяц", privatBankSummary));
+    }
+    const tdBankSummary = getActiveTdBankSummary();
+    if (hasProviderSummaryData(tdBankSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
+    }
+    return block;
+  }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
   const paypalSummary = getActivePayPalSummary();
@@ -2228,8 +2263,8 @@ function renderClosedFactTransfersBlock(headers, rows) {
 function renderAnalyticsSections(container, values) {
   const sections = getAnalyticsSections(values);
   const manualWorkbookUrl = state.config?.manualFinance?.spreadsheetUrl || "";
-  const manualWarnings = Array.isArray(state.data?.manual?.warnings) ? state.data.manual.warnings : [];
-  const needsGoogleManualOverlay = manualWarnings.some((warning) => /service account credentials are not configured/i.test(String(warning || "")));
+  const manualOverlayWarning = getManualOverlayUnavailableMessage();
+  const needsGoogleManualOverlay = Boolean(manualOverlayWarning);
   if (manualWorkbookUrl) {
     const linkNote = document.createElement("div");
     linkNote.className = "config-note";
@@ -2241,7 +2276,7 @@ function renderAnalyticsSections(container, values) {
     const warning = document.createElement("div");
     warning.className = "config-note";
     warning.style.marginBottom = "12px";
-    warning.textContent = "Сервер не видит manual workbook для этого периода. Нажмите «Подключить Google», чтобы пересчитать Аналитику из EzoHata Manual Inputs прямо в браузере.";
+    warning.textContent = manualOverlayWarning;
     container.appendChild(warning);
   }
   sections.forEach((section) => {
@@ -2253,7 +2288,12 @@ function renderAnalyticsSections(container, values) {
     title.style.fontWeight = "700";
     title.textContent = section.title;
     block.appendChild(title);
-    if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
+    if (shouldShowManualOverlayWarningInsteadOfSection(section.title)) {
+      const warning = document.createElement("div");
+      warning.className = "config-note";
+      warning.textContent = manualOverlayWarning;
+      block.appendChild(warning);
+    } else if ([normalizeCell("движение 1"), normalizeCell("личное движение средств")].includes(normalizeCell(section.title))) {
       appendCollapsibleZeroAnalyticsTable(block, section.rows);
     } else if (
       normalizeCell(section.title) === normalizeCell("ИТОГО ЗА ПЕРИОД USD") ||
@@ -2265,6 +2305,19 @@ function renderAnalyticsSections(container, values) {
     }
     container.appendChild(block);
   });
+}
+
+function getManualOverlayUnavailableMessage() {
+  const manualWarnings = Array.isArray(state.data?.manual?.warnings) ? state.data.manual.warnings : [];
+  const warning = manualWarnings.find((item) => /service account credentials are not configured/i.test(String(item || "")));
+  if (!warning || state.googleAuth.accessToken) return "";
+  return "Plan / Balance / Fact требуют авторизацию или server-side manual overlay. Данные manual workbook сейчас недоступны, поэтому нули не считаются валидной сверкой.";
+}
+
+function shouldShowManualOverlayWarningInsteadOfSection(title) {
+  if (!getManualOverlayUnavailableMessage()) return false;
+  const normalizedTitle = normalizeCell(title);
+  return normalizedTitle === normalizeCell("Plan") || normalizedTitle === normalizeCell("БАЛАНС");
 }
 
 function isZeroOnlyAnalyticsRow(row) {

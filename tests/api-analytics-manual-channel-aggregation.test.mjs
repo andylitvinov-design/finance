@@ -241,3 +241,42 @@ test("normalizeServerAnalyticsPayload builds Plan exchange from normalized opera
   const total = rowByChannel(plan.header, plan.rows, "Итого");
   assert.equal(total["обмен"], "-84577,0000");
 });
+
+test("normalizeServerAnalyticsPayload derives exchange_usd from operation currency when amount_usd is blank", () => {
+  const values = [
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
+    ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["Итого", "", "", "", "", "0", "", "", "0", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
+    ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["Итого", "0", "", "", "0", "", "", "", "", ""],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 10 } },
+    manual: {
+      operations: [
+        { date: "2026-04-25", operation: "exchange_out", fromChannel: "приват 24-грн", toChannel: "binance save", amount: "-4300", amountUsd: "", currency: "UAH", category: "exchange" },
+        { date: "2026-04-25", operation: "exchange_in", fromChannel: "приват 24-грн", toChannel: "binance save", amount: "100", amountUsd: "", currency: "USD", category: "exchange" }
+      ],
+      expenseRows: [],
+      transfers: [
+        { date: "2026-04-12", channel: "приват 24-грн", amount: "4300", currency: "UAH", usdAmount: "100" }
+      ],
+      balances: []
+    }
+  });
+
+  const plan = sectionRows(payload.tabs.analytics.values, "Plan");
+  assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен"], "-4300,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен_usd"], "-100,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "100,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "100,0000");
+});

@@ -261,6 +261,65 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
   }
 });
 
+test("loadManualRepositoryFromGoogleSheets derives missing amount_usd for exchange operations from currency and transfer rates", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:O",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category"],
+                  ["2026-04-25", "exchange_out", "приват 24-грн", "binance save", "-4300", "UAH", "", "exchange"],
+                  ["2026-04-25", "exchange_in", "приват 24-грн", "binance save", "100", "USD", "", "exchange"],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+              {
+                range: "'Переводы'!A1:G",
+                values: [
+                  ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+                  ["2026-04-12", "test", "4300", "UAH", "приват 24-грн", "43", "100"],
+                ],
+              },
+              { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.schema, "ledger-v1");
+    assert.equal(repository.operations[0].amountUsd, "-100");
+    assert.equal(repository.operations[1].amountUsd, "100");
+    assert.deepEqual(repository.views.byDateChannel, [
+      { date: "2026-04-25", channel: "Бинанс spot", amount: 100, amountUsd: 100 },
+      { date: "2026-04-25", channel: "приват 24-грн", amount: -4300, amountUsd: -100 },
+    ]);
+    assert.deepEqual(repository.views.byCategory, [
+      { category: "exchange", amount: -4200, amountUsd: 0, count: 2 },
+    ]);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
 test("loadManualRepositoryFromGoogleSheets keeps empty Ledger as explicit ledger-v1-empty schema", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;

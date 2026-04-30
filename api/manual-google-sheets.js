@@ -28,6 +28,13 @@ const NORMALIZED_OPERATION_HEADERS = [
   "amount_usd",
   "category"
 ];
+const FALLBACK_USD_RATES = {
+  RUB: 1 / 84.5563,
+  UAH: 1 / 43.86,
+  EUR: 1.16,
+  CAD: 0.74,
+  LOCAL: 1 / 18,
+};
 
 function normalizeCell(value) {
   return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
@@ -95,15 +102,17 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       accessToken,
       fetchImpl,
     });
-    const ledgerRepository = parseExpenseRepository(valuesBySheet[LEDGER_SHEET_NAME] || []);
-    const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || []);
+    const transfers = parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []);
+    const rateLookup = buildOperationUsdRateLookup(transfers);
+    const ledgerRepository = parseExpenseRepository(valuesBySheet[LEDGER_SHEET_NAME] || [], rateLookup);
+    const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || [], rateLookup);
     const repository = ledgerRepository.schema.startsWith("ledger-v1") ? ledgerRepository : legacyRepository;
     return {
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
       ...repository,
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
-      transfers: parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []),
+      transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
       fallbackSchema: ledgerRepository.schema.startsWith("ledger-v1") ? legacyRepository.schema : null,
     };
@@ -191,7 +200,7 @@ function extractSheetTitle(range) {
   return raw.split("!")[0].replace(/^'|'$/g, "");
 }
 
-function parseExpenseRepository(values) {
+function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const headerState = getNormalizedLedgerHeaderState(values);
   if (headerState === "empty") {
     return {
@@ -204,7 +213,7 @@ function parseExpenseRepository(values) {
       },
     };
   }
-  const normalizedOperations = parseNormalizedOperationRows(values);
+  const normalizedOperations = parseNormalizedOperationRows(values, rateLookup);
   if (normalizedOperations) {
     return {
       schema: "ledger-v1",
@@ -257,7 +266,7 @@ function parseLegacyExpenseRows(values) {
     .filter((row) => row.date && row.category && Object.values(row.amounts).some((value) => String(value || "").trim()));
 }
 
-function parseNormalizedOperationRows(values) {
+function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const { header, rows } = splitHeaderRows(values);
   if (!looksLikeNormalizedOperationsHeader(header)) return null;
   const indexes = {
@@ -285,7 +294,7 @@ function parseNormalizedOperationRows(values) {
       if ((rawOperation === "exchange" || rawOperation === "обмен") && category === "exchange") {
         operation = parseNumberString(row[indexes.amount]) > 0 ? "exchange_in" : "exchange_out";
       }
-      return {
+      const operationRow = {
         date: normalizeDate(row[indexes.date]),
         operation,
         fromChannel: canonicalManualFinanceChannel(row[indexes.fromChannel]),
@@ -303,6 +312,10 @@ function parseNormalizedOperationRows(values) {
         updatedAt: String(row[indexes.updatedAt] || "").trim(),
         source: "manual-google-sheets",
       };
+      if (!String(operationRow.amountUsd || "").trim()) {
+        operationRow.amountUsd = formatNumberString(deriveOperationUsdAmount(operationRow, rateLookup));
+      }
+      return operationRow;
     })
     .filter((row) => row.date && row.operation && (row.fromChannel || row.toChannel) && String(row.amount || "").trim());
 }
@@ -419,6 +432,53 @@ function buildOperationsPivotByCategory(operations) {
     grouped.set(category, current);
   }
   return Array.from(grouped.values()).sort((left, right) => left.category.localeCompare(right.category));
+}
+
+function buildOperationUsdRateLookup(transfers) {
+  const byChannel = {};
+  const byCurrency = {};
+  for (const row of transfers || []) {
+    const amount = Math.abs(parseNumberString(row?.amount));
+    const usdAmount = Math.abs(parseNumberString(row?.usdAmount));
+    if (!amount || !usdAmount) continue;
+    const channel = canonicalManualFinanceChannel(row?.channel || row?.destination || "");
+    const currency = String(row?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
+    const usdPerLocal = usdAmount / amount;
+    if (channel) addUsdRate(byChannel, channel, usdPerLocal);
+    if (currency) addUsdRate(byCurrency, currency, usdPerLocal);
+  }
+  return {
+    byChannel: averageUsdRates(byChannel),
+    byCurrency: { ...FALLBACK_USD_RATES, ...averageUsdRates(byCurrency) },
+  };
+}
+
+function addUsdRate(bucket, key, rate) {
+  if (!key || !Number.isFinite(rate) || rate <= 0) return;
+  if (!bucket[key]) bucket[key] = [];
+  bucket[key].push(rate);
+}
+
+function averageUsdRates(bucket) {
+  return Object.fromEntries(
+    Object.entries(bucket).map(([key, values]) => [key, values.reduce((sum, value) => sum + value, 0) / values.length])
+  );
+}
+
+function deriveOperationUsdAmount(operation, rateLookup = { byChannel: {}, byCurrency: {} }) {
+  const rawExplicitUsd = String(operation?.amountUsd || "").trim();
+  if (rawExplicitUsd) return parseNumberString(rawExplicitUsd);
+  const amount = parseNumberString(operation?.amount);
+  if (!Number.isFinite(amount)) return 0;
+  const channel = mapOperationToLegacyChannel(operation) || canonicalManualFinanceChannel(operation?.fromChannel || operation?.toChannel || "");
+  const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
+  if (currency === "USD") return amount;
+  const rate = parseNumberString(operation?.rate) ||
+    parseNumberString(rateLookup.byChannel?.[channel]) ||
+    parseNumberString(rateLookup.byCurrency?.[currency]) ||
+    FALLBACK_USD_RATES[currency] ||
+    FALLBACK_USD_RATES.LOCAL;
+  return rate ? amount * rate : 0;
 }
 
 function parseBalanceRows(values) {

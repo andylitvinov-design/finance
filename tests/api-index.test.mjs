@@ -474,6 +474,8 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
 
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
     const ordersRows = response.body?.data?.tabs?.orders?.values || [];
+    const missingPaymentRow = movementRows.find((row) => row?.[0] === "18101");
+    const fullyMissingRow = movementRows.find((row) => row?.[0] === "18104");
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
     assert.deepEqual(positions, [
       "дата 1",
@@ -489,6 +491,11 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
       "18108",
       "Итого"
     ]);
+    assert.equal(missingPaymentRow?.[20], "");
+    assert.equal(missingPaymentRow?.[21], "CHECK REQUIRED");
+    assert.match(String(missingPaymentRow?.[22] || ""), /balance not calculated from incomplete source row/i);
+    assert.equal(fullyMissingRow?.[20], "");
+    assert.equal(fullyMissingRow?.[21], "CHECK REQUIRED");
     assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
     global.fetch = previousFetch;

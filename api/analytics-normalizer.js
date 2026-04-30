@@ -401,9 +401,16 @@ function deriveManualUsdAmount(amount, channel, rateLookup) {
 }
 
 function deriveOperationUsdAmount(operation, amount, channel, rateLookup) {
-  const explicitUsd = parseLooseNumber(operation?.amountUsd);
-  if (explicitUsd) return explicitUsd;
-  return deriveManualUsdAmount(amount, channel, rateLookup);
+  const rawExplicitUsd = String(operation?.amountUsd || "").trim();
+  if (rawExplicitUsd) return parseLooseNumber(rawExplicitUsd);
+  const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
+  if (currency === "USD") return amount;
+  const rate = parseLooseNumber(operation?.rate) ||
+    parseLooseNumber(rateLookup.byCurrency?.[currency]) ||
+    parseLooseNumber(rateLookup.byChannel?.[channel]) ||
+    FALLBACK_USD_RATES[currency] ||
+    FALLBACK_USD_RATES.LOCAL;
+  return rate ? amount * rate : 0;
 }
 
 function getPeriodBalanceRows(balances, period = {}) {
