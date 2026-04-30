@@ -429,14 +429,15 @@ function getPeriodBalanceRows(balances, period = {}) {
 function normalizeManualCategory(value) {
   const normalized = normalizeCell(value);
   if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return "now";
-  if (/service|приход/.test(normalized)) return "serviceIncome";
+  if (/service|servicein|приход/.test(normalized)) return "serviceIncome";
+  if (/ezoin|ezohata|ezofact/.test(normalized)) return "serviceIncome";
   if (/business|бизнес/.test(normalized)) return "business";
-  if (/flat|house|кварт|дом/.test(normalized)) return "flat";
+  if (/flat|house|rent|кварт|дом|аренд/.test(normalized)) return "flat";
   if (/food|еда/.test(normalized)) return "food";
-  if (/travel|путеш/.test(normalized)) return "travel";
-  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
-  if (/fun|развлеч/.test(normalized)) return "fun";
+  if (/travel|study|учеб|обуч|курс|школ|путеш/.test(normalized)) return "travel";
+  if (/fun|event|beauty|развлеч/.test(normalized)) return "fun";
   if (/exchange|обмен/.test(normalized)) return "exchange";
+  if (/extra|unclear|other/.test(normalized)) return "business";
   return normalized;
 }
 
@@ -446,8 +447,9 @@ function mapOperationToManualCategory(operation) {
   if (category === "serviceIncome") return "serviceIncome";
   if (["business", "flat", "food", "fun", "study", "travel", "exchange", "now"].includes(category)) return category;
   if (op === "income") return "serviceIncome";
-  if (op === "exchange" || op === "обмен") return "exchange";
-  if (op === "expense" || op === "расход") return category || "business";
+  if (op === "exchange" || op === "обмен" || op === "exchange_in" || op === "exchange_out") return "exchange";
+  if (op === "expense" || op === "расход" || op === "business_expense" || op === "personal_expense") return category || "business";
+  if (op === "partner_transfer") return "exchange";
   if (op === "balance") return "now";
   return "";
 }
@@ -456,6 +458,9 @@ function mapOperationToManualChannel(operation, category) {
   const amount = parseLooseNumber(operation?.amount);
   if (category === "serviceIncome") return getCanonicalManualExpenseChannelKey(operation?.toChannel || operation?.fromChannel || "");
   if (category === "exchange") {
+    const op = normalizeCell(operation?.operation);
+    if (op === "exchange_out") return getCanonicalManualExpenseChannelKey(operation?.fromChannel || operation?.toChannel || "");
+    if (op === "exchange_in") return getCanonicalManualExpenseChannelKey(operation?.toChannel || operation?.fromChannel || "");
     if (amount < 0) return getCanonicalManualExpenseChannelKey(operation?.fromChannel || operation?.toChannel || "");
     if (amount > 0) return getCanonicalManualExpenseChannelKey(operation?.toChannel || operation?.fromChannel || "");
     return getCanonicalManualExpenseChannelKey(operation?.fromChannel || operation?.toChannel || "");
@@ -466,7 +471,12 @@ function mapOperationToManualChannel(operation, category) {
 function mapOperationToManualAmount(operation, category) {
   const amount = parseLooseNumber(operation?.amount);
   if (amount === 0 && String(operation?.amount || "").trim() === "") return null;
-  if (category === "exchange") return amount;
+  if (category === "exchange") {
+    const op = normalizeCell(operation?.operation);
+    if (op === "exchange_out") return -Math.abs(amount);
+    if (op === "exchange_in") return Math.abs(amount);
+    return amount;
+  }
   return Math.abs(amount);
 }
 

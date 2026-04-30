@@ -1,4 +1,5 @@
 import {
+  mapLedgerCategoryToLegacy,
   normalizeManualLedgerCategory,
   normalizeManualLedgerChannel,
 } from "./manual-ledger-maps.js";
@@ -6,7 +7,7 @@ import {
 const MAX_IMAGE_COUNT = 8;
 const MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const CATEGORY_SET = new Set(["business", "flat", "food", "fun", "travel", "study", "serviceIncome", "exchange"]);
+const CATEGORY_SET = new Set(["business", "flat", "food", "fun", "travel", "study", "serviceIncome", "exchange", "extra"]);
 const RECEIVED_TYPE_SET = new Set(["ezofact", "serviceincome", "exchange_in"]);
 
 export default async function handler(request, response) {
@@ -277,7 +278,8 @@ function normalizeChannel(value, channels) {
 }
 
 function normalizeCategory(value) {
-  const normalized = normalizeManualLedgerCategory(value, "");
+  const canonical = normalizeManualLedgerCategory(value, "");
+  const normalized = mapLedgerCategoryToLegacy(canonical);
   return CATEGORY_SET.has(normalized) ? normalized : "";
 }
 

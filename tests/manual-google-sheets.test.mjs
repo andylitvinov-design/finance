@@ -132,7 +132,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     });
 
     assert.equal(repository.ok, true);
-    assert.equal(repository.schema, "operations-v1");
+    assert.equal(repository.schema, "ledger-v1");
     assert.equal(repository.operations.length, 6);
     assert.deepEqual(repository.expenseRows, [
       {

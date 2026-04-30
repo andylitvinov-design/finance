@@ -1,4 +1,12 @@
 import { createSign } from "node:crypto";
+import {
+  MANUAL_LEDGER_HEADERS,
+  mapLedgerCategoryToLegacy,
+  normalizeManualLedgerCategory,
+  normalizeManualLedgerChannel,
+  normalizeManualLedgerDirection,
+  normalizeManualLedgerOperation,
+} from "./manual-ledger-maps.js";
 
 const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -6,6 +14,7 @@ const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4";
 
 const EXPENSE_SHEET_NAME = "Расходы";
+const LEDGER_SHEET_NAME = "Ledger";
 const BALANCE_SHEET_NAME = "Остатки";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
@@ -17,8 +26,7 @@ const NORMALIZED_OPERATION_HEADERS = [
   "amount",
   "currency",
   "amount_usd",
-  "category",
-  "comment",
+  "category"
 ];
 
 function normalizeCell(value) {
@@ -38,6 +46,8 @@ function normalizeLookupText(value) {
 function canonicalManualFinanceChannel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
+  const mapped = normalizeManualLedgerChannel(raw, MANUAL_FINANCE_CHANNELS);
+  if (mapped) return mapped;
   const exact = MANUAL_FINANCE_CHANNELS.find((channel) => normalizeCell(channel) === normalizeCell(raw));
   if (exact) return exact;
   const normalized = normalizeLookupText(raw);
@@ -81,17 +91,21 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     const accessToken = await requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl });
     const valuesBySheet = await batchGetSheetValues({
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      sheetNames: [EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
+      sheetNames: [LEDGER_SHEET_NAME, EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
       accessToken,
       fetchImpl,
     });
+    const ledgerRepository = parseExpenseRepository(valuesBySheet[LEDGER_SHEET_NAME] || []);
+    const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || []);
+    const repository = ledgerRepository.operations.length ? ledgerRepository : legacyRepository;
     return {
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      ...parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || []),
+      ...repository,
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers: parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []),
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
+      fallbackSchema: ledgerRepository.operations.length ? legacyRepository.schema : null,
     };
   } catch (error) {
     return {
@@ -177,7 +191,7 @@ function parseExpenseRepository(values) {
   const normalizedOperations = parseNormalizedOperationRows(values);
   if (normalizedOperations) {
     return {
-      schema: "operations-v1",
+      schema: "ledger-v1",
       operations: normalizedOperations,
       expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
       views: {
@@ -232,21 +246,41 @@ function parseNormalizedOperationRows(values) {
     currency: findHeaderIndex(header, ["currency", "валюта"]),
     amountUsd: findHeaderIndex(header, ["amount_usd", "amount usd", "сумма_usd", "usd amount"]),
     category: findHeaderIndex(header, ["category", "категория"]),
+    subcategory: findHeaderIndex(header, ["subcategory", "подкатегория"]),
+    direction: findHeaderIndex(header, ["direction", "направление"]),
     comment: findHeaderIndex(header, ["comment", "комментарий"]),
+    rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id"]),
+    transferGroupId: findHeaderIndex(header, ["transfer_group_id", "exchange_group_id", "transfer group id"]),
+    createdAt: findHeaderIndex(header, ["created_at", "created at"]),
+    updatedAt: findHeaderIndex(header, ["updated_at", "updated at"]),
   };
   return rows
-    .map((row) => ({
-      date: normalizeDate(row[indexes.date]),
-      operation: normalizeOperation(row[indexes.operation]),
-      fromChannel: canonicalManualFinanceChannel(row[indexes.fromChannel]),
-      toChannel: canonicalManualFinanceChannel(row[indexes.toChannel]),
-      amount: String(row[indexes.amount] || "").trim(),
-      currency: String(row[indexes.currency] || "").trim().toUpperCase(),
-      amountUsd: String(row[indexes.amountUsd] || "").trim(),
-      category: normalizeOperationCategory(row[indexes.category]),
-      comment: String(row[indexes.comment] || "").trim(),
-      source: "manual-google-sheets",
-    }))
+    .map((row) => {
+      const category = normalizeOperationCategory(row[indexes.category]);
+      let operation = normalizeOperation(row[indexes.operation], category);
+      const rawOperation = normalizeLookupText(row[indexes.operation]);
+      if ((rawOperation === "exchange" || rawOperation === "обмен") && category === "exchange") {
+        operation = parseNumberString(row[indexes.amount]) > 0 ? "exchange_in" : "exchange_out";
+      }
+      return {
+        date: normalizeDate(row[indexes.date]),
+        operation,
+        fromChannel: canonicalManualFinanceChannel(row[indexes.fromChannel]),
+        toChannel: canonicalManualFinanceChannel(row[indexes.toChannel]),
+        amount: String(row[indexes.amount] || "").trim(),
+        currency: String(row[indexes.currency] || "").trim().toUpperCase(),
+        amountUsd: String(row[indexes.amountUsd] || "").trim(),
+        category,
+        subcategory: String(row[indexes.subcategory] || "").trim(),
+        direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
+        comment: String(row[indexes.comment] || "").trim(),
+        rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
+        transferGroupId: String(row[indexes.transferGroupId] || "").trim(),
+        createdAt: String(row[indexes.createdAt] || "").trim(),
+        updatedAt: String(row[indexes.updatedAt] || "").trim(),
+        source: "manual-google-sheets",
+      };
+    })
     .filter((row) => row.date && row.operation && (row.fromChannel || row.toChannel) && String(row.amount || "").trim());
 }
 
@@ -255,31 +289,15 @@ function looksLikeNormalizedOperationsHeader(header) {
   return NORMALIZED_OPERATION_HEADERS.every((key) => normalizedHeader.includes(normalizeCell(key)));
 }
 
-function normalizeOperation(value) {
-  const normalized = normalizeLookupText(value);
-  if (!normalized) return "";
-  if (/^(income|received|приход)$/.test(normalized)) return "income";
-  if (/^(expense|spent|расход)$/.test(normalized)) return "expense";
-  if (/^(exchange|обмен|exchange out|exchange in)$/.test(normalized)) return "exchange";
-  if (/^(balance|balance snapshot|остаток|остатки)$/.test(normalized)) return "balance";
-  if (/^(commission|комиссия)$/.test(normalized)) return "commission";
-  return normalized;
+function normalizeOperation(value, category = "") {
+  return normalizeManualLedgerOperation(value, category);
 }
 
 function normalizeOperationCategory(value) {
   const normalized = normalizeLookupText(value);
-  if (!normalized) return "";
-  if (/^(serviceincome|service income|income|приход)$/.test(normalized)) return "serviceIncome";
-  if (/^(business|бизнес)$/.test(normalized)) return "business";
-  if (/^(flat|house|кварт|дом)$/.test(normalized)) return "flat";
-  if (/^(food|еда)$/.test(normalized)) return "food";
-  if (/^(fun|развлеч)/.test(normalized)) return "fun";
-  if (/^(study|учеб|обуч|курс|школ)/.test(normalized)) return "study";
-  if (/^(travel|путеш)/.test(normalized)) return "travel";
-  if (/^(exchange|обмен)$/.test(normalized)) return "exchange";
   if (/^(now|остаток сейчас|стало)$/.test(normalized)) return "now";
   if (/^(commission|комиссия)$/.test(normalized)) return "commission";
-  return normalized;
+  return normalizeManualLedgerCategory(value, "extra");
 }
 
 function buildLegacyExpenseRowsFromOperations(operations) {
@@ -308,12 +326,14 @@ function buildLegacyExpenseRowsFromOperations(operations) {
 
 function mapOperationToLegacyCategory(operation) {
   const category = normalizeOperationCategory(operation?.category);
-  const normalizedOperation = normalizeOperation(operation?.operation);
-  if (category === "serviceIncome") return "serviceIncome";
-  if (["business", "flat", "food", "fun", "study", "travel", "exchange", "now"].includes(category)) return category;
-  if (normalizedOperation === "income") return "serviceIncome";
-  if (normalizedOperation === "expense") return category || "business";
-  if (normalizedOperation === "exchange") return "exchange";
+  const normalizedOperation = normalizeOperation(operation?.operation, category);
+  if (category === "now") return "now";
+  if (category === "commission") return "commission";
+  if (category === "exchange" || normalizedOperation === "exchange_in" || normalizedOperation === "exchange_out") return "exchange";
+  if (normalizedOperation === "income") return mapLedgerCategoryToLegacy(category || "servicein");
+  if (normalizedOperation === "expense" || normalizedOperation === "business_expense" || normalizedOperation === "personal_expense") return mapLedgerCategoryToLegacy(category || "business");
+  if (normalizedOperation === "partner_transfer") return mapLedgerCategoryToLegacy("partner");
+  if (category) return mapLedgerCategoryToLegacy(category);
   return "";
 }
 
@@ -321,8 +341,11 @@ function mapOperationToLegacyChannel(operation) {
   const category = mapOperationToLegacyCategory(operation);
   if (!category) return "";
   const amount = parseNumberString(operation?.amount);
+  const operationName = normalizeOperation(operation?.operation, operation?.category);
   if (category === "serviceIncome") return canonicalManualExpenseChannel(operation?.toChannel || operation?.fromChannel || "");
   if (category === "exchange") {
+    if (operationName === "exchange_out") return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
+    if (operationName === "exchange_in") return canonicalManualExpenseChannel(operation?.toChannel || operation?.fromChannel || "");
     if (amount < 0) return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
     if (amount > 0) return canonicalManualExpenseChannel(operation?.toChannel || operation?.fromChannel || "");
     return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
@@ -334,7 +357,12 @@ function mapOperationToLegacyAmount(operation, category) {
   const amount = parseNumberString(operation?.amount);
   if (!Number.isFinite(amount) || !category) return null;
   if (category === "serviceIncome") return Math.abs(amount);
-  if (category === "exchange") return amount;
+  if (category === "exchange") {
+    const operationName = normalizeOperation(operation?.operation, operation?.category);
+    if (operationName === "exchange_out") return -Math.abs(amount);
+    if (operationName === "exchange_in") return Math.abs(amount);
+    return amount;
+  }
   return Math.abs(amount);
 }
 
