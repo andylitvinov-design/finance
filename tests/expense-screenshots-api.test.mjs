@@ -210,3 +210,42 @@ test("handler requests browser OCR fallback when OpenAI key is missing", async (
     else process.env.OPENAI_API_KEY = previous;
   }
 });
+
+test("handler falls back to browser OCR when OpenAI upstream is unavailable", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.OPENAI_API_KEY = "test-key";
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    async json() {
+      return {
+        error: {
+          message: "You exceeded your current quota."
+        }
+      };
+    }
+  });
+
+  try {
+    const response = createResponseRecorder();
+    await handler(
+      {
+        method: "POST",
+        body: {
+          images: [{ dataUrl: "data:image/jpeg;base64,abcd" }]
+        }
+      },
+      response
+    );
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.source, "browser-ocr-required");
+    assert.deepEqual(response.body?.entries, []);
+    assert.match(response.body?.warnings?.[0] || "", /quota|OpenAI/i);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    global.fetch = previousFetch;
+  }
+});
