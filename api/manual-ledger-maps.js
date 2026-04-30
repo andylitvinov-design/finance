@@ -1,9 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 export const MANUAL_LEDGER_HEADERS = [
   "date",
   "operation",
@@ -94,26 +88,8 @@ export const CANONICAL_BY_LEGACY_CATEGORY = {
   unclear: "extra"
 };
 
-function loadSheetConfigMaps() {
-  try {
-    const configPath = path.join(__dirname, "..", "sheet-config.json");
-    const payload = JSON.parse(readFileSync(configPath, "utf8"));
-    return {
-      categoryMap: payload?.manualFinance?.categoryMap || DEFAULT_CATEGORY_MAP,
-      channelMap: payload?.manualFinance?.channelMap || DEFAULT_CHANNEL_MAP,
-    };
-  } catch {
-    return {
-      categoryMap: DEFAULT_CATEGORY_MAP,
-      channelMap: DEFAULT_CHANNEL_MAP,
-    };
-  }
-}
-
-const loaded = loadSheetConfigMaps();
-
-export const CATEGORY_MAP = loaded.categoryMap;
-export const CHANNEL_MAP = loaded.channelMap;
+export const CATEGORY_MAP = DEFAULT_CATEGORY_MAP;
+export const CHANNEL_MAP = DEFAULT_CHANNEL_MAP;
 
 export function normalizeToken(value) {
   return String(value || "")
