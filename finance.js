@@ -2164,8 +2164,8 @@ function normalizeServerExpenseRows(rows) {
     date: normalizeIncomingSheetDateValue(row?.date),
     category: normalizeManualExpenseCategory(row?.category),
     amounts: getCanonicalManualExpenseAmounts({
-      ...(row?.amounts || {}),
-      ...Object.fromEntries(getManualFinanceChannels().map((channel) => [channel, row?.[channel] ?? ""]))
+      ...Object.fromEntries(getManualFinanceChannels().map((channel) => [channel, row?.[channel] ?? ""])),
+      ...(row?.amounts || {})
     })
   })).filter((row) => row.date && row.category);
 }

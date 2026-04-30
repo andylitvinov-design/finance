@@ -37,6 +37,7 @@ const emptyAmountsMatch = [extractFunction("buildEmptyExpenseAmounts")];
 const canonicalAmountsMatch = [extractFunction("getCanonicalManualExpenseAmounts")];
 const canonicalRawAmountsMatch = [extractFunction("getCanonicalManualExpenseRawAmounts")];
 const normalizeLookupTextMatch = [extractFunction("normalizeLookupText")];
+const normalizeServerExpenseRowsMatch = [extractFunction("normalizeServerExpenseRows")];
 
 function parseLooseNumber(value) {
   const raw = String(value ?? "").trim();
@@ -67,6 +68,10 @@ function parseDisplayDate(value) {
     return new Date(`${year}-${month}-${day}T00:00:00Z`);
   }
   return null;
+}
+
+function normalizeIncomingSheetDateValue(value) {
+  return String(value || "").trim().slice(0, 10);
 }
 
 function normalizeManualFinanceTransferRows(rows) {
@@ -110,6 +115,7 @@ const context = {
   hasAnyValue,
   findHeaderIndexByAliases,
   parseDisplayDate,
+  normalizeIncomingSheetDateValue,
   normalizeManualFinanceTransferRows,
   inferManualFinanceChannelCurrency,
   getManualFinanceChannels,
@@ -118,7 +124,7 @@ const context = {
   formatSheetNumber,
 };
 vm.createContext(context);
-vm.runInContext(`${normalizeLookupTextMatch[0]}\n${aliasMatch[0]}\n${canonicalChannelMatch[0]}\n${canonicalKeyMatch[0]}\n${emptyAmountsMatch[0]}\n${canonicalAmountsMatch[0]}\n${canonicalRawAmountsMatch[0]}\n${categoryMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;`, context);
+vm.runInContext(`${normalizeLookupTextMatch[0]}\n${aliasMatch[0]}\n${canonicalChannelMatch[0]}\n${canonicalKeyMatch[0]}\n${emptyAmountsMatch[0]}\n${canonicalAmountsMatch[0]}\n${canonicalRawAmountsMatch[0]}\n${categoryMatch[0]}\n${normalizeServerExpenseRowsMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;\nthis.normalizeServerExpenseRows = normalizeServerExpenseRows;`, context);
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
@@ -315,4 +321,16 @@ test("server manual payload is preserved for analytics without browser OAuth", (
   assert.match(financeJs, /normalizeServerExpenseRows\(manual\?\.expenseRows \|\| \[\]\)/);
   assert.match(financeJs, /normalizeServerBalanceRows\(manual\?\.balanceRows \|\| manual\?\.balances \|\| \[\]\)/);
   assert.match(financeJs, /normalizeServerCommissionRows\(manual\?\.commissionRows \|\| \[\]\)/);
+});
+
+test("normalizeServerExpenseRows keeps server amounts when flat channel columns are blank", () => {
+  const [row] = context.normalizeServerExpenseRows([{
+    date: "2026-04-24",
+    category: "serviceIncome",
+    amounts: { "Яндекс руб": "11287", "пейпал дол": "33" },
+    "Яндекс руб": "",
+    "пейпал дол": ""
+  }]);
+  assert.equal(row.amounts["Яндекс руб"], "11287,0000");
+  assert.equal(row.amounts["пейпал дол"], "33,0000");
 });
