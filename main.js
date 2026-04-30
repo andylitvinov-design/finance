@@ -24,6 +24,7 @@ async function init() {
   if (state.googleAuth.readyError) {
     setManualFinanceStatus(state.googleAuth.readyError, true);
   }
+  await trySilentGoogleConnect().catch(() => false);
   refreshAuthButtons();
   renderMetrics();
   renderTabs();

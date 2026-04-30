@@ -179,28 +179,37 @@ function rebuildPlanSection(section, manualRows) {
   const planGrowthIndex = findHeaderIndex(header, ["план-рост"]);
   const planProfitIndex = findHeaderIndex(header, ["plan-profit"]);
   const exchangeLookup = Object.fromEntries((manualRows || []).map((row) => [row.channel, row]));
+  const ownCostTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.total), 0);
+  const ownCostUsdTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.totalUsd), 0);
   const exchangeTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchange), 0);
   const exchangeUsdTotal = (manualRows || []).reduce((sum, row) => sum + parseLooseNumber(row.exchangeUsd), 0);
   const rebuiltRows = rows.map((row) => {
     const channel = String(row[0] || "").trim();
     const manual = normalizeCell(channel) === normalizeCell(TOTAL_LABEL)
-      ? { exchange: exchangeTotal, exchangeUsd: exchangeUsdTotal }
+      ? { total: ownCostTotal, totalUsd: ownCostUsdTotal, exchange: exchangeTotal, exchangeUsd: exchangeUsdTotal }
       : (exchangeLookup[channel] || {});
+    const ownCost = parseLooseNumber(manual.total);
+    const ownCostUsd = parseLooseNumber(manual.totalUsd);
     const exchange = parseLooseNumber(manual.exchange);
     const exchangeUsd = parseLooseNumber(manual.exchangeUsd);
     const existingPlanGrowth = readPlanNumber(row, planGrowthIndex, 5);
+    const basePlanGrowth = existingPlanGrowth + exchangeUsd;
     const existingPlanProfit = readPlanNumber(row, planProfitIndex, 8);
+    const baseOwnCostUsd = ownCostUsd || readPlanNumber(row, ownCostUsdIndex, 7);
+    const planProfit = ownCostUsd || ownCost
+      ? basePlanGrowth - baseOwnCostUsd
+      : existingPlanProfit + exchangeUsd;
     return [
       row[0] || "",
       readPlanCell(row, localIndex, 1),
       readPlanCell(row, usdIndex, 2),
-      readPlanCell(row, ownCostIndex, 6),
-      readPlanCell(row, ownCostUsdIndex, 7),
+      ownCost ? formatNumber(ownCost) : readPlanCell(row, ownCostIndex, 6),
+      ownCostUsd ? formatNumber(ownCostUsd) : readPlanCell(row, ownCostUsdIndex, 7),
       readPlanCell(row, paidOutIndex, 3),
       exchange ? formatNumber(exchange) : "",
       exchangeUsd ? formatNumber(exchangeUsd) : "",
-      formatNumber(existingPlanGrowth + exchangeUsd),
-      formatNumber(existingPlanProfit + exchangeUsd),
+      formatNumber(basePlanGrowth),
+      formatNumber(planProfit),
     ];
   });
   return {
@@ -220,7 +229,7 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
     const date = normalizeDate(row?.date);
     if (!isDateInRange(date, startDate, endDate)) continue;
     const category = normalizeManualCategory(row?.category);
-    if (category !== "exchange" && category !== "now") continue;
+    if (!category) continue;
 
     for (const [channel, rawAmount] of Object.entries(row.amounts || {})) {
       const amount = parseLooseNumber(rawAmount);
@@ -229,15 +238,25 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
       if (category === "exchange") {
         const exchange = parseLooseNumber(target.exchange) + amount;
         target.exchange = formatNumber(exchange);
-        target.exchangeUsd = formatNumber(deriveManualUsdAmount(exchange, channel, rateLookup));
+        const exchangeUsd = parseLooseNumber(target.exchangeUsd) + deriveManualUsdAmount(amount, channel, rateLookup);
+        target.exchangeUsd = formatNumber(exchangeUsd);
       } else if (!String(target.now || "").trim()) {
         target.now = rawAmount;
+      } else if (MANUAL_EXPENSE_CATEGORIES.has(category)) {
+        const current = parseLooseNumber(target[category]);
+        target[category] = formatNumber(current + amount);
+        const total = parseLooseNumber(target.total) + amount;
+        target.total = formatNumber(total);
+        const totalUsd = parseLooseNumber(target.totalUsd) + deriveManualUsdAmount(amount, channel, rateLookup);
+        target.totalUsd = formatNumber(totalUsd);
       }
     }
   }
 
   return Array.from(lookup.values());
 }
+
+const MANUAL_EXPENSE_CATEGORIES = new Set(["business", "flat", "food", "fun", "study", "travel"]);
 
 function ensureManualRow(lookup, channel) {
   const normalizedChannel = String(channel || "").trim();
@@ -252,6 +271,7 @@ function ensureManualRow(lookup, channel) {
       study: "",
       travel: "",
       total: "",
+      totalUsd: "",
       nowUsd: "",
       exchange: "",
       exchangeUsd: "",
@@ -323,6 +343,13 @@ function getPeriodBalanceRows(balances, period = {}) {
 function normalizeManualCategory(value) {
   const normalized = normalizeCell(value);
   if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return "now";
+  if (/service|приход/.test(normalized)) return "serviceIncome";
+  if (/business|бизнес/.test(normalized)) return "business";
+  if (/flat|house|кварт|дом/.test(normalized)) return "flat";
+  if (/food|еда/.test(normalized)) return "food";
+  if (/travel|путеш/.test(normalized)) return "travel";
+  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
+  if (/fun|развлеч/.test(normalized)) return "fun";
   if (/exchange|обмен/.test(normalized)) return "exchange";
   return normalized;
 }
