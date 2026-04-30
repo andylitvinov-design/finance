@@ -42,11 +42,18 @@ jobs:
             live_sha="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commitSha") or "").strip())')"
             build_time="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("buildTime") or "").strip())')"
             deploy_env="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("deploymentEnvironment") or "").strip())')"
+            live_status="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or "").strip())')"
+            live_error="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("error") or "").strip())')"
 
-            echo "Attempt $attempt/$attempts: live_sha=${live_sha:-missing} expected_sha=$EXPECTED_SHA env=${deploy_env:-missing} build_time=${build_time:-missing}"
+            echo "Attempt $attempt/$attempts: live_sha=${live_sha:-missing} expected_sha=$EXPECTED_SHA env=${deploy_env:-missing} build_time=${build_time:-missing} status=${live_status:-missing} error=${live_error:-none}"
 
             if [ -n "$live_sha" ] && [ "$live_sha" != "$EXPECTED_SHA" ]; then
               started_observing=1
+            fi
+
+            if [ "$live_sha" = "unknown" ] && [ "${build_time:-unknown}" != "unknown" ]; then
+              echo "Production alias is live but commit metadata is unavailable (${live_status:-unknown}${live_error:+: $live_error})." >&2
+              exit 1
             fi
 
             if [ "$live_sha" = "$EXPECTED_SHA" ]; then
