@@ -70,12 +70,32 @@
     return /андрей.*карта|карта.*андрей/.test(normalized);
   }
 
+  function resolveManualFinanceChannelAlias(value, channels = []) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const normalized = normalizeLookupText(raw);
+    const aliases = [
+      { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
+      { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
+      { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
+      { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
+      { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+      { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
+      { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
+    ];
+    const match = aliases.find((entry) => entry.pattern.test(normalized));
+    if (!match) return "";
+    return channels.find((channel) => normalizeCell(channel) === normalizeCell(match.channel)) || match.channel;
+  }
+
   function resolvePaymentChannel(value, channels = [], paymentRules = {}) {
     const raw = String(value || "").trim();
     if (!raw) return "";
     if (normalizeCell(raw) === normalizeCell("binance save")) return "Бинанс spot";
     const exact = channels.find((channel) => normalizeCell(channel) === normalizeCell(raw));
     if (exact) return exact;
+    const alias = resolveManualFinanceChannelAlias(raw, channels);
+    if (alias) return alias;
     const normalized = normalizeLookupText(raw);
     const entry = Object.entries(paymentRules || {}).find(([, rule]) => {
       return [...(rule.localPatterns || []), ...(rule.usdPatterns || [])].some((pattern) => pattern.test(raw) || pattern.test(normalized));

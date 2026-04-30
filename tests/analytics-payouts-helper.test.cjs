@@ -164,6 +164,21 @@ test("buildMovementPaymentSummaryRows maps binance save movement to Binance spot
   assert.deepEqual(rows[2], ["Итого", "100,0000", "101,0000", "70,7000", "101,0000", "0,0000"]);
 });
 
+test("buildMovementPaymentSummaryRows maps yandex alias payment methods to Yandex rub", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["1", "Yandex payer", "яндекс", "100", "103", "72.1", "90", "-13"]
+    ],
+    ["Яндекс руб", "приват 24-грн"],
+    {}
+  );
+
+  assert.deepEqual(rows[0], ["Яндекс руб", "100,0000", "103,0000", "72,1000", "90,0000", "-13,0000"]);
+  assert.deepEqual(rows[1], ["приват 24-грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
+  assert.deepEqual(rows[2], ["Итого", "100,0000", "103,0000", "72,1000", "90,0000", "-13,0000"]);
+});
+
 test("buildMovementPaymentSummaryRows ignores shifted duplicate table blocks", () => {
   const rows = buildMovementPaymentSummaryRows(
     [

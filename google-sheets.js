@@ -208,7 +208,11 @@ function assertIncomingExpenseHeaders(values) {
   const rows = values || [];
   if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
   const expected = ["дата", "категория", ...getManualFinanceChannels()];
-  const actual = expected.map((_, index) => String(rows[0]?.[index] || "").trim());
+  const actual = expected.map((_, index) => {
+    const cell = String(rows[0]?.[index] || "").trim();
+    if (index < 2) return cell;
+    return canonicalManualFinanceChannel(cell);
+  });
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`Expense sheet header mismatch. Expected ${expected.join(" | ")}, got ${actual.join(" | ")}`);
   }
@@ -273,12 +277,13 @@ function parseIncomingExpenseSheetValues(values) {
   const rows = values || [];
   assertIncomingExpenseHeaders(rows);
   const expenseRows = [];
-  const channels = getManualFinanceChannels();
+  const channels = (rows[0] || []).slice(2).map((cell) => canonicalManualFinanceChannel(String(cell || "").trim()));
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index] || [];
     if (!row.some((cell) => String(cell || "").trim())) continue;
-    const amounts = {};
+    const amounts = buildEmptyExpenseAmounts();
     channels.forEach((channel, channelIndex) => {
+      if (!channel || !(channel in amounts)) return;
       amounts[channel] = normalizeManualFinancePersistedNumberInput(row[channelIndex + 2] || "");
     });
     const normalizedDate = normalizeIncomingSheetDateValue(row[0]);
