@@ -1191,7 +1191,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
 }
 
 function buildMovementAmountSemantics({ paymentMethod, clientPaidUsd }) {
-  if (!requiresProviderNetVerification(paymentMethod)) {
+  if (isExplicitNoFeeDirectPayment(paymentMethod)) {
     return {
       clientPaidUsd,
       paymentFeeUsd: "",
@@ -1380,7 +1380,11 @@ function looksLikeUahPayment(paymentMethod) {
 }
 
 function requiresProviderNetVerification(paymentMethod) {
-  return /(paypal|п(?:ей|эй)п(?:е|э)л|wise|transferwise|трансервайз)/i.test(String(paymentMethod || "").trim());
+  return /(paypal|п(?:ей|эй)п(?:е|э)л|wise|transferwise|трансервайз|сайт|site|крипт|crypto|binance|бинанс)/i.test(String(paymentMethod || "").trim());
+}
+
+function isExplicitNoFeeDirectPayment(paymentMethod) {
+  return /(фоп|fop|приват|privat|монобанк|monobank|mono|карта|card|cash|нал)/i.test(String(paymentMethod || "").trim());
 }
 
 function buildSourcePaymentContext(row, previousRates = {}) {
