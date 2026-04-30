@@ -37,6 +37,7 @@ console.log(JSON.stringify({
   expectedSha: expectedSha || null,
   liveSha,
   buildTime: statusPayload.buildTime || null,
+  deployTime: statusPayload.deployTime || null,
   deploymentEnvironment: statusPayload.deploymentEnvironment || null,
   appVersion: statusPayload.appVersion || null,
   appBuildVersion: statusPayload.appBuildVersion || null,
