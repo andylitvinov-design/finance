@@ -1,4 +1,4 @@
-import { readFile, writeFile, access } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -71,6 +71,13 @@ const buildMeta = {
 
 await writeFile(
   path.join(root, "ops", "build-meta.json"),
+  `${JSON.stringify(buildMeta, null, 2)}\n`,
+  "utf8"
+);
+
+await mkdir(path.join(root, ".generated"), { recursive: true });
+await writeFile(
+  path.join(root, ".generated", "build-meta.override.json"),
   `${JSON.stringify(buildMeta, null, 2)}\n`,
   "utf8"
 );

@@ -26,7 +26,9 @@ function createResponseRecorder() {
 
 test("GET /api/status returns build metadata when generated file exists", async () => {
   const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
   const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
   const envBackup = snapshotEnv([
     "VERCEL",
     "VERCEL_ENV",
@@ -40,6 +42,19 @@ test("GET /api/status returns build metadata when generated file exists", async 
 
   await mkdir(path.dirname(buildMetaPath), { recursive: true });
   await writeFile(buildMetaPath, `${JSON.stringify({
+    appVersion: "9.9.9",
+    appBuildVersion: "2026.04.30.99",
+    buildTime: "2026-04-30T19:20:00.000Z",
+    deploymentEnvironment: "production",
+    commitSha: "localsha123",
+    commitRef: "main",
+    gitProvider: "github",
+    gitRepoSlug: "andylitvinov-design/finance",
+    gitCommitSha: "gitsha456",
+    gitCommitRef: "main"
+  }, null, 2)}\n`, "utf8");
+  await mkdir(path.dirname(overridePath), { recursive: true });
+  await writeFile(overridePath, `${JSON.stringify({
     appVersion: "9.9.9",
     appBuildVersion: "2026.04.30.99",
     buildTime: "2026-04-30T19:20:00.000Z",
@@ -77,13 +92,16 @@ test("GET /api/status returns build metadata when generated file exists", async 
     assert.equal(response.body?.observability?.hasGitMetadata, true);
   } finally {
     await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
     restoreEnv(envBackup);
   }
 });
 
 test("GET /api/status falls back safely when build metadata file is missing", async () => {
   const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
   const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
   const envBackup = snapshotEnv([
     "VERCEL",
     "VERCEL_ENV",
@@ -96,6 +114,7 @@ test("GET /api/status falls back safely when build metadata file is missing", as
   ]);
 
   await rm(buildMetaPath, { force: true });
+  await rm(overridePath, { force: true });
   delete process.env.VERCEL_GIT_COMMIT_SHA;
   delete process.env.VERCEL_GIT_COMMIT_REF;
   delete process.env.VERCEL_GIT_PROVIDER;
@@ -116,6 +135,7 @@ test("GET /api/status falls back safely when build metadata file is missing", as
     assert.equal(response.body?.observability?.hasGitMetadata, false);
   } finally {
     await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
     restoreEnv(envBackup);
   }
 });

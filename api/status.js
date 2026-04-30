@@ -57,8 +57,21 @@ export default async function handler(request, response) {
 }
 
 async function loadBuildMeta() {
+  const generatedMeta = await loadGeneratedBuildMeta();
+  if (Object.keys(generatedMeta).length) {
+    return generatedMeta;
+  }
   try {
     const text = await readFile(path.join(process.cwd(), "ops", "build-meta.json"), "utf8");
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+async function loadGeneratedBuildMeta() {
+  try {
+    const text = await readFile(new URL("../.generated/build-meta.override.json", import.meta.url), "utf8");
     return JSON.parse(text);
   } catch {
     return {};
