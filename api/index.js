@@ -801,7 +801,7 @@ function applyRealIncomeToMovementTable(movementTable, realIncome) {
     });
     row[statusIndex] = statusInfo.status;
     row[reviewNoteIndex] = joinReviewParts([
-      row[reviewNoteIndex],
+      clearNeedsVerificationReview(row[reviewNoteIndex]),
       `real income matched: ${match.matchedProvider}`,
       `real income diff ${formatDisplayNumber(match.differencePct)}%`,
       !String(row[clientPaidIndex] || "").trim() ? "" : `client paid gross ${formatDisplayNumber(parseLooseNumber(row[clientPaidIndex]))}`,
@@ -816,6 +816,14 @@ function applyRealIncomeToMovementTable(movementTable, realIncome) {
     nextSummaryRows.push(["provider net verified", formatTableNumber(realIncome.summaryTotals.realNetUsd)]);
   }
   return { ...movementTable, values, ...(nextSummaryRows.length ? { summaryRows: nextSummaryRows } : {}) };
+}
+
+function clearNeedsVerificationReview(value) {
+  return String(value || "")
+    .split("|")
+    .map((part) => String(part || "").trim())
+    .filter((part) => part && !/^(needs verification|provider fee\/net missing)$/i.test(part))
+    .join(" | ");
 }
 
 function matchRealIncomeEntriesToMovement(entries, movementValues) {
