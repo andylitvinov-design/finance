@@ -97,8 +97,6 @@ test("normalizeManualFinanceExpenseRows merges duplicate date-category rows by c
   };
   vm.createContext(context);
   vm.runInContext(
-    `${extractFunction(financeJs, "getManualChannelMap")}\n` +
-    `${extractFunction(financeJs, "normalizeManualMapToken")}\n` +
     `${extractFunction(financeJs, "resolveManualFinanceChannelAlias")}\n` +
     `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
     `${extractFunction(financeJs, "getCanonicalManualChannelKey")}\n` +
