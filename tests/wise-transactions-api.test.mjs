@@ -138,7 +138,7 @@ test("fetchWiseStatementEntries loads profiles, balances, and compact statements
   assert.equal(urls.length, 3);
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0].direction, "income");
-  assert.equal(result.entries[0].suggestedCategory, "serviceIncome");
+  assert.equal(result.entries[0].suggestedCategory, "servicein");
   assert.equal(result.entries[0].feeAmount, null);
   assert.deepEqual(result.summary.totalsByCurrency.EUR, { income: 20, expense: 0, net: 20 });
 });

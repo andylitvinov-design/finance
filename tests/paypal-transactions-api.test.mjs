@@ -94,7 +94,7 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[1].counterpartyLabel, "Кому: Комиссия PayPal");
   assert.equal(entries[1].entryKind, "fee");
   assert.equal(entries[2].direction, "income");
-  assert.equal(entries[2].suggestedCategory, "serviceIncome");
+  assert.equal(entries[2].suggestedCategory, "servicein");
   assert.equal(entries[2].channel, "пейпал евр");
   assert.equal(entries[2].feeAmount, null);
   assert.equal(entries[2].counterpartyName, "Jane Doe");
@@ -438,7 +438,7 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
     assert.equal(response.body.ok, true);
     assert.equal(response.body.source, "paypal-mcp");
     assert.equal(response.body.entries[0].sourceTransactionId, "FALLBACK-1");
-    assert.equal(response.body.entries[0].suggestedCategory, "serviceIncome");
+    assert.equal(response.body.entries[0].suggestedCategory, "servicein");
   } finally {
     global.fetch = previousFetch;
     for (const [key, value] of Object.entries(previousEnv)) {

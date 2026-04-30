@@ -46,7 +46,7 @@ test("validateImages keeps upload fallback dates when provided", () => {
   assert.equal(image.uploadedAtDate, "2026-04-29");
 });
 
-test("normalizeVisionResult keeps study as a separate category", () => {
+test("normalizeVisionResult maps study into canonical travel category", () => {
   const result = normalizeVisionResult(
     {
       entries: [
@@ -71,7 +71,7 @@ test("normalizeVisionResult keeps study as a separate category", () => {
     }
   );
 
-  assert.equal(result.entries[0].suggestedCategory, "study");
+  assert.equal(result.entries[0].suggestedCategory, "travel");
   assert.equal(result.entries[0].channel, "монобанк грн");
   assert.equal(result.entries[0].usdAmount, 30);
 });

@@ -9,8 +9,21 @@ const MANUAL_FINANCE_TRANSFER_TITLE = "Переводы";
 const MANUAL_FINANCE_EXPENSE_TITLE = "Расходы";
 const MANUAL_FINANCE_BALANCE_TITLE = "Остатки";
 const MANUAL_FINANCE_COMMISSION_TITLE = "Комиссии";
+const MANUAL_FINANCE_LEDGER_TITLE = "Ledger";
 const MANUAL_FINANCE_TOTAL_LABEL = "Итого";
 const ANALYTICS_FACT_IMPORT_SHEET = "MANUAL_INPUTS_IMPORT";
+const MANUAL_LEDGER_CONTRACT = window.EzohataManualLedgerContract || {};
+const MANUAL_LEDGER_HEADERS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_HEADERS || [
+  "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category",
+  "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"
+];
+const MANUAL_LEDGER_OPERATIONS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_OPERATIONS || [
+  "income", "expense", "exchange_in", "exchange_out", "partner_transfer", "business_expense", "personal_expense", "correction"
+];
+const MANUAL_LEDGER_DIRECTIONS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_DIRECTIONS || ["in", "out", "neutral"];
+const MANUAL_LEDGER_CATEGORIES = MANUAL_LEDGER_CONTRACT.CANONICAL_LEDGER_CATEGORIES || [
+  "servicein", "ezoin", "exchange", "partner", "business", "house", "food", "fun", "travel", "extra"
+];
 const MANUAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MANUAL_FINANCE_FALLBACK_USD_RATES = {
   RUB: 1 / 84.5563,
@@ -35,27 +48,29 @@ const MANUAL_EXCHANGE_CATEGORY = "exchange";
 const MANUAL_INPUT_CATEGORIES = [...MANUAL_EXPENSE_TYPES, MANUAL_EXCHANGE_CATEGORY];
 const MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES = MANUAL_INPUT_CATEGORIES.slice();
 const MANUAL_STORED_INPUT_CATEGORIES = [MANUAL_NOW_CATEGORY, ...MANUAL_INPUT_CATEGORIES];
-const DEFAULT_MANUAL_CATEGORY_MAP = {
-  serviceIncome: ["service income", "serviceincome", "service in", "servicein", "приход"],
-  business: ["spent for business", "business", "бизнес"],
-  flat: ["spent for flat", "spent for house", "flat", "house", "квартира", "кварт", "дом", "аренда", "rent"],
+const DEFAULT_MANUAL_CATEGORY_MAP = MANUAL_LEDGER_CONTRACT.CATEGORY_MAP || {
+  servicein: ["service income", "serviceincome", "service in", "services", "service", "приход"],
+  ezoin: ["ezoin", "ezo in", "ezohata", "ezo", "ezofact"],
+  exchange: ["обмен", "exchange", "exchange_usd", "exchange usd", "exchangeusd", "комиссии", "exchange_in"],
+  partner: ["partner", "partnertransfer", "partner transfer", "партнер", "партнеры"],
+  business: ["spent for business", "business", "business expense", "бизнес"],
+  house: ["spent for flat", "spent for house", "flat", "house", "rent", "квартира", "кварт", "дом", "аренда"],
   food: ["spent for food", "food", "еда", "продукты"],
-  fun: ["spent for fun", "fun", "развлечения", "развлеч", "events", "event", "beauty"],
-  study: ["spent for study", "study", "учеба", "учеб", "обучение", "обуч", "курс", "школа"],
-  travel: ["spent for travel", "spent for travel/ fun", "travel", "travelfun", "travel fun", "путешествия", "путеш"],
-  exchange: ["обмен", "exchange", "exchange_usd", "exchange usd", "комиссии", "exchange_in"],
-  ezoin: ["ezoin", "ezo in"],
-  partnerTransfer: ["partnertransfer", "partner transfer"],
-  extra: ["extra"],
-  unclear: ["unclear"]
+  fun: ["spent for fun", "fun", "events", "event", "beauty", "развлечения", "развлеч"],
+  travel: ["spent for travel", "spent for study", "travel", "travel/study", "study", "учеб", "обуч", "путеш"],
+  extra: ["extra", "unclear", "other", "misc", "unknown"]
 };
-const DEFAULT_MANUAL_CHANNEL_MAP = {
+const DEFAULT_MANUAL_CHANNEL_MAP = MANUAL_LEDGER_CONTRACT.CHANNEL_MAP || {
   "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли"],
   "пейпал дол": ["paypal", "paypal usd", "пейпал", "пейпал дол"],
   "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
   "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
-  "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+  "приват 24-дол": ["privat usd", "privat 24 usd", "приват 24 дол"],
+  "приват 24-евро": ["privat eur", "privat 24 eur", "приват 24 евро"],
   "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
+  "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+  "трансервайз дол": ["wise usd", "transferwise usd"],
+  "трансервайз евро": ["wise eur", "transferwise eur"],
   "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
 };
 const MANUAL_TRANSFER_MIN_ROWS = 3;
