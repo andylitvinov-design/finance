@@ -71,6 +71,29 @@ async function connectGoogle(interactive = true) {
   });
 }
 
+async function trySilentGoogleConnect() {
+  if (!state.googleAuth.configured || state.googleAuth.accessToken) return false;
+  if (!state.googleAuth.initialized) {
+    await initializeGoogleAuth();
+  }
+  return await new Promise((resolve) => {
+    state.googleAuth.tokenClient.callback = (response) => {
+      if (response?.error) {
+        resolve(false);
+        return;
+      }
+      state.googleAuth.accessToken = response.access_token || "";
+      refreshAuthButtons();
+      resolve(Boolean(state.googleAuth.accessToken));
+    };
+    try {
+      state.googleAuth.tokenClient.requestAccessToken({ prompt: "" });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 function disconnectGoogle() {
   if (state.googleAuth.accessToken && window.google?.accounts?.oauth2) {
     google.accounts.oauth2.revoke(state.googleAuth.accessToken, () => {});
@@ -123,7 +146,7 @@ function getOAuthReadinessMessage() {
 }
 
 function refreshGoogleControlsVisibility() {
-  const shouldShow = state.activeTab === "manualFinance" || state.activeTab === "expenseAccounting" || state.activeTab === "savings" || state.activeTab === "orders";
+  const shouldShow = state.activeTab === "analytics" || state.activeTab === "manualFinance" || state.activeTab === "expenseAccounting" || state.activeTab === "savings" || state.activeTab === "orders";
   const display = shouldShow ? "" : "none";
   elements.connectGoogleButton.style.display = display;
   elements.disconnectGoogleButton.style.display = display;

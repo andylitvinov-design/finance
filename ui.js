@@ -1882,12 +1882,21 @@ function renderClosedFactTransfersBlock(headers, rows) {
 function renderAnalyticsSections(container, values) {
   const sections = getAnalyticsSections(values);
   const manualWorkbookUrl = state.config?.manualFinance?.spreadsheetUrl || "";
+  const manualWarnings = Array.isArray(state.data?.manual?.warnings) ? state.data.manual.warnings : [];
+  const needsGoogleManualOverlay = manualWarnings.some((warning) => /service account credentials are not configured/i.test(String(warning || "")));
   if (manualWorkbookUrl) {
     const linkNote = document.createElement("div");
     linkNote.className = "config-note";
     linkNote.style.marginBottom = "12px";
     linkNote.innerHTML = `Источник fact: <a href="${escapeHtml(manualWorkbookUrl)}" target="_blank" rel="noreferrer">EzoHata Manual Inputs</a>`;
     container.appendChild(linkNote);
+  }
+  if (needsGoogleManualOverlay && !state.googleAuth.accessToken) {
+    const warning = document.createElement("div");
+    warning.className = "config-note";
+    warning.style.marginBottom = "12px";
+    warning.textContent = "Сервер не видит manual workbook для этого периода. Нажмите «Подключить Google», чтобы пересчитать Аналитику из EzoHata Manual Inputs прямо в браузере.";
+    container.appendChild(warning);
   }
   sections.forEach((section) => {
     const block = document.createElement("div");
