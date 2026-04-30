@@ -40,7 +40,7 @@ jobs:
             status_json="$(cat "$status_file")"
             rm -f "$status_file"
             live_sha="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commitSha") or "").strip())')"
-            build_time="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("buildTime") or "").strip())')"
+            build_time="$(printf '%s' "$status_json" | python3 -c 'import json,sys; data=json.load(sys.stdin); print((data.get("buildTime") or data.get("deployTime") or "").strip())')"
             deploy_env="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("deploymentEnvironment") or "").strip())')"
             live_status="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("status") or "").strip())')"
             live_error="$(printf '%s' "$status_json" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("error") or "").strip())')"

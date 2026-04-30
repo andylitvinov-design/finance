@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
 const requiredFiles = [
@@ -21,68 +22,138 @@ const requiredFiles = [
   "api/privatbank-transactions.js",
   "api/yoomoney-transactions.js",
 ];
+const buildMetaCandidates = [
+  {
+    source: "generated",
+    filePath: path.join(root, ".generated", "build-meta.override.json")
+  },
+  {
+    source: "ops",
+    filePath: path.join(root, "ops", "build-meta.json")
+  }
+];
 
-for (const relativePath of requiredFiles) {
-  await access(path.join(root, relativePath));
+if (isExecutedDirectly()) {
+  await main();
 }
 
-const parseJsonFile = async (relativePath) => {
+export async function main() {
+  for (const relativePath of requiredFiles) {
+    await access(path.join(root, relativePath));
+  }
+
+  await parseJsonFile("sheet-config.json");
+  await parseJsonFile("vercel.json");
+  await parseJsonFile("ops/deployment-manifest.json");
+  const packageJson = await parseJsonFile("package.json");
+
+  const indexHtml = await readFile(path.join(root, "index.html"), "utf8");
+  const localAssetPattern = /\b(?:src|href)=["']([^"']+)["']/g;
+  const missingAssets = [];
+  for (const match of indexHtml.matchAll(localAssetPattern)) {
+    const target = match[1];
+    if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
+    const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
+    try {
+      await access(path.join(root, normalized));
+    } catch {
+      missingAssets.push(target);
+    }
+  }
+
+  if (missingAssets.length) {
+    throw new Error(`Missing assets referenced by index.html: ${missingAssets.join(", ")}`);
+  }
+
+  const appBuildVersionMatch = (await readFile(path.join(root, "config.js"), "utf8"))
+    .match(/const APP_BUILD_VERSION = "([^"]+)";/);
+  const existingBuildMeta = await loadExistingBuildMeta();
+  const buildMeta = composeBuildMeta({
+    packageJson,
+    appBuildVersion: appBuildVersionMatch?.[1] || "",
+    existingBuildMeta
+  });
+
+  await writeFile(
+    path.join(root, "ops", "build-meta.json"),
+    `${JSON.stringify(buildMeta, null, 2)}\n`,
+    "utf8"
+  );
+
+  await mkdir(path.join(root, ".generated"), { recursive: true });
+  await writeFile(
+    path.join(root, ".generated", "build-meta.override.json"),
+    `${JSON.stringify(buildMeta, null, 2)}\n`,
+    "utf8"
+  );
+
+  console.log("build-check: ok");
+}
+
+export function composeBuildMeta({
+  packageJson,
+  appBuildVersion,
+  existingBuildMeta = {},
+  detectGitValueFn = detectGitValue
+}) {
+  const gitCommitSha = normalizeValue(
+    process.env.VERCEL_GIT_COMMIT_SHA
+    || detectGitValueFn("rev-parse", "HEAD")
+    || existingBuildMeta.gitCommitSha
+    || existingBuildMeta.commitSha
+  );
+  const gitCommitRef = normalizeValue(
+    process.env.VERCEL_GIT_COMMIT_REF
+    || detectGitValueFn("rev-parse", "--abbrev-ref", "HEAD")
+    || existingBuildMeta.gitCommitRef
+    || existingBuildMeta.commitRef
+  );
+
+  return {
+    appVersion: String(packageJson.version || ""),
+    appBuildVersion,
+    buildTime: new Date().toISOString(),
+    deploymentEnvironment: normalizeValue(
+      process.env.VERCEL_ENV
+      || existingBuildMeta.deploymentEnvironment
+      || process.env.NODE_ENV
+      || "local"
+    ) || "local",
+    commitSha: gitCommitSha || "",
+    commitRef: gitCommitRef || "",
+    gitProvider: normalizeValue(
+      process.env.VERCEL_GIT_PROVIDER
+      || existingBuildMeta.gitProvider
+    ) || "",
+    gitRepoSlug: normalizeValue(
+      process.env.VERCEL_GIT_REPO_SLUG
+      || existingBuildMeta.gitRepoSlug
+    ) || "",
+    gitCommitSha: gitCommitSha || "",
+    gitCommitRef: gitCommitRef || ""
+  };
+}
+
+async function parseJsonFile(relativePath) {
   const text = await readFile(path.join(root, relativePath), "utf8");
   return JSON.parse(text);
-};
+}
 
-await parseJsonFile("sheet-config.json");
-await parseJsonFile("vercel.json");
-await parseJsonFile("ops/deployment-manifest.json");
-const packageJson = await parseJsonFile("package.json");
-
-const indexHtml = await readFile(path.join(root, "index.html"), "utf8");
-const localAssetPattern = /\b(?:src|href)=["']([^"']+)["']/g;
-const missingAssets = [];
-for (const match of indexHtml.matchAll(localAssetPattern)) {
-  const target = match[1];
-  if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
-  const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
-  try {
-    await access(path.join(root, normalized));
-  } catch {
-    missingAssets.push(target);
+async function loadExistingBuildMeta() {
+  for (const candidate of buildMetaCandidates) {
+    try {
+      const text = await readFile(candidate.filePath, "utf8");
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return {};
 }
-
-if (missingAssets.length) {
-  throw new Error(`Missing assets referenced by index.html: ${missingAssets.join(", ")}`);
-}
-
-const appBuildVersionMatch = (await readFile(path.join(root, "config.js"), "utf8"))
-  .match(/const APP_BUILD_VERSION = "([^"]+)";/);
-const buildMeta = {
-  appVersion: String(packageJson.version || ""),
-  appBuildVersion: appBuildVersionMatch?.[1] || "",
-  buildTime: new Date().toISOString(),
-  deploymentEnvironment: String(process.env.VERCEL_ENV || process.env.NODE_ENV || "local"),
-  commitSha: detectGitValue("rev-parse", "HEAD"),
-  commitRef: detectGitValue("rev-parse", "--abbrev-ref", "HEAD"),
-  gitProvider: String(process.env.VERCEL_GIT_PROVIDER || ""),
-  gitRepoSlug: String(process.env.VERCEL_GIT_REPO_SLUG || ""),
-  gitCommitSha: String(process.env.VERCEL_GIT_COMMIT_SHA || ""),
-  gitCommitRef: String(process.env.VERCEL_GIT_COMMIT_REF || "")
-};
-
-await writeFile(
-  path.join(root, "ops", "build-meta.json"),
-  `${JSON.stringify(buildMeta, null, 2)}\n`,
-  "utf8"
-);
-
-await mkdir(path.join(root, ".generated"), { recursive: true });
-await writeFile(
-  path.join(root, ".generated", "build-meta.override.json"),
-  `${JSON.stringify(buildMeta, null, 2)}\n`,
-  "utf8"
-);
-
-console.log("build-check: ok");
 
 function detectGitValue(...args) {
   try {
@@ -94,4 +165,13 @@ function detectGitValue(...args) {
   } catch {
     return "";
   }
+}
+
+function normalizeValue(value) {
+  const normalized = String(value || "").trim();
+  return normalized || "";
+}
+
+function isExecutedDirectly() {
+  return process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 }

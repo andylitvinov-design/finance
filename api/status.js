@@ -21,14 +21,25 @@ export default async function handler(request, response) {
       loadPackageJson()
     ]);
     const buildMeta = buildMetaResult.data;
+    const buildTime = normalizeValue(buildMeta.buildTime);
+    const deployTime = normalizeValue(
+      buildMeta.deployTime
+      || buildMeta.buildTime
+      || process.env.VERCEL_DEPLOYMENT_CREATED_AT
+    );
     const rawCommitSha = normalizeValue(
       process.env.VERCEL_GIT_COMMIT_SHA
       || buildMeta.gitCommitSha
       || buildMeta.commitSha
     );
+    const hasGitMetadata = Boolean(rawCommitSha);
     const commitSha = rawCommitSha || "unknown";
     const deploymentEnvironment = normalizeValue(process.env.VERCEL_ENV || buildMeta.deploymentEnvironment) || "unknown";
-    const effectiveError = buildMetaResult.error || (rawCommitSha ? null : "commit_metadata_unavailable");
+    const effectiveError = (
+      buildMetaResult.error === "metadata_unavailable" && hasGitMetadata
+        ? null
+        : buildMetaResult.error
+    ) || (hasGitMetadata ? null : "commit_metadata_unavailable");
     const status = effectiveError ? "degraded" : "ok";
 
     return response.status(200).json({
@@ -37,7 +48,8 @@ export default async function handler(request, response) {
       service: "ezohata-incoming-ledger",
       appVersion: normalizeValue(buildMeta.appVersion || packageJson.version) || "unknown",
       appBuildVersion: normalizeValue(buildMeta.appBuildVersion) || "unknown",
-      buildTime: normalizeValue(buildMeta.buildTime) || "unknown",
+      buildTime: buildTime || "unknown",
+      deployTime: deployTime || "unknown",
       deploymentEnvironment,
       commitSha,
       commitRef: normalizeValue(
@@ -59,7 +71,7 @@ export default async function handler(request, response) {
           && normalizeValue(buildMeta.commitSha)
           && rawCommitSha === normalizeValue(buildMeta.commitSha)
         ),
-        hasGitMetadata: Boolean(rawCommitSha),
+        hasGitMetadata,
         metadataSource: buildMetaResult.source
       }
     });
@@ -71,6 +83,7 @@ export default async function handler(request, response) {
       appVersion: "unknown",
       appBuildVersion: "unknown",
       buildTime: "unknown",
+      deployTime: normalizeValue(process.env.VERCEL_DEPLOYMENT_CREATED_AT) || "unknown",
       deploymentEnvironment: normalizeValue(process.env.VERCEL_ENV) || "unknown",
       commitSha: "unknown",
       commitRef: "unknown",
