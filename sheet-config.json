@@ -68,7 +68,30 @@
       "нал-мам-евро",
       "нал-мам-дол"
     ],
-    "expenseTypes": ["business", "flat", "food", "fun", "travel", "study"]
+    "expenseTypes": ["business", "flat", "food", "fun", "travel", "study", "exchange"],
+    "categoryMap": {
+      "serviceIncome": ["service income", "serviceincome", "service in", "servicein", "приход"],
+      "business": ["spent for business", "business", "бизнес"],
+      "flat": ["spent for flat", "spent for house", "flat", "house", "квартира", "кварт", "дом", "аренда", "rent"],
+      "food": ["spent for food", "food", "еда", "продукты"],
+      "fun": ["spent for fun", "fun", "развлечения", "развлеч", "events", "event", "beauty"],
+      "study": ["spent for study", "study", "учеба", "учеб", "обучение", "обуч", "курс", "школа"],
+      "travel": ["spent for travel", "spent for travel/ fun", "travel", "travelfun", "travel fun", "путешествия", "путеш"],
+      "exchange": ["обмен", "exchange", "exchange_usd", "exchange usd", "комиссии", "exchange_in"],
+      "ezoin": ["ezoin", "ezo in"],
+      "partnerTransfer": ["partnertransfer", "partner transfer"],
+      "extra": ["extra"],
+      "unclear": ["unclear"]
+    },
+    "channelMap": {
+      "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли"],
+      "пейпал дол": ["paypal", "paypal usd", "пейпал", "пейпал дол"],
+      "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
+      "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
+      "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+      "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
+      "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+    }
   },
   "manualOrders": {
     "spreadsheetId": "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY",

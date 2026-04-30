@@ -402,19 +402,24 @@ function getManualFinanceChannels() {
 function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChannels()) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  const normalized = normalizeLookupText(raw);
-  const aliases = [
-    { pattern: /^(яндекс|yandex)( руб| rub| рубли| rubles)?$/, channel: "Яндекс руб" },
-    { pattern: /^(пейпал|paypal)( дол| usd)?$/, channel: "пейпал дол" },
-    { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
-    { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
-    { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
-    { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
-    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
-  ];
-  const match = aliases.find((entry) => entry.pattern.test(normalized));
-  if (!match) return "";
-  return channels.find((channel) => normalizeCell(channel) === normalizeCell(match.channel)) || match.channel;
+  const normalizeToken = (item) => normalizeLookupText(item).replace(/_/g, " ");
+  const normalized = normalizeToken(raw);
+  const defaultChannelMap = {
+    "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли"],
+    "пейпал дол": ["paypal", "paypal usd", "пейпал", "пейпал дол"],
+    "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
+    "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
+    "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+    "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
+    "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+  };
+  const channelMap = (typeof state !== "undefined" ? state.config?.manualFinance?.channelMap : null) || defaultChannelMap;
+  for (const [channel, aliases] of Object.entries(channelMap || {})) {
+    const knownTokens = [channel, ...(aliases || [])].map((item) => normalizeToken(item));
+    if (!knownTokens.includes(normalized)) continue;
+    return channels.find((item) => normalizeCell(item) === normalizeCell(channel)) || channel;
+  }
+  return "";
 }
 
 function canonicalManualFinanceChannel(value) {
@@ -2684,14 +2689,28 @@ function normalizeManualExpenseCategory(value) {
   const normalized = normalizeCell(value).replace(/ё/g, "е");
   if (!normalized) return "";
   if (normalized === "now" || normalized === "стало" || normalized === "остаток сейчас") return MANUAL_NOW_CATEGORY;
-  if (/service|приход/.test(normalized)) return "serviceIncome";
-  if (/business|бизнес/.test(normalized)) return "business";
-  if (/flat|house|кварт|дом/.test(normalized)) return "flat";
-  if (/food|еда/.test(normalized)) return "food";
-  if (/travel|путеш/.test(normalized)) return "travel";
-  if (/study|учеб|обуч|курс|школ/.test(normalized)) return "study";
-  if (/fun|развлеч/.test(normalized)) return "fun";
-  if (/exchange|обмен/.test(normalized)) return MANUAL_EXCHANGE_CATEGORY;
+  const normalizeToken = (item) => normalizeLookupText(item).replace(/_/g, " ");
+  const normalizedToken = normalizeToken(normalized);
+  const defaultCategoryMap = {
+    serviceIncome: ["service income", "serviceincome", "service in", "servicein", "приход"],
+    business: ["spent for business", "business", "бизнес"],
+    flat: ["spent for flat", "spent for house", "flat", "house", "квартира", "кварт", "дом", "аренда", "rent"],
+    food: ["spent for food", "food", "еда", "продукты"],
+    fun: ["spent for fun", "fun", "развлечения", "развлеч", "events", "event", "beauty"],
+    study: ["spent for study", "study", "учеба", "учеб", "обучение", "обуч", "курс", "школа"],
+    travel: ["spent for travel", "spent for travel/ fun", "travel", "travelfun", "travel fun", "путешествия", "путеш"],
+    exchange: ["обмен", "exchange", "exchange_usd", "exchange usd", "комиссии", "exchange_in"],
+    ezoin: ["ezoin", "ezo in"],
+    partnerTransfer: ["partnertransfer", "partner transfer"],
+    extra: ["extra"],
+    unclear: ["unclear"]
+  };
+  const categoryMap = (typeof state !== "undefined" ? state.config?.manualFinance?.categoryMap : null) || defaultCategoryMap;
+  for (const [category, aliases] of Object.entries(categoryMap || {})) {
+    const knownTokens = [category, ...(aliases || [])].map((item) => normalizeToken(item));
+    if (!knownTokens.includes(normalizedToken)) continue;
+    return category === "exchange" ? MANUAL_EXCHANGE_CATEGORY : category;
+  }
   return String(value || "").trim();
 }
 

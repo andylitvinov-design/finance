@@ -27,7 +27,7 @@ const MANUAL_TRANSFER_HEADERS = ["дата перевода", "кто", "сум�
 const MANUAL_BALANCE_HEADERS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
 const MANUAL_COMMISSION_HEADERS = ["дата", "канал", "сумма в долларах", "комментарий"];
 const MANUAL_EXPENSE_TYPES = ["serviceIncome", "business", "flat", "food", "fun", "study", "travel"];
-const MANUAL_EXPENSE_ACCOUNTING_CATEGORIES = ["business", "flat", "food", "fun", "travel", "study"];
+const MANUAL_EXPENSE_ACCOUNTING_CATEGORIES = ["business", "flat", "food", "fun", "travel", "study", "exchange"];
 const MANUAL_RECEIVED_ENTRY_TYPES = ["ezofact", "serviceincome", "exchange_in"];
 const DEFAULT_MANUAL_RECEIVED_ENTRY_TYPE = "serviceincome";
 const MANUAL_NOW_CATEGORY = "now";
@@ -35,6 +35,29 @@ const MANUAL_EXCHANGE_CATEGORY = "exchange";
 const MANUAL_INPUT_CATEGORIES = [...MANUAL_EXPENSE_TYPES, MANUAL_EXCHANGE_CATEGORY];
 const MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES = MANUAL_INPUT_CATEGORIES.slice();
 const MANUAL_STORED_INPUT_CATEGORIES = [MANUAL_NOW_CATEGORY, ...MANUAL_INPUT_CATEGORIES];
+const DEFAULT_MANUAL_CATEGORY_MAP = {
+  serviceIncome: ["service income", "serviceincome", "service in", "servicein", "приход"],
+  business: ["spent for business", "business", "бизнес"],
+  flat: ["spent for flat", "spent for house", "flat", "house", "квартира", "кварт", "дом", "аренда", "rent"],
+  food: ["spent for food", "food", "еда", "продукты"],
+  fun: ["spent for fun", "fun", "развлечения", "развлеч", "events", "event", "beauty"],
+  study: ["spent for study", "study", "учеба", "учеб", "обучение", "обуч", "курс", "школа"],
+  travel: ["spent for travel", "spent for travel/ fun", "travel", "travelfun", "travel fun", "путешествия", "путеш"],
+  exchange: ["обмен", "exchange", "exchange_usd", "exchange usd", "комиссии", "exchange_in"],
+  ezoin: ["ezoin", "ezo in"],
+  partnerTransfer: ["partnertransfer", "partner transfer"],
+  extra: ["extra"],
+  unclear: ["unclear"]
+};
+const DEFAULT_MANUAL_CHANNEL_MAP = {
+  "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли"],
+  "пейпал дол": ["paypal", "paypal usd", "пейпал", "пейпал дол"],
+  "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
+  "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
+  "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+  "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
+  "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+};
 const MANUAL_TRANSFER_MIN_ROWS = 3;
 const ANALYTICS_PAYOUTS_HELPER = window.EzohataAnalyticsPayoutsHelper || {};
 const MANUAL_FINANCE_FORMULAS = window.EzohataManualFinanceFormulas || {};
