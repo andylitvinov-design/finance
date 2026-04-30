@@ -234,6 +234,12 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     const quantityRow = movementRows.find((row) => row?.[0] === "18129");
     assert.equal(cryptoRow?.[9], "101");
     assert.equal(cryptoRow?.[11], "70,7");
+    assert.equal(cryptoRow?.[18], "103");
+    assert.equal(cryptoRow?.[19], "");
+    assert.equal(cryptoRow?.[20], "");
+    assert.equal(cryptoRow?.[22], "");
+    assert.equal(cryptoRow?.[23], "NEEDS VERIFICATION");
+    assert.match(String(cryptoRow?.[24] || ""), /provider fee\/net missing/i);
     assert.equal(correctedLozinaRow?.[17], "14870");
     assert.equal(correctedLozinaRow?.[18], "339,8857");
     assert.match(correctedLozinaRow?.[24], /source duplicate 14870 UAH/);
@@ -254,10 +260,16 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(fallbackUahRateRow?.[18], "10,3449");
     assert.equal(quantityRow?.[8], "200");
     assert.equal(quantityRow?.[9], "206");
+    assert.equal(quantityRow?.[19], "");
+    assert.equal(quantityRow?.[20], "");
+    assert.equal(quantityRow?.[22], "");
+    assert.equal(quantityRow?.[23], "NEEDS VERIFICATION");
+    assert.match(String(quantityRow?.[24] || ""), /provider fee\/net missing/i);
     assert.deepEqual(movementSummaryRows, [
       ["2) начислено прайс +%", "1440,0000"],
-      ["4) получено в долларах", "2307,2306"],
-      ["6) 70% от прайс+%", "1008,0000"]
+      ["4) получено в долларах", "2204,2306"],
+      ["6) 70% от прайс+%", "1008,0000"],
+      ["needs verification: provider fee/net missing", "2"]
     ]);
     assert.deepEqual(positions, [
       "дата 1",
@@ -492,10 +504,10 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
       "Итого"
     ]);
     assert.equal(missingPaymentRow?.[22], "");
-    assert.equal(missingPaymentRow?.[23], "CHECK REQUIRED");
-    assert.match(String(missingPaymentRow?.[24] || ""), /balance not calculated from incomplete source row/i);
+    assert.equal(missingPaymentRow?.[23], "NEEDS VERIFICATION");
+    assert.match(String(missingPaymentRow?.[24] || ""), /provider fee\/net missing|balance not calculated from incomplete source row/i);
     assert.equal(fullyMissingRow?.[22], "");
-    assert.equal(fullyMissingRow?.[23], "CHECK REQUIRED");
+    assert.equal(fullyMissingRow?.[23], "NEEDS VERIFICATION");
     assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
     global.fetch = previousFetch;
