@@ -59,7 +59,7 @@ function resolveManualChannelAlias(value) {
     { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
     { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
-    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
+    { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" }
   ];
   return aliases.find((entry) => entry.pattern.test(normalized))?.channel || "";
 }
@@ -81,9 +81,7 @@ function getCanonicalManualChannelKey(value) {
 function getCanonicalManualExpenseChannelKey(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  return normalizeCell(raw) === normalizeCell("binance save")
-    ? "Бинанс spot"
-    : getCanonicalManualChannelKey(raw);
+  return getCanonicalManualChannelKey(raw);
 }
 
 function getCanonicalManualAmounts(amounts = {}) {

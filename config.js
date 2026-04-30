@@ -71,7 +71,8 @@ const DEFAULT_MANUAL_CHANNEL_MAP = MANUAL_LEDGER_CONTRACT.CHANNEL_MAP || {
   "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
   "трансервайз дол": ["wise usd", "transferwise usd"],
   "трансервайз евро": ["wise eur", "transferwise eur"],
-  "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+  "Бинанс spot": ["binance spot", "бинанс spot", "бинанс"],
+  "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"]
 };
 const MANUAL_TRANSFER_MIN_ROWS = 3;
 const ANALYTICS_PAYOUTS_HELPER = window.EzohataAnalyticsPayoutsHelper || {};
