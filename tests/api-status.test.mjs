@@ -190,6 +190,61 @@ test("GET /api/status returns degraded JSON when build metadata is malformed", a
   }
 });
 
+test("GET /api/status degrades when metadata exists but commit fields are unavailable", async () => {
+  const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
+  const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
+  const envBackup = snapshotEnv([
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG"
+  ]);
+
+  await mkdir(path.dirname(overridePath), { recursive: true });
+  await writeFile(overridePath, `${JSON.stringify({
+    appVersion: "9.9.9",
+    appBuildVersion: "2026.04.30.99",
+    buildTime: "2026-04-30T19:20:00.000Z",
+    deploymentEnvironment: "production",
+    commitSha: "",
+    commitRef: "",
+    gitProvider: "",
+    gitRepoSlug: "",
+    gitCommitSha: "",
+    gitCommitRef: ""
+  }, null, 2)}\n`, "utf8");
+  delete process.env.VERCEL_GIT_COMMIT_SHA;
+  delete process.env.VERCEL_GIT_COMMIT_REF;
+  delete process.env.VERCEL_GIT_PROVIDER;
+  delete process.env.VERCEL_GIT_REPO_SLUG;
+  process.env.VERCEL = "1";
+  process.env.VERCEL_ENV = "production";
+  process.env.VERCEL_URL = "ezohata-incoming-ledger.vercel.app";
+  process.env.VERCEL_PROJECT_PRODUCTION_URL = "ezohata-incoming-ledger.vercel.app";
+
+  try {
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: {} }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.status, "degraded");
+    assert.equal(response.body?.commitSha, "unknown");
+    assert.equal(response.body?.error, "commit_metadata_unavailable");
+    assert.equal(response.body?.observability?.hasGitMetadata, false);
+  } finally {
+    await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
+    restoreEnv(envBackup);
+  }
+});
+
 function snapshotEnv(keys) {
   return Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 }

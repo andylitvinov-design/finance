@@ -21,13 +21,15 @@ export default async function handler(request, response) {
       loadPackageJson()
     ]);
     const buildMeta = buildMetaResult.data;
-    const commitSha = normalizeValue(
+    const rawCommitSha = normalizeValue(
       process.env.VERCEL_GIT_COMMIT_SHA
       || buildMeta.gitCommitSha
       || buildMeta.commitSha
     );
+    const commitSha = rawCommitSha || "unknown";
     const deploymentEnvironment = normalizeValue(process.env.VERCEL_ENV || buildMeta.deploymentEnvironment) || "unknown";
-    const status = buildMetaResult.error ? "degraded" : "ok";
+    const effectiveError = buildMetaResult.error || (rawCommitSha ? null : "commit_metadata_unavailable");
+    const status = effectiveError ? "degraded" : "ok";
 
     return response.status(200).json({
       ok: true,
@@ -37,7 +39,7 @@ export default async function handler(request, response) {
       appBuildVersion: normalizeValue(buildMeta.appBuildVersion) || "unknown",
       buildTime: normalizeValue(buildMeta.buildTime) || "unknown",
       deploymentEnvironment,
-      commitSha: commitSha || "unknown",
+      commitSha,
       commitRef: normalizeValue(
         process.env.VERCEL_GIT_COMMIT_REF
         || buildMeta.gitCommitRef
@@ -45,7 +47,7 @@ export default async function handler(request, response) {
       ) || "unknown",
       gitProvider: normalizeValue(process.env.VERCEL_GIT_PROVIDER || buildMeta.gitProvider) || "unknown",
       gitRepoSlug: normalizeValue(process.env.VERCEL_GIT_REPO_SLUG || buildMeta.gitRepoSlug) || "unknown",
-      error: buildMetaResult.error,
+      error: effectiveError,
       vercel: {
         isVercel: process.env.VERCEL === "1",
         deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",
@@ -53,11 +55,11 @@ export default async function handler(request, response) {
       },
       observability: {
         liveCommitMatchesBuildCommit: Boolean(
-          commitSha
+          rawCommitSha
           && normalizeValue(buildMeta.commitSha)
-          && commitSha === normalizeValue(buildMeta.commitSha)
+          && rawCommitSha === normalizeValue(buildMeta.commitSha)
         ),
-        hasGitMetadata: Boolean(commitSha),
+        hasGitMetadata: Boolean(rawCommitSha),
         metadataSource: buildMetaResult.source
       }
     });
