@@ -986,7 +986,7 @@ async function parseExpenseScreenshotsWithBrowserOcr(images) {
     setExpenseAccountingStatus(`OCR в браузере: скриншот ${imageIndex + 1} из ${images.length}...`, false);
     renderTabs();
     const result = await window.Tesseract.recognize(image.dataUrl, "eng+rus+ukr", { logger: () => {} });
-    const parsed = parseExpenseOcrText(result?.data?.text || "", imageIndex);
+    const parsed = parseExpenseOcrText(result?.data?.text || "", imageIndex, image.uploadedAtDate);
     entries.push(...parsed.entries);
     warnings.push(...parsed.warnings);
   }
@@ -1187,21 +1187,24 @@ function compactTdBankDescription(entry) {
   ].filter(Boolean).join(" | ").slice(0, 240);
 }
 
-function parseExpenseOcrText(text, sourceImageIndex = 0) {
+function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
   const lines = String(text || "")
     .split(/\n+/)
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const entries = [];
   const warnings = [];
+  const fallbackDate = normalizeIncomingSheetDateValue(uploadedAtDate);
   let currentDate = "";
   lines.forEach((line) => {
     const date = extractExpenseOcrDate(line);
     if (date) currentDate = date;
     const amountInfo = extractExpenseOcrAmount(line);
-    if (!amountInfo || !currentDate) return;
+    if (!amountInfo) return;
     entries.push(normalizeExpenseAccountingEntry({
-      date: currentDate,
+      date: currentDate || fallbackDate,
+      dateSource: currentDate ? "screenshot" : "upload_fallback",
+      uploadedAtDate: fallbackDate,
       channel: inferExpenseOcrChannel(line),
       direction: inferExpenseOcrDirection(line),
       localAmount: amountInfo.amount,
@@ -1214,7 +1217,7 @@ function parseExpenseOcrText(text, sourceImageIndex = 0) {
       sourceImageIndex
     }, entries.length));
   });
-  if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no amount/date pairs were recognized.`);
+  if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no amount rows were recognized.`);
   return { entries, warnings };
 }
 
