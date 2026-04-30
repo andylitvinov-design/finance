@@ -415,7 +415,8 @@ function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChan
     "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
     "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
     "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
-    "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+    "Бинанс spot": ["binance spot", "бинанс spot", "бинанс"],
+    "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"]
   };
   const channelMap = (typeof state !== "undefined" ? state.config?.manualFinance?.channelMap : null) || defaultChannelMap;
   for (const [channel, aliases] of Object.entries(channelMap || {})) {
@@ -542,9 +543,7 @@ function buildEmptyExpenseAmounts() {
 function getCanonicalManualExpenseAmounts(amounts = {}) {
   const canonicalAmounts = buildEmptyExpenseAmounts();
   Object.entries(amounts || {}).forEach(([channel, value]) => {
-    const canonicalChannel = normalizeCell(channel) === normalizeCell("binance save")
-      ? "Бинанс spot"
-      : getCanonicalManualChannelKey(channel);
+    const canonicalChannel = getCanonicalManualChannelKey(channel);
     if (!canonicalChannel || !Object.prototype.hasOwnProperty.call(canonicalAmounts, canonicalChannel)) return;
     const sum = parseLooseNumber(canonicalAmounts[canonicalChannel]) + parseLooseNumber(value);
     canonicalAmounts[canonicalChannel] = sum ? formatSheetNumber(sum) : "";
@@ -556,9 +555,7 @@ function getCanonicalManualExpenseRawAmounts(amounts = {}) {
   const canonicalAmounts = buildEmptyExpenseAmounts();
   const duplicates = new Set();
   Object.entries(amounts || {}).forEach(([channel, value]) => {
-    const canonicalChannel = normalizeCell(channel) === normalizeCell("binance save")
-      ? "Бинанс spot"
-      : getCanonicalManualChannelKey(channel);
+    const canonicalChannel = getCanonicalManualChannelKey(channel);
     const raw = String(value ?? "").trim();
     if (!canonicalChannel || !raw || !Object.prototype.hasOwnProperty.call(canonicalAmounts, canonicalChannel)) return;
     if (!String(canonicalAmounts[canonicalChannel] || "").trim()) {
@@ -2548,7 +2545,6 @@ function normalizePayoutAmount(value) {
 function resolvePaymentChannel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (normalizeCell(raw) === normalizeCell("binance save")) return "Бинанс spot";
   const exact = MANUAL_FINANCE_MONEY_CHANNELS.find((channel) => normalizeCell(channel) === normalizeCell(raw));
   if (exact) return exact;
   const alias = resolveManualFinanceChannelAlias(raw, MANUAL_FINANCE_MONEY_CHANNELS);

@@ -178,8 +178,8 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           "REVOLUT дол": "",
           "Payoneer - eur": "",
           "Payoneer - dol": "",
-          "Бинанс spot": "-950",
-          "binance save": "",
+          "Бинанс spot": "",
+          "binance save": "-950",
           "Налично -я-евр": "",
           "местная валюты": "",
           "БАНК КАНАДА cad": "",
@@ -243,7 +243,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.deepEqual(repository.views.byDateChannel, [
       { date: "2026-04-24", channel: "Бинанс spot", amount: 874, amountUsd: 874 },
       { date: "2026-04-24", channel: "Яндекс руб", amount: -74669, amountUsd: -883.0684 },
-      { date: "2026-04-25", channel: "Бинанс spot", amount: -950, amountUsd: -950 },
+      { date: "2026-04-25", channel: "binance save", amount: -950, amountUsd: -950 },
       { date: "2026-04-25", channel: "пейпал дол", amount: 369, amountUsd: 369 },
       { date: "2026-04-25", channel: "приват 24-грн", amount: -4916, amountUsd: -112.0839 },
       { date: "2026-04-26", channel: "Яндекс руб", amount: 1000, amountUsd: 11.82 },
@@ -306,7 +306,7 @@ test("loadManualRepositoryFromGoogleSheets derives missing amount_usd for exchan
     assert.equal(repository.operations[0].amountUsd, "-100");
     assert.equal(repository.operations[1].amountUsd, "100");
     assert.deepEqual(repository.views.byDateChannel, [
-      { date: "2026-04-25", channel: "Бинанс spot", amount: 100, amountUsd: 100 },
+      { date: "2026-04-25", channel: "binance save", amount: 100, amountUsd: 100 },
       { date: "2026-04-25", channel: "приват 24-грн", amount: -4300, amountUsd: -100 },
     ]);
     assert.deepEqual(repository.views.byCategory, [

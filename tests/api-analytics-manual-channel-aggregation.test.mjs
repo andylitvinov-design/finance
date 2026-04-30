@@ -139,6 +139,7 @@ test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the 
     ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
     ["Яндекс руб", "", "", "", "", "0", "", "", "0", "0"],
     ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["binance save", "", "", "", "", "0", "", "", "0", "0"],
     ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
     ["Итого", "", "", "", "", "0", "", "", "0", "0"],
     [],
@@ -146,6 +147,7 @@ test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the 
     ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
     ["Яндекс руб", "0", "", "", "0", "", "", "", "", ""],
     ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["binance save", "0", "", "", "0", "", "", "", "", ""],
     ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
     ["Итого", "0", "", "", "0", "", "", "", "", ""],
     []
@@ -189,7 +191,8 @@ test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the 
 
   const plan = sectionRows(payload.tabs.analytics.values, "Plan");
   assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен"], "-74669,0000");
-  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "-76,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "874,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "-950,0000");
   assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен"], "-9832,0000");
 
   const total = rowByChannel(plan.header, plan.rows, "Итого");
@@ -202,6 +205,7 @@ test("normalizeServerAnalyticsPayload builds Plan exchange from normalized opera
     ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
     ["Яндекс руб", "", "", "", "", "0", "", "", "0", "0"],
     ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["binance save", "", "", "", "", "0", "", "", "0", "0"],
     ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
     ["Итого", "", "", "", "", "0", "", "", "0", "0"],
     [],
@@ -209,6 +213,7 @@ test("normalizeServerAnalyticsPayload builds Plan exchange from normalized opera
     ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
     ["Яндекс руб", "0", "", "", "0", "", "", "", "", ""],
     ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["binance save", "0", "", "", "0", "", "", "", "", ""],
     ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
     ["Итого", "0", "", "", "0", "", "", "", "", ""],
     []
@@ -234,8 +239,10 @@ test("normalizeServerAnalyticsPayload builds Plan exchange from normalized opera
   const plan = sectionRows(payload.tabs.analytics.values, "Plan");
   assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен"], "-74669,0000");
   assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен_usd"], "-883,0684");
-  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "-76,0000");
-  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "-76,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "874,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "874,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "-950,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен_usd"], "-950,0000");
   assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен"], "-9832,0000");
 
   const total = rowByChannel(plan.header, plan.rows, "Итого");
@@ -248,12 +255,14 @@ test("normalizeServerAnalyticsPayload derives exchange_usd from operation curren
     ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
     ["приват 24-грн", "", "", "", "", "0", "", "", "0", "0"],
     ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["binance save", "", "", "", "", "0", "", "", "0", "0"],
     ["Итого", "", "", "", "", "0", "", "", "0", "0"],
     [],
     ["БАЛАНС"],
     ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
     ["приват 24-грн", "0", "", "", "0", "", "", "", "", ""],
     ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["binance save", "0", "", "", "0", "", "", "", "", ""],
     ["Итого", "0", "", "", "0", "", "", "", "", ""],
     []
   ];
@@ -277,8 +286,8 @@ test("normalizeServerAnalyticsPayload derives exchange_usd from operation curren
   const plan = sectionRows(payload.tabs.analytics.values, "Plan");
   assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен"], "-4300,0000");
   assert.equal(rowByChannel(plan.header, plan.rows, "приват 24-грн")["обмен_usd"], "-100,0000");
-  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "100,0000");
-  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "100,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "100,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен_usd"], "100,0000");
 });
 
 test("normalizeServerAnalyticsPayload normalizes explicit exchange amount_usd sign from live ledger operations", () => {

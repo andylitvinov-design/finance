@@ -84,7 +84,7 @@ function inferManualFinanceChannelCurrency(channel) {
 }
 
 function getManualFinanceChannels() {
-  return ["Яндекс руб", "пейпал дол"];
+  return context.MANUAL_FINANCE_MONEY_CHANNELS.slice();
 }
 
 function getManualStoredExpenseTypes() {
@@ -221,6 +221,27 @@ test("buildManualFinanceSummaryRows uses latest now instead of summing now rows"
   assert.equal(summary[1].business, "12,0000");
   assert.equal(summary[1].food, "4,0000");
   assert.equal(summary[1].total, "16,0000");
+});
+
+test("buildManualFinanceSummaryRows keeps Binance spot and binance save exchange totals separate", () => {
+  const previousChannels = context.MANUAL_FINANCE_MONEY_CHANNELS;
+  context.MANUAL_FINANCE_MONEY_CHANNELS = ["Бинанс spot", "binance save"];
+  try {
+    const rows = [
+      { date: "2026-04-24", category: "exchange", amounts: { "Бинанс spot": "874", "binance save": "-950", "бинанс сейв": "-25" } },
+      { date: "2026-04-25", category: "exchange", amounts: { "binance spot": "126", "binance save": "-75" } },
+    ];
+
+    const summary = context.buildManualFinanceSummaryRows(rows, {});
+    assert.equal(summary[0].channel, "Бинанс spot");
+    assert.equal(summary[0].exchange, "1000,0000");
+    assert.equal(summary[1].channel, "binance save");
+    assert.equal(summary[1].exchange, "-1050,0000");
+    assert.equal(summary[2].channel, "Итого");
+    assert.equal(summary[2].exchange, "-50,0000");
+  } finally {
+    context.MANUAL_FINANCE_MONEY_CHANNELS = previousChannels;
+  }
 });
 
 test("buildLatestNowUsdLookup converts RUB now with the rate from the now date", () => {

@@ -65,7 +65,7 @@ function canonicalManualFinanceChannel(value) {
     { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
     { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
-    { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" },
+    { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" },
   ];
   const match = aliases.find((entry) => entry.pattern.test(normalized));
   return match?.channel || raw;
@@ -74,7 +74,6 @@ function canonicalManualFinanceChannel(value) {
 function canonicalManualExpenseChannel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (normalizeLookupText(raw) === normalizeLookupText("binance save")) return "Бинанс spot";
   return canonicalManualFinanceChannel(raw);
 }
 
