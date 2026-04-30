@@ -938,7 +938,7 @@ test("GET getDashboardData adds real income payload and movement net-income colu
             service: "Программа Харизма",
             priceBase: 200,
             accruedPlus: 206,
-            paymentMethod: "пейпал дол",
+            paymentMethod: "сайт, дол, пэйпэл",
             receivedUsd: 315,
           }),
           makeSourceRow({

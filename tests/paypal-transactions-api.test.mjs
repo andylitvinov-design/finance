@@ -49,6 +49,10 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
         custom_field: "ORDER-1",
         transaction_event_code: "T0006"
       },
+      payee_info: {
+        email_address: "merchant@example.com",
+        payee_name: "Software Inc"
+      },
       cart_info: {
         item_details: [{ item_name: "Ignored because subject wins" }]
       }
@@ -60,6 +64,11 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
         transaction_amount: { value: "20.00", currency_code: "EUR" }
       },
       payer_info: {
+        payer_id: "PAYER-1",
+        payer_name: {
+          given_name: "Jane",
+          surname: "Doe"
+        },
         email_address: "payer@example.com"
       }
     }
@@ -71,12 +80,32 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[0].channel, "пейпал дол");
   assert.equal(entries[0].localAmount, 12.5);
   assert.equal(entries[0].organization, "Software | invoice INV-1 | custom ORDER-1 | event T0006");
+  assert.equal(entries[0].counterpartyName, "Software Inc");
+  assert.equal(entries[0].counterpartyEmail, "merchant@example.com");
+  assert.equal(entries[0].counterpartyType, "company");
+  assert.equal(entries[0].counterpartyRole, "payee");
+  assert.equal(entries[0].counterpartyLabel, "Кому: Software Inc");
+  assert.equal(entries[0].entryKind, "payment");
+  assert.equal(entries[0].payeeName, "Software Inc");
+  assert.equal(entries[0].payeeEmail, "merchant@example.com");
+  assert.equal(entries[0].transactionSubject, "Software");
   assert.equal(entries[1].organization, "PayPal fee: Software | invoice INV-1 | custom ORDER-1 | event T0006");
   assert.equal(entries[1].suggestedCategory, "business");
+  assert.equal(entries[1].counterpartyLabel, "Кому: Комиссия PayPal");
+  assert.equal(entries[1].entryKind, "fee");
   assert.equal(entries[2].direction, "income");
   assert.equal(entries[2].suggestedCategory, "serviceIncome");
   assert.equal(entries[2].channel, "пейпал евр");
   assert.equal(entries[2].feeAmount, null);
+  assert.equal(entries[2].counterpartyName, "Jane Doe");
+  assert.equal(entries[2].counterpartyEmail, "payer@example.com");
+  assert.equal(entries[2].counterpartyType, "person");
+  assert.equal(entries[2].counterpartyRole, "payer");
+  assert.equal(entries[2].counterpartyLabel, "От: Jane Doe");
+  assert.equal(entries[2].entryKind, "payment");
+  assert.equal(entries[2].payerName, "Jane Doe");
+  assert.equal(entries[2].payerEmail, "payer@example.com");
+  assert.equal(entries[2].payerId, "PAYER-1");
 });
 
 test("normalizePayPalTransactionDetails keeps fee metadata on income entries", () => {
@@ -119,6 +148,34 @@ test("normalizePayPalTransactionDetails classifies currency conversion legs as e
   assert.equal(entries.length, 2);
   assert.deepEqual(entries.map((entry) => entry.direction), ["exchange", "exchange"]);
   assert.deepEqual(entries.map((entry) => entry.suggestedCategory), ["exchange", "exchange"]);
+  assert.deepEqual(entries.map((entry) => entry.entryKind), ["exchange", "exchange"]);
+});
+
+test("normalizePayPalTransactionDetails keeps refunds out of merchant expense labeling", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "REFUND-1",
+        transaction_event_code: "T1107",
+        transaction_initiation_date: "2026-04-25T14:30:00Z",
+        transaction_amount: { value: "12.50", currency_code: "USD" },
+        transaction_subject: "Refund for Software order",
+        transaction_note: "Refund from merchant"
+      },
+      payer_info: {
+        payer_name: {
+          given_name: "Merchant",
+          surname: "Support"
+        },
+        email_address: "support@example.com"
+      }
+    }
+  ]);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].direction, "income");
+  assert.equal(entries[0].entryKind, "refund");
+  assert.equal(entries[0].counterpartyLabel, "От: Merchant Support");
 });
 
 test("summarizePayPalStatementEntries groups income and expense by month and currency", () => {

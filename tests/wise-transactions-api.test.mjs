@@ -31,6 +31,37 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.feeAmount, 0.44);
   assert.equal(entry.feeCurrency, "USD");
   assert.equal(entry.organization, "Card payment to Vendor | CARD | reference WISE-1 | balance USD | profile profile-1");
+  assert.equal(entry.counterpartyName, "Vendor");
+  assert.equal(entry.counterpartyEmail, "");
+  assert.equal(entry.counterpartyType, "company");
+  assert.equal(entry.counterpartyRole, "merchant");
+  assert.equal(entry.counterpartyLabel, "Кому: Vendor");
+  assert.equal(entry.merchantName, "Vendor");
+  assert.equal(entry.referenceNumber, "WISE-1");
+  assert.equal(entry.transferType, "CARD");
+  assert.equal(entry.description, "Card payment to Vendor");
+});
+
+test("normalizeWiseTransaction falls back to description when merchant name is not extractable", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "CREDIT",
+      date: "2026-04-21T08:00:00.000Z",
+      referenceNumber: "WISE-2",
+      amount: { value: "88.00", currency: "EUR" },
+      details: {
+        description: "Invoice 441 from consulting client",
+        type: "TRANSFER"
+      }
+    },
+    { id: "balance-2", currency: "EUR" },
+    "profile-2"
+  );
+
+  assert.equal(entry.direction, "income");
+  assert.equal(entry.counterpartyName, "");
+  assert.equal(entry.counterpartyEmail, "");
+  assert.equal(entry.counterpartyLabel, "От: Invoice 441 from consulting client");
 });
 
 test("summarizeWiseStatementEntries groups income and expense by month and currency", () => {

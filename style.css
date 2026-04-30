@@ -212,6 +212,33 @@ tr:nth-child(even) td { background: #fffcf7; }
 .expense-feed { display: grid; gap: 16px; }
 .expense-day { display: grid; gap: 8px; }
 .expense-day-title { font-size: 15px; font-weight: 700; color: var(--accent-2); }
+.expense-table-shell { display: grid; gap: 10px; }
+.expense-table-counterparty { min-width: 0; }
+.expense-counterparty-label,
+.expense-counterparty-details {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expense-counterparty-label { font-weight: 600; color: var(--ink); }
+.expense-counterparty-details { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.expense-table-mobile { display: none; gap: 10px; }
+.expense-table-mobile-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(247,239,230,0.88));
+}
+.expense-mobile-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
 .expense-row {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(96px, 0.8fr) minmax(120px, 0.9fr);
@@ -307,6 +334,10 @@ tr:nth-child(even) td { background: #fffcf7; }
   .expense-row .expense-select { grid-column: 1 / -1; }
   .expense-summary-grid { grid-template-columns: 1fr; }
   .analysis-table-wrap table { min-width: 560px; }
+  .expense-table-desktop { display: none; }
+  .expense-table-mobile { display: grid; }
+  .expense-counterparty-label,
+  .expense-counterparty-details { white-space: normal; overflow: visible; text-overflow: clip; }
   .table-wrap { -webkit-overflow-scrolling: touch; }
   .table-wrap table tr > :first-child {
     position: sticky;

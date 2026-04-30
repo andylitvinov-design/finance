@@ -154,7 +154,8 @@ function getManualFinanceDisplayRates(rateLookup = { byCurrency: {} }) {
   return [
     { label: "рубль", currency: "RUB" },
     { label: "грн", currency: "UAH" },
-    { label: "евро", currency: "EUR" }
+    { label: "евро", currency: "EUR" },
+    { label: "канадский доллар", currency: "CAD" }
   ].map((row) => ({
     ...row,
     rate: getLocalPerUsdRate(row.currency, rateLookup)
