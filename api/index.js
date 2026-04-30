@@ -7,6 +7,7 @@ import {
   fetchPayPalStatementEntriesFromMcp,
 } from "./paypal-transactions.js";
 import { fetchWiseStatementEntries } from "./wise-transactions.js";
+import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
@@ -18,6 +19,7 @@ const SOURCE_SPREADSHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/edit#gid=${SOURCE_SPREADSHEET_GID}`;
 const REAL_INCOME_COLUMN_HEADER = "РЕАЛЬНЫЕ ПРИХОДЫ";
 const REAL_INCOME_CHANNELS = [
+  "Яндекс руб",
   "пейпал дол",
   "пейпал евр",
   "пейпал сad",
@@ -25,6 +27,7 @@ const REAL_INCOME_CHANNELS = [
   "трансервайз евро",
 ];
 const REAL_INCOME_CHANNEL_CURRENCY = {
+  "Яндекс руб": "RUB",
   "пейпал дол": "USD",
   "пейпал евр": "EUR",
   "пейпал сad": "CAD",
@@ -449,6 +452,7 @@ async function buildRealIncomePayload(period, movementValues) {
   const providerResults = await Promise.all([
     loadPayPalProviderEntries(startDate, endDate),
     loadWiseProviderEntries(startDate, endDate),
+    loadYooMoneyProviderEntries(startDate, endDate),
   ]);
   for (const result of providerResults) {
     if (!result) continue;
@@ -523,6 +527,24 @@ async function loadWiseProviderEntries(startDate, endDate) {
     return { entries: result.entries || [], warnings: result.warnings || [] };
   } catch (error) {
     return { entries: [], warnings: [`Wise real income: ${String(error?.message || error)}`] };
+  }
+}
+
+async function loadYooMoneyProviderEntries(startDate, endDate) {
+  const accessToken = String(process.env.YOOMONEY_ACCESS_TOKEN || "").trim();
+  if (!accessToken) return null;
+  try {
+    const result = await fetchYooMoneyStatementEntries({
+      startDate,
+      endDate,
+      accessToken,
+      currency: process.env.YOOMONEY_CURRENCY || "RUB",
+      baseUrl: process.env.YOOMONEY_API_BASE,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: [] };
+  } catch (error) {
+    return { entries: [], warnings: [`YooMoney real income: ${String(error?.message || error)}`] };
   }
 }
 
@@ -745,6 +767,9 @@ function resolvePaymentChannel(value) {
   }
   if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
+  if (/(yoomoney|юmoney|юмани|юмоней|yandex|яндекс).*(rub|руб)|(?:rub|руб).*(yoomoney|юmoney|юмани|юмоней|yandex|яндекс)/.test(normalized)) {
+    return "Яндекс руб";
+  }
   return "";
 }
 

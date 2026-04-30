@@ -78,6 +78,7 @@ npm run release-guard
 
 - `/api/paypal-transactions`
 - `/api/wise-transactions`
+- `/api/yoomoney-transactions`
 - `/api/expense-screenshots`
 
 Required or optional deploy env vars are listed in [.env.example](/Users/andriilitvinov/projects/MYPROJECTS/finance/.env.example).
@@ -95,6 +96,12 @@ Current env inventory:
 - `WISE_API_TOKEN`
 - `WISE_PROFILE_ID`
 - `WISE_API_BASE`
+- `YOOMONEY_ACCESS_TOKEN`
+- `YOOMONEY_CLIENT_ID`
+- `YOOMONEY_CLIENT_SECRET`
+- `YOOMONEY_REDIRECT_URI`
+- `YOOMONEY_API_BASE`
+- `YOOMONEY_CURRENCY`
 - `OPENAI_API_KEY`
 - `OPENAI_EXPENSE_MODEL`
 
@@ -106,6 +113,11 @@ Operational notes:
 
 PayPal live app setup:
 [PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live)
+
+YooMoney wallet OAuth setup:
+[YooMoney wallet authorization docs](https://yoomoney.ru/docs/wallet/using-api/authorization/request-access-token)
+
+Use YooMoney wallet API for `/api/yoomoney-transactions`; do not replace it with YooKassa business API.
 
 ## Deploy Flow
 
