@@ -467,7 +467,9 @@ function buildEmptyExpenseAmounts() {
 function getCanonicalManualExpenseAmounts(amounts = {}) {
   const canonicalAmounts = buildEmptyExpenseAmounts();
   Object.entries(amounts || {}).forEach(([channel, value]) => {
-    const canonicalChannel = getCanonicalManualChannelKey(channel);
+    const canonicalChannel = normalizeCell(channel) === normalizeCell("binance save")
+      ? "Бинанс spot"
+      : getCanonicalManualChannelKey(channel);
     if (!canonicalChannel || !Object.prototype.hasOwnProperty.call(canonicalAmounts, canonicalChannel)) return;
     const sum = parseLooseNumber(canonicalAmounts[canonicalChannel]) + parseLooseNumber(value);
     canonicalAmounts[canonicalChannel] = sum ? formatSheetNumber(sum) : "";
@@ -479,7 +481,9 @@ function getCanonicalManualExpenseRawAmounts(amounts = {}) {
   const canonicalAmounts = buildEmptyExpenseAmounts();
   const duplicates = new Set();
   Object.entries(amounts || {}).forEach(([channel, value]) => {
-    const canonicalChannel = getCanonicalManualChannelKey(channel);
+    const canonicalChannel = normalizeCell(channel) === normalizeCell("binance save")
+      ? "Бинанс spot"
+      : getCanonicalManualChannelKey(channel);
     const raw = String(value ?? "").trim();
     if (!canonicalChannel || !raw || !Object.prototype.hasOwnProperty.call(canonicalAmounts, canonicalChannel)) return;
     if (!String(canonicalAmounts[canonicalChannel] || "").trim()) {

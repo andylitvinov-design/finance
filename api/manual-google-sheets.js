@@ -43,6 +43,13 @@ function canonicalManualFinanceChannel(value) {
   return match?.channel || raw;
 }
 
+function canonicalManualExpenseChannel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (normalizeLookupText(raw) === normalizeLookupText("binance save")) return "Бинанс spot";
+  return canonicalManualFinanceChannel(raw);
+}
+
 const MANUAL_FINANCE_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн",
   "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
@@ -161,13 +168,22 @@ function parseExpenseRows(values) {
   const categoryIndex = findHeaderIndex(header, ["категория", "category"]);
   if (dateIndex === -1 || categoryIndex === -1) return [];
   const channelIndexes = header
-    .map((cell, index) => ({ channel: canonicalManualFinanceChannel(cell), index }))
+    .map((cell, index) => ({ channel: canonicalManualExpenseChannel(cell), index }))
     .filter((item) => item.channel && item.index !== dateIndex && item.index !== categoryIndex);
   return rows
     .map((row) => ({
       date: normalizeDate(row[dateIndex]),
       category: String(row[categoryIndex] || "").trim(),
-      amounts: Object.fromEntries(channelIndexes.map(({ channel, index }) => [channel, String(row[index] || "").trim()])),
+      amounts: channelIndexes.reduce((amounts, { channel, index }) => {
+        const raw = String(row[index] || "").trim();
+        if (!raw) {
+          if (!Object.prototype.hasOwnProperty.call(amounts, channel)) amounts[channel] = "";
+          return amounts;
+        }
+        const sum = Number(String(amounts[channel] || "0").replace(",", ".")) + Number(raw.replace(",", "."));
+        amounts[channel] = Number.isFinite(sum) && sum ? String(sum).replace(".", ",") : raw;
+        return amounts;
+      }, {}),
     }))
     .filter((row) => row.date && row.category && Object.values(row.amounts).some((value) => String(value || "").trim()));
 }
@@ -261,7 +277,8 @@ function findHeaderIndex(header, aliases) {
 
 function normalizeDate(value) {
   const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const isoDatePrefix = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/);
+  if (isoDatePrefix) return isoDatePrefix[1];
   const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (display) return `${display[3]}-${display[2]}-${display[1]}`;
   if (/^\d{5}$/.test(raw)) {

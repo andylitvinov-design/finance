@@ -81,7 +81,9 @@ function getCanonicalManualChannelKey(value) {
 function getCanonicalManualAmounts(amounts = {}) {
   const canonical = {};
   Object.entries(amounts || {}).forEach(([channel, value]) => {
-    const canonicalChannel = getCanonicalManualChannelKey(channel);
+    const canonicalChannel = normalizeCell(channel) === normalizeCell("binance save")
+      ? "Бинанс spot"
+      : getCanonicalManualChannelKey(channel);
     if (!canonicalChannel) return;
     canonical[canonicalChannel] = (canonical[canonicalChannel] || 0) + parseLooseNumber(value);
   });
@@ -564,7 +566,9 @@ function formatNumber(value) {
 }
 
 function normalizeDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim()) ? String(value).trim() : "";
+  const raw = String(value || "").trim();
+  const isoDatePrefix = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/);
+  return isoDatePrefix ? isoDatePrefix[1] : "";
 }
 
 function normalizeCell(value) {
