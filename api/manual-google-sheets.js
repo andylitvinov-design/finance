@@ -9,6 +9,17 @@ const EXPENSE_SHEET_NAME = "Расходы";
 const BALANCE_SHEET_NAME = "Остатки";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
+const NORMALIZED_OPERATION_HEADERS = [
+  "date",
+  "operation",
+  "from_channel",
+  "to_channel",
+  "amount",
+  "currency",
+  "amount_usd",
+  "category",
+  "comment",
+];
 
 function normalizeCell(value) {
   return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
@@ -77,7 +88,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     return {
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      expenseRows: parseExpenseRows(valuesBySheet[EXPENSE_SHEET_NAME] || []),
+      ...parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || []),
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers: parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []),
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
@@ -162,7 +173,28 @@ function extractSheetTitle(range) {
   return raw.split("!")[0].replace(/^'|'$/g, "");
 }
 
-function parseExpenseRows(values) {
+function parseExpenseRepository(values) {
+  const normalizedOperations = parseNormalizedOperationRows(values);
+  if (normalizedOperations) {
+    return {
+      schema: "operations-v1",
+      operations: normalizedOperations,
+      expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
+      views: {
+        byDateChannel: buildOperationsPivotByDateChannel(normalizedOperations),
+        byCategory: buildOperationsPivotByCategory(normalizedOperations),
+      },
+    };
+  }
+  return {
+    schema: "legacy-expense-grid",
+    operations: [],
+    expenseRows: parseLegacyExpenseRows(values),
+    views: null,
+  };
+}
+
+function parseLegacyExpenseRows(values) {
   const { header, rows } = splitHeaderRows(values);
   const dateIndex = findHeaderIndex(header, ["дата", "date"]);
   const categoryIndex = findHeaderIndex(header, ["категория", "category"]);
@@ -186,6 +218,156 @@ function parseExpenseRows(values) {
       }, {}),
     }))
     .filter((row) => row.date && row.category && Object.values(row.amounts).some((value) => String(value || "").trim()));
+}
+
+function parseNormalizedOperationRows(values) {
+  const { header, rows } = splitHeaderRows(values);
+  if (!looksLikeNormalizedOperationsHeader(header)) return null;
+  const indexes = {
+    date: findHeaderIndex(header, ["date", "дата"]),
+    operation: findHeaderIndex(header, ["operation", "операция"]),
+    fromChannel: findHeaderIndex(header, ["from_channel", "from channel", "канал списания", "канал from"]),
+    toChannel: findHeaderIndex(header, ["to_channel", "to channel", "канал зачисления", "канал to"]),
+    amount: findHeaderIndex(header, ["amount", "сумма"]),
+    currency: findHeaderIndex(header, ["currency", "валюта"]),
+    amountUsd: findHeaderIndex(header, ["amount_usd", "amount usd", "сумма_usd", "usd amount"]),
+    category: findHeaderIndex(header, ["category", "категория"]),
+    comment: findHeaderIndex(header, ["comment", "комментарий"]),
+  };
+  return rows
+    .map((row) => ({
+      date: normalizeDate(row[indexes.date]),
+      operation: normalizeOperation(row[indexes.operation]),
+      fromChannel: canonicalManualFinanceChannel(row[indexes.fromChannel]),
+      toChannel: canonicalManualFinanceChannel(row[indexes.toChannel]),
+      amount: String(row[indexes.amount] || "").trim(),
+      currency: String(row[indexes.currency] || "").trim().toUpperCase(),
+      amountUsd: String(row[indexes.amountUsd] || "").trim(),
+      category: normalizeOperationCategory(row[indexes.category]),
+      comment: String(row[indexes.comment] || "").trim(),
+      source: "manual-google-sheets",
+    }))
+    .filter((row) => row.date && row.operation && (row.fromChannel || row.toChannel) && String(row.amount || "").trim());
+}
+
+function looksLikeNormalizedOperationsHeader(header) {
+  const normalizedHeader = (header || []).map((cell) => normalizeCell(cell));
+  return NORMALIZED_OPERATION_HEADERS.every((key) => normalizedHeader.includes(normalizeCell(key)));
+}
+
+function normalizeOperation(value) {
+  const normalized = normalizeLookupText(value);
+  if (!normalized) return "";
+  if (/^(income|received|приход)$/.test(normalized)) return "income";
+  if (/^(expense|spent|расход)$/.test(normalized)) return "expense";
+  if (/^(exchange|обмен|exchange out|exchange in)$/.test(normalized)) return "exchange";
+  if (/^(balance|balance snapshot|остаток|остатки)$/.test(normalized)) return "balance";
+  if (/^(commission|комиссия)$/.test(normalized)) return "commission";
+  return normalized;
+}
+
+function normalizeOperationCategory(value) {
+  const normalized = normalizeLookupText(value);
+  if (!normalized) return "";
+  if (/^(serviceincome|service income|income|приход)$/.test(normalized)) return "serviceIncome";
+  if (/^(business|бизнес)$/.test(normalized)) return "business";
+  if (/^(flat|house|кварт|дом)$/.test(normalized)) return "flat";
+  if (/^(food|еда)$/.test(normalized)) return "food";
+  if (/^(fun|развлеч)/.test(normalized)) return "fun";
+  if (/^(study|учеб|обуч|курс|школ)/.test(normalized)) return "study";
+  if (/^(travel|путеш)/.test(normalized)) return "travel";
+  if (/^(exchange|обмен)$/.test(normalized)) return "exchange";
+  if (/^(now|остаток сейчас|стало)$/.test(normalized)) return "now";
+  if (/^(commission|комиссия)$/.test(normalized)) return "commission";
+  return normalized;
+}
+
+function buildLegacyExpenseRowsFromOperations(operations) {
+  const grouped = new Map();
+  for (const operation of operations || []) {
+    const category = mapOperationToLegacyCategory(operation);
+    const channel = mapOperationToLegacyChannel(operation);
+    const amount = mapOperationToLegacyAmount(operation, category);
+    if (!category || !channel || amount === null) continue;
+    const key = `${operation.date}|${category}`;
+    if (!grouped.has(key)) grouped.set(key, { date: operation.date, category, amounts: {} });
+    const row = grouped.get(key);
+    row.amounts[channel] = formatNumberString(parseNumberString(row.amounts[channel]) + amount);
+  }
+  return Array.from(grouped.values())
+    .map((row) => ({
+      date: row.date,
+      category: row.category,
+      amounts: Object.fromEntries(MANUAL_FINANCE_CHANNELS.map((channel) => [channel, row.amounts[channel] || ""])),
+    }))
+    .sort((left, right) => {
+      if (left.date !== right.date) return left.date.localeCompare(right.date);
+      return left.category.localeCompare(right.category);
+    });
+}
+
+function mapOperationToLegacyCategory(operation) {
+  const category = normalizeOperationCategory(operation?.category);
+  const normalizedOperation = normalizeOperation(operation?.operation);
+  if (category === "serviceIncome") return "serviceIncome";
+  if (["business", "flat", "food", "fun", "study", "travel", "exchange", "now"].includes(category)) return category;
+  if (normalizedOperation === "income") return "serviceIncome";
+  if (normalizedOperation === "expense") return category || "business";
+  if (normalizedOperation === "exchange") return "exchange";
+  return "";
+}
+
+function mapOperationToLegacyChannel(operation) {
+  const category = mapOperationToLegacyCategory(operation);
+  if (!category) return "";
+  const amount = parseNumberString(operation?.amount);
+  if (category === "serviceIncome") return canonicalManualExpenseChannel(operation?.toChannel || operation?.fromChannel || "");
+  if (category === "exchange") {
+    if (amount < 0) return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
+    if (amount > 0) return canonicalManualExpenseChannel(operation?.toChannel || operation?.fromChannel || "");
+    return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
+  }
+  return canonicalManualExpenseChannel(operation?.fromChannel || operation?.toChannel || "");
+}
+
+function mapOperationToLegacyAmount(operation, category) {
+  const amount = parseNumberString(operation?.amount);
+  if (!Number.isFinite(amount) || !category) return null;
+  if (category === "serviceIncome") return Math.abs(amount);
+  if (category === "exchange") return amount;
+  return Math.abs(amount);
+}
+
+function buildOperationsPivotByDateChannel(operations) {
+  const grouped = new Map();
+  for (const operation of operations || []) {
+    const channel = mapOperationToLegacyChannel(operation);
+    const amount = parseNumberString(operation?.amount);
+    if (!channel || !Number.isFinite(amount)) continue;
+    const key = `${operation.date}|${channel}`;
+    const current = grouped.get(key) || { date: operation.date, channel, amount: 0, amountUsd: 0 };
+    current.amount += amount;
+    current.amountUsd += parseNumberString(operation?.amountUsd);
+    grouped.set(key, current);
+  }
+  return Array.from(grouped.values()).sort((left, right) =>
+    left.date === right.date ? left.channel.localeCompare(right.channel) : left.date.localeCompare(right.date)
+  );
+}
+
+function buildOperationsPivotByCategory(operations) {
+  const grouped = new Map();
+  for (const operation of operations || []) {
+    const category = mapOperationToLegacyCategory(operation);
+    const amount = mapOperationToLegacyAmount(operation, category);
+    if (!category || amount === null) continue;
+    const current = grouped.get(category) || { category, amount: 0, amountUsd: 0, count: 0 };
+    current.amount += amount;
+    current.amountUsd += parseNumberString(operation?.amountUsd);
+    current.count += 1;
+    grouped.set(category, current);
+  }
+  return Array.from(grouped.values()).sort((left, right) => left.category.localeCompare(right.category));
 }
 
 function parseBalanceRows(values) {
@@ -261,7 +443,7 @@ function parseCommissionRows(values) {
 function splitHeaderRows(values) {
   const headerIndex = (values || []).findIndex((row) => {
     const normalized = (row || []).map((cell) => normalizeCell(cell));
-    return normalized.includes("дата") || normalized.includes("дата перевода");
+    return normalized.includes("дата") || normalized.includes("date") || normalized.includes("дата перевода");
   });
   if (headerIndex === -1) return { header: [], rows: [] };
   return {
@@ -286,4 +468,16 @@ function normalizeDate(value) {
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
   }
   return "";
+}
+
+function parseNumberString(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.+-]/g, "");
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function formatNumberString(value) {
+  return value ? String(value).replace(".", ",") : "";
 }
