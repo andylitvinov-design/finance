@@ -388,6 +388,23 @@ function getAnalyticsSections(values) {
   return output;
 }
 
+function isAnalyticsPersonalSection(section) {
+  const title = normalizeCell(section?.title).replace(/ё/g, "е");
+  if ([normalizeCell("Личные расходы"), normalizeCell("личное движение средств")].includes(title)) {
+    return true;
+  }
+  const header = Array.isArray(section?.rows?.[0]) ? section.rows[0] : [];
+  if (!header.length) return false;
+  const hasNowColumn = findHeaderIndexByAliases(header, ["now"]) !== -1;
+  const hasServiceColumn = findHeaderIndexByAliases(header, ["приход от услуг", "service income"]) !== -1;
+  const hasExchangeColumn = findHeaderIndexByAliases(header, ["обмен", "exchange"]) !== -1;
+  return hasNowColumn && hasServiceColumn && hasExchangeColumn;
+}
+
+function getAnalyticsPersonalSection(sections = []) {
+  return (sections || []).find((section) => isAnalyticsPersonalSection(section)) || sections[0] || null;
+}
+
 
 // ============================================================
 // MANUAL FINANCE
@@ -2232,8 +2249,9 @@ function calculateManualMoneyTotals(rows) {
 
 function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movementValues, payoutsValues, savingsValues, aggregatedManual) {
   const sections = splitAnalyticsSections(extractAnalyticsTopTables(sourceValues));
-  const firstTitle = sections[0]?.title || "Личные расходы";
-  const firstSectionRows = Array.isArray(sections[0]?.rows) ? sections[0].rows : [];
+  const personalSection = getAnalyticsPersonalSection(sections);
+  const firstTitle = personalSection?.title || "Личные расходы";
+  const firstSectionRows = Array.isArray(personalSection?.rows) ? personalSection.rows : [];
   const manualRows = aggregatedManual?.rows || [];
   const movementStats = calculateMovementChannelStats(movementValues);
   const normalizedTransferRows = ANALYTICS_PAYOUTS_HELPER.buildTransferPayoutRowsWithUsd
@@ -2442,7 +2460,7 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
     formatSheetNumber(movementRealTotals.balanceTotal)
   ];
   const movementSummarySection = {
-    title: "движение 1",
+    title: "Сверка Movement по каналам",
     header: [
       "канал переводов",
       "план = ACCRUED",
