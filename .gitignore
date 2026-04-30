@@ -3,5 +3,6 @@
 .env.local
 .env.*.local
 .npm/
+ops/build-meta.json
 .vercel
 .worktrees/

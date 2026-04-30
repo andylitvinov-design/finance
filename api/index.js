@@ -129,6 +129,7 @@ export default async function handler(request, response) {
       service: "ezohata-reconcile-v2-api",
       configured: Boolean(upstream),
       fallbackSnapshot: !upstream,
+      statusEndpoint: "/api/status",
       supportedGetActions: Array.from(SUPPORTED_GET_ACTIONS),
       supportedPostActions: Array.from(SUPPORTED_POST_ACTIONS),
     });

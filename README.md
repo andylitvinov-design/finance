@@ -156,6 +156,27 @@ Rules:
 - legacy repos and deploy projects are deprecated read-only references only
 - release guard requires `origin/main` from `andylitvinov-design/finance`
 
+Post-merge production verification:
+
+```bash
+git fetch origin
+EXPECTED_SHA="$(git rev-parse origin/main)"
+node scripts/verify-production.mjs "$EXPECTED_SHA"
+```
+
+Check this in order after merge to `main`:
+
+- GitHub Actions: `Production Observability` must start on the merge push and finish green
+- live commit: `/api/status` must return `commitSha == origin/main`
+- deploy metadata: `/api/status` must return `buildTime`, `deploymentEnvironment`, `appVersion`, `appBuildVersion`
+- smoke test: `/api/index?health=1` must return `ok: true`
+
+Useful URLs:
+
+- production app: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-incoming-ledger.vercel.app)
+- production status: [https://ezohata-incoming-ledger.vercel.app/api/status](https://ezohata-incoming-ledger.vercel.app/api/status)
+- production health: [https://ezohata-incoming-ledger.vercel.app/api/index?health=1](https://ezohata-incoming-ledger.vercel.app/api/index?health=1)
+
 ## Versioning
 
 - release version is stored in `package.json` and `sheet-config.json`
