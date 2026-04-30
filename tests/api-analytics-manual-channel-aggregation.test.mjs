@@ -280,3 +280,40 @@ test("normalizeServerAnalyticsPayload derives exchange_usd from operation curren
   assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "100,0000");
   assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "100,0000");
 });
+
+test("normalizeServerAnalyticsPayload normalizes explicit exchange amount_usd sign from live ledger operations", () => {
+  const values = [
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["Яндекс руб", "", "", "", "", "0", "", "", "0", "0"],
+    ["Бинанс spot", "", "", "", "", "0", "", "", "0", "0"],
+    ["Итого", "", "", "", "", "0", "", "", "0", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["Яндекс руб", "0", "", "", "0", "", "", "", "", ""],
+    ["Бинанс spot", "0", "", "", "0", "", "", "", "", ""],
+    ["Итого", "0", "", "", "0", "", "", "", "", ""],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 10 } },
+    manual: {
+      operations: [
+        { date: "2026-04-24", operation: "exchange_out", fromChannel: "Яндекс руб", toChannel: "", amount: "74669", amountUsd: "883.0684", currency: "RUB", category: "exchange" },
+        { date: "2026-04-24", operation: "exchange_in", fromChannel: "", toChannel: "Бинанс spot", amount: "874", amountUsd: "874", currency: "USD", category: "exchange" }
+      ],
+      expenseRows: [],
+      transfers: [],
+      balances: []
+    }
+  });
+
+  const plan = sectionRows(payload.tabs.analytics.values, "Plan");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен"], "-74669,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Яндекс руб")["обмен_usd"], "-883,0684");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен"], "874,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Бинанс spot")["обмен_usd"], "874,0000");
+});

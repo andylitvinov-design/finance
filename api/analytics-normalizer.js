@@ -402,15 +402,23 @@ function deriveManualUsdAmount(amount, channel, rateLookup) {
 
 function deriveOperationUsdAmount(operation, amount, channel, rateLookup) {
   const rawExplicitUsd = String(operation?.amountUsd || "").trim();
-  if (rawExplicitUsd) return parseLooseNumber(rawExplicitUsd);
+  if (rawExplicitUsd) return normalizeExchangeUsdSign(parseLooseNumber(rawExplicitUsd), operation);
   const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
-  if (currency === "USD") return amount;
+  if (currency === "USD") return normalizeExchangeUsdSign(amount, operation);
   const rate = parseLooseNumber(operation?.rate) ||
     parseLooseNumber(rateLookup.byCurrency?.[currency]) ||
     parseLooseNumber(rateLookup.byChannel?.[channel]) ||
     FALLBACK_USD_RATES[currency] ||
     FALLBACK_USD_RATES.LOCAL;
-  return rate ? amount * rate : 0;
+  return rate ? normalizeExchangeUsdSign(amount * rate, operation) : 0;
+}
+
+function normalizeExchangeUsdSign(amountUsd, operation) {
+  const numeric = parseLooseNumber(amountUsd);
+  const operationName = normalizeCell(operation?.operation);
+  if (operationName === "exchange_out") return -Math.abs(numeric);
+  if (operationName === "exchange_in") return Math.abs(numeric);
+  return numeric;
 }
 
 function getPeriodBalanceRows(balances, period = {}) {

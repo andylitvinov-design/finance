@@ -312,9 +312,7 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         updatedAt: String(row[indexes.updatedAt] || "").trim(),
         source: "manual-google-sheets",
       };
-      if (!String(operationRow.amountUsd || "").trim()) {
-        operationRow.amountUsd = formatNumberString(deriveOperationUsdAmount(operationRow, rateLookup));
-      }
+      operationRow.amountUsd = formatNumberString(deriveOperationUsdAmount(operationRow, rateLookup));
       return operationRow;
     })
     .filter((row) => row.date && row.operation && (row.fromChannel || row.toChannel) && String(row.amount || "").trim());
@@ -467,18 +465,26 @@ function averageUsdRates(bucket) {
 
 function deriveOperationUsdAmount(operation, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const rawExplicitUsd = String(operation?.amountUsd || "").trim();
-  if (rawExplicitUsd) return parseNumberString(rawExplicitUsd);
+  if (rawExplicitUsd) return normalizeExchangeUsdSign(parseNumberString(rawExplicitUsd), operation);
   const amount = parseNumberString(operation?.amount);
   if (!Number.isFinite(amount)) return 0;
   const channel = mapOperationToLegacyChannel(operation) || canonicalManualFinanceChannel(operation?.fromChannel || operation?.toChannel || "");
   const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
-  if (currency === "USD") return amount;
+  if (currency === "USD") return normalizeExchangeUsdSign(amount, operation);
   const rate = parseNumberString(operation?.rate) ||
     parseNumberString(rateLookup.byChannel?.[channel]) ||
     parseNumberString(rateLookup.byCurrency?.[currency]) ||
     FALLBACK_USD_RATES[currency] ||
     FALLBACK_USD_RATES.LOCAL;
-  return rate ? amount * rate : 0;
+  return rate ? normalizeExchangeUsdSign(amount * rate, operation) : 0;
+}
+
+function normalizeExchangeUsdSign(amountUsd, operation) {
+  const numeric = parseNumberString(amountUsd);
+  const operationName = normalizeOperation(operation?.operation, operation?.category);
+  if (operationName === "exchange_out") return -Math.abs(numeric);
+  if (operationName === "exchange_in") return Math.abs(numeric);
+  return numeric;
 }
 
 function parseBalanceRows(values) {
