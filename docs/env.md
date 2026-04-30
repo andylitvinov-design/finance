@@ -15,6 +15,10 @@ Required only when the corresponding provider import is used:
   Primary PayPal REST credentials for `/api/paypal-transactions`.
 - `WISE_API_TOKEN`
   Wise statement/balance access for `/api/wise-transactions`.
+- `MONOBANK_API_TOKEN`
+  Monobank personal API token for `/api/monobank-transactions`.
+- `PRIVATBANK_STATEMENT_URL` and `PRIVATBANK_API_TOKEN`
+  PrivatBank statement endpoint and API token for `/api/privatbank-transactions`.
 - `YOOMONEY_ACCESS_TOKEN`
   YooMoney wallet token with `operation-history` scope for `/api/yoomoney-transactions`.
 
@@ -29,6 +33,12 @@ Required only when the corresponding provider import is used:
   Optional if the token can access only one usable Wise profile.
 - `WISE_API_BASE`
   Defaults to `https://api.wise.com`.
+- `MONOBANK_ACCOUNT_ID`
+  Optional if the Monobank token should be limited to one account.
+- `MONOBANK_API_BASE`
+  Defaults to `https://api.monobank.ua`.
+- `PRIVATBANK_ACCOUNT_ID`
+  Optional if the PrivatBank endpoint supports filtering by account.
 - `YOOMONEY_CLIENT_ID`
 - `YOOMONEY_CLIENT_SECRET`
 - `YOOMONEY_REDIRECT_URI`
@@ -44,6 +54,18 @@ YooMoney notes:
 - Required OAuth scope: `operation-history`.
 - Official authorization docs: [YooMoney wallet authorization](https://yoomoney.ru/docs/wallet/using-api/authorization/request-access-token)
 - Official history method docs: [operation-history](https://yoomoney.ru/docs/wallet/user-account/operation-history)
+
+Monobank notes:
+
+- Official token cabinet: [Monobank API cabinet](https://api.monobank.ua/)
+- Official API docs: [Monobank API documentation](https://api.monobank.ua/docs/index.html)
+- Personal statement sync is limited to 31 days per request.
+
+PrivatBank notes:
+
+- Official integration page: [PrivatBank Business integration](https://privatbank.ua/en/business/intehratsiya)
+- AutoClient API docs: [PrivatBank AutoClient API](https://docs.google.com/document/d/e/2PACX-1vTtKvGa3P4E-lDqLg3bHRF6Wi9S7GIjSMFEFxII5qQZBGxuTXs25hQNiUU1hMZQhOyx6BNvIZ1bVKSr/pub)
+- The selected Privat24 Business profile must expose `Інтеграція / Автоклієнт / API`. A profile with all accounts closed does not expose the needed settings.
 
 ## OCR
 
@@ -134,5 +156,7 @@ After adding or adjusting envs in Vercel production:
 1. Open `/api?health=1` on production and confirm the main API is healthy.
 2. If `EZOHATA_LEGACY_MANUAL_FINANCE_URL` was intentionally added, open `/api/legacy?health=1` and expect `configured: true`.
 3. If `YOOMONEY_ACCESS_TOKEN` was added, open `Учет расходов`, select a period, click `Подтянуть ЮMoney`, and confirm the monthly provider block appears with RUB income/expense totals.
-4. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
-5. Manually run the Google OAuth flow from the production app as described above.
+4. If `MONOBANK_API_TOKEN` was added, open `Учет расходов`, select a period up to 31 days, click `Подтянуть Mono`, and confirm the monthly provider block appears with UAH totals.
+5. If `PRIVATBANK_STATEMENT_URL` and `PRIVATBANK_API_TOKEN` were added, open `Учет расходов`, select a period, click `Подтянуть Privat`, and confirm the monthly provider block appears with UAH/USD/EUR totals.
+6. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
+7. Manually run the Google OAuth flow from the production app as described above.

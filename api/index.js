@@ -7,6 +7,8 @@ import {
   fetchPayPalStatementEntriesFromMcp,
 } from "./paypal-transactions.js";
 import { fetchWiseStatementEntries } from "./wise-transactions.js";
+import { fetchMonobankStatementEntries } from "./monobank-transactions.js";
+import { fetchPrivatBankStatementEntries } from "./privatbank-transactions.js";
 import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync"]);
@@ -23,6 +25,10 @@ const REAL_INCOME_CHANNELS = [
   "пейпал дол",
   "пейпал евр",
   "пейпал сad",
+  "приват 24-дол",
+  "приват 24-евро",
+  "приват 24-грн",
+  "монобанк грн",
   "трансервайз дол",
   "трансервайз евро",
 ];
@@ -31,6 +37,10 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "пейпал дол": "USD",
   "пейпал евр": "EUR",
   "пейпал сad": "CAD",
+  "приват 24-дол": "USD",
+  "приват 24-евро": "EUR",
+  "приват 24-грн": "UAH",
+  "монобанк грн": "UAH",
   "трансервайз дол": "USD",
   "трансервайз евро": "EUR",
 };
@@ -452,6 +462,8 @@ async function buildRealIncomePayload(period, movementValues) {
   const providerResults = await Promise.all([
     loadPayPalProviderEntries(startDate, endDate),
     loadWiseProviderEntries(startDate, endDate),
+    loadMonobankProviderEntries(startDate, endDate),
+    loadPrivatBankProviderEntries(startDate, endDate),
     loadYooMoneyProviderEntries(startDate, endDate),
   ]);
   for (const result of providerResults) {
@@ -527,6 +539,43 @@ async function loadWiseProviderEntries(startDate, endDate) {
     return { entries: result.entries || [], warnings: result.warnings || [] };
   } catch (error) {
     return { entries: [], warnings: [`Wise real income: ${String(error?.message || error)}`] };
+  }
+}
+
+async function loadMonobankProviderEntries(startDate, endDate) {
+  const apiToken = String(process.env.MONOBANK_API_TOKEN || "").trim();
+  if (!apiToken) return null;
+  try {
+    const result = await fetchMonobankStatementEntries({
+      startDate,
+      endDate,
+      apiToken,
+      accountId: process.env.MONOBANK_ACCOUNT_ID,
+      baseUrl: process.env.MONOBANK_API_BASE,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: result.warnings || [] };
+  } catch (error) {
+    return { entries: [], warnings: [`Monobank real income: ${String(error?.message || error)}`] };
+  }
+}
+
+async function loadPrivatBankProviderEntries(startDate, endDate) {
+  const apiToken = String(process.env.PRIVATBANK_API_TOKEN || "").trim();
+  const baseUrl = String(process.env.PRIVATBANK_STATEMENT_URL || "").trim();
+  if (!apiToken || !baseUrl) return null;
+  try {
+    const result = await fetchPrivatBankStatementEntries({
+      startDate,
+      endDate,
+      apiToken,
+      accountId: process.env.PRIVATBANK_ACCOUNT_ID,
+      baseUrl,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: result.warnings || [] };
+  } catch (error) {
+    return { entries: [], warnings: [`PrivatBank real income: ${String(error?.message || error)}`] };
   }
 }
 
@@ -767,6 +816,12 @@ function resolvePaymentChannel(value) {
   }
   if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
+  if (/(mono|monobank|монобанк).*(uah|грн|грив)|(?:uah|грн|грив).*(mono|monobank|монобанк)/.test(normalized)) {
+    return "монобанк грн";
+  }
+  if (/(privat|приват).*(usd|дол)|(?:usd|дол).*(privat|приват)/.test(normalized)) return "приват 24-дол";
+  if (/(privat|приват).*(eur|евр|euro)|(?:eur|евр|euro).*(privat|приват)/.test(normalized)) return "приват 24-евро";
+  if (/(privat|приват).*(uah|грн|грив)|(?:uah|грн|грив).*(privat|приват)/.test(normalized)) return "приват 24-грн";
   if (/(yoomoney|юmoney|юмани|юмоней|yandex|яндекс).*(rub|руб)|(?:rub|руб).*(yoomoney|юmoney|юмани|юмоней|yandex|яндекс)/.test(normalized)) {
     return "Яндекс руб";
   }

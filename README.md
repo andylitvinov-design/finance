@@ -78,6 +78,8 @@ npm run release-guard
 
 - `/api/paypal-transactions`
 - `/api/wise-transactions`
+- `/api/monobank-transactions`
+- `/api/privatbank-transactions`
 - `/api/yoomoney-transactions`
 - `/api/expense-screenshots`
 
@@ -96,6 +98,12 @@ Current env inventory:
 - `WISE_API_TOKEN`
 - `WISE_PROFILE_ID`
 - `WISE_API_BASE`
+- `MONOBANK_API_TOKEN`
+- `MONOBANK_ACCOUNT_ID`
+- `MONOBANK_API_BASE`
+- `PRIVATBANK_STATEMENT_URL`
+- `PRIVATBANK_API_TOKEN`
+- `PRIVATBANK_ACCOUNT_ID`
 - `YOOMONEY_ACCESS_TOKEN`
 - `YOOMONEY_CLIENT_ID`
 - `YOOMONEY_CLIENT_SECRET`
@@ -113,6 +121,11 @@ Operational notes:
 
 PayPal live app setup:
 [PayPal Live Apps & Credentials](https://developer.paypal.com/dashboard/applications/live)
+
+Monobank personal API setup:
+[Monobank API cabinet](https://api.monobank.ua/)
+
+PrivatBank setup depends on the enabled account product. Use `PRIVATBANK_STATEMENT_URL` for the JSON statement endpoint issued by Privat24 Business/Open Banking/AutoClient and keep the token in `PRIVATBANK_API_TOKEN`.
 
 YooMoney wallet OAuth setup:
 [YooMoney wallet authorization docs](https://yoomoney.ru/docs/wallet/using-api/authorization/request-access-token)
