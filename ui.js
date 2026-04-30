@@ -1436,7 +1436,11 @@ function getCurrentAnalyticsManualRows() {
       fun: row.fun || "",
       study: row.study || "",
       travel: row.travel || "",
-      total: row.total || ""
+      total: row.total || "",
+      exchange: row.exchange || "",
+      exchangeUsd: row.exchangeUsd || "",
+      totalUsd: row.totalUsd || "",
+      nowUsd: row.nowUsd || "",
     }));
   }
   if (state.manualFinance.data?.moneyRows?.length) {
@@ -1449,6 +1453,10 @@ function getCurrentAnalyticsManualRows() {
   const studyIndex = findHeaderIndexByAliases(header, ["spent for study", "study"]);
   const travelIndex = findHeaderIndexByAliases(header, ["spent for travel", "travel"]);
   const totalIndex = findHeaderIndexByAliases(header, ["затраты-мои", "total"]);
+  const exchangeIndex = findHeaderIndexByAliases(header, ["обмен", "exchange"]);
+  const exchangeUsdIndex = findHeaderIndexByAliases(header, ["обмен_usd", "exchange_usd"]);
+  const totalUsdIndex = findHeaderIndexByAliases(header, ["затраты-мои usd", "total_usd", "total usd"]);
+  const nowUsdIndex = findHeaderIndexByAliases(header, ["now_usd", "now usd"]);
   return rows.slice(1).filter((row) => hasAnyValue(row)).map((row) => ({
     channel: row[0] || "",
     now: row[1] || "",
@@ -1459,7 +1467,11 @@ function getCurrentAnalyticsManualRows() {
     fun: row[6] || "",
     study: studyIndex === -1 ? "" : row[studyIndex] || "",
     travel: travelIndex === -1 ? "" : row[travelIndex] || "",
-    total: totalIndex === -1 ? "" : row[totalIndex] || ""
+    total: totalIndex === -1 ? "" : row[totalIndex] || "",
+    exchange: exchangeIndex === -1 ? "" : row[exchangeIndex] || "",
+    exchangeUsd: exchangeUsdIndex === -1 ? "" : row[exchangeUsdIndex] || "",
+    totalUsd: totalUsdIndex === -1 ? "" : row[totalUsdIndex] || "",
+    nowUsd: nowUsdIndex === -1 ? "" : row[nowUsdIndex] || "",
   }));
 }
 

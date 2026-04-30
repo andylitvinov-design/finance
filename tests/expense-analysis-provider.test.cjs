@@ -295,6 +295,6 @@ test("getCurrentAnalyticsManualRows prefers aggregated period rows over end-date
   );
 
   assert.deepEqual(plain(context.getCurrentAnalyticsManualRows()), [
-    { channel: "пейпал евр", now: "0", serviceIncome: "222,7500", business: "20,0000", flat: "0", food: "0", fun: "0", study: "0", travel: "12,5000", total: "32,5000" }
+    { channel: "пейпал евр", now: "0", serviceIncome: "222,7500", business: "20,0000", flat: "0", food: "0", fun: "0", study: "0", travel: "12,5000", total: "32,5000", exchange: "", exchangeUsd: "", totalUsd: "", nowUsd: "" }
   ]);
 });
