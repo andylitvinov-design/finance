@@ -19,7 +19,10 @@ const SOURCE_SPREADSHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/export?format=csv&gid=${SOURCE_SPREADSHEET_GID}`;
 const SOURCE_SPREADSHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/edit#gid=${SOURCE_SPREADSHEET_GID}`;
-const REAL_INCOME_COLUMN_HEADER = "РЕАЛЬНЫЕ ПРИХОДЫ";
+const CLIENT_PAID_COLUMN_HEADER = "ОПЛАЧЕНО КЛИЕНТОМ USD";
+const PAYMENT_FEE_COLUMN_HEADER = "КОМИССИЯ ПРОВАЙДЕРА USD";
+const NET_RECEIVED_COLUMN_HEADER = "ДОШЛО ДО НАС USD";
+const REAL_INCOME_COLUMN_HEADER = "ДОШЛО ФАКТ / PROVIDER NET";
 const REAL_INCOME_CHANNELS = [
   "Яндекс руб",
   "пейпал дол",
@@ -70,7 +73,9 @@ const FRESH_MOVEMENT_HEADER = [
   "ПОЛУЧЕНО В ДОЛЛАРАХ",
   "ПОЛУЧЕНО В РУБЛЯХ",
   "ПОЛУЧЕНО В ГРИВНАХ",
-  "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)",
+  CLIENT_PAID_COLUMN_HEADER,
+  PAYMENT_FEE_COLUMN_HEADER,
+  NET_RECEIVED_COLUMN_HEADER,
   REAL_INCOME_COLUMN_HEADER,
   "BALANCE",
   "STATUS",
@@ -291,6 +296,16 @@ async function maybeOverlayFreshSourceData(data) {
     const freshPayouts = buildFreshPayoutsTableFromRows(sourceRows, data.period);
     const realIncome = await buildRealIncomePayload(data.period, freshMovement.values);
     const enrichedMovement = applyRealIncomeToMovementTable(freshMovement, realIncome);
+    const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
+    const nextRealIncome = realIncome || movementWarnings.length
+      ? {
+          entries: realIncome?.entries || [],
+          rowMatches: realIncome?.rowMatches || [],
+          summaryByChannel: realIncome?.summaryByChannel || {},
+          summaryTotals: realIncome?.summaryTotals || null,
+          warnings: [...new Set([...(realIncome?.warnings || []), ...movementWarnings])],
+        }
+      : null;
     return {
       ...data,
       tabs: {
@@ -299,7 +314,7 @@ async function maybeOverlayFreshSourceData(data) {
         orders: buildFreshOrdersTable(enrichedMovement),
         ...(freshPayouts ? { payouts: freshPayouts } : {})
       },
-      ...(realIncome ? { realIncome } : {})
+      ...(nextRealIncome ? { realIncome: nextRealIncome } : {})
     };
   } catch (error) {
     console.warn("Fresh source overlay failed, using upstream dashboard data.", error);
@@ -377,6 +392,7 @@ function buildFreshMovementTableFromRows(rows, period, summaryRows = []) {
   const mappedRows = buildMovementRowsFromSource(rows, period);
   if (!mappedRows.length) return null;
   const totalRow = buildFreshMovementTotalRow(mappedRows);
+  const nextSummaryRows = buildFreshMovementSummaryRows(mappedRows, summaryRows);
 
   const startDate = formatDisplayDate(period.startDate) || "";
   const endDate = formatDisplayDate(period.endDate) || "";
@@ -399,7 +415,7 @@ function buildFreshMovementTableFromRows(rows, period, summaryRows = []) {
       ...mappedRows,
       totalRow,
     ],
-    ...(summaryRows.length ? { summaryRows } : {}),
+    ...(nextSummaryRows.length ? { summaryRows: nextSummaryRows } : {}),
     rowCount: mappedRows.length + 4,
     columnCount: FRESH_MOVEMENT_HEADER.length,
   };
@@ -429,8 +445,61 @@ function extractMovementSummaryRows(values) {
   return summaryRows;
 }
 
+function collectMovementVerificationWarnings(values = []) {
+  const header = values?.[2] || values?.[0] || [];
+  const numberIndex = findHeaderIndexByAliases(header, ["NUMBER"]);
+  const statusIndex = findHeaderIndexByAliases(header, ["STATUS"]);
+  const reviewIndex = findHeaderIndexByAliases(header, ["REVIEW NOTE"]);
+  return (values || [])
+    .slice(3)
+    .filter((row) => /^\d+$/.test(String(row?.[numberIndex] || "").trim()))
+    .filter((row) => String(row?.[statusIndex] || "").trim() === "NEEDS VERIFICATION")
+    .map((row) => `order ${String(row?.[numberIndex] || "").trim()}: ${String(row?.[reviewIndex] || "").trim() || "needs verification"}`);
+}
+
+function buildFreshMovementSummaryRows(mappedRows = [], upstreamSummaryRows = []) {
+  const summary = [];
+  const pushIfPresent = (labelMatch, fallbackLabel) => {
+    const row = (upstreamSummaryRows || []).find((item) => normalizeSummaryText(item?.[0]).includes(labelMatch));
+    if (row?.[0]) summary.push([String(row[0]), String(row[1] || "")]);
+    else if (fallbackLabel) summary.push([fallbackLabel, ""]);
+  };
+
+  pushIfPresent("начислено", "2) начислено прайс +%");
+  summary.push(["4) получено в долларах", formatTableNumber(sumMovementColumn(mappedRows, 20))]);
+  pushIfPresent("70% от прайс", "6) 70% от прайс+%");
+
+  const verificationCount = mappedRows.filter((row) => String(row?.[23] || "").trim() === "NEEDS VERIFICATION").length;
+  if (verificationCount > 0) {
+    summary.push(["needs verification: provider fee/net missing", String(verificationCount)]);
+  }
+
+  return summary.filter((row, index, items) => {
+    const label = normalizeSummaryText(row?.[0]);
+    return label && items.findIndex((candidate) => normalizeSummaryText(candidate?.[0]) === label) === index;
+  }).map((row) => {
+    if (normalizeSummaryText(row?.[0]) === normalizeSummaryText("2) начислено прайс +%")) {
+      return [row[0], formatTableNumber(sumMovementColumn(mappedRows, 9))];
+    }
+    if (normalizeSummaryText(row?.[0]) === normalizeSummaryText("6) 70% от прайс+%")) {
+      return [row[0], formatTableNumber(sumMovementColumn(mappedRows, 11))];
+    }
+    return row;
+  });
+}
+
+function sumMovementColumn(rows = [], index = -1) {
+  if (index < 0) return 0;
+  return roundNumber((rows || []).reduce((sum, row) => sum + (parseLooseNumber(row?.[index]) || 0), 0));
+}
+
 function normalizeSummaryText(value) {
   return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+}
+
+function findHeaderIndexByAliases(header, aliases) {
+  const normalizedAliases = new Set((aliases || []).map((alias) => normalizeSummaryText(alias)));
+  return (header || []).findIndex((cell) => normalizedAliases.has(normalizeSummaryText(cell)));
 }
 
 function buildFreshPayoutsTableFromRows(rows, period) {
@@ -488,16 +557,19 @@ async function buildRealIncomePayload(period, movementValues) {
   const movementRateLookup = buildMovementUsdRateLookup(movementValues, endDate);
   const entries = providerEntries
     .filter((entry) => entry?.direction === "income" && entry?.date && entry?.channel && Number(entry?.localAmount || 0) > 0)
-    .map((entry, index) => normalizeRealIncomeEntry(entry, movementRateLookup, index))
-    .filter((entry) => entry.realNetUsd > 0);
+    .map((entry, index) => normalizeRealIncomeEntry(entry, movementRateLookup, index));
+  entries
+    .filter((entry) => entry.needsVerification)
+    .forEach((entry) => warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: needs verification - provider fee/net missing`));
+  const verifiedEntries = entries.filter((entry) => Number(entry.realNetUsd || 0) > 0);
 
-  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(entries, movementValues);
+  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
   warnings.push(...matchWarnings);
   return {
     entries,
     rowMatches,
-    summaryByChannel: summarizeRealIncomeByChannel(entries, movementValues),
-    summaryTotals: summarizeRealIncomeTotals(entries, movementValues),
+    summaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
+    summaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
     warnings: [...new Set(warnings.filter(Boolean))],
   };
 }
@@ -613,11 +685,20 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
   const currency = String(entry?.currency || inferChannelCurrency(entry?.channel)).trim().toUpperCase();
   const feeCurrency = String(entry?.feeCurrency || currency).trim().toUpperCase();
   const realGrossLocal = Math.abs(Number(entry?.localAmount || 0));
-  const realFeeLocal = Math.abs(Number(entry?.feeAmount || 0));
-  const realNetLocal = Math.max(0, realGrossLocal - realFeeLocal);
+  const hasFeeAmount = hasExplicitMoneyValue(entry?.feeAmount);
+  const hasNetAmount = hasExplicitMoneyValue(entry?.netAmount);
+  const realFeeLocal = hasFeeAmount ? Math.abs(Number(entry?.feeAmount || 0)) : null;
+  const realNetLocal = hasNetAmount
+    ? Math.abs(Number(entry?.netAmount || 0))
+    : (hasFeeAmount ? Math.max(0, realGrossLocal - realFeeLocal) : null);
   const realGrossUsd = convertLocalAmountToUsd(realGrossLocal, currency, movementRateLookup, entry?.channel);
-  const realFeeUsd = convertLocalAmountToUsd(realFeeLocal, feeCurrency, movementRateLookup, entry?.channel);
-  const realNetUsd = Math.max(0, roundNumber(realGrossUsd - realFeeUsd));
+  const realFeeUsd = realFeeLocal === null
+    ? null
+    : convertLocalAmountToUsd(realFeeLocal, feeCurrency, movementRateLookup, entry?.channel);
+  const derivedNetUsd = hasNetAmount
+    ? convertLocalAmountToUsd(realNetLocal, currency, movementRateLookup, entry?.channel)
+    : (realFeeUsd === null ? null : roundNumber(realGrossUsd - realFeeUsd));
+  const realNetUsd = derivedNetUsd === null ? null : Math.max(0, roundNumber(derivedNetUsd));
   return {
     id: String(entry?.id || `${entry?.source || "provider"}-${entry?.sourceTransactionId || index}`),
     source: String(entry?.source || "").trim(),
@@ -628,12 +709,19 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
     feeCurrency,
     organization: String(entry?.organization || "").trim(),
     realGrossLocal: roundNumber(realGrossLocal),
-    realFeeLocal: roundNumber(realFeeLocal),
-    realNetLocal: roundNumber(realNetLocal),
+    realFeeLocal: realFeeLocal === null ? null : roundNumber(realFeeLocal),
+    realNetLocal: realNetLocal === null ? null : roundNumber(realNetLocal),
     realGrossUsd,
     realFeeUsd,
     realNetUsd,
+    needsVerification: realNetUsd === null,
   };
+}
+
+function hasExplicitMoneyValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string" && !value.trim()) return false;
+  return Number.isFinite(Number(value));
 }
 
 function summarizeRealIncomeByChannel(entries, movementValues) {
@@ -678,33 +766,56 @@ function summarizeRealIncomeTotals(entries, movementValues) {
 }
 
 function applyRealIncomeToMovementTable(movementTable, realIncome) {
-  if (!movementTable?.values?.length || !realIncome?.entries?.length) return movementTable;
+  if (!movementTable?.values?.length) return movementTable;
+  if (!realIncome) return movementTable;
   const values = movementTable.values.map((row) => row.slice());
   const header = values[2] || [];
-  const realIncomeIndex = header.findIndex((cell) => normalizeSummaryText(cell) === normalizeSummaryText(REAL_INCOME_COLUMN_HEADER));
-  const reviewNoteIndex = header.findIndex((cell) => normalizeSummaryText(cell) === normalizeSummaryText("REVIEW NOTE"));
-  if (realIncomeIndex === -1) return movementTable;
+  const clientPaidIndex = findHeaderIndexByAliases(header, [CLIENT_PAID_COLUMN_HEADER, "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
+  const feeIndex = findHeaderIndexByAliases(header, [PAYMENT_FEE_COLUMN_HEADER]);
+  const netReceivedIndex = findHeaderIndexByAliases(header, [NET_RECEIVED_COLUMN_HEADER]);
+  const realIncomeIndex = findHeaderIndexByAliases(header, [REAL_INCOME_COLUMN_HEADER, "РЕАЛЬНЫЕ ПРИХОДЫ"]);
+  const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
+  const statusIndex = findHeaderIndexByAliases(header, ["STATUS"]);
+  const reviewNoteIndex = findHeaderIndexByAliases(header, ["REVIEW NOTE"]);
+  const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
+  if (realIncomeIndex === -1 || netReceivedIndex === -1 || balanceIndex === -1 || statusIndex === -1 || reviewNoteIndex === -1 || accruedPlusIndex === -1) {
+    return movementTable;
+  }
   const matchedByRow = new Map((realIncome.rowMatches || []).map((match) => [match.rowNumber, match]));
   for (let index = 3; index < values.length; index += 1) {
     const row = values[index] || [];
     const number = String(row[0] || "").trim();
     if (!matchedByRow.has(number)) continue;
     const match = matchedByRow.get(number);
+    if (feeIndex !== -1) row[feeIndex] = formatDisplayNumber(match.realFeeUsd);
+    row[netReceivedIndex] = formatDisplayNumber(match.realNetUsd);
     row[realIncomeIndex] = formatDisplayNumber(match.realNetUsd);
+    row[balanceIndex] = deriveBalance(row[netReceivedIndex], row[accruedPlusIndex]);
+    const statusInfo = deriveStatusInfo({
+      comment: row[4],
+      action: row[6],
+      paymentMethod: row[14],
+      totalUsd: row[netReceivedIndex],
+      accruedPlus3: row[accruedPlusIndex],
+      balance: row[balanceIndex],
+    });
+    row[statusIndex] = statusInfo.status;
     row[reviewNoteIndex] = joinReviewParts([
       row[reviewNoteIndex],
       `real income matched: ${match.matchedProvider}`,
       `real income diff ${formatDisplayNumber(match.differencePct)}%`,
+      !String(row[clientPaidIndex] || "").trim() ? "" : `client paid gross ${formatDisplayNumber(parseLooseNumber(row[clientPaidIndex]))}`,
+      !Number.isFinite(Number(match.realFeeUsd)) ? "" : `provider fee ${formatDisplayNumber(match.realFeeUsd)}`,
+      statusInfo.reviewNote,
     ]);
   }
   values[values.length - 1] = buildFreshMovementTotalRow(values.slice(3, -1));
-  if (movementTable.summaryRows?.length) {
-    const nextSummaryRows = movementTable.summaryRows
-      .filter((row) => normalizeSummaryText(row?.[0]) !== normalizeSummaryText("реально получено net"));
-    nextSummaryRows.push(["реально получено net", formatTableNumber(realIncome.summaryTotals?.realNetUsd || 0)]);
-    movementTable = { ...movementTable, summaryRows: nextSummaryRows };
+  const dataRows = values.slice(3, -1);
+  const nextSummaryRows = buildFreshMovementSummaryRows(dataRows, movementTable.summaryRows || []);
+  if (realIncome?.summaryTotals?.realNetUsd) {
+    nextSummaryRows.push(["provider net verified", formatTableNumber(realIncome.summaryTotals.realNetUsd)]);
   }
-  return { ...movementTable, values };
+  return { ...movementTable, values, ...(nextSummaryRows.length ? { summaryRows: nextSummaryRows } : {}) };
 }
 
 function matchRealIncomeEntriesToMovement(entries, movementValues) {
@@ -980,7 +1091,9 @@ function buildFreshMovementTotalRow(rows) {
     "ПОЛУЧЕНО В ДОЛЛАРАХ",
     "ПОЛУЧЕНО В РУБЛЯХ",
     "ПОЛУЧЕНО В ГРИВНАХ",
-    "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)",
+    CLIENT_PAID_COLUMN_HEADER,
+    PAYMENT_FEE_COLUMN_HEADER,
+    NET_RECEIVED_COLUMN_HEADER,
     REAL_INCOME_COLUMN_HEADER,
     "BALANCE",
     "AMOUNT (USD)",
@@ -1019,15 +1132,18 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const receivedUah = correctedContext.receivedUah;
   const rubRate = derivedContext.rubRate;
   const uahRate = derivedContext.uahRate;
-  const totalUsd = deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
-  const balance = deriveBalance(totalUsd, accruedPlus3);
+  const clientPaidUsd = deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
+  const amountSemantics = buildMovementAmountSemantics({ paymentMethod, clientPaidUsd });
+  const balance = deriveBalance(amountSemantics.netReceivedUsd, accruedPlus3);
   const statusInfo = deriveStatusInfo({
     comment: row[5],
     action: row[7],
     paymentMethod,
-    totalUsd,
+    totalUsd: amountSemantics.netReceivedUsd,
     accruedPlus3,
     balance,
+    needsVerification: amountSemantics.needsVerification,
+    verificationReason: amountSemantics.verificationReason,
   });
 
   return [
@@ -1049,7 +1165,9 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     receivedUsd,
     receivedRub,
     receivedUah,
-    totalUsd,
+    clientPaidUsd,
+    amountSemantics.paymentFeeUsd,
+    amountSemantics.netReceivedUsd,
     "",
     balance,
     statusInfo.status,
@@ -1062,6 +1180,25 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
     "",
     "",
   ];
+}
+
+function buildMovementAmountSemantics({ paymentMethod, clientPaidUsd }) {
+  if (!requiresProviderNetVerification(paymentMethod)) {
+    return {
+      clientPaidUsd,
+      paymentFeeUsd: "",
+      netReceivedUsd: clientPaidUsd,
+      needsVerification: false,
+      verificationReason: "",
+    };
+  }
+  return {
+    clientPaidUsd,
+    paymentFeeUsd: "",
+    netReceivedUsd: "",
+    needsVerification: true,
+    verificationReason: "provider fee/net missing",
+  };
 }
 
 function deriveAccruedAmount(row) {
@@ -1234,6 +1371,10 @@ function looksLikeUahPayment(paymentMethod) {
   return /(грн|uah|приват|privat|карта|монобанк|mono|фоп)/i.test(String(paymentMethod || "").trim());
 }
 
+function requiresProviderNetVerification(paymentMethod) {
+  return /(paypal|п(?:ей|эй)п(?:е|э)л|wise|transferwise|трансервайз)/i.test(String(paymentMethod || "").trim());
+}
+
 function buildSourcePaymentContext(row, previousRates = {}) {
   const payment = extractSourcePaymentMethod(row);
   const paymentMethod = payment.paymentMethod;
@@ -1344,7 +1485,7 @@ function deriveBalance(totalUsd, accruedPlus3) {
   return formatDisplayNumber(total - accrued);
 }
 
-function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlus3, balance }) {
+function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlus3, balance, needsVerification = false, verificationReason = "" }) {
   const commentParts = [String(comment || "").trim(), String(action || "").trim()].filter(Boolean);
   const total = parseLooseNumber(totalUsd);
   const accrued = parseLooseNumber(accruedPlus3);
@@ -1354,6 +1495,18 @@ function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlu
     return {
       status: "CHECK REQUIRED",
       reviewNote: joinReviewParts(["manual review", "missing +3% amount", ...commentParts]),
+    };
+  }
+
+  if (needsVerification) {
+    return {
+      status: "NEEDS VERIFICATION",
+      reviewNote: joinReviewParts([
+        "needs verification",
+        verificationReason,
+        !paymentMethod ? "payment channel missing" : "",
+        ...commentParts,
+      ]),
     };
   }
 

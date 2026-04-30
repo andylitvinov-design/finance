@@ -2451,7 +2451,7 @@ function buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movement
       "план = ACCRUED",
       "план плюс процент начислено = ACCRUED +3%",
       "70% OF +3%",
-      "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО",
+      "ДОШЛО ДО НАС USD",
       "BALANCE"
     ],
     rows: [...movementSummaryRows, movementRealTotalRow]
@@ -2926,7 +2926,7 @@ function calculateMovementChannelStats(values) {
   const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
   const receivedRubIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В РУБЛЯХ"]);
   const receivedUahIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ГРИВНАХ"]);
-  const receivedUsdIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
+  const receivedUsdIndex = findHeaderIndexByAliases(header, ["ДОШЛО ДО НАС USD", "NET RECEIVED USD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
   const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
   const localByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const usdByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
@@ -3151,7 +3151,7 @@ function getMovementTotalsFromTable(values) {
   const seventyIndex = findHeaderIndexByAliases(header, ["70% OF +3%"]);
   const receivedUsdIndex = findHeaderIndexByAliases(
     header,
-    ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]
+    ["ДОШЛО ДО НАС USD", "NET RECEIVED USD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]
   );
   const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
   const totalRow = values.slice(1).find((row) => isTableTotalRow(row));
@@ -3189,6 +3189,10 @@ function getMovementTotalHeaders() {
     "получено в долларах",
     "получено в рублях",
     "получено в гривнах",
+    "оплачено клиентом usd",
+    "комиссия провайдера usd",
+    "дошло до нас usd",
+    "дошло факт provider net",
     "получено в долларах итого (сводный)",
     "balance",
     "amount (usd)",

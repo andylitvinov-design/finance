@@ -80,11 +80,11 @@ test("calculatePayoutTotalsByChannel maps payout rows to matching channels", () 
 test("buildMovementPaymentSummaryRows summarizes movement metrics by payment channel", () => {
   const rows = buildMovementPaymentSummaryRows(
     [
-      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
-      ["1", "А", "сайт, рубли", "100", "103", "72.1", "90", "13"],
-      ["2", "А", "сайт рубли", "50", "51.5", "36.05", "60", "-8.5"],
-      ["18110", "Инна Устименко", "", "100", "103", "72.1", "", "-103"],
-      ["18111", "Инна Устименко", "сайт, дол, пэйпэл", "200", "206", "144.2", "315", "109"]
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ОПЛАЧЕНО КЛИЕНТОМ USD", "ДОШЛО ДО НАС USD", "BALANCE"],
+      ["1", "А", "сайт, рубли", "100", "103", "72.1", "90", "90", "13"],
+      ["2", "А", "сайт рубли", "50", "51.5", "36.05", "60", "60", "-8.5"],
+      ["18110", "Инна Устименко", "", "100", "103", "72.1", "", "", "-103"],
+      ["18111", "Инна Устименко", "сайт, дол, пэйпэл", "200", "206", "144.2", "315", "311.06", "105.06"]
     ],
     ["Яндекс руб", "пейпал дол", "приват 24-грн"],
     {
@@ -99,9 +99,27 @@ test("buildMovementPaymentSummaryRows summarizes movement metrics by payment cha
   );
 
   assert.deepEqual(rows[0], ["Яндекс руб", "150,0000", "154,5000", "108,1500", "150,0000", "4,5000"]);
-  assert.deepEqual(rows[1], ["пейпал дол", "300,0000", "309,0000", "216,3000", "315,0000", "6,0000"]);
+  assert.deepEqual(rows[1], ["пейпал дол", "300,0000", "309,0000", "216,3000", "311,0600", "2,0600"]);
   assert.deepEqual(rows[2], ["приват 24-грн", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000"]);
-  assert.deepEqual(rows[3], ["Итого", "450,0000", "463,5000", "324,4500", "465,0000", "10,5000"]);
+  assert.deepEqual(rows[3], ["Итого", "450,0000", "463,5000", "324,4500", "461,0600", "6,5600"]);
+});
+
+test("buildMovementPaymentSummaryRows prefers net received over client paid when both columns exist", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ОПЛАЧЕНО КЛИЕНТОМ USD", "ДОШЛО ДО НАС USD", "BALANCE"],
+      ["1", "PayPal client", "сайт, дол, пэйпэл", "100", "103", "72.1", "120", "110", "7"]
+    ],
+    ["пейпал дол"],
+    {
+      "пейпал дол": {
+        usdPatterns: [/сайт, дол, пэйпэл|сайт, пэйпэл, дол/i]
+      }
+    }
+  );
+
+  assert.deepEqual(rows[0], ["пейпал дол", "100,0000", "103,0000", "72,1000", "110,0000", "7,0000"]);
+  assert.deepEqual(rows[1], ["Итого", "100,0000", "103,0000", "72,1000", "110,0000", "7,0000"]);
 });
 
 test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank UAH", () => {

@@ -111,6 +111,8 @@
     const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
     const seventyPlusIndex = findHeaderIndexByAliases(header, ["70% OF +3%"]);
     const receivedUsdIndex = findHeaderIndexByAliases(header, [
+      "ДОШЛО ДО НАС USD",
+      "NET RECEIVED USD",
       "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)",
       "RECEIVED TOTAL USD"
     ]);
