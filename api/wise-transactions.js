@@ -125,6 +125,7 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
   const reference = String(transaction?.referenceNumber || "").trim();
   const direction = String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense";
+  const counterparty = buildWiseCounterparty(transaction, direction);
   return {
     id: `wise-${reference || balance?.id || index}`,
     date,
@@ -135,6 +136,7 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     usdAmount: (amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null,
     suggestedCategory: direction === "income" ? "serviceIncome" : "business",
     organization: buildWiseDescription(transaction, balance, profileId),
+    ...counterparty,
     confidence: 0.95,
     source: "wise",
     sourceTransactionId: reference || `${balance?.id || "balance"}-${date}-${index}`,
@@ -205,6 +207,40 @@ function buildWiseDescription(transaction, balance, profileId) {
   ]);
 }
 
+function buildWiseCounterparty(transaction, direction) {
+  const details = transaction?.details || {};
+  const description = String(details.description || "").trim();
+  const merchantName = extractWiseMerchantName(description);
+  const referenceNumber = String(transaction?.referenceNumber || "").trim();
+  const fallback = firstNonEmpty(description, referenceNumber, "Контрагент не определен");
+  return {
+    counterpartyName: merchantName,
+    counterpartyEmail: "",
+    counterpartyType: merchantName ? "company" : "unknown",
+    counterpartyRole: merchantName ? "merchant" : "unknown",
+    counterpartyLabel: `${direction === "income" ? "От" : "Кому"}: ${firstNonEmpty(merchantName, fallback)}`,
+    merchantName,
+    description,
+    referenceNumber,
+    transferType: String(details.type || "").trim()
+  };
+}
+
+function extractWiseMerchantName(description) {
+  const text = String(description || "").trim();
+  if (!text) return "";
+  const patterns = [
+    /\b(?:card payment to|payment to|sent to|transfer to)\s+(.+)$/i,
+    /\b(?:received from|transfer from)\s+(.+)$/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    return String(match[1] || "").trim();
+  }
+  return "";
+}
+
 function compactDescription(parts) {
   const seen = new Set();
   return parts
@@ -218,6 +254,14 @@ function compactDescription(parts) {
     })
     .join(" | ")
     .slice(0, 240);
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
 }
 
 function normalizeWiseMoney(value) {

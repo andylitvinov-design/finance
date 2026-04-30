@@ -140,3 +140,32 @@ test("live CAD rate fetch falls back safely", async () => {
   context.fetch = async () => ({ ok: true, json: async () => ({ rates: { CAD: 1.25 } }) });
   assert.equal(await context.fetchLiveCadUsdRate(), 0.8);
 });
+
+test("manual finance rate display includes CAD row", () => {
+  const context = {
+    parseLooseNumber,
+    MANUAL_FINANCE_FALLBACK_USD_RATES: {
+      RUB: 1 / 84.5563,
+      UAH: 1 / 43.86,
+      EUR: 1.16,
+      CAD: 0.74,
+      LOCAL: 1 / 18,
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "getLocalPerUsdRate")}\n` +
+    `${extractFunction(financeJs, "getManualFinanceDisplayRates")}\n` +
+    "this.getManualFinanceDisplayRates = getManualFinanceDisplayRates;",
+    context
+  );
+
+  const rows = plain(context.getManualFinanceDisplayRates({
+    byCurrency: { CAD: 0.8 }
+  }));
+  assert.deepEqual(rows[3], {
+    label: "канадский доллар",
+    currency: "CAD",
+    rate: 1.25
+  });
+});

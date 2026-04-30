@@ -347,61 +347,76 @@ function renderExpenseAccountingFeed() {
     title.className = "expense-day-title";
     title.textContent = date;
     day.appendChild(title);
-    entries.forEach((entry) => day.appendChild(renderExpenseAccountingRow(entry)));
+    day.appendChild(renderExpenseAccountingTable(entries));
     feed.appendChild(day);
   });
   return feed;
 }
 
-function renderExpenseAccountingRow(entry) {
-  const row = document.createElement("article");
-  row.className = "expense-row";
-  const channel = document.createElement("div");
-  channel.className = "expense-primary";
-  const title = document.createElement("div");
-  title.textContent = entry.channel || "";
-  const meta = document.createElement("div");
-  meta.className = "expense-meta";
-  meta.textContent = buildExpenseAccountingMeta(entry);
-  channel.append(title, meta);
+function renderExpenseAccountingTable(entries) {
+  const shell = document.createElement("div");
+  shell.className = "expense-table-shell";
+
+  const desktopWrap = document.createElement("div");
+  desktopWrap.className = "table-wrap expense-table-desktop";
+  const table = document.createElement("table");
+  const tbody = document.createElement("tbody");
+  const header = document.createElement("tr");
+  ["Канал", "Сумма", "Категория"].forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell;
+    header.appendChild(th);
+  });
+  const counterpartyHeader = document.createElement("th");
+  counterpartyHeader.textContent = "От кого / Кому";
+  header.appendChild(counterpartyHeader);
+  tbody.appendChild(header);
+  entries.forEach((entry) => tbody.appendChild(renderExpenseAccountingTableRow(entry)));
+  table.appendChild(tbody);
+  desktopWrap.appendChild(table);
+  shell.appendChild(desktopWrap);
+
+  const mobileWrap = document.createElement("div");
+  mobileWrap.className = "expense-table-mobile";
+  entries.forEach((entry) => mobileWrap.appendChild(renderExpenseAccountingMobileCard(entry)));
+  shell.appendChild(mobileWrap);
+
+  return shell;
+}
+
+function renderExpenseAccountingTableRow(entry) {
+  const row = document.createElement("tr");
+  const channel = document.createElement("td");
+  channel.appendChild(buildExpenseAccountingChannelNode(entry));
+  const amount = document.createElement("td");
+  amount.className = "expense-amount";
+  amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
+  const category = document.createElement("td");
+  category.appendChild(buildExpenseAccountingCategorySelect(entry));
+  const counterparty = document.createElement("td");
+  counterparty.className = "expense-table-counterparty";
+  counterparty.appendChild(buildExpenseAccountingCounterpartyNode(entry));
+  row.append(channel, amount, category, counterparty);
+  return row;
+}
+
+function renderExpenseAccountingMobileCard(entry) {
+  const card = document.createElement("article");
+  card.className = "expense-table-mobile-card";
+  card.appendChild(buildExpenseAccountingChannelNode(entry));
+
   const amount = document.createElement("div");
   amount.className = "expense-amount";
   amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
-  const select = document.createElement("select");
-  select.className = "expense-select";
-  if (entry.direction === "income") {
-    MANUAL_RECEIVED_ENTRY_TYPES.forEach((category) => {
-      const option = document.createElement("option");
-      option.value = category;
-      option.textContent = category;
-      option.selected = entry.receivedType === category;
-      select.appendChild(option);
-    });
-  } else {
-    MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.forEach((category) => {
-      if (!MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.includes(category)) return;
-      const option = document.createElement("option");
-      option.value = category;
-      option.textContent = category;
-      option.selected = entry.category === category;
-      select.appendChild(option);
-    });
-  }
-  select.addEventListener("change", (event) => {
-    if (entry.direction === "income") {
-      entry.receivedType = normalizeReceivedEntryType(event.target.value);
-      entry.category = mapReceivedTypeToAccountingCategory(entry.receivedType);
-      return;
-    }
-    entry.category = event.target.value;
-  });
-  const org = document.createElement("div");
-  org.className = "expense-org";
-  org.textContent = entry.counterparty || entry.organization || (
-    entry.direction === "income" ? "Источник поступления не распознан" : "Получатель платежа не распознан"
-  );
-  row.append(channel, amount, select, org);
-  return row;
+  card.appendChild(amount);
+
+  const counterpartyLabel = document.createElement("div");
+  counterpartyLabel.className = "expense-mobile-label";
+  counterpartyLabel.textContent = "От кого / Кому";
+  card.appendChild(counterpartyLabel);
+  card.appendChild(buildExpenseAccountingCounterpartyNode(entry));
+  card.appendChild(buildExpenseAccountingCategorySelect(entry));
+  return card;
 }
 
 function renderExpenseFinancialAnalysis() {
@@ -767,10 +782,104 @@ function getExpenseAccountingVisibleEntries() {
 function buildExpenseAccountingMeta(entry) {
   const parts = [entry.date || ""];
   if (entry.dateSource === "upload_fallback") parts.push("дата = fallback по загрузке");
-  parts.push(entry.direction === "income" ? "Received" : "Spent");
+  if (entry.entryKind === "fee") parts.push("PayPal fee");
+  else if (entry.entryKind === "refund") parts.push("Refund");
+  else if (entry.direction === "income") parts.push("Received");
+  else if (entry.direction === "exchange") parts.push("Exchange");
+  else parts.push("Spent");
   return parts.filter(Boolean).join(" · ");
 }
 
+function buildExpenseAccountingChannelNode(entry) {
+  const channel = document.createElement("div");
+  channel.className = "expense-primary";
+  const title = document.createElement("div");
+  title.textContent = entry.channel || "";
+  const meta = document.createElement("div");
+  meta.className = "expense-meta";
+  meta.textContent = buildExpenseAccountingMeta(entry);
+  channel.append(title, meta);
+  return channel;
+}
+
+function buildExpenseAccountingCategorySelect(entry) {
+  const select = document.createElement("select");
+  select.className = "expense-select";
+  if (entry.direction === "income") {
+    MANUAL_RECEIVED_ENTRY_TYPES.forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category;
+      option.selected = entry.receivedType === category;
+      select.appendChild(option);
+    });
+  } else {
+    MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES.forEach((category) => {
+      if (!MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.includes(category)) return;
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category;
+      option.selected = entry.category === category;
+      select.appendChild(option);
+    });
+  }
+  select.addEventListener("change", (event) => {
+    if (entry.direction === "income") {
+      entry.receivedType = normalizeReceivedEntryType(event.target.value);
+      entry.category = mapReceivedTypeToAccountingCategory(entry.receivedType);
+      return;
+    }
+    entry.category = event.target.value;
+  });
+  return select;
+}
+
+function buildExpenseAccountingCounterpartyNode(entry) {
+  const wrap = document.createElement("div");
+  wrap.className = "expense-table-counterparty";
+  const label = buildExpenseAccountingCounterpartyLabel(entry);
+  const details = buildExpenseAccountingCounterpartyDetails(entry);
+
+  const labelNode = document.createElement("div");
+  labelNode.className = "expense-counterparty-label";
+  labelNode.textContent = label;
+  labelNode.title = details ? `${label}\n${details}` : label;
+  wrap.appendChild(labelNode);
+
+  if (details) {
+    const detailsNode = document.createElement("div");
+    detailsNode.className = "expense-counterparty-details";
+    detailsNode.textContent = details;
+    detailsNode.title = details;
+    wrap.appendChild(detailsNode);
+  }
+  return wrap;
+}
+
+function buildExpenseAccountingCounterpartyLabel(entry) {
+  const explicit = String(entry.counterpartyLabel || "").trim();
+  if (explicit) return explicit;
+  const legacy = String(entry.counterparty || entry.organization || "").trim();
+  if (legacy) {
+    return `${entry.direction === "income" ? "От" : "Кому"}: ${legacy}`;
+  }
+  return "Контрагент не определен";
+}
+
+function buildExpenseAccountingCounterpartyDetails(entry) {
+  const parts = [
+    entry.counterpartyName ? `name: ${entry.counterpartyName}` : "",
+    entry.counterpartyEmail ? `email: ${entry.counterpartyEmail}` : "",
+    entry.payerId ? `payer id: ${entry.payerId}` : "",
+    entry.referenceNumber ? `reference: ${entry.referenceNumber}` : "",
+    entry.payeeName && entry.payeeName !== entry.counterpartyName ? `payee: ${entry.payeeName}` : "",
+    entry.payeeEmail && entry.payeeEmail !== entry.counterpartyEmail ? `payee email: ${entry.payeeEmail}` : "",
+    entry.merchantName && entry.merchantName !== entry.counterpartyName ? `merchant: ${entry.merchantName}` : "",
+    entry.transactionSubject ? `subject: ${entry.transactionSubject}` : "",
+    entry.description ? `details: ${entry.description}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
 function normalizeReceivedEntryType(value) {
   const normalized = String(value || "").trim().toLowerCase().replace(/[ -]+/g, "_");
   if (MANUAL_RECEIVED_ENTRY_TYPES.includes(normalized)) return normalized;
@@ -1227,6 +1336,23 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     receivedType,
     organization: String(entry.organization || entry.counterparty || "").trim(),
     counterparty: String(entry.counterparty || entry.organization || "").trim(),
+    counterpartyName: String(entry.counterpartyName || "").trim(),
+    counterpartyEmail: String(entry.counterpartyEmail || "").trim(),
+    counterpartyType: String(entry.counterpartyType || "").trim(),
+    counterpartyRole: String(entry.counterpartyRole || "").trim(),
+    counterpartyLabel: String(entry.counterpartyLabel || "").trim(),
+    entryKind: String(entry.entryKind || "").trim(),
+    payerName: String(entry.payerName || "").trim(),
+    payerEmail: String(entry.payerEmail || "").trim(),
+    payerId: String(entry.payerId || "").trim(),
+    payeeName: String(entry.payeeName || "").trim(),
+    payeeEmail: String(entry.payeeEmail || "").trim(),
+    merchantName: String(entry.merchantName || "").trim(),
+    transactionSubject: String(entry.transactionSubject || "").trim(),
+    description: String(entry.description || "").trim(),
+    transactionEventCode: String(entry.transactionEventCode || "").trim(),
+    referenceNumber: String(entry.referenceNumber || "").trim(),
+    transferType: String(entry.transferType || "").trim(),
     confidence: Number(entry.confidence || 0),
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),

@@ -46,6 +46,15 @@ test("expense analysis UI keeps refresh action and scrollable tables", () => {
   assert.match(styleCss, /\.analysis-table-wrap table \{ min-width: 640px; \}/);
 });
 
+test("expense accounting UI renders dedicated counterparty column that stays visible on mobile", () => {
+  assert.match(uiJs, /textContent = "От кого \/ Кому"/);
+  assert.match(uiJs, /buildExpenseAccountingCounterpartyLabel\(entry\)/);
+  assert.match(uiJs, /buildExpenseAccountingCounterpartyDetails\(entry\)/);
+  assert.match(styleCss, /\.expense-table-counterparty/);
+  assert.match(styleCss, /\.expense-counterparty-label/);
+  assert.match(styleCss, /\.expense-counterparty-details/);
+  assert.match(styleCss, /\.expense-table-mobile-card/);
+});
 test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual rows for services/spend", () => {
   const context = {
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",

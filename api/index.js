@@ -730,9 +730,16 @@ function resolvePaymentChannel(value) {
   if (normalized === normalizeLookupText("binance save")) return "Бинанс spot";
   const exact = REAL_INCOME_CHANNELS.find((channel) => normalizeLookupText(channel) === normalized);
   if (exact) return exact;
-  if (/сайт.*пейпэл.*дол|сайт.*дол.*пейпэл|paypal.*usd|пейпал.*дол/.test(normalized)) return "пейпал дол";
-  if (/paypal.*eur|пейпал.*евр|пейпал.*euro/.test(normalized)) return "пейпал евр";
-  if (/paypal.*cad|пейпал.*cad|пейпал.*канада/.test(normalized)) return "пейпал сad";
+  const paypalAlias = "(?:paypal|п[еэ]йп(?:а|э)л)";
+  if (new RegExp(`(?:сайт.*${paypalAlias}.*дол|сайт.*дол.*${paypalAlias}|${paypalAlias}.*(?:usd|дол)|(?:usd|дол).*${paypalAlias})`).test(normalized)) {
+    return "пейпал дол";
+  }
+  if (new RegExp(`(?:${paypalAlias}.*(?:eur|евр|euro)|(?:eur|евр|euro).*${paypalAlias})`).test(normalized)) {
+    return "пейпал евр";
+  }
+  if (new RegExp(`(?:${paypalAlias}.*(?:cad|канада)|(?:cad|канада).*${paypalAlias})`).test(normalized)) {
+    return "пейпал сad";
+  }
   if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
   return "";
@@ -1095,12 +1102,33 @@ function derivePayoutUsd({ currency, currentAmount, transferRate, receivedUsd, p
 }
 
 function normalizePaymentMethod(row) {
-  const primary = String(row?.[24] || "").trim();
+  return extractSourcePaymentMethod(row).paymentMethod;
+}
+
+function extractSourcePaymentMethod(row) {
   const secondary = String(row?.[23] || "").trim();
-  if (primary && secondary && !primary.includes(",") && secondary.length <= 16) {
-    return `${secondary}, ${primary}`;
+  const fragments = [];
+  for (let index = 24; index <= 29; index += 1) {
+    const value = String(row?.[index] || "").trim();
+    if (!value) {
+      if (fragments.length) break;
+      continue;
+    }
+    if (looksSourceNumericCell(value)) break;
+    fragments.push(value);
   }
-  return primary || secondary;
+  const primary = fragments.join(", ");
+  const paymentMethod = primary && secondary && !primary.includes(",") && secondary.length <= 16
+    ? `${secondary}, ${primary}`
+    : (primary || secondary);
+  return {
+    paymentMethod,
+    shift: Math.max(0, fragments.length - 1),
+  };
+}
+
+function looksSourceNumericCell(value) {
+  return parseLooseNumber(value) !== null;
 }
 
 function looksLikeRublePayment(paymentMethod) {
@@ -1112,18 +1140,20 @@ function looksLikeUahPayment(paymentMethod) {
 }
 
 function buildSourcePaymentContext(row, previousRates = {}) {
-  const paymentMethod = normalizePaymentMethod(row);
+  const payment = extractSourcePaymentMethod(row);
+  const paymentMethod = payment.paymentMethod;
+  const paymentShift = payment.shift || 0;
   const hasExplicitPaymentMethod = Boolean(paymentMethod);
-  const receivedUsd = hasExplicitPaymentMethod ? normalizeSumCell(row[30]) : "";
-  const receivedRub = hasExplicitPaymentMethod ? normalizeSumCell(row[32]) : "";
+  const receivedUsd = hasExplicitPaymentMethod ? normalizeSumCell(row[30 + paymentShift]) : "";
+  const receivedRub = hasExplicitPaymentMethod ? normalizeSumCell(row[32 + paymentShift]) : "";
   const receivedRubForPayout = hasExplicitPaymentMethod
-    ? normalizeSumCell(firstNonEmpty([row[32], row[31]]))
+    ? normalizeSumCell(firstNonEmpty([row[32 + paymentShift], row[31 + paymentShift]]))
     : "";
   const receivedUah = hasExplicitPaymentMethod
-    ? normalizeSumCell(firstNonEmpty([row[33], row[34]]))
+    ? normalizeSumCell(firstNonEmpty([row[33 + paymentShift], row[34 + paymentShift]]))
     : "";
   const receivedUahForPayout = hasExplicitPaymentMethod
-    ? normalizeSumCell(firstNonEmpty([row[33], row[34], row[32]]))
+    ? normalizeSumCell(firstNonEmpty([row[33 + paymentShift], row[34 + paymentShift], row[32 + paymentShift]]))
     : "";
   const hasUsd = parseLooseNumber(receivedUsd) !== null;
   const hasRub = parseLooseNumber(receivedRubForPayout) !== null;
