@@ -10,7 +10,7 @@ import {
   resolveManualLedgerSource,
 } from "./manual-ledger-maps.js";
 
-const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
+export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4";
@@ -131,8 +131,57 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
   }
 }
 
+export async function probeGoogleSheetAccess({ fetchImpl = fetch } = {}) {
+  const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
+  const privateKey = normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
+  const hasEmail = Boolean(clientEmail);
+  const hasPrivateKey = Boolean(privateKey);
+  const keyLooksPem = hasPemEnvelope(privateKey);
+  const configured = hasEmail && hasPrivateKey && keyLooksPem;
+  const result = {
+    configured,
+    hasEmail,
+    hasPrivateKey,
+    keyLooksPem,
+    authClientCreated: false,
+    readOk: false,
+    rowCount: 0,
+    error: null,
+  };
+
+  if (!hasEmail || !hasPrivateKey) {
+    result.error = "service_account_credentials_missing";
+    return result;
+  }
+  if (!keyLooksPem) {
+    result.error = "service_account_private_key_invalid_pem";
+    return result;
+  }
+
+  try {
+    const accessToken = await requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl });
+    result.authClientCreated = true;
+    const values = await readSheetProbeRow({
+      spreadsheetId: MANUAL_SPREADSHEET_ID,
+      accessToken,
+      fetchImpl,
+    });
+    result.readOk = true;
+    result.rowCount = values.length;
+    return result;
+  } catch (error) {
+    result.error = toSafeGoogleError(error);
+    return result;
+  }
+}
+
 function normalizePrivateKey(value) {
-  return String(value || "").trim().replace(/\\n/g, "\n");
+  return String(value || "").replace(/\\n/g, "\n").trim();
+}
+
+function hasPemEnvelope(privateKey) {
+  return privateKey.startsWith("-----BEGIN PRIVATE KEY-----")
+    && privateKey.endsWith("-----END PRIVATE KEY-----");
 }
 
 async function requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl }) {
@@ -198,6 +247,39 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
     output[title] = range.values || [];
   });
   return output;
+}
+
+async function readSheetProbeRow({ spreadsheetId, accessToken, fetchImpl }) {
+  const escaped = LEDGER_SHEET_NAME.replace(/'/g, "''");
+  const range = encodeURIComponent(`'${escaped}'!A1:V2`);
+  const response = await fetchImpl(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Sheets probe failed with HTTP ${response.status}`);
+  }
+  return payload.values || [];
+}
+
+function toSafeGoogleError(error) {
+  const message = String(error?.message || error || "google_sheet_probe_failed").trim();
+  if (!message) return "google_sheet_probe_failed";
+  const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
+  const emailPattern = clientEmail ? new RegExp(escapeRegExp(clientEmail), "g") : null;
+  return message
+    .replace(/-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/g, "[redacted-private-key]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .replace(emailPattern || /\b\B/g, "[redacted-service-account-email]")
+    .slice(0, 500);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractSheetTitle(range) {

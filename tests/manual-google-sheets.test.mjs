@@ -2,19 +2,180 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import { loadManualRepositoryFromGoogleSheets } from "../api/manual-google-sheets.js";
+import { loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../api/manual-google-sheets.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
-function jsonResponse(payload) {
+function jsonResponse(payload, init = {}) {
   return {
-    ok: true,
-    status: 200,
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
     async json() {
       return payload;
     },
   };
 }
+
+test("probeGoogleSheetAccess reports missing credentials without fetching", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+
+  try {
+    let fetchCount = 0;
+    const probe = await probeGoogleSheetAccess({
+      fetchImpl: async () => {
+        fetchCount += 1;
+        throw new Error("fetch should not be called");
+      },
+    });
+
+    assert.equal(probe.configured, false);
+    assert.equal(probe.hasEmail, false);
+    assert.equal(probe.hasPrivateKey, false);
+    assert.equal(probe.keyLooksPem, false);
+    assert.equal(probe.authClientCreated, false);
+    assert.equal(probe.readOk, false);
+    assert.equal(probe.error, "service_account_credentials_missing");
+    assert.equal(fetchCount, 0);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("probeGoogleSheetAccess validates malformed private key without exposing it", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = "not-a-private-key";
+
+  try {
+    const probe = await probeGoogleSheetAccess({
+      fetchImpl: async () => {
+        throw new Error("fetch should not be called");
+      },
+    });
+
+    assert.equal(probe.configured, false);
+    assert.equal(probe.hasEmail, true);
+    assert.equal(probe.hasPrivateKey, true);
+    assert.equal(probe.keyLooksPem, false);
+    assert.equal(probe.readOk, false);
+    assert.equal(probe.error, "service_account_private_key_invalid_pem");
+    assert.equal(JSON.stringify(probe).includes("not-a-private-key"), false);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("probeGoogleSheetAccess normalizes escaped private key newlines and reads one row", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey
+    .export({ format: "pem", type: "pkcs8" })
+    .toString()
+    .replace(/\n/g, "\\n");
+
+  try {
+    const fetchCalls = [];
+    const probe = await probeGoogleSheetAccess({
+      fetchImpl: async (url) => {
+        fetchCalls.push(String(url));
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({ values: [["date", "operation"], ["2026-05-01", "income"]] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(probe.configured, true);
+    assert.equal(probe.hasEmail, true);
+    assert.equal(probe.hasPrivateKey, true);
+    assert.equal(probe.keyLooksPem, true);
+    assert.equal(probe.authClientCreated, true);
+    assert.equal(probe.readOk, true);
+    assert.equal(probe.rowCount, 2);
+    assert.equal(probe.error, null);
+    assert.equal(fetchCalls.length, 2);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("probeGoogleSheetAccess reports token request failure safely", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const probe = await probeGoogleSheetAccess({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ error_description: "invalid_grant" }, { ok: false, status: 401 });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(probe.configured, true);
+    assert.equal(probe.authClientCreated, false);
+    assert.equal(probe.readOk, false);
+    assert.equal(probe.rowCount, 0);
+    assert.equal(probe.error, "invalid_grant");
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("probeGoogleSheetAccess reports sheet read failure safely", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const probe = await probeGoogleSheetAccess({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({ error: { message: "The caller does not have permission" } }, { ok: false, status: 403 });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(probe.configured, true);
+    assert.equal(probe.authClientCreated, true);
+    assert.equal(probe.readOk, false);
+    assert.equal(probe.rowCount, 0);
+    assert.equal(probe.error, "The caller does not have permission");
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
 
 test("loadManualRepositoryFromGoogleSheets ignores legacy Расходы as an operations source", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;

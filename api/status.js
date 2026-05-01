@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { probeGoogleSheetAccess } from "./manual-google-sheets.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -16,9 +17,11 @@ export default async function handler(request, response) {
   }
 
   try {
-    const [buildMetaResult, packageJson] = await Promise.all([
+    const [buildMetaResult, packageJson, vercelProject, googleProbe] = await Promise.all([
       loadBuildMeta(),
-      loadPackageJson()
+      loadPackageJson(),
+      loadVercelProject(),
+      probeGoogleSheetAccess()
     ]);
     const buildMeta = buildMetaResult.data;
     const buildTime = normalizeValue(buildMeta.buildTime);
@@ -46,6 +49,8 @@ export default async function handler(request, response) {
       ok: true,
       status,
       service: "ezohata-incoming-ledger",
+      vercelProjectName: normalizeValue(process.env.VERCEL_PROJECT_NAME || vercelProject.projectName) || "ezohata-incoming-ledger",
+      deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",
       appVersion: normalizeValue(buildMeta.appVersion || packageJson.version) || "unknown",
       appBuildVersion: normalizeValue(buildMeta.appBuildVersion) || "unknown",
       buildTime: buildTime || "unknown",
@@ -59,6 +64,11 @@ export default async function handler(request, response) {
       ) || "unknown",
       gitProvider: normalizeValue(process.env.VERCEL_GIT_PROVIDER || buildMeta.gitProvider) || "unknown",
       gitRepoSlug: normalizeValue(process.env.VERCEL_GIT_REPO_SLUG || buildMeta.gitRepoSlug) || "unknown",
+      hasGoogleServiceAccountEmail: googleProbe.hasEmail,
+      hasGoogleServiceAccountPrivateKey: googleProbe.hasPrivateKey,
+      googleSheetConfigured: googleProbe.configured,
+      googleSheetReadOk: googleProbe.readOk,
+      googleSheetReadError: googleProbe.error,
       error: effectiveError,
       vercel: {
         isVercel: process.env.VERCEL === "1",
@@ -76,10 +86,13 @@ export default async function handler(request, response) {
       }
     });
   } catch {
+    const googleEnv = getGoogleEnvStatus();
     return response.status(503).json({
       ok: false,
       status: "degraded",
       service: "ezohata-incoming-ledger",
+      vercelProjectName: normalizeValue(process.env.VERCEL_PROJECT_NAME) || "ezohata-incoming-ledger",
+      deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",
       appVersion: "unknown",
       appBuildVersion: "unknown",
       buildTime: "unknown",
@@ -89,6 +102,11 @@ export default async function handler(request, response) {
       commitRef: "unknown",
       gitProvider: "unknown",
       gitRepoSlug: "unknown",
+      hasGoogleServiceAccountEmail: googleEnv.hasEmail,
+      hasGoogleServiceAccountPrivateKey: googleEnv.hasPrivateKey,
+      googleSheetConfigured: googleEnv.configured,
+      googleSheetReadOk: false,
+      googleSheetReadError: "status_runtime_unavailable",
       error: "status_runtime_unavailable",
       vercel: {
         isVercel: process.env.VERCEL === "1",
@@ -149,6 +167,25 @@ async function loadPackageJson() {
   } catch {
     return {};
   }
+}
+
+async function loadVercelProject() {
+  try {
+    const text = await readFile(path.join(process.cwd(), ".vercel", "project.json"), "utf8");
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function getGoogleEnvStatus() {
+  const hasEmail = Boolean(normalizeValue(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL));
+  const hasPrivateKey = Boolean(normalizeValue(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY));
+  return {
+    hasEmail,
+    hasPrivateKey,
+    configured: hasEmail && hasPrivateKey
+  };
 }
 
 function normalizeValue(value) {
