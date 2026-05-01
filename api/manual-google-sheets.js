@@ -1,5 +1,5 @@
 import { createSign } from "node:crypto";
-import { createRequire } from "node:module";
+import LEDGER_CONTRACT from "../manual-ledger-contract.js";
 import {
   MANUAL_LEDGER_HEADERS,
   mapLedgerCategoryToLegacy,
@@ -10,8 +10,6 @@ import {
   resolveManualLedgerSource,
 } from "./manual-ledger-maps.js";
 
-const require = createRequire(import.meta.url);
-const LEDGER_CONTRACT = require("../manual-ledger-contract.js");
 const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
