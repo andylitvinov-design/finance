@@ -5,6 +5,7 @@ import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
 
 const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;
+export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
 const PAYPAL_CHANNEL_BY_CURRENCY = {
@@ -34,13 +35,14 @@ export default async function handler(request, response) {
     const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
     let result;
     if (clientId && clientSecret) {
+      const environment = process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT;
       try {
         result = await fetchPayPalStatementEntries({
           startDate: payload.startDate,
           endDate: payload.endDate,
           clientId,
           clientSecret,
-          environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
+          environment,
           fetchImpl: fetch
         });
       } catch (error) {
@@ -52,9 +54,16 @@ export default async function handler(request, response) {
           refreshToken: mcpRefreshToken,
           restClientId: clientId,
           restClientSecret: clientSecret,
-          environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
+          environment,
           fetchImpl: fetch
         });
+        result = {
+          ...result,
+          warnings: uniquePayPalWarnings([
+            buildPayPalProviderWarning(error, { environment }),
+            ...(result.warnings || [])
+          ])
+        };
       }
     } else {
       result = await fetchPayPalStatementEntriesFromMcp({
@@ -352,6 +361,35 @@ function collectPayPalFeeWarnings(entries = [], options = {}) {
   return warnings;
 }
 
+export function buildPayPalProviderWarning(error, options = {}) {
+  const message = String(error?.message || error || "").trim();
+  const environment = String(options.environment || DEFAULT_PAYPAL_ENVIRONMENT).trim().toLowerCase() || DEFAULT_PAYPAL_ENVIRONMENT;
+  const hint = isPayPalEnvironmentMismatchCandidate(error, message)
+    ? ` (environment: ${environment}; verify live vs sandbox app credentials).`
+    : ".";
+  return `${PAYPAL_FEE_UNAVAILABLE_WARNING}${hint}`;
+}
+
+function isPayPalEnvironmentMismatchCandidate(error, message) {
+  const status = Number(error?.paypalStatus || error?.status || 0);
+  const normalized = String(message || "").toLowerCase();
+  return status === 401 ||
+    /client authentication failed|invalid_client|invalid client|authentication failed|unauthorized/.test(normalized);
+}
+
+function createPayPalApiError(message, options = {}) {
+  const error = new Error(message);
+  error.paypalStatus = Number(options.status || 0);
+  error.paypalPhase = String(options.phase || "");
+  error.paypalError = String(options.payload?.error || "");
+  error.paypalName = String(options.payload?.name || "");
+  return error;
+}
+
+function uniquePayPalWarnings(warnings = []) {
+  return Array.from(new Set((warnings || []).map((warning) => String(warning || "").trim()).filter(Boolean)));
+}
+
 function addPayPalSummaryAmount(lookup, currency, direction, amount) {
   if (!lookup.has(currency)) lookup.set(currency, { income: 0, expense: 0, exchange: 0, net: 0 });
   const totals = lookup.get(currency);
@@ -403,7 +441,10 @@ export async function getPayPalAccessToken(options = {}) {
   });
   const payload = await upstream.json().catch(() => null);
   if (!upstream.ok || !payload?.access_token) {
-    throw new Error(payload?.error_description || payload?.error || `PayPal token request failed (${upstream.status}).`);
+    throw createPayPalApiError(
+      payload?.error_description || payload?.error || `PayPal token request failed (${upstream.status}).`,
+      { status: upstream.status, payload, phase: "oauth" }
+    );
   }
   return payload.access_token;
 }
@@ -431,7 +472,10 @@ export async function fetchPayPalTransactionDetails(options = {}) {
     });
     const payload = await upstream.json().catch(() => null);
     if (!upstream.ok) {
-      throw new Error(payload?.message || payload?.name || `PayPal transaction request failed (${upstream.status}).`);
+      throw createPayPalApiError(
+        payload?.message || payload?.name || `PayPal transaction request failed (${upstream.status}).`,
+        { status: upstream.status, payload, phase: "transaction_search" }
+      );
     }
     details.push(...(Array.isArray(payload?.transaction_details) ? payload.transaction_details : []));
     totalPages = Math.max(1, Number(payload?.total_pages || 1));
@@ -465,7 +509,10 @@ export async function fetchPayPalTransactionDetailsById(options = {}) {
   });
   const payload = await upstream.json().catch(() => null);
   if (!upstream.ok) {
-    throw new Error(payload?.message || payload?.name || `PayPal transaction detail lookup failed (${upstream.status}).`);
+    throw createPayPalApiError(
+      payload?.message || payload?.name || `PayPal transaction detail lookup failed (${upstream.status}).`,
+      { status: upstream.status, payload, phase: "transaction_detail_lookup" }
+    );
   }
   return Array.isArray(payload?.transaction_details) ? payload.transaction_details : [];
 }
@@ -490,7 +537,7 @@ async function enrichPayPalMcpTransactionDetails(details = [], options = {}) {
   try {
     accessToken = await getPayPalAccessToken({ fetchImpl, baseUrl, clientId, clientSecret });
   } catch (error) {
-    warnings.push(`PayPal REST enrichment token failed: ${String(error?.message || error)}`);
+    warnings.push(buildPayPalProviderWarning(error, { environment: options.environment }));
     debugSamples.push(...targets.slice(0, 5).map((detail) => buildPayPalCounterpartyDebugSample(detail, "rest_token_failed")));
     return { details, warnings, debugSamples };
   }
@@ -516,7 +563,7 @@ async function enrichPayPalMcpTransactionDetails(details = [], options = {}) {
         debugSamples.push(buildPayPalCounterpartyDebugSample(target, "rest_detail_not_found", candidates));
       }
     } catch (error) {
-      warnings.push(`PayPal REST enrichment failed for ${transactionId}: ${String(error?.message || error)}`);
+      warnings.push(buildPayPalProviderWarning(error, { environment: options.environment }));
       debugSamples.push(buildPayPalCounterpartyDebugSample(target, "rest_lookup_failed"));
     }
   }
@@ -531,7 +578,7 @@ async function enrichPayPalMcpTransactionDetails(details = [], options = {}) {
 
   return {
     details: enrichedDetails,
-    warnings,
+    warnings: uniquePayPalWarnings(warnings),
     debugSamples: debugSamples.slice(0, 5)
   };
 }

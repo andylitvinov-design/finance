@@ -1275,7 +1275,18 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
           ok: true,
           status: 200,
           async json() {
-            return { total_pages: 1, transaction_details: [] };
+            return {
+              total_pages: 1,
+              transaction_details: [
+                {
+                  transaction_info: {
+                    transaction_id: "PAYPAL-NOFEE-1",
+                    transaction_initiation_date: "2026-04-18T10:00:00Z",
+                    transaction_amount: { value: "206", currency_code: "USD" },
+                  },
+                },
+              ],
+            };
           },
         };
       }
@@ -1305,7 +1316,9 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.equal(paypalRow?.[23], "NEEDS VERIFICATION");
     assert.match(String(paypalRow?.[24] || ""), /needs verification/i);
     assert.match(String(paypalRow?.[24] || ""), /provider fee\/net missing/i);
-    assert.match((response.body?.data?.realIncome?.warnings || []).join(" | "), /needs verification/i);
+    const realIncomeWarnings = (response.body?.data?.realIncome?.warnings || []).join(" | ");
+    assert.match(realIncomeWarnings, /needs verification/i);
+    assert.match(realIncomeWarnings, /missing fee on income transaction PAYPAL-NOFEE-1/i);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import handler, {
+  buildPayPalProviderWarning,
   fetchPayPalStatementEntries,
   fetchPayPalStatementEntriesFromMcp,
   getReadablePayPalCounterparty,
@@ -498,6 +499,22 @@ test("fetchPayPalStatementEntries warns when income fee is missing", async () =>
   assert.match(String(result.warnings[0] || ""), /missing fee on income transaction TXN-NOFEE/);
 });
 
+test("buildPayPalProviderWarning reports auth and transaction search permission failures", () => {
+  const oauthError = new Error("Client Authentication failed");
+  oauthError.paypalStatus = 401;
+  assert.equal(
+    buildPayPalProviderWarning(oauthError, { environment: "live" }),
+    "PayPal fee unavailable due to API permissions/auth (environment: live; verify live vs sandbox app credentials)."
+  );
+
+  const searchError = new Error("Insufficient permissions for Transaction Search");
+  searchError.paypalStatus = 403;
+  assert.equal(
+    buildPayPalProviderWarning(searchError, { environment: "sandbox" }),
+    "PayPal fee unavailable due to API permissions/auth."
+  );
+});
+
 test("fetchPayPalStatementEntriesFromMcp refreshes OAuth and calls list_transactions", async () => {
   let streamController;
   const postedMethods = [];
@@ -901,6 +918,7 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.source, "paypal-mcp");
+    assert.match(response.body.warnings.join(" | "), /PayPal fee unavailable due to API permissions\/auth/);
     assert.equal(response.body.entries[0].sourceTransactionId, "FALLBACK-1");
     assert.equal(response.body.entries[0].suggestedCategory, "servicein");
   } finally {
