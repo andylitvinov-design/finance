@@ -37,11 +37,66 @@ function plain(value) {
 test("expense UI exposes TD Bank helper wiring", () => {
   assert.match(uiJs, /TD Bank import helper/);
   assert.match(uiJs, /loadTdBankExpenseStatementFromClipboard/);
+  assert.match(uiJs, /parseTdBankClipboardPayload/);
   assert.match(uiJs, /readTdBankPayloadText/);
   assert.match(uiJs, /window\.prompt\("Вставьте TD Bank JSON из буфера обмена"/);
   assert.match(uiJs, /td-easyweb-importer\.js/);
   assert.match(uiJs, /state\.expenseAccounting\.tdBankLoading/);
   assert.match(uiJs, /state\.expenseAccounting\.tdBankSummary/);
+  assert.match(uiJs, /Скопировать bookmarklet/);
+  assert.match(uiJs, /Открыть TD EasyWeb Activity/);
+  assert.match(uiJs, /Запустить bookmarklet/);
+  assert.match(uiJs, /Вернуться в Ledger/);
+  assert.match(uiJs, /Импортировать TD из буфера/);
+});
+
+test("parseTdBankClipboardPayload rejects non-json clipboard text with a friendly TD Bank error", () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "parseTdBankClipboardPayload")}\n` +
+    "this.parseTdBankClipboardPayload = parseTdBankClipboardPayload;",
+    context
+  );
+
+  assert.throws(
+    () => context.parseTdBankClipboardPayload("Задача: проверить TD Bank импорт"),
+    (error) => {
+      assert.match(error.message, /В буфере обмена не TD Bank JSON/);
+      assert.doesNotMatch(error.message, /Unexpected token|SyntaxError/);
+      return true;
+    }
+  );
+});
+
+test("parseTdBankClipboardPayload accepts TD Bank JSON payload", () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "parseTdBankClipboardPayload")}\n` +
+    "this.parseTdBankClipboardPayload = parseTdBankClipboardPayload;",
+    context
+  );
+
+  assert.deepEqual(
+    plain(context.parseTdBankClipboardPayload('{ "source": { "provider": "tdbank" }, "items": [] }')),
+    { source: { provider: "tdbank" }, items: [] }
+  );
+});
+
+test("parseTdBankClipboardPayload rejects JSON from another provider with a friendly TD Bank error", () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "parseTdBankClipboardPayload")}\n` +
+    "this.parseTdBankClipboardPayload = parseTdBankClipboardPayload;",
+    context
+  );
+
+  assert.throws(
+    () => context.parseTdBankClipboardPayload('{ "source": { "provider": "paypal" }, "items": [] }'),
+    /В буфере нет TD Bank payload/
+  );
 });
 
 test("normalizeTdBankClipboardEntries maps clipboard payload into ledger entries", () => {

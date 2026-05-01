@@ -741,9 +741,19 @@ function renderTdBankExpenseHelper() {
   helper.className = "expense-helper";
   const summary = document.createElement("summary");
   summary.textContent = "TD Bank import helper";
-  const note = document.createElement("div");
+  const note = document.createElement("ol");
   note.className = "tab-note";
-  note.textContent = "Откройте TD EasyWeb activity за тот же период, скопируйте bookmarklet, запустите его на странице TD и затем нажмите импорт из буфера.";
+  [
+    "Скопировать bookmarklet",
+    "Открыть TD EasyWeb Activity",
+    "Запустить bookmarklet",
+    "Вернуться в Ledger",
+    "Импортировать TD из буфера"
+  ].forEach((step) => {
+    const item = document.createElement("li");
+    item.textContent = step;
+    note.appendChild(item);
+  });
   const runner = document.createElement("textarea");
   runner.readOnly = true;
   runner.spellcheck = false;
@@ -1349,13 +1359,7 @@ async function loadTdBankExpenseStatementFromClipboard() {
   renderTabs();
   try {
     const raw = await readTdBankPayloadText();
-    if (!raw.trim()) {
-      throw new Error("Буфер обмена пуст. Сначала запустите TD Bank bookmarklet на странице EasyWeb activity.");
-    }
-    const payload = JSON.parse(raw);
-    if (String(payload?.source?.provider || "").trim() !== "tdbank") {
-      throw new Error("В буфере нет TD Bank payload. Скопируйте его bookmarklet-ом из TD EasyWeb.");
-    }
+    const payload = parseTdBankClipboardPayload(raw);
     const entries = normalizeTdBankClipboardEntries(payload);
     state.expenseAccounting.entries = [
       ...state.expenseAccounting.entries.filter((entry) => entry.source !== "tdbank"),
@@ -1376,6 +1380,29 @@ async function loadTdBankExpenseStatementFromClipboard() {
     state.expenseAccounting.tdBankLoading = false;
     renderTabs();
   }
+}
+
+function parseTdBankClipboardPayload(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    throw new Error("Буфер обмена пуст. Сначала запустите TD Bank bookmarklet на странице EasyWeb activity.");
+  }
+  const firstCharCode = text.charCodeAt(0);
+  if (firstCharCode !== 123 && firstCharCode !== 91) {
+    throw new Error("В буфере обмена не TD Bank JSON. Сначала нажмите ‘Скопировать TD bookmarklet’, запустите его на странице TD EasyWeb Activity, затем вернитесь и нажмите ‘Импортировать TD из буфера’.");
+  }
+
+  let payload = null;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new Error("В буфере обмена повреждён TD Bank JSON. Скопируйте payload заново через TD Bank bookmarklet.");
+  }
+
+  if (String(payload?.source?.provider || "").trim() !== "tdbank") {
+    throw new Error("В буфере нет TD Bank payload. Скопируйте его bookmarklet-ом из TD EasyWeb.");
+  }
+  return payload;
 }
 
 async function readTdBankPayloadText() {
