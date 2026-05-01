@@ -85,6 +85,11 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[0].counterpartyType, "company");
   assert.equal(entries[0].counterpartyRole, "payee");
   assert.equal(entries[0].counterpartyLabel, "Кому: Software Inc");
+  assert.equal(entries[0].fromEntity, "me");
+  assert.equal(entries[0].toEntity, "Software Inc");
+  assert.equal(entries[0].operationType, "payout");
+  assert.equal(entries[0].displayFromTo, "Me → Software Inc");
+  assert.equal(entries[0].externalId, "INV-1");
   assert.equal(entries[0].entryKind, "payment");
   assert.equal(entries[0].payeeName, "Software Inc");
   assert.equal(entries[0].payeeEmail, "merchant@example.com");
@@ -92,6 +97,11 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[1].organization, "PayPal fee: Software | invoice INV-1 | custom ORDER-1 | event T0006");
   assert.equal(entries[1].suggestedCategory, "business");
   assert.equal(entries[1].counterpartyLabel, "Кому: Комиссия PayPal");
+  assert.equal(entries[1].fromEntity, "me");
+  assert.equal(entries[1].toEntity, "PayPal Fee");
+  assert.equal(entries[1].operationType, "fee");
+  assert.equal(entries[1].displayFromTo, "Me → PayPal Fee");
+  assert.equal(entries[1].externalId, "INV-1");
   assert.equal(entries[1].entryKind, "fee");
   assert.equal(entries[2].direction, "income");
   assert.equal(entries[2].suggestedCategory, "servicein");
@@ -102,6 +112,11 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[2].counterpartyType, "person");
   assert.equal(entries[2].counterpartyRole, "payer");
   assert.equal(entries[2].counterpartyLabel, "От: Jane Doe");
+  assert.equal(entries[2].fromEntity, "Jane Doe");
+  assert.equal(entries[2].toEntity, "Me");
+  assert.equal(entries[2].operationType, "service_in");
+  assert.equal(entries[2].displayFromTo, "Jane Doe → Me");
+  assert.equal(entries[2].externalId, "TXN-2");
   assert.equal(entries[2].entryKind, "payment");
   assert.equal(entries[2].payerName, "Jane Doe");
   assert.equal(entries[2].payerEmail, "payer@example.com");
@@ -130,6 +145,7 @@ test("normalizePayPalTransactionDetails classifies currency conversion legs as e
     {
       transaction_info: {
         transaction_id: "CONVERSION-1",
+        paypal_reference_id: "REF-EX-1",
         transaction_event_code: "T0200",
         transaction_initiation_date: "2026-04-22T14:30:00Z",
         transaction_amount: { value: "-8.46", currency_code: "EUR" }
@@ -138,6 +154,7 @@ test("normalizePayPalTransactionDetails classifies currency conversion legs as e
     {
       transaction_info: {
         transaction_id: "CONVERSION-2",
+        paypal_reference_id: "REF-EX-1",
         transaction_event_code: "T1105",
         transaction_initiation_date: "2026-04-22T14:30:00Z",
         transaction_amount: { value: "13.00", currency_code: "CAD" }
@@ -149,6 +166,63 @@ test("normalizePayPalTransactionDetails classifies currency conversion legs as e
   assert.deepEqual(entries.map((entry) => entry.direction), ["exchange", "exchange"]);
   assert.deepEqual(entries.map((entry) => entry.suggestedCategory), ["exchange", "exchange"]);
   assert.deepEqual(entries.map((entry) => entry.entryKind), ["exchange", "exchange"]);
+  assert.deepEqual(entries.map((entry) => entry.operationType), ["exchange", "exchange"]);
+  assert.deepEqual(entries.map((entry) => entry.fromEntity), ["PayPal EUR", "PayPal EUR"]);
+  assert.deepEqual(entries.map((entry) => entry.toEntity), ["PayPal CAD", "PayPal CAD"]);
+  assert.deepEqual(entries.map((entry) => entry.displayFromTo), ["PayPal EUR → PayPal CAD", "PayPal EUR → PayPal CAD"]);
+  assert.deepEqual(entries.map((entry) => entry.exchangeLeg), ["out", "in"]);
+  assert.equal(entries[0].exchangeGroupId, "REF-EX-1");
+  assert.equal(entries[1].exchangeGroupId, "REF-EX-1");
+});
+
+test("normalizePayPalTransactionDetails keeps sparse MCP invoice ids out of counterparty labels", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "4DE49858FX1604308",
+        transaction_event_code: "T0200",
+        transaction_initiation_date: "2026-04-22T14:30:00Z",
+        transaction_amount: { value: "-8.46", currency_code: "EUR" },
+        invoice_id: "2202611623284821200_1",
+      }
+    },
+    {
+      transaction_info: {
+        transaction_id: "3N88835107811011F",
+        transaction_event_code: "T0003",
+        transaction_initiation_date: "2026-04-22T14:30:00Z",
+        transaction_amount: { value: "-12.00", currency_code: "USD" },
+        invoice_id: "2202611623284821200_1",
+      }
+    }
+  ]);
+
+  assert.equal(entries[0].displayFromTo, "PayPal EUR → PayPal EUR");
+  assert.equal(entries[0].externalId, "2202611623284821200_1");
+  assert.equal(entries[0].counterpartyName, "");
+  assert.equal(entries[1].displayFromTo, "Me → counterparty unavailable");
+  assert.equal(entries[1].counterpartyLabel, "Кому: counterparty unavailable");
+  assert.equal(entries[1].counterpartyName, "");
+  assert.equal(entries[1].organization, "2202611623284821200_1 | invoice 2202611623284821200_1 | event T0003");
+});
+
+test("normalizePayPalTransactionDetails ignores technical transaction subjects as readable counterparties", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "5P31220414740291C",
+        transaction_event_code: "T0003",
+        transaction_initiation_date: "2026-04-22T14:30:00Z",
+        transaction_amount: { value: "-12.00", currency_code: "USD" },
+        invoice_id: "43610720",
+        transaction_subject: "42127468",
+      }
+    }
+  ]);
+
+  assert.equal(entries[0].displayFromTo, "Me → counterparty unavailable");
+  assert.equal(entries[0].counterpartyLabel, "Кому: counterparty unavailable");
+  assert.equal(entries[0].externalId, "43610720");
 });
 
 test("normalizePayPalTransactionDetails keeps refunds out of merchant expense labeling", () => {
@@ -176,6 +250,9 @@ test("normalizePayPalTransactionDetails keeps refunds out of merchant expense la
   assert.equal(entries[0].direction, "income");
   assert.equal(entries[0].entryKind, "refund");
   assert.equal(entries[0].counterpartyLabel, "От: Merchant Support");
+  assert.equal(entries[0].fromEntity, "Merchant Support");
+  assert.equal(entries[0].toEntity, "Me");
+  assert.equal(entries[0].displayFromTo, "Merchant Support → Me");
 });
 
 test("summarizePayPalStatementEntries groups income and expense by month and currency", () => {

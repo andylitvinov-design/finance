@@ -929,7 +929,8 @@ function buildExpenseAccountingCategorySelect(entry) {
 function buildExpenseAccountingCounterpartyNode(entry) {
   const wrap = document.createElement("div");
   wrap.className = "expense-table-counterparty";
-  const label = buildExpenseAccountingCounterpartyLabel(entry);
+  const label = buildExpenseAccountingFromToLabel(entry);
+  const operationLabel = buildExpenseAccountingOperationTypeLabel(entry);
   const details = buildExpenseAccountingCounterpartyDetails(entry);
 
   const labelNode = document.createElement("div");
@@ -937,6 +938,14 @@ function buildExpenseAccountingCounterpartyNode(entry) {
   labelNode.textContent = label;
   labelNode.title = details ? `${label}\n${details}` : label;
   wrap.appendChild(labelNode);
+
+  if (operationLabel) {
+    const operationNode = document.createElement("div");
+    operationNode.className = "expense-counterparty-details";
+    operationNode.textContent = operationLabel;
+    operationNode.title = operationLabel;
+    wrap.appendChild(operationNode);
+  }
 
   if (details) {
     const detailsNode = document.createElement("div");
@@ -946,6 +955,34 @@ function buildExpenseAccountingCounterpartyNode(entry) {
     wrap.appendChild(detailsNode);
   }
   return wrap;
+}
+
+function buildExpenseAccountingFromToLabel(entry) {
+  const explicit = String(entry.displayFromTo || "").trim();
+  if (explicit) return explicit;
+  const fromEntity = normalizeExpenseAccountingEntityLabel(entry.fromEntity || entry.from_entity || "");
+  const toEntity = normalizeExpenseAccountingEntityLabel(entry.toEntity || entry.to_entity || "");
+  if (fromEntity || toEntity) return `${fromEntity || "Unknown"} → ${toEntity || "Unknown"}`;
+  return buildExpenseAccountingCounterpartyLabel(entry);
+}
+
+function normalizeExpenseAccountingEntityLabel(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (normalized.toLowerCase() === "me") return "Me";
+  return normalized;
+}
+
+function buildExpenseAccountingOperationTypeLabel(entry) {
+  const value = String(entry.operationType || entry.operation_type || "").trim().toLowerCase();
+  if (value === "service_in") return "service_in";
+  if (value === "payout") return "payout";
+  if (value === "exchange") {
+    const leg = String(entry.exchangeLeg || "").trim().toLowerCase();
+    return leg ? `exchange (${leg})` : "exchange";
+  }
+  if (value === "fee") return "fee";
+  return "";
 }
 
 function buildExpenseAccountingCounterpartyLabel(entry) {
@@ -960,6 +997,9 @@ function buildExpenseAccountingCounterpartyLabel(entry) {
 
 function buildExpenseAccountingCounterpartyDetails(entry) {
   const parts = [
+    entry.operationType || entry.operation_type ? `operation: ${entry.operationType || entry.operation_type}` : "",
+    entry.externalId || entry.external_id ? `external id: ${entry.externalId || entry.external_id}` : "",
+    entry.exchangeGroupId || entry.exchange_group_id ? `exchange group: ${entry.exchangeGroupId || entry.exchange_group_id}` : "",
     entry.counterpartyName ? `name: ${entry.counterpartyName}` : "",
     entry.counterpartyEmail ? `email: ${entry.counterpartyEmail}` : "",
     entry.payerId ? `payer id: ${entry.payerId}` : "",
@@ -972,6 +1012,7 @@ function buildExpenseAccountingCounterpartyDetails(entry) {
     entry.counterEdrpou ? `edrpou: ${entry.counterEdrpou}` : "",
     entry.mcc ? `mcc: ${entry.mcc}` : "",
     entry.description ? `details: ${entry.description}` : "",
+    entry.rawMetadata ? `raw: ${entry.rawMetadata}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
 }
@@ -1562,6 +1603,14 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     counterpartyType: String(entry.counterpartyType || "").trim(),
     counterpartyRole: String(entry.counterpartyRole || "").trim(),
     counterpartyLabel: String(entry.counterpartyLabel || "").trim(),
+    fromEntity: String(entry.fromEntity || entry.from_entity || "").trim(),
+    toEntity: String(entry.toEntity || entry.to_entity || "").trim(),
+    operationType: String(entry.operationType || entry.operation_type || "").trim(),
+    externalId: String(entry.externalId || entry.external_id || "").trim(),
+    exchangeGroupId: String(entry.exchangeGroupId || entry.exchange_group_id || "").trim(),
+    exchangeLeg: String(entry.exchangeLeg || "").trim(),
+    displayFromTo: String(entry.displayFromTo || "").trim(),
+    rawMetadata: String(entry.rawMetadata || "").trim(),
     entryKind: String(entry.entryKind || "").trim(),
     payerName: String(entry.payerName || "").trim(),
     payerEmail: String(entry.payerEmail || "").trim(),
