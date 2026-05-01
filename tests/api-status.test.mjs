@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import handler from "../api/status.js";
+
+const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
 function createResponseRecorder() {
   return {
@@ -24,6 +27,16 @@ function createResponseRecorder() {
   };
 }
 
+function jsonResponse(payload, init = {}) {
+  return {
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    async json() {
+      return payload;
+    }
+  };
+}
+
 test("GET /api/status returns build metadata when generated file exists", async () => {
   const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
   const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
@@ -37,7 +50,9 @@ test("GET /api/status returns build metadata when generated file exists", async 
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
   ]);
 
   await mkdir(path.dirname(buildMetaPath), { recursive: true });
@@ -77,6 +92,7 @@ test("GET /api/status returns build metadata when generated file exists", async 
     VERCEL_GIT_PROVIDER: "github",
     VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance"
   });
+  clearGoogleEnv();
 
   try {
     const response = createResponseRecorder();
@@ -90,7 +106,14 @@ test("GET /api/status returns build metadata when generated file exists", async 
     assert.equal(response.body?.appBuildVersion, "2026.04.30.99");
     assert.equal(response.body?.deployTime, "2026-04-30T19:20:00.000Z");
     assert.equal(response.body?.deploymentEnvironment, "production");
+    assert.equal(response.body?.vercelProjectName, "ezohata-incoming-ledger");
+    assert.equal(response.body?.deploymentUrl, "ezohata-incoming-ledger.vercel.app");
     assert.equal(response.body?.vercel?.deploymentUrl, "ezohata-incoming-ledger.vercel.app");
+    assert.equal(response.body?.hasGoogleServiceAccountEmail, false);
+    assert.equal(response.body?.hasGoogleServiceAccountPrivateKey, false);
+    assert.equal(response.body?.googleSheetConfigured, false);
+    assert.equal(response.body?.googleSheetReadOk, false);
+    assert.equal(response.body?.googleSheetReadError, "service_account_credentials_missing");
     assert.equal(response.body?.observability?.hasGitMetadata, true);
     assert.equal(response.body?.observability?.metadataSource, "generated");
     assert.equal(response.body?.error, null);
@@ -114,7 +137,9 @@ test("GET /api/status falls back safely when build metadata file is missing", as
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
   ]);
 
   await rm(buildMetaPath, { force: true });
@@ -127,6 +152,7 @@ test("GET /api/status falls back safely when build metadata file is missing", as
   process.env.VERCEL_ENV = "preview";
   process.env.VERCEL_URL = "preview.example.vercel.app";
   delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  clearGoogleEnv();
 
   try {
     const response = createResponseRecorder();
@@ -148,6 +174,63 @@ test("GET /api/status falls back safely when build metadata file is missing", as
   }
 });
 
+test("GET /api/status reports Google Sheet probe success without exposing secrets", async () => {
+  const envBackup = snapshotEnv([
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+  ]);
+  const originalFetch = globalThis.fetch;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey
+    .export({ format: "pem", type: "pkcs8" })
+    .toString()
+    .replace(/\n/g, "\\n");
+  process.env.VERCEL = "1";
+  process.env.VERCEL_ENV = "production";
+  process.env.VERCEL_URL = "ezohata-incoming-ledger.vercel.app";
+  process.env.VERCEL_PROJECT_PRODUCTION_URL = "ezohata-incoming-ledger.vercel.app";
+  process.env.VERCEL_GIT_COMMIT_SHA = "envsha123";
+  process.env.VERCEL_GIT_COMMIT_REF = "main";
+  process.env.VERCEL_GIT_PROVIDER = "github";
+  process.env.VERCEL_GIT_REPO_SLUG = "andylitvinov-design/finance";
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      return jsonResponse({ access_token: "token" });
+    }
+    if (String(url).includes("sheets.googleapis.com")) {
+      return jsonResponse({ values: [["date", "operation"]] });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  try {
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: {} }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.hasGoogleServiceAccountEmail, true);
+    assert.equal(response.body?.hasGoogleServiceAccountPrivateKey, true);
+    assert.equal(response.body?.googleSheetConfigured, true);
+    assert.equal(response.body?.googleSheetReadOk, true);
+    assert.equal(response.body?.googleSheetReadError, null);
+    const serialized = JSON.stringify(response.body);
+    assert.equal(serialized.includes("manual-ledger-test@example.com"), false);
+    assert.equal(serialized.includes("BEGIN PRIVATE KEY"), false);
+    assert.equal(serialized.includes("token"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(envBackup);
+  }
+});
+
 test("GET /api/status uses Vercel git env vars when metadata files are missing", async () => {
   const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
   const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
@@ -161,7 +244,9 @@ test("GET /api/status uses Vercel git env vars when metadata files are missing",
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
   ]);
 
   await rm(buildMetaPath, { force: true });
@@ -176,6 +261,7 @@ test("GET /api/status uses Vercel git env vars when metadata files are missing",
     VERCEL_GIT_PROVIDER: "github",
     VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance"
   });
+  clearGoogleEnv();
 
   try {
     const response = createResponseRecorder();
@@ -212,7 +298,9 @@ test("GET /api/status returns degraded JSON when build metadata is malformed", a
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
   ]);
 
   await mkdir(path.dirname(overridePath), { recursive: true });
@@ -225,6 +313,7 @@ test("GET /api/status returns degraded JSON when build metadata is malformed", a
   process.env.VERCEL_ENV = "production";
   process.env.VERCEL_URL = "ezohata-incoming-ledger.vercel.app";
   process.env.VERCEL_PROJECT_PRODUCTION_URL = "ezohata-incoming-ledger.vercel.app";
+  clearGoogleEnv();
 
   try {
     const response = createResponseRecorder();
@@ -257,7 +346,9 @@ test("GET /api/status degrades when metadata exists but commit fields are unavai
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
   ]);
 
   await mkdir(path.dirname(overridePath), { recursive: true });
@@ -281,6 +372,7 @@ test("GET /api/status degrades when metadata exists but commit fields are unavai
   process.env.VERCEL_ENV = "production";
   process.env.VERCEL_URL = "ezohata-incoming-ledger.vercel.app";
   process.env.VERCEL_PROJECT_PRODUCTION_URL = "ezohata-incoming-ledger.vercel.app";
+  clearGoogleEnv();
 
   try {
     const response = createResponseRecorder();
@@ -309,6 +401,11 @@ function restoreEnv(snapshot) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+}
+
+function clearGoogleEnv() {
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
 }
 
 async function restoreFile(filePath, originalText) {
