@@ -11,6 +11,9 @@
     "amount",
     "currency",
     "amount_usd",
+    "amount_gross",
+    "amount_fee",
+    "amount_net",
     "category",
     "subcategory",
     "direction",
@@ -466,8 +469,6 @@
   function getBalanceAmount(row, options = {}) {
     const explicitNet = parseLedgerNumber(getValue(row, "amount_net", "amountNet"));
     if (explicitNet !== null) return signLedgerAmount(explicitNet, row);
-    const amount = parseLedgerNumber(getValue(row, "amount"));
-    if (amount === null) return null;
     if (!options.suppressWarnings && Array.isArray(options.warnings)) {
       const externalId = String(
         getValue(row, "external_id", "externalId") ||
@@ -475,10 +476,10 @@
           ""
       ).trim();
       options.warnings.push(
-        `Ledger v2 fallback: amount_net missing${externalId ? ` for ${externalId}` : ""}; balance used amount.`
+        `Ledger v2 error: amount_net missing${externalId ? ` for ${externalId}` : ""}; balance not calculated.`
       );
     }
-    return signLedgerAmount(amount, row);
+    return null;
   }
 
   function isLedgerV2Row(row) {
@@ -550,6 +551,7 @@
     if (["expense", "transfer", "exchange"].includes(normalized.operation) && !normalized.from_channel) {
       errors.push("from_channel is required for expense, transfer, and exchange");
     }
+    if (!normalized.amount_net) errors.push("amount_net is required");
     if (normalized.operation === "exchange" && !normalized.amount_usd) {
       errors.push("amount_usd is required for exchange");
     }

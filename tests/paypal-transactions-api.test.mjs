@@ -110,7 +110,7 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[2].feeAmount, null);
   assert.equal(entries[2].amountGross, 20);
   assert.equal(entries[2].amountFee, null);
-  assert.equal(entries[2].amountNet, null);
+  assert.equal(entries[2].amountNet, 20);
   assert.equal(entries[2].counterpartyName, "Jane Doe");
   assert.equal(entries[2].counterpartyEmail, "payer@example.com");
   assert.equal(entries[2].counterpartyType, "person");

@@ -14,7 +14,8 @@ const MANUAL_FINANCE_TOTAL_LABEL = "Итого";
 const ANALYTICS_FACT_IMPORT_SHEET = "MANUAL_INPUTS_IMPORT";
 const MANUAL_LEDGER_CONTRACT = window.EzohataManualLedgerContract || {};
 const MANUAL_LEDGER_HEADERS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_HEADERS || [
-  "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category",
+  "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd",
+  "amount_gross", "amount_fee", "amount_net", "category",
   "subcategory", "direction", "comment", "counterparty", "description", "source", "external_id",
   "raw_source_id", "transfer_group_id", "created_at", "updated_at"
 ];

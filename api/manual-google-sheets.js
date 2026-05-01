@@ -178,7 +178,7 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
   const url = new URL(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values:batchGet`);
   sheetNames.forEach((name) => {
     const escaped = name.replace(/'/g, "''");
-    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:S` : `'${escaped}'`;
+    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:V` : `'${escaped}'`;
     url.searchParams.append("ranges", range);
   });
   const response = await fetchImpl(url.toString(), {
@@ -215,13 +215,19 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   const normalizedOperations = parseNormalizedOperationRows(values, rateLookup);
   if (normalizedOperations) {
     const ledgerV2Rows = normalizedOperations.map((row) => row.ledgerV2).filter(Boolean);
+    const warnings = buildLedgerV2RepositoryWarnings(normalizedOperations, values);
+    const blockingWarnings = warnings.filter((warning) => /amount_net|amount_usd.*required/i.test(warning));
+    if (blockingWarnings.length) {
+      throw new Error(blockingWarnings.join(" "));
+    }
     return {
       schema: hasLedgerV2Header(values) ? "ledger-v2-compatible" : "ledger-v1",
       operations: normalizedOperations,
       ledgerV2Rows,
-      warnings: buildLedgerV2RepositoryWarnings(normalizedOperations, values),
+      warnings,
       expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
       views: {
+        fallback_amount_rows: 0,
         byDateChannel: buildOperationsPivotByDateChannel(normalizedOperations),
         byCategory: buildOperationsPivotByCategory(normalizedOperations),
       },
@@ -378,21 +384,20 @@ function buildLedgerV2RepositoryWarnings(operations, values) {
   const warnings = [];
   const ledgerV2Header = hasLedgerV2Header(values);
   if (!ledgerV2Header) {
-    warnings.push("Ledger v2 physical columns need verification: current Sheet is Ledger v1; v2 rows are normalized in memory.");
+    warnings.push("Ledger v2 physical columns need verification: current Sheet is Ledger v1; v2 rows are not used for balance until amount_net exists.");
   }
   const fallbackCount = (operations || []).filter((row) => {
-    if (!ledgerV2Header) return String(row?.amount || "").trim();
-    return (row?.ledgerV2?.warnings || []).some((warning) => /amount_net missing/.test(String(warning || "")));
+    return !String(row?.amountNet ?? row?.amount_net ?? "").trim();
   }).length;
   if (fallbackCount) {
-    warnings.push(`Ledger v2 fallback: ${fallbackCount} row(s) have empty amount_net; balance falls back to amount.`);
+    warnings.push(`Ledger v2 error: ${fallbackCount} row(s) have empty amount_net; balance was not calculated.`);
   }
   const exchangeMissingUsd = (operations || []).filter((row) => {
     const operation = normalizeOperation(row?.operation, row?.category);
     return (operation === "exchange_in" || operation === "exchange_out") && !String(row?.amountUsd || "").trim();
   }).length;
   if (exchangeMissingUsd) {
-    warnings.push(`Ledger v2 warning: ${exchangeMissingUsd} exchange row(s) still have empty amount_usd after normalization.`);
+    warnings.push(`Ledger v2 error: amount_usd is required for ${exchangeMissingUsd} exchange row(s).`);
   }
   return warnings;
 }
@@ -467,7 +472,7 @@ function mapOperationToLegacyChannel(operation) {
 }
 
 function mapOperationToLegacyAmount(operation, category) {
-  const amount = parseNumberString(operation?.amount);
+  const amount = getOperationBalanceAmount(operation);
   if (!Number.isFinite(amount) || !category) return null;
   if (category === "serviceIncome") return Math.abs(amount);
   if (category === "exchange") {
@@ -483,7 +488,7 @@ function buildOperationsPivotByDateChannel(operations) {
   const grouped = new Map();
   for (const operation of operations || []) {
     const channel = mapOperationToLegacyChannel(operation);
-    const amount = parseNumberString(operation?.amount);
+    const amount = getOperationBalanceAmount(operation);
     if (!channel || !Number.isFinite(amount)) continue;
     const key = `${operation.date}|${channel}`;
     const current = grouped.get(key) || { date: operation.date, channel, amount: 0, amountUsd: 0 };
@@ -494,6 +499,12 @@ function buildOperationsPivotByDateChannel(operations) {
   return Array.from(grouped.values()).sort((left, right) =>
     left.date === right.date ? left.channel.localeCompare(right.channel) : left.date.localeCompare(right.date)
   );
+}
+
+function getOperationBalanceAmount(operation) {
+  const value = operation?.ledgerV2?.balance_amount ?? operation?.balanceAmount;
+  if (value === null || value === undefined || value === "") return NaN;
+  return Number(value);
 }
 
 function buildOperationsPivotByCategory(operations) {

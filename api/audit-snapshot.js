@@ -70,9 +70,9 @@ export async function buildAuditSnapshot(options = {}) {
     },
     {
       name: "balance_amount_source",
-      status: balanceResult.fallback_amount_rows ? "needs verification" : "ok",
-      message: balanceResult.fallback_amount_rows
-        ? "Some balance rows used amount fallback because amount_net was missing."
+      status: balanceResult.missing_amount_net_rows ? "needs verification" : "ok",
+      message: balanceResult.missing_amount_net_rows
+        ? "Some balance rows are excluded because amount_net is missing."
         : "Balance uses amount_net-compatible normalized ledger values.",
     },
     {
@@ -244,12 +244,16 @@ function buildSummary(operations, repository) {
 function buildBalances(operations) {
   const grouped = new Map();
   const warnings = [];
-  let fallbackAmountRows = 0;
+  let missingAmountNetRows = 0;
   let totalUsd = 0;
   let hasTotalUsd = false;
 
   for (const row of operations) {
     const ledger = row?.ledgerV2 || {};
+    if (!String(ledger.amount_net ?? row.amountNet ?? "").trim()) {
+      missingAmountNetRows += 1;
+      continue;
+    }
     const balanceAmount = parseNumber(ledger.balance_amount ?? row.balanceAmount);
     if (balanceAmount === null) continue;
     const channel = getBalanceChannel(row, balanceAmount);
@@ -264,11 +268,10 @@ function buildBalances(operations) {
       hasTotalUsd = true;
     }
     grouped.set(channel, existing);
-    if (!String(ledger.amount_net ?? row.amountNet ?? "").trim()) fallbackAmountRows += 1;
   }
 
-  if (fallbackAmountRows) {
-    warnings.push(`Ledger v2 fallback: ${fallbackAmountRows} row(s) have empty amount_net; balance falls back to amount.`);
+  if (missingAmountNetRows) {
+    warnings.push(`Ledger v2 error: ${missingAmountNetRows} row(s) have empty amount_net; balance was not calculated.`);
   }
 
   return {
@@ -281,7 +284,8 @@ function buildBalances(operations) {
         rows: row.rows,
       })),
     total_usd: hasTotalUsd ? round(totalUsd) : null,
-    fallback_amount_rows: fallbackAmountRows,
+    fallback_amount_rows: 0,
+    missing_amount_net_rows: missingAmountNetRows,
     warnings,
   };
 }
@@ -354,7 +358,7 @@ function buildExchangeSummary(operations) {
     missing_amount_usd_rows: missingAmountUsdRows,
     total_out_usd: hasOut ? round(totalOut) : null,
     total_in_usd: hasIn ? round(totalIn) : null,
-    compatibility_mode: true,
+    compatibility_mode: false,
     warnings: missingAmountUsdRows
       ? [`Ledger v2 warning: ${missingAmountUsdRows} exchange row(s) have empty amount_usd.`]
       : [],

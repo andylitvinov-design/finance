@@ -90,7 +90,7 @@ test("ledger v2 normalizes income gross fee net and balance prefers net", () => 
   assert.equal(contract.validateLedgerRow(row).ok, true);
 });
 
-test("ledger v2 balance falls back to amount and records warning when net is missing", () => {
+test("ledger v2 refuses balance fallback when net is missing", () => {
   const warnings = [];
   const row = contract.normalizeLedgerRow({
     date: "2026-05-01",
@@ -104,8 +104,9 @@ test("ledger v2 balance falls back to amount and records warning when net is mis
   const balance = contract.getBalanceAmount(row, { warnings });
 
   assert.equal(row.amount_net, "");
-  assert.equal(balance, 100);
+  assert.equal(balance, null);
   assert.match(warnings[0], /amount_net missing.*missing-net/);
+  assert.deepEqual(contract.validateLedgerRow(row).errors, ["amount_net is required"]);
 });
 
 test("ledger v2 normalizes exchange amount_usd signs and two-row aggregation", () => {
@@ -117,6 +118,7 @@ test("ledger v2 normalizes exchange amount_usd signs and two-row aggregation", (
     amount: "74669",
     currency: "RUB",
     amount_usd: "883.0684",
+    amount_net: "74669",
     category: "exchange",
     raw_source_id: "ex-1"
   });
@@ -127,6 +129,7 @@ test("ledger v2 normalizes exchange amount_usd signs and two-row aggregation", (
     to_channel: "Бинанс spot",
     amount: "874",
     currency: "USD",
+    amount_net: "874",
     category: "exchange",
     raw_source_id: "ex-1:in"
   });
