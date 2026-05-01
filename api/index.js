@@ -1448,14 +1448,17 @@ function buildSourcePaymentContext(row, previousRates = {}) {
 }
 
 function isCryptoPaymentMethod(paymentMethod) {
-  return /(крипт|crypto|binance|бинанс)/i.test(String(paymentMethod || "").trim());
+  return /(крипт|crypto|binance|бинанс|usdt|usdc|trc20|erc20)/i.test(String(paymentMethod || "").trim());
+}
+
+function getAccruedMarkupMultiplier(paymentMethod) {
+  return isCryptoPaymentMethod(paymentMethod) ? 1.01 : 1.03;
 }
 
 function deriveAccruedPlusPercent(accrued, paymentMethod) {
   const accruedValue = parseLooseNumber(accrued);
   if (accruedValue === null) return "";
-  const multiplier = isCryptoPaymentMethod(paymentMethod) ? 1.01 : 1.03;
-  return formatDisplayNumber(accruedValue * multiplier);
+  return formatDisplayNumber(accruedValue * getAccruedMarkupMultiplier(paymentMethod));
 }
 
 function deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate }) {
