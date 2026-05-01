@@ -298,3 +298,63 @@ test("getCurrentAnalyticsManualRows prefers aggregated period rows over end-date
     { channel: "пейпал евр", now: "0", serviceIncome: "222,7500", business: "20,0000", flat: "0", food: "0", fun: "0", study: "0", travel: "12,5000", total: "32,5000", exchange: "", exchangeUsd: "", totalUsd: "", nowUsd: "" }
   ]);
 });
+
+test("getCurrentFactMetricTotals uses aggregated period rows instead of stale fact snapshot rows", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    state: {
+      aggregatedManualRange: {
+        rows: [
+          { channel: "Яндекс руб", serviceIncome: "200,0000", business: "50,0000", flat: "10,0000", food: "0", fun: "0", study: "0", travel: "0" },
+          { channel: "пейпал дол", serviceIncome: "300,0000", business: "40,0000", flat: "0", food: "0", fun: "0", study: "0", travel: "0" },
+        ],
+        transferRows: [],
+      },
+      manualFinance: {
+        data: {
+          moneyRows: [{ channel: "Яндекс руб", serviceIncome: "0,0000", business: "0,0000" }],
+          transferRows: [],
+        },
+      },
+      analyticsFact: {
+        periodEnd: "2026-04-30",
+      },
+      data: {
+        tabs: {
+          movement: {
+            values: [],
+          },
+        },
+      },
+    },
+    elements: {
+      endDate: {
+        value: "2026-04-30",
+      },
+    },
+    getCurrentAnalyticsManualRows() {
+      return context.state.aggregatedManualRange.rows;
+    },
+    getCurrentFactMetricTransfers() {
+      return context.state.aggregatedManualRange.transferRows;
+    },
+    buildManualFinanceUsdRateLookup() {
+      return {};
+    },
+    getManualFinanceFieldUsdNumber(row, key) {
+      const value = String(row?.[key] ?? "").trim();
+      return value ? Number(value.replace(",", ".")) : 0;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "getCurrentFactMetricTotals")}\n` +
+    "this.getCurrentFactMetricTotals = getCurrentFactMetricTotals;",
+    context
+  );
+
+  assert.deepEqual(plain(context.getCurrentFactMetricTotals()), {
+    myServices: 500,
+    myCosts: 100,
+  });
+});

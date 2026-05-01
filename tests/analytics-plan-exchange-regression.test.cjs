@@ -221,3 +221,34 @@ test("analytics UI still maps movement summary and personal ledger rows to diffe
   assert.equal(context.getAnalyticsSectionDisplayTitle(movementSummarySection), "Сверка Movement по каналам");
   assert.equal(context.getAnalyticsSectionDisplayTitle(personalSection), "Движение 1");
 });
+
+test("analytics UI does not render duplicate Движение 1 titles when both sections are present", () => {
+  const context = {
+    normalizeCell,
+    findHeaderIndexByAliases(header, aliases) {
+      return header.findIndex((cell) => aliases.some((alias) => normalizeCell(cell) === normalizeCell(alias)));
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "isAnalyticsPersonalSection")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionDisplayTitle")}\n` +
+    "this.getAnalyticsSectionDisplayTitle = getAnalyticsSectionDisplayTitle;",
+    context
+  );
+
+  const sections = [
+    {
+      title: "движение 1",
+      rows: [["канал переводов", "план = ACCRUED"]],
+    },
+    {
+      title: "Личные расходы",
+      rows: [["валюта", "now", "приход от услуг", "обмен"]],
+    },
+  ];
+
+  const displayTitles = sections.map((section) => context.getAnalyticsSectionDisplayTitle(section));
+  assert.deepEqual(displayTitles, ["Сверка Movement по каналам", "Движение 1"]);
+  assert.equal(displayTitles.filter((title) => title === "Движение 1").length, 1);
+});
