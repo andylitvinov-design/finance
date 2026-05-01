@@ -136,6 +136,81 @@ async function ensureSheetExists(title, spreadsheetId = getManualFinanceSpreadsh
   return payload.replies?.[0]?.addSheet?.properties?.sheetId || null;
 }
 
+function getSpreadsheetSheetProperties(metadata, title) {
+  return (metadata?.sheets || []).find((sheet) => sheet?.properties?.title === title)?.properties || null;
+}
+
+async function ensureManualLedgerSourceColumn() {
+  const spreadsheetId = getManualFinanceSpreadsheetId();
+  const sheetTitle = getManualLedgerSheetName();
+  const metadata = await getManualSpreadsheetMetadata();
+  const sheetProperties = getSpreadsheetSheetProperties(metadata, sheetTitle);
+  if (!sheetProperties?.sheetId) {
+    return { insertedSourceColumn: false, backfilledRows: 0, missingSheet: true };
+  }
+  const sourceIndex = MANUAL_LEDGER_HEADERS.indexOf("source");
+  const rawSourceIndex = MANUAL_LEDGER_HEADERS.indexOf("raw_source_id");
+  const sourceColumnLetter = columnLetter(sourceIndex + 1);
+  const initialValues = await getSheetValuesByTitle(sheetTitle, spreadsheetId);
+  const initialHeader = (initialValues[0] || []).map((cell) => String(cell || "").trim());
+  if (!initialHeader.some(Boolean)) {
+    return { insertedSourceColumn: false, backfilledRows: 0, missingHeader: true };
+  }
+  const hasSourceColumn = initialHeader[sourceIndex] === "source";
+  if (!hasSourceColumn) {
+    const hasLegacyHeader = initialHeader[sourceIndex] === "raw_source_id" && !initialHeader.includes("source");
+    if (!hasLegacyHeader) {
+      throw new Error(`Ledger sheet header mismatch. Expected source at column ${sourceIndex + 1}.`);
+    }
+    await googleSheetsFetch(`/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId: sheetProperties.sheetId,
+                dimension: "COLUMNS",
+                startIndex: sourceIndex,
+                endIndex: sourceIndex + 1
+              },
+              inheritFromBefore: true
+            }
+          }
+        ]
+      })
+    });
+    await batchUpdateSheetValues([
+      {
+        range: `'${sheetTitle.replace(/'/g, "''")}'!${sourceColumnLetter}1`,
+        values: [["source"]]
+      }
+    ], spreadsheetId);
+  }
+
+  const ledgerValues = hasSourceColumn ? initialValues : await getSheetValuesByTitle(sheetTitle, spreadsheetId);
+  const header = (ledgerValues[0] || []).map((cell) => String(cell || "").trim());
+  if (header[sourceIndex] !== "source") {
+    throw new Error("Ledger source column migration did not complete successfully.");
+  }
+  const updates = [];
+  for (let rowIndex = 1; rowIndex < ledgerValues.length; rowIndex += 1) {
+    const row = ledgerValues[rowIndex] || [];
+    const sourceValue = String(row[sourceIndex] || "").trim();
+    const rawSourceId = String(row[rawSourceIndex] || "").trim();
+    if (sourceValue || !/^migration:/i.test(rawSourceId)) continue;
+    updates.push({
+      range: `'${sheetTitle.replace(/'/g, "''")}'!${sourceColumnLetter}${rowIndex + 1}`,
+      values: [["manual"]]
+    });
+  }
+  await batchUpdateSheetValues(updates, spreadsheetId);
+  return {
+    insertedSourceColumn: !hasSourceColumn,
+    backfilledRows: updates.length
+  };
+}
+
 async function deleteSheetIfExists(title, spreadsheetId = getManualFinanceSpreadsheetId()) {
   const metadata = await getSpreadsheetMetadata(spreadsheetId);
   const existing = (metadata.sheets || []).find((sheet) => sheet?.properties?.title === title);
@@ -169,6 +244,22 @@ async function overwriteSheetValues(sheetTitle, values, spreadsheetId = getManua
       range: `'${sheetTitle}'!A1:${endColumn}${endRow}`,
       majorDimension: "ROWS",
       values
+    })
+  });
+}
+
+async function batchUpdateSheetValues(data, spreadsheetId = getManualFinanceSpreadsheetId()) {
+  const updates = (data || []).filter((item) => item?.range && Array.isArray(item.values));
+  if (!updates.length) return;
+  await googleSheetsFetch(`/spreadsheets/${spreadsheetId}/values:batchUpdate?valueInputOption=USER_ENTERED`, {
+    method: "POST",
+    body: JSON.stringify({
+      data: updates.map((item) => ({
+        range: item.range,
+        majorDimension: "ROWS",
+        values: item.values
+      })),
+      valueInputOption: "USER_ENTERED"
     })
   });
 }
@@ -208,8 +299,15 @@ function normalizeManualLedgerSource(value, fallback = "") {
   return fallback;
 }
 
-function getManualLedgerDisplaySource(value) {
-  return normalizeManualLedgerSource(value, "") || "unknown";
+function resolveManualLedgerSource(value, rawSourceId = "", fallback = "") {
+  const normalized = normalizeManualLedgerSource(value, "");
+  if (normalized) return normalized;
+  if (/^migration:/i.test(String(rawSourceId || "").trim())) return "manual";
+  return fallback;
+}
+
+function getManualLedgerDisplaySource(value, rawSourceId = "") {
+  return resolveManualLedgerSource(value, rawSourceId, "") || "unknown";
 }
 
 function assertIncomingTransferHeaders(values) {
@@ -433,8 +531,8 @@ function parseManualLedgerSheetValues(values) {
       subcategory: String(read("subcategory") || "").trim(),
       direction: normalizeManualLedgerDirection(read("direction"), operation),
       comment: [String(read("comment") || "").trim(), ...warningParts].filter(Boolean).join(" | "),
-      source: indexByName.source === -1 ? "" : normalizeManualLedgerSource(read("source"), ""),
-      displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source")),
+      source: resolveManualLedgerSource(indexByName.source === -1 ? "" : read("source"), rawSourceId, ""),
+      displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source"), rawSourceId),
       rawSourceId,
       transferGroupId: String(read("transfer_group_id") || "").trim(),
       createdAt: String(read("created_at") || "").trim(),
@@ -634,6 +732,7 @@ function buildDeletedManualLedgerSheetValues(values, sheetRowNumber) {
 }
 
 async function updateManualLedgerRowDirect(rowPatch) {
+  await ensureManualLedgerSourceColumn();
   const ledgerValues = await getSheetValuesByTitle(getManualLedgerSheetName());
   const updatedValues = buildUpdatedManualLedgerSheetValues(ledgerValues, rowPatch);
   await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
@@ -642,6 +741,7 @@ async function updateManualLedgerRowDirect(rowPatch) {
 }
 
 async function deleteManualLedgerRowDirect(sheetRowNumber) {
+  await ensureManualLedgerSourceColumn();
   const ledgerValues = await getSheetValuesByTitle(getManualLedgerSheetName());
   const updatedValues = buildDeletedManualLedgerSheetValues(ledgerValues, sheetRowNumber);
   await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
@@ -889,6 +989,7 @@ function mergeLatestNowEntries(primary = {}, fallback = {}) {
 // ============================================================
 
 async function listManualSheetDatesDirect() {
+  await ensureManualLedgerSourceColumn();
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
   const transferValues = titles.has(getManualTransfersSheetName())
@@ -923,6 +1024,7 @@ async function listManualSheetDatesDirect() {
 async function getManualSheetDirect(startDate, endDate) {
   const period = normalizePeriod(startDate, endDate);
   const snapshotDate = period.endDate;
+  await ensureManualLedgerSourceColumn();
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
   const [ledgerValues, transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
@@ -1090,6 +1192,7 @@ async function saveManualTransfersSheetDirect(startDate, endDate, rawTransferRow
 async function saveManualSheetDirect(params) {
   const period = normalizePeriod(params.startDate, params.endDate);
   const snapshotDate = period.endDate;
+  await ensureManualLedgerSourceColumn();
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
   const existingTransfers = titles.has(getManualTransfersSheetName())

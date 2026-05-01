@@ -31,7 +31,8 @@ manual | mcp | photo
 Backward-compatible fallback:
 
 - old Ledger sheets without `source` still load;
-- missing `source` is treated as empty on the data layer;
+- rows with `raw_source_id` prefixed by `migration:` are normalized to `manual`;
+- other missing `source` values are treated as empty on the data layer;
 - UI displays missing source as `unknown`.
 
 Allowed `operation` values:
@@ -196,6 +197,12 @@ The helper:
 - logs created row count, skipped rows, unknown categories, unknown channels, and a sample
 
 No destructive migration is run automatically.
+
+The app can safely self-heal the `Ledger` header when Google write access is available:
+
+- insert `source` between `comment` and `raw_source_id` if the workbook still has the legacy header;
+- backfill only blank `source` cells for rows with `raw_source_id` prefixed by `migration:` to `manual`;
+- leave all other existing rows unchanged.
 
 ## Risks
 
