@@ -462,7 +462,53 @@ test("loadManualRepositoryFromGoogleSheets keeps empty Ledger as explicit ledger
     assert.deepEqual(repository.operations, []);
     assert.deepEqual(repository.expenseRows, []);
     assert.equal(repository.fallbackSchema, "legacy-expense-grid");
-    assert.match(fetchCalls[1], /ranges=%27Ledger%27%21A%3AP/);
+    assert.match(fetchCalls[1], /ranges=%27Ledger%27%21A%3AS/);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets fills UAH amount_usd and reads detail fields", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:S",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "counterparty", "description", "source", "external_id", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                  ["2026-04-25", "business_expense", "приват 24-грн", "", "4386", "UAH", "", "business", "", "out", "comment", "ТОВ Сервіс", "Оплата", "mcp", "PB-1", "PB-1", "", "2026-04-25T09:00:00.000Z", "2026-04-25T09:00:00.000Z"],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
+              { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
+              { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.operations[0].amountUsd, "100");
+    assert.equal(repository.operations[0].counterparty, "ТОВ Сервіс");
+    assert.equal(repository.operations[0].description, "Оплата");
+    assert.equal(repository.operations[0].externalId, "PB-1");
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;

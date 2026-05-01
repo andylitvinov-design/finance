@@ -492,7 +492,7 @@ function renderExpenseAccountingTable(entries) {
   const table = document.createElement("table");
   const tbody = document.createElement("tbody");
   const header = document.createElement("tr");
-  ["Канал", "Сумма", "Категория"].forEach((cell) => {
+  ["Канал", "Сумма", "Клиент заплатил", "Net получено", "Категория"].forEach((cell) => {
     const th = document.createElement("th");
     th.textContent = cell;
     header.appendChild(th);
@@ -521,12 +521,18 @@ function renderExpenseAccountingTableRow(entry) {
   const amount = document.createElement("td");
   amount.className = "expense-amount";
   amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
+  const clientPaid = document.createElement("td");
+  clientPaid.className = "expense-amount";
+  clientPaid.textContent = formatOptionalProviderAmount(entry.amountClientPaid, entry.currency);
+  const netReceived = document.createElement("td");
+  netReceived.className = "expense-amount";
+  netReceived.textContent = formatOptionalProviderAmount(entry.amountNetReceived, entry.currency);
   const category = document.createElement("td");
   category.appendChild(buildExpenseAccountingCategorySelect(entry));
   const counterparty = document.createElement("td");
   counterparty.className = "expense-table-counterparty";
   counterparty.appendChild(buildExpenseAccountingCounterpartyNode(entry));
-  row.append(channel, amount, category, counterparty);
+  row.append(channel, amount, clientPaid, netReceived, category, counterparty);
   return row;
 }
 
@@ -540,6 +546,24 @@ function renderExpenseAccountingMobileCard(entry) {
   amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
   card.appendChild(amount);
 
+  const clientPaidLabel = document.createElement("div");
+  clientPaidLabel.className = "expense-mobile-label";
+  clientPaidLabel.textContent = "Клиент заплатил";
+  card.appendChild(clientPaidLabel);
+  const clientPaid = document.createElement("div");
+  clientPaid.className = "expense-amount";
+  clientPaid.textContent = formatOptionalProviderAmount(entry.amountClientPaid, entry.currency);
+  card.appendChild(clientPaid);
+
+  const netReceivedLabel = document.createElement("div");
+  netReceivedLabel.className = "expense-mobile-label";
+  netReceivedLabel.textContent = "Net получено";
+  card.appendChild(netReceivedLabel);
+  const netReceived = document.createElement("div");
+  netReceived.className = "expense-amount";
+  netReceived.textContent = formatOptionalProviderAmount(entry.amountNetReceived, entry.currency);
+  card.appendChild(netReceived);
+
   const counterpartyLabel = document.createElement("div");
   counterpartyLabel.className = "expense-mobile-label";
   counterpartyLabel.textContent = "От кого / Кому";
@@ -547,6 +571,12 @@ function renderExpenseAccountingMobileCard(entry) {
   card.appendChild(buildExpenseAccountingCounterpartyNode(entry));
   card.appendChild(buildExpenseAccountingCategorySelect(entry));
   return card;
+}
+
+function formatOptionalProviderAmount(value, currency) {
+  const amount = parseLooseNumber(value);
+  if (!amount) return "—";
+  return `${formatSheetNumber(amount)} ${currency || ""}`.trim();
 }
 
 function renderExpenseFinancialAnalysis() {
@@ -1954,6 +1984,10 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
     currency: String(entry.currency || inferManualFinanceChannelCurrency(entry.channel)).trim().toUpperCase(),
     usdAmount: parseLooseNumber(entry.usdAmount),
+    amountClientPaid: parseLooseNumber(entry.amountClientPaid ?? entry.amount_client_paid ?? entry.localAmount),
+    amount_client_paid: parseLooseNumber(entry.amountClientPaid ?? entry.amount_client_paid ?? entry.localAmount),
+    amountNetReceived: parseLooseNumber(entry.amountNetReceived ?? entry.amount_net_received ?? entry.localAmount),
+    amount_net_received: parseLooseNumber(entry.amountNetReceived ?? entry.amount_net_received ?? entry.localAmount),
     category: direction === "income"
       ? mapReceivedTypeToAccountingCategory(receivedType)
       : (normalizeManualExpenseCategory(entry.suggestedCategory || entry.category) || "business"),

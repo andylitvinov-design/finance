@@ -28,12 +28,34 @@ test("normalizePrivatBankStatementItem maps common statement rows to ledger entr
   assert.equal(entry.direction, "expense");
   assert.equal(entry.localAmount, 4517.6);
   assert.equal(entry.currency, "UAH");
+  assert.equal(entry.usdAmount, 103.0005);
   assert.equal(entry.organization, "Оплата сервісу | рахунок 44 | account UA111");
   assert.equal(entry.counterpartyName, "ТОВ Сервіс");
   assert.equal(entry.counterpartyLabel, "Кому: ТОВ Сервіс");
   assert.equal(entry.counterIban, "UA999");
   assert.equal(entry.source, "privatbank");
   assert.equal(entry.sourceTransactionId, "PB-1");
+  assert.equal(entry.externalId, "PB-1");
+});
+
+test("normalizePrivatBankStatementItem keeps exchange details for ledger dual-row save", () => {
+  const entry = normalizePrivatBankStatementItem({
+    id: "PB-EX-1",
+    date: "2026-04-21",
+    amount: "-4300",
+    currency: "UAH",
+    toAmount: "100",
+    toCurrency: "USD",
+    description: "Обмін валюти"
+  });
+
+  assert.equal(entry.direction, "exchange");
+  assert.equal(entry.suggestedCategory, "exchange");
+  assert.equal(entry.usdAmount, 98.0392);
+  assert.equal(entry.toChannel, "приват 24-дол");
+  assert.equal(entry.toAmount, 100);
+  assert.equal(entry.toCurrency, "USD");
+  assert.equal(entry.exchangeGroupId, "PB-EX-1");
 });
 
 test("summarizePrivatBankStatementEntries groups totals by currency", () => {
@@ -79,6 +101,9 @@ test("fetchPrivatBankStatementEntries calls configured endpoint with date range"
 
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0].direction, "income");
+  assert.equal(result.entries[0].usdAmount, 2.28);
+  assert.equal(result.ledgerRows.length, 1);
+  assert.equal(result.ledgerRows[0].amount_usd, "2.28");
   assert.equal(result.transactionCount, 1);
   assert.equal(result.source, "privatbank");
 });

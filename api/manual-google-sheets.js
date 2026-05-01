@@ -171,7 +171,7 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
   const url = new URL(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values:batchGet`);
   sheetNames.forEach((name) => {
     const escaped = name.replace(/'/g, "''");
-    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:P` : `'${escaped}'`;
+    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:S` : `'${escaped}'`;
     url.searchParams.append("ranges", range);
   });
   const response = await fetchImpl(url.toString(), {
@@ -281,7 +281,10 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
     subcategory: findHeaderIndex(header, ["subcategory", "подкатегория"]),
     direction: findHeaderIndex(header, ["direction", "направление"]),
     comment: findHeaderIndex(header, ["comment", "комментарий"]),
+    counterparty: findHeaderIndex(header, ["counterparty", "контрагент", "от кого / кому"]),
+    description: findHeaderIndex(header, ["description", "описание", "details"]),
     source: findHeaderIndex(header, ["source", "источник"]),
+    externalId: findHeaderIndex(header, ["external_id", "external id", "transaction id"]),
     rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id"]),
     transferGroupId: findHeaderIndex(header, ["transfer_group_id", "exchange_group_id", "transfer group id"]),
     createdAt: findHeaderIndex(header, ["created_at", "created at"]),
@@ -307,8 +310,11 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         subcategory: String(row[indexes.subcategory] || "").trim(),
         direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
         comment: String(row[indexes.comment] || "").trim(),
+        counterparty: String(row[indexes.counterparty] || "").trim(),
+        description: String(row[indexes.description] || "").trim(),
         source: indexes.source === -1 ? "" : normalizeManualLedgerSource(row[indexes.source], ""),
-        rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
+        externalId: String(row[indexes.externalId] || row[indexes.rawSourceId] || "").trim(),
+        rawSourceId: String(row[indexes.rawSourceId] || row[indexes.externalId] || "").trim(),
         transferGroupId: String(row[indexes.transferGroupId] || "").trim(),
         createdAt: String(row[indexes.createdAt] || "").trim(),
         updatedAt: String(row[indexes.updatedAt] || "").trim(),

@@ -19,7 +19,7 @@ Analytics should prefer `Ledger`. If `Ledger` is missing or empty, the app falls
 `Ledger` headers:
 
 ```text
-date | operation | from_channel | to_channel | amount | currency | amount_usd | category | subcategory | direction | comment | source | raw_source_id | transfer_group_id | created_at | updated_at
+date | operation | from_channel | to_channel | amount | currency | amount_usd | category | subcategory | direction | comment | counterparty | description | source | external_id | raw_source_id | transfer_group_id | created_at | updated_at
 ```
 
 `source` values:
@@ -52,8 +52,8 @@ Validation rules:
 - Unknown `category`: store as `extra`, preserve the raw value in warning/comment.
 - Unknown channel: preserve the raw value and warn.
 - Empty or invalid `amount`: skip from sums and warn.
-- Missing `amount_usd`: derive only when a defensible rate exists; otherwise keep blank/null.
-- Duplicate `raw_source_id`: keep the first imported row and skip duplicates.
+- Missing `amount_usd`: derive from explicit row rate, transfer-rate lookup, or fallback rates; UAH rows must not persist blank/null USD.
+- Duplicate `external_id` or `raw_source_id`: keep the first imported row and skip duplicates.
 - Unknown or missing `source`: keep the row and expose it as `unknown` in UI filters.
 
 ## Category Mapping
@@ -142,7 +142,7 @@ amount=<received amount>
 currency=<received currency>
 ```
 
-Both rows share `transfer_group_id` or a related `raw_source_id`.
+Both rows share `transfer_group_id`; imported rows should also expose related `external_id`/`raw_source_id` suffixes such as `PB-1:out` and `PB-1:in`.
 
 Legacy wide summary may still show:
 

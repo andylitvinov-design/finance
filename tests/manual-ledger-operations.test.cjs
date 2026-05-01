@@ -59,13 +59,17 @@ function buildLedgerTestContext() {
       "subcategory",
       "direction",
       "comment",
+      "counterparty",
+      "description",
       "source",
+      "external_id",
       "raw_source_id",
       "transfer_group_id",
       "created_at",
       "updated_at"
     ],
     MANUAL_FINANCE_CHANNELS: ["Яндекс руб", "пейпал дол", "Бинанс spot", "binance save", "монобанк грн", "приват 24-грн"],
+    MANUAL_FINANCE_FALLBACK_USD_RATES: { UAH: 1 / 43.86, RUB: 1 / 84.5563, LOCAL: 1 / 18 },
     MANUAL_NOW_CATEGORY: "now",
     canonicalManualFinanceChannel(value) {
       const normalized = String(value || "").trim().toLowerCase();
@@ -153,6 +157,9 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "assertManualLedgerHeaders")}\n` +
     `${extractFunction(googleSheetsJs, "parseManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "buildManualLedgerSheetValues")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeLedgerAmountUsdForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerUsdPerLocalRate")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeLedgerExchangeUsdSign")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerRowsForSave")}\n` +
     `${extractFunction(googleSheetsJs, "trimTrailingEmptySheetRows")}\n` +
     `${extractFunction(googleSheetsJs, "buildUpdatedManualLedgerSheetValues")}\n` +
@@ -186,8 +193,8 @@ test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger ro
   const context = buildLedgerTestContext();
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
-    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "manual", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "edit me", "photo", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "edit me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildUpdatedManualLedgerSheetValues(values, {
@@ -198,19 +205,19 @@ test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger ro
   }));
 
   assert.equal(updated[1][10], "keep me");
-  assert.equal(updated[1][11], "manual");
+  assert.equal(updated[1][13], "manual");
   assert.equal(updated[2][4], "700");
   assert.equal(updated[2][10], "updated row");
-  assert.equal(updated[2][11], "mcp");
+  assert.equal(updated[2][13], "mcp");
 });
 
 test("buildDeletedManualLedgerSheetValues deletes the correct physical Ledger row", () => {
   const context = buildLedgerTestContext();
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
-    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "manual", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "remove me", "photo", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
-    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "servicein", "", "in", "keep me too", "mcp", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
+    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "remove me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "servicein", "", "in", "keep me too", "", "", "mcp", "raw-3", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildDeletedManualLedgerSheetValues(values, 3));
@@ -270,6 +277,31 @@ test("buildLedgerRowsFromAccountingEntries maps provider rows to mcp and OCR row
   assert.equal(rows.length, 2);
   assert.equal(rows[0].source, "mcp");
   assert.equal(rows[1].source, "photo");
+});
+
+test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail fields", () => {
+  const context = buildLedgerTestContext();
+  const normalized = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-01",
+      operation: "business_expense",
+      fromChannel: "приват 24-грн",
+      amount: "4386",
+      currency: "UAH",
+      category: "business",
+      counterparty: "ТОВ Сервіс",
+      description: "Privat payment",
+      externalId: "PB-DETAIL-1",
+      source: "privatbank"
+    }
+  ]));
+
+  assert.equal(normalized.warnings.length, 0);
+  assert.equal(normalized.rows[0].amountUsd, "100,0000");
+  assert.equal(normalized.rows[0].counterparty, "ТОВ Сервіс");
+  assert.equal(normalized.rows[0].description, "Privat payment");
+  assert.equal(normalized.rows[0].externalId, "PB-DETAIL-1");
+  assert.equal(normalized.rows[0].source, "mcp");
 });
 
 test("filterExpenseOperationsRows filters by period, channels, and source", () => {

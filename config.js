@@ -15,7 +15,8 @@ const ANALYTICS_FACT_IMPORT_SHEET = "MANUAL_INPUTS_IMPORT";
 const MANUAL_LEDGER_CONTRACT = window.EzohataManualLedgerContract || {};
 const MANUAL_LEDGER_HEADERS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_HEADERS || [
   "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category",
-  "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"
+  "subcategory", "direction", "comment", "counterparty", "description", "source", "external_id",
+  "raw_source_id", "transfer_group_id", "created_at", "updated_at"
 ];
 const MANUAL_LEDGER_OPERATIONS = MANUAL_LEDGER_CONTRACT.MANUAL_LEDGER_OPERATIONS || [
   "income", "expense", "exchange_in", "exchange_out", "partner_transfer", "business_expense", "personal_expense", "correction"
