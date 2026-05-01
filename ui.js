@@ -282,11 +282,17 @@ function renderExpenseAccountingBlock() {
   yoomoneyButton.textContent = state.expenseAccounting.yoomoneyLoading ? "Загружаю ЮMoney..." : "Подтянуть ЮMoney";
   yoomoneyButton.disabled = state.expenseAccounting.loading || statementLoading;
   yoomoneyButton.addEventListener("click", loadYooMoneyExpenseStatement);
+  const monobankConnectButton = document.createElement("button");
+  monobankConnectButton.type = "button";
+  monobankConnectButton.className = "secondary";
+  monobankConnectButton.textContent = state.expenseAccounting.monobankConnectOpen ? "Скрыть Monobank" : "Подключить Monobank";
+  monobankConnectButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.monobankValidating || statementLoading;
+  monobankConnectButton.addEventListener("click", toggleMonobankConnectPanel);
   const monobankButton = document.createElement("button");
   monobankButton.type = "button";
   monobankButton.className = "secondary";
   monobankButton.textContent = state.expenseAccounting.monobankLoading ? "Загружаю Mono..." : "Подтянуть Mono";
-  monobankButton.disabled = state.expenseAccounting.loading || statementLoading;
+  monobankButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.monobankValidating || statementLoading;
   monobankButton.addEventListener("click", loadMonobankExpenseStatement);
   const privatBankButton = document.createElement("button");
   privatBankButton.type = "button";
@@ -300,9 +306,10 @@ function renderExpenseAccountingBlock() {
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Подтянуть TD Bank";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
-  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankButton, privatBankButton, tdBankButton);
+  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privatBankButton, tdBankButton);
   upload.append(input, actions);
   shell.appendChild(upload);
+  if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderTdBankExpenseHelper());
   shell.appendChild(renderExpenseAccountingResultTabs());
 
@@ -323,6 +330,98 @@ function renderExpenseAccountingSaveButton() {
   button.disabled = state.expenseAccounting.loading;
   button.addEventListener("click", saveExpenseAccountingEntries);
   return button;
+}
+
+function renderMonobankConnectPanel() {
+  const panel = document.createElement("div");
+  panel.className = "provider-connect-card";
+
+  const title = document.createElement("div");
+  title.className = "provider-connect-title";
+  title.textContent = "Подключить Monobank";
+  panel.appendChild(title);
+
+  const note = document.createElement("div");
+  note.className = "config-note";
+  note.append("1. Откройте ");
+  const link = document.createElement("a");
+  link.href = "https://api.monobank.ua/";
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "Monobank API cabinet";
+  note.appendChild(link);
+  note.append(" 2. Скопируйте personal token. 3. Вставьте его ниже и нажмите `Проверить токен`.");
+  panel.appendChild(note);
+
+  const securityNote = document.createElement("div");
+  securityNote.className = "config-note";
+  securityNote.textContent = "Токен хранится только в памяти текущей страницы и уходит только в server request на проверку/импорт. localStorage не используется.";
+  panel.appendChild(securityNote);
+
+  const controls = document.createElement("div");
+  controls.className = "provider-connect-controls";
+
+  const tokenInput = document.createElement("input");
+  tokenInput.type = "password";
+  tokenInput.className = "finance-input provider-token-input";
+  tokenInput.placeholder = "Вставьте Monobank personal token";
+  tokenInput.value = state.expenseAccounting.monobankToken;
+  tokenInput.autocomplete = "off";
+  tokenInput.spellcheck = false;
+  tokenInput.disabled = state.expenseAccounting.monobankValidating || state.expenseAccounting.monobankLoading;
+  tokenInput.addEventListener("input", (event) => {
+    state.expenseAccounting.monobankToken = String(event.target.value || "");
+  });
+
+  const validateButton = document.createElement("button");
+  validateButton.type = "button";
+  validateButton.className = "secondary";
+  validateButton.textContent = state.expenseAccounting.monobankValidating ? "Проверяю токен..." : "Проверить токен";
+  validateButton.disabled = state.expenseAccounting.monobankValidating || state.expenseAccounting.monobankLoading;
+  validateButton.addEventListener("click", validateMonobankConnection);
+
+  controls.append(tokenInput, validateButton);
+  panel.appendChild(controls);
+
+  if (state.expenseAccounting.monobankAccounts.length) {
+    const accountWrap = document.createElement("div");
+    accountWrap.className = "provider-connect-controls";
+
+    const accountSelect = document.createElement("select");
+    accountSelect.className = "finance-input";
+    accountSelect.disabled = state.expenseAccounting.monobankLoading;
+    [
+      { id: "", label: "Все найденные счета" },
+      ...state.expenseAccounting.monobankAccounts
+    ].forEach((account) => {
+      const option = document.createElement("option");
+      option.value = account.id || "";
+      option.textContent = account.label || "Счет Monobank";
+      option.selected = state.expenseAccounting.monobankSelectedAccountId === option.value;
+      accountSelect.appendChild(option);
+    });
+    accountSelect.addEventListener("change", (event) => {
+      state.expenseAccounting.monobankSelectedAccountId = String(event.target.value || "");
+    });
+    accountWrap.appendChild(accountSelect);
+
+    const accountNote = document.createElement("div");
+    accountNote.className = "config-note";
+    accountNote.textContent = state.expenseAccounting.monobankClientName
+      ? `Найдено счетов: ${state.expenseAccounting.monobankAccounts.length}. Клиент: ${state.expenseAccounting.monobankClientName}.`
+      : `Найдено счетов: ${state.expenseAccounting.monobankAccounts.length}.`;
+    accountWrap.appendChild(accountNote);
+    panel.appendChild(accountWrap);
+  }
+
+  if (state.expenseAccounting.monobankValidationMessage) {
+    const status = document.createElement("div");
+    status.className = `provider-connect-status${state.expenseAccounting.monobankValidationError ? " error" : ""}`;
+    status.textContent = state.expenseAccounting.monobankValidationMessage;
+    panel.appendChild(status);
+  }
+
+  return panel;
 }
 
 function renderExpenseAccountingResultTabs() {
@@ -1292,7 +1391,8 @@ async function loadMonobankExpenseStatement() {
     summaryKey: "monobankSummary",
     title: "Monobank",
     progressMessage: "Запрашиваю Monobank-выписку за выбранный период...",
-    emptyMessage: "Monobank-выписка загружена, но строк за период не найдено."
+    emptyMessage: "Monobank-выписка загружена, но строк за период не найдено.",
+    buildRequestPayload: () => buildMonobankRequestPayload()
   });
 }
 
@@ -1320,10 +1420,11 @@ async function loadBankExpenseStatement(config) {
   setExpenseAccountingStatus(config.progressMessage, false);
   renderTabs();
   try {
+    const extraPayload = typeof config.buildRequestPayload === "function" ? (config.buildRequestPayload() || {}) : {};
     const response = await fetch(config.apiPath, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ startDate, endDate })
+      body: JSON.stringify({ startDate, endDate, ...extraPayload })
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload?.ok) {
@@ -1349,6 +1450,70 @@ async function loadBankExpenseStatement(config) {
     setExpenseAccountingStatus(error.message || `Не удалось загрузить ${config.title}-выписку.`, true);
   } finally {
     state.expenseAccounting[config.loadingKey] = false;
+    renderTabs();
+  }
+}
+
+function toggleMonobankConnectPanel() {
+  state.expenseAccounting.monobankConnectOpen = !state.expenseAccounting.monobankConnectOpen;
+  renderTabs();
+}
+
+function buildMonobankRequestPayload() {
+  const payload = {};
+  const token = String(state.expenseAccounting.monobankToken || "").trim();
+  const accountId = String(state.expenseAccounting.monobankSelectedAccountId || "").trim();
+  if (token) payload.apiToken = token;
+  if (accountId) payload.accountId = accountId;
+  return payload;
+}
+
+async function validateMonobankConnection() {
+  const token = String(state.expenseAccounting.monobankToken || "").trim();
+  if (!token) {
+    state.expenseAccounting.monobankValidationMessage = "Вставьте Monobank personal token перед проверкой.";
+    state.expenseAccounting.monobankValidationError = true;
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.monobankValidating = true;
+  state.expenseAccounting.monobankValidationMessage = "Проверяю токен Monobank...";
+  state.expenseAccounting.monobankValidationError = false;
+  renderTabs();
+  try {
+    const response = await fetch("./api/monobank-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "validate",
+        apiToken: token
+      })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `Monobank вернул ошибку (${response.status}).`);
+    }
+    const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+    const selected = String(state.expenseAccounting.monobankSelectedAccountId || "").trim();
+    if (selected && !accounts.some((account) => String(account.id || "") === selected)) {
+      state.expenseAccounting.monobankSelectedAccountId = "";
+    }
+    state.expenseAccounting.monobankAccounts = accounts;
+    state.expenseAccounting.monobankClientName = String(payload.client?.name || "").trim();
+    state.expenseAccounting.monobankMode = String(payload.mode || "manual").trim();
+    state.expenseAccounting.monobankValidationMessage = accounts.length
+      ? `Токен подтверждён. Найдено счетов: ${accounts.length}. Можно подтягивать выписку за период до 31 дня.`
+      : "Токен подтверждён, но доступные счета не найдены.";
+    state.expenseAccounting.monobankValidationError = false;
+    setExpenseAccountingStatus(state.expenseAccounting.monobankValidationMessage, false);
+  } catch (error) {
+    state.expenseAccounting.monobankAccounts = [];
+    state.expenseAccounting.monobankClientName = "";
+    state.expenseAccounting.monobankValidationMessage = error.message || "Не удалось проверить Monobank token.";
+    state.expenseAccounting.monobankValidationError = true;
+    setExpenseAccountingStatus(state.expenseAccounting.monobankValidationMessage, true);
+  } finally {
+    state.expenseAccounting.monobankValidating = false;
     renderTabs();
   }
 }

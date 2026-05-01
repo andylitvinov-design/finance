@@ -16,7 +16,7 @@ Required only when the corresponding provider import is used:
 - `WISE_API_TOKEN`
   Wise statement/balance access for `/api/wise-transactions`.
 - `MONOBANK_API_TOKEN`
-  Monobank personal API token for `/api/monobank-transactions`.
+  Optional server-side Monobank personal API token for `/api/monobank-transactions`. The UI also supports temporary manual token paste without storing it in `localStorage`.
 - `PRIVATBANK_STATEMENT_URL` and `PRIVATBANK_API_TOKEN`
   PrivatBank statement endpoint and API token for `/api/privatbank-transactions`.
 - `YOOMONEY_ACCESS_TOKEN`
@@ -60,6 +60,8 @@ Monobank notes:
 - Official token cabinet: [Monobank API cabinet](https://api.monobank.ua/)
 - Official API docs: [Monobank API documentation](https://api.monobank.ua/docs/index.html)
 - Personal statement sync is limited to 31 days per request.
+- Current minimal-safe user flow is personal-token based, not OAuth/link based. Full Monobank partner/OAuth registration still needs verification.
+- Temporary manual token paste is validated server-side through `/personal/client-info`, then used for `/personal/statement/{account}/{from}/{to}` import. The token is kept only in page memory and request body, not in `localStorage`.
 
 PrivatBank notes:
 
@@ -157,6 +159,7 @@ After adding or adjusting envs in Vercel production:
 2. If `EZOHATA_LEGACY_MANUAL_FINANCE_URL` was intentionally added, open `/api/legacy?health=1` and expect `configured: true`.
 3. If `YOOMONEY_ACCESS_TOKEN` was added, open `Учет расходов`, select a period, click `Подтянуть ЮMoney`, and confirm the monthly provider block appears with RUB income/expense totals.
 4. If `MONOBANK_API_TOKEN` was added, open `Учет расходов`, select a period up to 31 days, click `Подтянуть Mono`, and confirm the monthly provider block appears with UAH totals.
-5. If `PRIVATBANK_STATEMENT_URL` and `PRIVATBANK_API_TOKEN` were added, open `Учет расходов`, select a period, click `Подтянуть Privat`, and confirm the monthly provider block appears with UAH/USD/EUR totals.
-6. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
-7. Manually run the Google OAuth flow from the production app as described above.
+5. If production relies on temporary manual token paste instead of `MONOBANK_API_TOKEN`, open `Учет расходов`, click `Подключить Monobank`, paste the token, verify the masked account list, then click `Подтянуть Mono`.
+6. If `PRIVATBANK_STATEMENT_URL` and `PRIVATBANK_API_TOKEN` were added, open `Учет расходов`, select a period, click `Подтянуть Privat`, and confirm the monthly provider block appears with UAH/USD/EUR totals.
+7. If `OPENAI_API_KEY` was added, upload a screenshot in `Учет расходов` and confirm the response no longer falls back to browser OCR by default.
+8. Manually run the Google OAuth flow from the production app as described above.
