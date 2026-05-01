@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import handler, {
   fetchPayPalStatementEntries,
   fetchPayPalStatementEntriesFromMcp,
+  getReadablePayPalCounterparty,
   normalizePayPalTransactionDetails,
   summarizePayPalStatementEntries,
   splitDateRange,
@@ -253,6 +254,100 @@ test("normalizePayPalTransactionDetails keeps refunds out of merchant expense la
   assert.equal(entries[0].fromEntity, "Merchant Support");
   assert.equal(entries[0].toEntity, "Me");
   assert.equal(entries[0].displayFromTo, "Merchant Support → Me");
+});
+
+test("normalizePayPalTransactionDetails extracts sandbox REST payee business and email fields", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "SANDBOX-PAYOUT-1",
+        transaction_event_code: "T0006",
+        transaction_initiation_date: "2026-04-20T14:30:00Z",
+        transaction_amount: { value: "-42.00", currency_code: "USD" },
+        invoice_id: "INV-SANDBOX-1",
+        custom_field: "CUSTOM-SANDBOX-1",
+        transaction_subject: "INV-SANDBOX-1",
+      },
+      payee_info: {
+        payee_name: {
+          alternate_full_name: "Sandbox Merchant LLC"
+        },
+        email_address: "merchant-facilitator@example.com"
+      },
+      cart_info: {
+        merchant_name: "Lower Priority Merchant",
+        item_details: [{ item_name: "Sandbox test item" }]
+      }
+    }
+  ]);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].direction, "expense");
+  assert.equal(entries[0].counterpartyName, "Sandbox Merchant LLC");
+  assert.equal(entries[0].counterpartyEmail, "merchant-facilitator@example.com");
+  assert.equal(entries[0].counterpartyType, "company");
+  assert.equal(entries[0].counterpartyRole, "payee");
+  assert.equal(entries[0].counterpartyLabel, "Кому: Sandbox Merchant LLC");
+  assert.equal(entries[0].displayFromTo, "Me → Sandbox Merchant LLC");
+  assert.equal(entries[0].externalId, "INV-SANDBOX-1");
+});
+
+test("normalizePayPalTransactionDetails extracts sandbox REST payer person and email fields", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "SANDBOX-INCOME-1",
+        transaction_event_code: "T0003",
+        transaction_initiation_date: "2026-04-21T10:00:00Z",
+        transaction_amount: { value: "120.00", currency_code: "EUR" },
+        transaction_subject: "SANDBOX-INCOME-1",
+      },
+      payer_info: {
+        payer_name: {
+          alternate_full_name: "Sandbox Buyer"
+        },
+        email_address: "buyer@example.com"
+      }
+    }
+  ]);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].direction, "income");
+  assert.equal(entries[0].counterpartyName, "Sandbox Buyer");
+  assert.equal(entries[0].counterpartyEmail, "buyer@example.com");
+  assert.equal(entries[0].counterpartyType, "person");
+  assert.equal(entries[0].counterpartyRole, "payer");
+  assert.equal(entries[0].counterpartyLabel, "От: Sandbox Buyer");
+  assert.equal(entries[0].displayFromTo, "Sandbox Buyer → Me");
+  assert.equal(entries[0].externalId, "SANDBOX-INCOME-1");
+});
+
+test("getReadablePayPalCounterparty keeps sandbox technical ids below readable merchant fields", () => {
+  const readable = getReadablePayPalCounterparty({
+    transaction_info: {
+      transaction_id: "SANDBOX-TECH-1",
+      invoice_id: "INV-TECH-1",
+      custom_field: "CUSTOM-TECH-1",
+      transaction_subject: "INV-TECH-1",
+      transaction_note: "event T0006"
+    },
+    payee_info: {
+      email_address: "merchant@example.com"
+    }
+  }, {
+    direction: "expense",
+    info: {
+      transaction_id: "SANDBOX-TECH-1",
+      invoice_id: "INV-TECH-1",
+      custom_field: "CUSTOM-TECH-1",
+      transaction_subject: "INV-TECH-1",
+      transaction_note: "event T0006"
+    }
+  });
+
+  assert.equal(readable.label, "merchant@example.com");
+  assert.equal(readable.email, "merchant@example.com");
+  assert.equal(readable.unavailable, false);
 });
 
 test("summarizePayPalStatementEntries groups income and expense by month and currency", () => {
