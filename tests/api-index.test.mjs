@@ -551,6 +551,22 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
             return {
               valueRanges: [
                 {
+                  range: "'Ledger'!A:P",
+                  values: [
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                    ["2026-04-24", "business_expense", "Яндекс руб", "", "74669", "RUB", "883.0684", "business", "", "out", "ledger source", "manual", "fact:2026-04-24:business:Яндекс руб:0", "", "", ""],
+                    ["2026-04-24", "exchange_out", "Яндекс руб", "", "74669", "RUB", "883.0684", "exchange", "", "out", "ledger source", "manual", "fact:exchange:2026-04-24:0", "g1", "", ""],
+                    ["2026-04-08", "business_expense", "пейпал дол", "", "15", "USD", "15", "business", "", "out", "ledger source", "manual", "fact:2026-04-08:business:пейпал дол:0", "", "", ""],
+                    ["2026-04-10", "exchange_in", "", "пейпал дол", "10", "USD", "10", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-10:0", "g2", "", ""],
+                    ["2026-04-11", "personal_expense", "приват 24-грн", "", "860", "UAH", "20", "food", "", "out", "ledger source", "manual", "fact:2026-04-11:food:приват 24-грн:0", "", "", ""],
+                    ["2026-04-12", "exchange_in", "", "приват 24-грн", "4300", "UAH", "100", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-12:0", "g3", "", ""],
+                    ["2026-04-15", "personal_expense", "приват 24-грн", "", "430", "UAH", "10", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:приват 24-грн:0", "", "", ""],
+                    ["2026-04-15", "personal_expense", "БАНК КАНАДА cad", "", "300", "CAD", "", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:БАНК КАНАДА cad:0", "", "", ""],
+                    ["2026-04-25", "income", "", "пейпал дол", "369", "USD", "369", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:пейпал дол:0", "", "", ""],
+                    ["2026-04-25", "income", "", "Бинанс spot", "108.15", "USD", "108.15", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:Бинанс spot:0", "", "", ""]
+                  ]
+                },
+                {
                   range: "'Расходы'!A1:V",
                   values: [
                     ["дата", "категория", "яндекс", "пейпал дол", "приват 24-грн"],
@@ -739,11 +755,11 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
     assert.equal(canadaPlanRow?.[3], "300,0000");
     const totalPlanRow = analyticsRows.slice(planIndex + 2, balanceIndex).find((row) => row?.[0] === "Итого");
     assert.equal(totalPlanRow?.[3], "76274,0000");
-    assert.equal(totalPlanRow?.[4], "928,0684");
+    assert.equal(totalPlanRow?.[4], "1150,0684");
     assert.equal(totalPlanRow?.[6], "-70359,0000");
     assert.equal(totalPlanRow?.[7], "-773,0684");
     assert.equal(totalPlanRow?.[8], "-295,9184");
-    assert.equal(totalPlanRow?.[9], "-1223,9868");
+    assert.equal(totalPlanRow?.[9], "-1445,9868");
 
     const findBalanceRow = (channel) =>
       analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);

@@ -16,7 +16,7 @@ function jsonResponse(payload) {
   };
 }
 
-test("loadManualRepositoryFromGoogleSheets keeps timestamped expense rows inside the selected period shape", async () => {
+test("loadManualRepositoryFromGoogleSheets ignores legacy Расходы as an operations source", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
@@ -54,37 +54,11 @@ test("loadManualRepositoryFromGoogleSheets keeps timestamped expense rows inside
     });
 
     assert.equal(repository.ok, true);
-    assert.equal(repository.schema, "legacy-expense-grid");
+    assert.equal(repository.schema, "ledger-v1-empty");
     assert.deepEqual(repository.operations, []);
-    assert.deepEqual(repository.expenseRows, [
-      {
-        date: "2026-04-24",
-        category: "exchange",
-        amounts: {
-          "Яндекс руб": "-74669",
-          "Бинанс spot": "874",
-          "приват 24-грн": "",
-        },
-      },
-      {
-        date: "2026-04-25",
-        category: "exchange",
-        amounts: {
-          "Яндекс руб": "",
-          "Бинанс spot": "-950",
-          "приват 24-грн": "-4916",
-        },
-      },
-      {
-        date: "2026-04-30",
-        category: "exchange",
-        amounts: {
-          "Яндекс руб": "",
-          "Бинанс spot": "",
-          "приват 24-грн": "-4916",
-        },
-      },
-    ]);
+    assert.deepEqual(repository.expenseRows, []);
+    assert.equal(repository.fallbackSchema, null);
+    assert.deepEqual(repository.warnings, ["legacy Расходы ignored: Ledger is the only operations source."]);
     assert.equal(fetchCalls.length, 2);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -110,15 +84,22 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           return jsonResponse({
             valueRanges: [
               {
+                range: "'Ledger'!A:P",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                  ["2026-04-24 00:00:00", "exchange_out", "Яндекс руб", "Бинанс spot", "-74669", "RUB", "-883.0684", "exchange", "", "out", "sell rub", "mcp", "ledger-1", "g1", "", ""],
+                  ["2026-04-24 00:00:00", "exchange_in", "Яндекс руб", "Бинанс spot", "874", "USD", "874", "exchange", "", "in", "buy usd", "mcp", "ledger-2", "g1", "", ""],
+                  ["2026-04-25 00:00:00", "exchange_out", "приват 24-грн", "binance save", "-4916", "UAH", "-112.0839", "exchange", "", "out", "buy crypto", "mcp", "ledger-3", "g2", "", ""],
+                  ["2026-04-25 00:00:00", "exchange_out", "binance save", "", "-950", "USD", "-950", "exchange", "", "out", "send usd", "mcp", "ledger-4", "g2", "", ""],
+                  ["2026-04-25 00:00:00", "income", "", "пейпал дол", "369", "USD", "369", "serviceIncome", "", "in", "income", "manual", "ledger-5", "", "", ""],
+                  ["2026-04-26 00:00:00", "expense", "Яндекс руб", "", "1000", "RUB", "11.82", "food", "", "out", "meal", "photo", "ledger-6", "", "", ""],
+                ],
+              },
+              {
                 range: "'Расходы'!A1:Z10",
                 values: [
-                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "comment", "source"],
-                  ["2026-04-24 00:00:00", "exchange", "Яндекс руб", "Бинанс spot", "-74669", "RUB", "-883.0684", "exchange", "sell rub", "mcp"],
-                  ["2026-04-24 00:00:00", "exchange", "Яндекс руб", "Бинанс spot", "874", "USD", "874", "exchange", "buy usd", "mcp"],
-                  ["2026-04-25 00:00:00", "exchange", "приват 24-грн", "binance save", "-4916", "UAH", "-112.0839", "exchange", "buy crypto", "mcp"],
-                  ["2026-04-25 00:00:00", "exchange", "binance save", "", "-950", "USD", "-950", "exchange", "send usd", "mcp"],
-                  ["2026-04-25 00:00:00", "income", "", "пейпал дол", "369", "USD", "369", "serviceIncome", "income", "manual"],
-                  ["2026-04-26 00:00:00", "expense", "Яндекс руб", "", "1000", "RUB", "11.82", "food", "meal", "photo"],
+                  ["дата", "категория", "Яндекс руб"],
+                  ["2026-04-24", "business", "999999"],
                 ],
               },
               { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
@@ -507,7 +488,8 @@ test("loadManualRepositoryFromGoogleSheets keeps empty Ledger as explicit ledger
     assert.equal(repository.schema, "ledger-v1-empty");
     assert.deepEqual(repository.operations, []);
     assert.deepEqual(repository.expenseRows, []);
-    assert.equal(repository.fallbackSchema, "legacy-expense-grid");
+    assert.equal(repository.fallbackSchema, null);
+    assert.deepEqual(repository.warnings, ["legacy Расходы ignored: Ledger is the only operations source."]);
     assert.match(fetchCalls[1], /ranges=%27Ledger%27%21A%3AP/);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
