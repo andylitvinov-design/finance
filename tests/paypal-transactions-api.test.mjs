@@ -108,6 +108,9 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[2].suggestedCategory, "servicein");
   assert.equal(entries[2].channel, "пейпал евр");
   assert.equal(entries[2].feeAmount, null);
+  assert.equal(entries[2].amountGross, 20);
+  assert.equal(entries[2].amountFee, null);
+  assert.equal(entries[2].amountNet, null);
   assert.equal(entries[2].counterpartyName, "Jane Doe");
   assert.equal(entries[2].counterpartyEmail, "payer@example.com");
   assert.equal(entries[2].counterpartyType, "person");
@@ -137,6 +140,10 @@ test("normalizePayPalTransactionDetails keeps fee metadata on income entries", (
   ]);
 
   const income = entries.find((entry) => entry.direction === "income");
+  assert.equal(income?.amountGross, 324);
+  assert.equal(income?.amountFee, 12.94);
+  assert.equal(income?.amountNet, 311.06);
+  assert.equal(income?.usdAmount, 311.06);
   assert.equal(income?.feeAmount, 12.94);
   assert.equal(income?.feeCurrency, "USD");
 });

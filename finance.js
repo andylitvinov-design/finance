@@ -2131,8 +2131,9 @@ async function aggregateClosedManualPeriodDataDirect(startDate, endDate) {
 }
 
 function buildAggregatedManualDataFromServerPayload(manual, startDate, endDate) {
+  const ledgerExpenseRows = buildServerExpenseRowsFromLedgerV2(manual?.ledgerV2Rows || manual?.operations || [], startDate, endDate);
   const expenseRows = normalizeManualFinanceExpenseRows(
-    filterManualFlowExpenseRows(normalizeServerExpenseRows(manual?.expenseRows || []))
+    filterManualFlowExpenseRows(normalizeServerExpenseRows(ledgerExpenseRows.length ? ledgerExpenseRows : (manual?.expenseRows || [])))
       .filter((row) => row.date && row.date >= startDate && row.date <= endDate),
     startDate,
     endDate
@@ -2170,6 +2171,68 @@ function buildAggregatedManualDataFromServerPayload(manual, startDate, endDate) 
     latestNowEntriesByChannel,
     selectedSheets: [getManualExpensesSheetName(), getManualBalancesSheetName(), getManualTransfersSheetName(), getManualCommissionsSheetName()]
   };
+}
+
+function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
+  const grouped = new Map();
+  (rows || []).forEach((rawRow) => {
+    const row = rawRow?.ledgerV2 || rawRow;
+    const date = normalizeIncomingSheetDateValue(row?.date);
+    if (!date || date < startDate || date > endDate) return;
+    const category = mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
+    if (!category || category === MANUAL_NOW_CATEGORY) return;
+    const amount = getLedgerBalanceAmountForFinance(row);
+    if (!amount) return;
+    const channel = getLedgerV2ManualChannel(row, amount);
+    if (!channel) return;
+    const key = `${date}|${category}`;
+    if (!grouped.has(key)) grouped.set(key, createManualFinanceExpenseRow(date, category));
+    const target = grouped.get(key);
+    const signedAmount = category === MANUAL_EXCHANGE_CATEGORY ? amount : Math.abs(amount);
+    target.amounts[channel] = formatSheetNumber(parseLooseNumber(target.amounts[channel]) + signedAmount);
+  });
+  return Array.from(grouped.values()).sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    return String(left.category).localeCompare(String(right.category));
+  });
+}
+
+function getLedgerBalanceAmountForFinance(row) {
+  const contract = typeof EzohataManualLedgerContract === "object" ? EzohataManualLedgerContract : null;
+  if (contract?.getBalanceAmount) {
+    const value = contract.getBalanceAmount(row, { suppressWarnings: true });
+    if (Number.isFinite(value)) return value;
+  }
+  const net = parseLooseNumber(row?.amount_net ?? row?.amountNet ?? "");
+  if (net) return net;
+  const amount = parseLooseNumber(row?.amount);
+  const operation = String(row?.legacy_operation || row?.operation || "").trim();
+  const direction = String(row?.direction || "").trim();
+  if (operation === "exchange_out" || direction === "out" || operation === "expense") return -Math.abs(amount);
+  return amount;
+}
+
+function getLedgerV2ManualChannel(row, amount) {
+  const operation = String(row?.operation || row?.legacy_operation || "").trim();
+  const fromChannel = canonicalManualFinanceChannel(row?.from_channel || row?.fromChannel || "");
+  const toChannel = canonicalManualFinanceChannel(row?.to_channel || row?.toChannel || "");
+  if (operation === "income") return toChannel || fromChannel;
+  if (operation === "exchange") return amount < 0 ? (fromChannel || toChannel) : (toChannel || fromChannel);
+  return fromChannel || toChannel;
+}
+
+function mapLedgerV2CategoryToManualExpenseCategory(value) {
+  const normalized = normalizeLookupText(value);
+  if (!normalized) return "";
+  if (/^(service|servicein|serviceincome|ezohata|ezoin|ezofact)$/.test(normalized)) return "serviceIncome";
+  if (normalized === "exchange") return MANUAL_EXCHANGE_CATEGORY;
+  if (normalized === "partner") return "exchange";
+  if (normalized === "house" || normalized === "flat") return "flat";
+  if (normalized === "study") return "study";
+  if (normalized === "travel") return "travel";
+  if (["business", "personal", "other", "extra", "adjustment"].includes(normalized)) return "business";
+  if (["food", "fun"].includes(normalized)) return normalized;
+  return normalizeManualExpenseCategory(value);
 }
 
 function normalizeServerExpenseRows(rows) {
