@@ -4,15 +4,15 @@
 
 The primary manual-finance source is the `Ledger` sheet in the `EzoHata Manual Inputs` workbook.
 
-Legacy tabs are retained for compatibility and report views:
+Legacy tabs are retained for compatibility and historical review:
 
-- `Расходы`: derived wide daily summary, `date | category | channel...`
+- `Расходы`: historical wide daily summary, `date | category | channel...`; not a runtime source
 - `Переводы`: compatibility transfer/rate rows
 - `Остатки`: compatibility balance rows
 - `Комиссии`: compatibility commission rows
 - UI `fact`: legacy editor that now also writes normalized ledger rows
 
-Analytics should prefer `Ledger`. If `Ledger` is missing or empty, the app falls back to the legacy wide tabs.
+Analytics and Operations use `Ledger` as the only operations source. If `Ledger` is missing or empty, legacy `Расходы` is ignored and the app should surface a warning instead of migrating or falling back during normal runtime.
 
 ## Schema
 
@@ -170,7 +170,7 @@ Raw source -> category/channel normalization -> Ledger rows
 Compatibility views:
 
 ```text
-Ledger -> Расходы / Переводы / Остатки / Комиссии
+Ledger -> in-memory expenseRows / analytics compatibility views
 ```
 
 Analytics:
@@ -178,7 +178,7 @@ Analytics:
 ```text
 Ledger-derived daily summary -> Аналитика
 Ledger-derived channel/category totals -> Учет расходов / анализ финансов
-Legacy fallback only when Ledger is unavailable or empty
+No runtime fallback to Расходы
 ```
 
 ## Migration
@@ -196,7 +196,7 @@ The helper:
 - does not write to Google Sheets
 - logs created row count, skipped rows, unknown categories, unknown channels, and a sample
 
-No destructive migration is run automatically.
+No destructive migration is run automatically. Normal app load/save must not migrate `Расходы` into `Ledger`.
 
 The app can safely self-heal the `Ledger` header when Google write access is available:
 

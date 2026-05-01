@@ -250,6 +250,22 @@ test("buildLedgerRowsFromExpenseRows marks fact-created rows as source=manual", 
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].source, "manual");
+  assert.ok(!rows[0].rawSourceId.startsWith("migration:"));
+});
+
+test("manual Fact save writes Ledger only and does not update legacy Расходы", () => {
+  const saveFunction = extractFunction(googleSheetsJs, "saveManualSheetDirect");
+  assert.match(saveFunction, /buildLedgerRowsFromExpenseRows\(rawExpenseRows/);
+  assert.match(saveFunction, /ledgerSource:\s*"manual"/);
+  assert.doesNotMatch(saveFunction, /overwriteSheetValues\(getManualExpensesSheetName\(\)/);
+  assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
+});
+
+test("expense accounting imports write Ledger only and do not update legacy Расходы", () => {
+  const saveFunction = extractFunction(uiJs, "saveExpenseAccountingEntriesDirect");
+  assert.match(saveFunction, /buildLedgerRowsFromAccountingEntries\(entries\)/);
+  assert.doesNotMatch(saveFunction, /overwriteSheetValues\(getManualExpensesSheetName\(\)/);
+  assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
 
 test("buildLedgerRowsFromAccountingEntries maps provider rows to mcp and OCR rows to photo", () => {

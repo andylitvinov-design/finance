@@ -104,17 +104,23 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     });
     const transfers = parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []);
     const rateLookup = buildOperationUsdRateLookup(transfers);
-    const ledgerRepository = parseExpenseRepository(valuesBySheet[LEDGER_SHEET_NAME] || [], rateLookup);
+    const ledgerValues = valuesBySheet[LEDGER_SHEET_NAME] || [];
+    const ledgerRepository = ledgerValues.length ? parseExpenseRepository(ledgerValues, rateLookup) : buildEmptyLedgerRepository();
     const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || [], rateLookup);
-    const repository = ledgerRepository.schema.startsWith("ledger-v1") ? ledgerRepository : legacyRepository;
+    const legacyHasRows = legacyRepository.schema === "legacy-expense-grid" && legacyRepository.expenseRows.length > 0;
+    const warnings = [];
+    if (!ledgerRepository.operations.length && legacyHasRows) {
+      warnings.push("legacy Расходы ignored: Ledger is the only operations source.");
+    }
     return {
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      ...repository,
+      ...ledgerRepository,
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
-      fallbackSchema: ledgerRepository.schema.startsWith("ledger-v1") ? legacyRepository.schema : null,
+      warnings,
+      fallbackSchema: null,
     };
   } catch (error) {
     return {
@@ -203,15 +209,7 @@ function extractSheetTitle(range) {
 function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const headerState = getNormalizedLedgerHeaderState(values);
   if (headerState === "empty") {
-    return {
-      schema: "ledger-v1-empty",
-      operations: [],
-      expenseRows: [],
-      views: {
-        byDateChannel: [],
-        byCategory: [],
-      },
-    };
+    return buildEmptyLedgerRepository();
   }
   const normalizedOperations = parseNormalizedOperationRows(values, rateLookup);
   if (normalizedOperations) {
@@ -230,6 +228,18 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
     operations: [],
     expenseRows: parseLegacyExpenseRows(values),
     views: null,
+  };
+}
+
+function buildEmptyLedgerRepository() {
+  return {
+    schema: "ledger-v1-empty",
+    operations: [],
+    expenseRows: [],
+    views: {
+      byDateChannel: [],
+      byCategory: [],
+    },
   };
 }
 

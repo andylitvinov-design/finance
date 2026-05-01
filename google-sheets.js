@@ -995,9 +995,6 @@ async function listManualSheetDatesDirect() {
   const transferValues = titles.has(getManualTransfersSheetName())
     ? await getSheetValuesByTitle(getManualTransfersSheetName())
     : [];
-  const expenseValues = titles.has(getManualExpensesSheetName())
-    ? await getSheetValuesByTitle(getManualExpensesSheetName())
-    : [];
   const balanceValues = titles.has(getManualBalancesSheetName())
     ? await getSheetValuesByTitle(getManualBalancesSheetName())
     : [];
@@ -1010,7 +1007,6 @@ async function listManualSheetDatesDirect() {
   const dates = new Set();
   parseManualLedgerSheetValues(ledgerValues).rows.forEach((row) => row.date && dates.add(row.date));
   parseIncomingTransferSheetValues(transferValues).forEach((row) => row.transferDate && dates.add(row.transferDate));
-  parseIncomingExpenseSheetValues(expenseValues).forEach((row) => row.date && dates.add(row.date));
   parseIncomingBalanceSheetValues(balanceValues).forEach((row) => row.date && dates.add(row.date));
   parseIncomingCommissionSheetValues(commissionValues).forEach((row) => row.date && dates.add(row.date));
   return {
@@ -1027,16 +1023,13 @@ async function getManualSheetDirect(startDate, endDate) {
   await ensureManualLedgerSourceColumn();
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-  const [ledgerValues, transferValues, expenseValues, balanceValues, commissionValues] = await Promise.all([
+  const [ledgerValues, transferValues, balanceValues, commissionValues] = await Promise.all([
     titles.has(getManualLedgerSheetName())
       ? getSheetValuesByTitle(getManualLedgerSheetName())
       : Promise.resolve(buildManualLedgerSheetValues([])),
     titles.has(getManualTransfersSheetName())
       ? getSheetValuesByTitle(getManualTransfersSheetName())
       : Promise.resolve(buildIncomingTransferSheetValues([])),
-    titles.has(getManualExpensesSheetName())
-      ? getSheetValuesByTitle(getManualExpensesSheetName())
-      : Promise.resolve(buildIncomingExpenseSheetValues([])),
     titles.has(getManualBalancesSheetName())
       ? getSheetValuesByTitle(getManualBalancesSheetName())
       : Promise.resolve(buildIncomingBalanceSheetValues([])),
@@ -1049,21 +1042,18 @@ async function getManualSheetDirect(startDate, endDate) {
   const transferRows = parseIncomingTransferSheetValues(transferValues).filter((row) => {
     return row.transferDate && row.transferDate === snapshotDate;
   });
-  const parsedExpenseRows = parseIncomingExpenseSheetValues(expenseValues);
-  const expenseRows = (ledgerExpenseRows.length ? ledgerExpenseRows : parsedExpenseRows).filter((row) => {
+  const expenseRows = ledgerExpenseRows.filter((row) => {
     return row.date && row.date === snapshotDate;
   });
   const flowExpenseRows = filterManualFlowExpenseRows(expenseRows);
   const latestNowEntriesByChannel = mergeLatestNowEntries(
     buildLatestBalanceEntriesByChannel(parseIncomingBalanceSheetValues(balanceValues), snapshotDate),
-    buildLatestNowEntriesByChannel(parsedExpenseRows, snapshotDate)
+    buildLatestNowEntriesByChannel(ledgerExpenseRows, snapshotDate)
   );
   return {
     sheetName: MANUAL_INCOMING_TITLE,
     displayName: `${MANUAL_INCOMING_TITLE}: ${snapshotDate}`,
-    sourceSheetName: ledgerExpenseRows.length
-      ? `${getManualLedgerSheetName()} + legacy views`
-      : `${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
+    sourceSheetName: `${getManualLedgerSheetName()} + ${getManualTransfersSheetName()} + ${getManualBalancesSheetName()}`,
     created: false,
     virtual: false,
     sourceType: "incoming-repository",
@@ -1198,9 +1188,6 @@ async function saveManualSheetDirect(params) {
   const existingTransfers = titles.has(getManualTransfersSheetName())
     ? parseIncomingTransferSheetValues(await getSheetValuesByTitle(getManualTransfersSheetName()))
     : [];
-  const existingExpenses = titles.has(getManualExpensesSheetName())
-    ? parseIncomingExpenseSheetValues(await getSheetValuesByTitle(getManualExpensesSheetName()))
-    : [];
   const existingLedgerParse = titles.has(getManualLedgerSheetName())
     ? parseManualLedgerSheetValues(await getSheetValuesByTitle(getManualLedgerSheetName()))
     : { rows: [], warnings: [] };
@@ -1226,18 +1213,7 @@ async function saveManualSheetDirect(params) {
   const balanceRows = isLegacyFactSnapshotSave
     ? buildManualBalanceRowsFromMoneyRows(params.moneyRows, snapshotDate, transferRows, movementValues)
     : buildManualBalanceRowsFromNowExpenseRows(rawExpenseRows, snapshotDate, transferRows, movementValues);
-  const expenseRows = filterManualFlowExpenseRows(rawExpenseRows)
-    .map((row) => ({
-      date: snapshotDate,
-      category: row.category,
-      amounts: Object.fromEntries(
-        getManualFinanceChannels().map((channel) => [channel, normalizeManualFinancePersistedNumberInput(row.amounts?.[channel])])
-      )
-    }));
-  const expenseReplaceStart = snapshotDate;
-  const expenseReplaceEnd = snapshotDate;
   const mergedTransfers = replaceManualRowsForDateRange(existingTransfers, transferRows, snapshotDate, snapshotDate, "transferDate");
-  const mergedExpenses = replaceManualRowsForDateRange(existingExpenses, expenseRows, expenseReplaceStart, expenseReplaceEnd, "date");
   const mergedBalances = mergeManualBalanceRows(existingBalances, balanceRows);
   const factLedgerRows = buildLedgerRowsFromExpenseRows(rawExpenseRows, {
     date: snapshotDate,
@@ -1252,18 +1228,16 @@ async function saveManualSheetDirect(params) {
   });
   const ledgerSave = normalizeManualLedgerRowsForSave([...preservedLedgerRows, ...factLedgerRows]);
   await ensureSheetExists(getManualTransfersSheetName(), getManualFinanceSpreadsheetId());
-  await ensureSheetExists(getManualExpensesSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualBalancesSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualLedgerSheetName(), buildManualLedgerSheetValues(ledgerSave.rows), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualTransfersSheetName(), buildIncomingTransferSheetValues(mergedTransfers), getManualFinanceSpreadsheetId());
-  await overwriteSheetValues(getManualExpensesSheetName(), buildIncomingExpenseSheetValues(mergedExpenses), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualBalancesSheetName(), buildIncomingBalanceSheetValues(mergedBalances), getManualFinanceSpreadsheetId());
   return {
     periodStart: snapshotDate,
     periodEnd: snapshotDate,
     status: "saved",
-    sourceSheetName: `${getManualLedgerSheetName()} + ${getManualTransfersSheetName()} + ${getManualExpensesSheetName()} + ${getManualBalancesSheetName()}`,
+    sourceSheetName: `${getManualLedgerSheetName()} + ${getManualTransfersSheetName()} + ${getManualBalancesSheetName()}`,
     ledgerWarnings: [...existingLedgerParse.warnings, ...ledgerSave.warnings],
     savedAt: new Date().toLocaleString("ru-RU"),
     writeEnabled: true
