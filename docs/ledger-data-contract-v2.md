@@ -2,12 +2,30 @@
 
 ## Goal
 
-Ledger v2 is the canonical in-memory contract for financial operations. Phase 1 keeps the existing physical Google Sheet Ledger v1 layout intact and normalizes rows in code, so current URLs, OAuth, imports, and legacy views keep working.
+Ledger v2 is the canonical in-memory contract for financial operations.
+
+Phase 1 keeps the existing physical Google Sheet Ledger v1 layout intact and
+normalizes rows in code, so current URLs, OAuth, imports, and legacy views keep
+working.
 
 ## Schema
 
 ```text
-date | operation | from_channel | to_channel | amount | currency | amount_usd | amount_gross | amount_fee | amount_net | rate | category | source | external_id | comment
+date
+operation
+from_channel
+to_channel
+amount
+currency
+amount_usd
+amount_gross
+amount_fee
+amount_net
+rate
+category
+source
+external_id
+comment
 ```
 
 - `date`: operation date in `YYYY-MM-DD`.
@@ -16,13 +34,17 @@ date | operation | from_channel | to_channel | amount | currency | amount_usd | 
 - `to_channel`: where money arrived. Required for income.
 - `amount`: legacy-compatible display amount.
 - `currency`: currency for `amount`.
-- `amount_usd`: USD equivalent for analytics. For USD rows it follows `amount_net` when present, then `amount`.
+- `amount_usd`: USD equivalent for analytics. For USD rows it follows
+  `amount_net` when present, then `amount`.
 - `amount_gross`: client-paid or original pre-fee amount.
 - `amount_fee`: provider or bank fee, stored as a positive number.
 - `amount_net`: amount actually received or spent after fees. Balance must prefer this field.
 - `rate`: USD conversion rate when needed.
-- `category`: `service`, `ezohata`, `exchange`, `partner`, `business`, `personal`, `house`, `food`, `fun`, `travel`, `study`, `adjustment`, or `other`.
-- `source`: `manual`, `fact`, `paypal`, `monobank`, `td_bank`, `wise`, `google_sheets`, `migration`, or `other`.
+- `category`: `service`, `ezohata`, `exchange`, `partner`, `business`,
+  `personal`, `house`, `food`, `fun`, `travel`, `study`, `adjustment`, or
+  `other`.
+- `source`: `manual`, `fact`, `paypal`, `monobank`, `td_bank`, `wise`,
+  `google_sheets`, `migration`, or `other`.
 - `external_id`: provider transaction id or migrated `raw_source_id`.
 - `comment`: human-readable note.
 
@@ -40,11 +62,28 @@ date | operation | from_channel | to_channel | amount | currency | amount_usd | 
 Preferred exchange representation is two canonical rows with a shared source id or transfer group:
 
 ```text
-operation=exchange | from_channel=<source> | to_channel=<target> | amount<0 | currency=<source> | amount_usd<0 | category=exchange
-operation=exchange | from_channel=<source> | to_channel=<target> | amount>0 | currency=<target> | amount_usd>0 | category=exchange
+operation=exchange
+from_channel=<source>
+to_channel=<target>
+amount<0
+currency=<source>
+amount_usd<0
+category=exchange
+
+operation=exchange
+from_channel=<source>
+to_channel=<target>
+amount>0
+currency=<target>
+amount_usd>0
+category=exchange
 ```
 
-The current app still stores Ledger v1 operations as `exchange_out` and `exchange_in`. Phase 1 maps those rows to v2 in memory, preserves the existing Sheet layout, and normalizes `amount_usd` sign so analytics does not lose exchange values.
+The current app still stores Ledger v1 operations as `exchange_out` and
+`exchange_in`.
+
+Phase 1 maps those rows to v2 in memory, preserves the existing Sheet layout,
+and normalizes `amount_usd` sign so analytics does not lose exchange values.
 
 ## Examples
 
@@ -138,7 +177,11 @@ Exchange pair:
 
 ## Known Risks
 
-- Current production Sheet layout still needs manual verification before physical v2 columns are added.
-- Historical provider rows without fee/net remain fallback rows and should be reviewed before using them for final balance.
-- Some provider paths may expose gross/fee/net only after credentials are configured; code path can exist while live credentials still need verification.
+- Current production Sheet layout still needs manual verification before
+  physical v2 columns are added.
+- Historical provider rows without fee/net remain fallback rows and should be
+  reviewed before using them for final balance.
+- Some provider paths may expose gross/fee/net only after credentials are
+  configured; code path can exist while live credentials still need
+  verification.
 - Wise is kept compatible in Phase 1; no destructive provider-specific migration is included.

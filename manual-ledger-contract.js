@@ -64,7 +64,13 @@
     "extra"
   ];
 
-  const LEDGER_V2_OPERATIONS = ["income", "expense", "transfer", "exchange", "adjustment"];
+  const LEDGER_V2_OPERATIONS = [
+    "income",
+    "expense",
+    "transfer",
+    "exchange",
+    "adjustment"
+  ];
   const LEDGER_V2_CATEGORIES = [
     "service",
     "ezohata",
@@ -93,15 +99,60 @@
   ];
 
   const CATEGORY_MAP = {
-    servicein: ["service income", "serviceincome", "service in", "services", "service", "приход"],
+    servicein: [
+      "service income",
+      "serviceincome",
+      "service in",
+      "services",
+      "service",
+      "приход"
+    ],
     ezoin: ["ezoin", "ezo in", "ezohata", "ezo", "ezofact"],
-    exchange: ["обмен", "exchange", "exchange_usd", "exchange usd", "exchangeusd", "комиссии", "exchange_in", "exchange out", "exchange in"],
+    exchange: [
+      "обмен",
+      "exchange",
+      "exchange_usd",
+      "exchange usd",
+      "exchangeusd",
+      "комиссии",
+      "exchange_in",
+      "exchange out",
+      "exchange in"
+    ],
     partner: ["partner", "partnertransfer", "partner transfer", "партнер", "партнеры"],
     business: ["spent for business", "business", "business expense", "бизнес"],
-    house: ["spent for flat", "spent for house", "flat", "house", "rent", "квартира", "кварт", "дом", "аренда"],
+    house: [
+      "spent for flat",
+      "spent for house",
+      "flat",
+      "house",
+      "rent",
+      "квартира",
+      "кварт",
+      "дом",
+      "аренда"
+    ],
     food: ["spent for food", "food", "еда", "продукты"],
     fun: ["spent for fun", "fun", "events", "event", "beauty", "развлечения", "развлеч"],
-    travel: ["spent for travel", "spent for study", "spent for travel/ fun", "travel", "travelfun", "travel fun", "travel study", "travel/study", "study", "учеба", "учеб", "обучение", "обуч", "курс", "школа", "путешествия", "путеш"],
+    travel: [
+      "spent for travel",
+      "spent for study",
+      "spent for travel/ fun",
+      "travel",
+      "travelfun",
+      "travel fun",
+      "travel study",
+      "travel/study",
+      "study",
+      "учеба",
+      "учеб",
+      "обучение",
+      "обуч",
+      "курс",
+      "школа",
+      "путешествия",
+      "путеш"
+    ],
     extra: ["extra", "unclear", "other", "misc", "unknown", "прочее", "неясное"]
   };
 
@@ -154,20 +205,65 @@
   };
 
   const CHANNEL_MAP = {
-    "Яндекс руб": ["яндекс", "yandex", "yandex rub", "яндекс руб", "яндекс рубли", "yoomoney", "юmoney", "юмани"],
-    "пейпал дол": ["paypal", "paypal usd", "paypal dol", "пейпал", "пейпал дол", "пейпал usd"],
+    "Яндекс руб": [
+      "яндекс",
+      "yandex",
+      "yandex rub",
+      "яндекс руб",
+      "яндекс рубли",
+      "yoomoney",
+      "юmoney",
+      "юмани"
+    ],
+    "пейпал дол": [
+      "paypal",
+      "paypal usd",
+      "paypal dol",
+      "пейпал",
+      "пейпал дол",
+      "пейпал usd"
+    ],
     "пейпал евр": ["paypal eur", "paypal euro", "пейпал евр", "пейпал евро"],
     "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad", "paypal сad"],
     "приват 24-дол": ["privat usd", "privat 24 usd", "приват 24 дол", "приват 24-дол"],
     "приват 24-евро": ["privat eur", "privat 24 eur", "приват 24 евро", "приват 24-евро"],
-    "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah", "privat uah"],
-    "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
+    "приват 24-грн": [
+      "приват",
+      "privat",
+      "privat 24",
+      "приват 24",
+      "приват грн",
+      "privat 24 грн",
+      "privat 24 uah",
+      "privat uah"
+    ],
+    "монобанк грн": [
+      "монобанк",
+      "monobank",
+      "mono",
+      "монобанк грн",
+      "monobank uah",
+      "mono uah"
+    ],
     "трансервайз дол": ["wise usd", "transferwise usd", "трансервайз дол", "wise дол"],
-    "трансервайз евро": ["wise eur", "wise euro", "transferwise eur", "трансервайз евро", "трансервайз евр"],
+    "трансервайз евро": [
+      "wise eur",
+      "wise euro",
+      "transferwise eur",
+      "трансервайз евро",
+      "трансервайз евр"
+    ],
     "REVOLUT дол": ["revolut", "revolut usd", "револют", "револют дол"],
     "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
     "Payoneer - dol": ["payoneer usd", "payoneer dol", "payoneer - dol"],
-    "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс", "binance"],
+    "Бинанс spot": [
+      "binance save",
+      "бинанс save",
+      "binance spot",
+      "бинанс spot",
+      "бинанс",
+      "binance"
+    ],
     "binance save": ["бинанс сейв", "binance savings"],
     "Налично -я-евр": ["налично я евр", "налично -я-евр", "cash eur"],
     "местная валюты": ["местная валюта", "местная валюты", "local currency"],
@@ -240,7 +336,15 @@
     if (MANUAL_LEDGER_DIRECTIONS.includes(token)) return token;
     const op = normalizeManualLedgerOperation(operation);
     if (op === "income" || op === "exchange_in") return "in";
-    if (op === "expense" || op === "exchange_out" || op === "business_expense" || op === "personal_expense" || op === "partner_transfer") return "out";
+    if (
+      op === "expense" ||
+      op === "exchange_out" ||
+      op === "business_expense" ||
+      op === "personal_expense" ||
+      op === "partner_transfer"
+    ) {
+      return "out";
+    }
     return "neutral";
   }
 
@@ -269,9 +373,23 @@
   function normalizeLedgerOperation(value, category = "") {
     const token = normalizeToken(value);
     if (LEDGER_V2_OPERATIONS.includes(token)) return token;
-    if (token === "exchange in" || token === "exchange out" || token === "exchange_in" || token === "exchange_out") return "exchange";
+    if (
+      token === "exchange in" ||
+      token === "exchange out" ||
+      token === "exchange_in" ||
+      token === "exchange_out"
+    ) {
+      return "exchange";
+    }
     if (token === "partner transfer" || token === "partner_transfer") return "transfer";
-    if (token === "business expense" || token === "business_expense" || token === "personal expense" || token === "personal_expense") return "expense";
+    if (
+      token === "business expense" ||
+      token === "business_expense" ||
+      token === "personal expense" ||
+      token === "personal_expense"
+    ) {
+      return "expense";
+    }
     if (token === "correction") return "adjustment";
     const legacy = normalizeManualLedgerOperation(value, category);
     if (legacy === "income") return "income";
@@ -347,8 +465,14 @@
     const amount = parseLedgerNumber(getValue(row, "amount"));
     if (amount === null) return null;
     if (!options.suppressWarnings && Array.isArray(options.warnings)) {
-      const externalId = String(getValue(row, "external_id", "externalId") || getValue(row, "raw_source_id", "rawSourceId") || "").trim();
-      options.warnings.push(`Ledger v2 fallback: amount_net missing${externalId ? ` for ${externalId}` : ""}; balance used amount.`);
+      const externalId = String(
+        getValue(row, "external_id", "externalId") ||
+          getValue(row, "raw_source_id", "rawSourceId") ||
+          ""
+      ).trim();
+      options.warnings.push(
+        `Ledger v2 fallback: amount_net missing${externalId ? ` for ${externalId}` : ""}; balance used amount.`
+      );
     }
     return signLedgerAmount(amount, row);
   }
@@ -381,7 +505,11 @@
       rate: normalizeLedgerNumber(getValue(input, "rate")),
       category,
       source: normalizeLedgerV2Source(getValue(input, "source"), options.defaultSource || "other"),
-      external_id: String(getValue(input, "external_id", "externalId") || getValue(input, "raw_source_id", "rawSourceId") || "").trim(),
+      external_id: String(
+        getValue(input, "external_id", "externalId") ||
+          getValue(input, "raw_source_id", "rawSourceId") ||
+          ""
+      ).trim(),
       comment: String(getValue(input, "comment") || "").trim()
     };
     row.legacy_operation = legacyOperation && legacyOperation !== operation ? legacyOperation : "";
@@ -407,14 +535,20 @@
     const errors = [];
     const normalized = normalizeLedgerRow(row);
     if (!normalized.date) errors.push("date is required");
-    if (!LEDGER_V2_OPERATIONS.includes(normalized.operation)) errors.push(`unsupported operation: ${normalized.operation}`);
+    if (!LEDGER_V2_OPERATIONS.includes(normalized.operation)) {
+      errors.push(`unsupported operation: ${normalized.operation}`);
+    }
     if (!normalized.amount) errors.push("amount is required");
     if (!normalized.currency) errors.push("currency is required");
-    if (normalized.operation === "income" && !normalized.to_channel) errors.push("to_channel is required for income");
+    if (normalized.operation === "income" && !normalized.to_channel) {
+      errors.push("to_channel is required for income");
+    }
     if (["expense", "transfer", "exchange"].includes(normalized.operation) && !normalized.from_channel) {
       errors.push("from_channel is required for expense, transfer, and exchange");
     }
-    if (normalized.operation === "exchange" && !normalized.amount_usd) errors.push("amount_usd is required for exchange");
+    if (normalized.operation === "exchange" && !normalized.amount_usd) {
+      errors.push("amount_usd is required for exchange");
+    }
     return { ok: errors.length === 0, errors, row: normalized };
   }
 
