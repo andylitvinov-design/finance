@@ -49,7 +49,10 @@ test("expense analysis UI keeps refresh action and scrollable tables", () => {
 test("expense accounting UI renders dedicated counterparty column that stays visible on mobile", () => {
   assert.match(uiJs, /textContent = "От кого \/ Кому"/);
   assert.match(uiJs, /buildExpenseAccountingCounterpartyLabel\(entry\)/);
+  assert.match(uiJs, /buildExpenseAccountingFromToLabel\(entry\)/);
+  assert.match(uiJs, /buildExpenseAccountingOperationTypeLabel\(entry\)/);
   assert.match(uiJs, /buildExpenseAccountingCounterpartyDetails\(entry\)/);
+  assert.match(uiJs, /→/);
   assert.match(styleCss, /\.expense-table-counterparty/);
   assert.match(styleCss, /\.expense-counterparty-label/);
   assert.match(styleCss, /\.expense-counterparty-details/);

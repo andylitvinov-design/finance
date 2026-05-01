@@ -400,6 +400,7 @@ export async function fetchPayPalTransactionDetails(options = {}) {
 
 export function normalizePayPalTransactionDetails(details = []) {
   const entries = [];
+  const exchangeLookup = buildPayPalExchangeLookup(details);
   details.forEach((detail, detailIndex) => {
     const info = detail?.transaction_info || {};
     const date = normalizeIsoDate(String(info.transaction_initiation_date || info.transaction_updated_date || "").slice(0, 10));
@@ -408,7 +409,8 @@ export function normalizePayPalTransactionDetails(details = []) {
     const organization = getPayPalCounterparty(detail, info);
     const direction = getPayPalEntryDirection(info, amount.value);
     const entryKind = getPayPalEntryKind(detail, info, amount.value);
-    const counterparty = buildPayPalCounterparty(detail, info, direction, entryKind);
+    const counterparty = buildPayPalCounterparty(detail, info, direction, entryKind, amount, exchangeLookup);
+    const externalId = getPayPalExternalId(info);
     if (date && amount.value) {
       entries.push({
         id: `paypal-${info.transaction_id || detailIndex}`,
@@ -424,6 +426,8 @@ export function normalizePayPalTransactionDetails(details = []) {
         organization,
         ...counterparty,
         entryKind,
+        externalId,
+        external_id: externalId,
         confidence: 0.95,
         source: "paypal",
         sourceTransactionId: String(info.transaction_id || "")
@@ -442,8 +446,10 @@ export function normalizePayPalTransactionDetails(details = []) {
         feeCurrency: fee.currency || amount.currency,
         suggestedCategory: "business",
         organization: `PayPal fee${organization ? `: ${organization}` : ""}`,
-        ...buildPayPalFeeCounterparty(detail, info),
+        ...buildPayPalFeeCounterparty(detail, info, counterparty, externalId),
         entryKind: "fee",
+        externalId,
+        external_id: externalId,
         confidence: 0.95,
         source: "paypal",
         sourceTransactionId: String(info.transaction_id || "")
@@ -560,7 +566,7 @@ function getPayPalCounterparty(detail, info) {
   ]);
 }
 
-function buildPayPalCounterparty(detail, info, direction, entryKind) {
+function buildPayPalCounterparty(detail, info, direction, entryKind, amount, exchangeLookup) {
   const payer = normalizePayPalPartyInfo(detail?.payer_info, "payer");
   const payee = normalizePayPalPartyInfo(detail?.payee_info || detail?.payee || detail?.seller_info, "payee");
   const merchantName = firstNonEmpty(
@@ -585,21 +591,40 @@ function buildPayPalCounterparty(detail, info, direction, entryKind) {
     : (direction === "income"
         ? (payer.name || payer.email ? payer : null)
         : (payee.name || payee.email ? payee : null));
-  const counterpartyName = firstNonEmpty(
-    preferredParty?.name,
-    direction === "expense" ? merchantName : "",
-    ""
-  );
+  const readableCounterparty = getReadablePayPalCounterparty(detail, {
+    direction,
+    entryKind,
+    payer,
+    payee,
+    merchantName,
+    info,
+  });
+  const counterpartyName = readableCounterparty.name;
   const counterpartyEmail = firstNonEmpty(
-    preferredParty?.email,
+    readableCounterparty.email,
+    direction === "income" || entryKind === "refund" ? payer.email : "",
     direction === "expense" ? payee.email : "",
     ""
   );
-  const labelValue = firstNonEmpty(counterpartyName, counterpartyEmail, fallback, "Контрагент не определен");
+  const labelValue = readableCounterparty.label;
+  const normalizedFlow = buildPayPalNormalizedFlow({
+    detail,
+    info,
+    direction,
+    entryKind,
+    amount,
+    payer,
+    payee,
+    merchantName,
+    fallback,
+    labelValue,
+    exchangeLookup
+  });
   return {
+    ...normalizedFlow,
     counterpartyName,
     counterpartyEmail,
-    counterpartyType: inferCounterpartyType(counterpartyName || merchantName || fallback),
+    counterpartyType: inferCounterpartyType(counterpartyName || merchantName || ""),
     counterpartyRole: entryKind === "exchange"
       ? "unknown"
       : (direction === "income" ? "payer" : (payee.name || payee.email ? "payee" : merchantName ? "merchant" : "unknown")),
@@ -616,15 +641,195 @@ function buildPayPalCounterparty(detail, info, direction, entryKind) {
   };
 }
 
-function buildPayPalFeeCounterparty(detail, info) {
-  const base = buildPayPalCounterparty(detail, info, "expense", "fee");
+function buildPayPalFeeCounterparty(detail, info, baseCounterparty = {}, externalId = "") {
   return {
-    ...base,
+    ...baseCounterparty,
     counterpartyName: "Комиссия PayPal",
     counterpartyEmail: "",
     counterpartyType: "company",
     counterpartyRole: "merchant",
-    counterpartyLabel: "Кому: Комиссия PayPal"
+    counterpartyLabel: "Кому: Комиссия PayPal",
+    fromEntity: "me",
+    toEntity: "PayPal Fee",
+    from_entity: "me",
+    to_entity: "PayPal Fee",
+    displayFromTo: "Me → PayPal Fee",
+    operationType: "fee",
+    operation_type: "fee",
+    exchangeGroupId: "",
+    exchange_group_id: "",
+    exchangeLeg: "",
+    externalId,
+    external_id: externalId
+  };
+}
+
+function buildPayPalNormalizedFlow({
+  detail,
+  info,
+  direction,
+  entryKind,
+  amount,
+  payer,
+  payee,
+  merchantName,
+  fallback,
+  labelValue,
+  exchangeLookup
+}) {
+  if (entryKind === "exchange" || direction === "exchange") {
+    const exchange = resolvePayPalExchangeFlow(info, amount, exchangeLookup);
+    return {
+      fromEntity: exchange.fromEntity,
+      toEntity: exchange.toEntity,
+      from_entity: exchange.fromEntity.toLowerCase() === "me" ? "me" : exchange.fromEntity,
+      to_entity: exchange.toEntity.toLowerCase() === "me" ? "me" : exchange.toEntity,
+      displayFromTo: `${exchange.fromEntity} → ${exchange.toEntity}`,
+      operationType: "exchange",
+      operation_type: "exchange",
+      exchangeGroupId: exchange.exchangeGroupId,
+      exchange_group_id: exchange.exchangeGroupId,
+      exchangeLeg: exchange.exchangeLeg,
+      rawMetadata: getPayPalCounterparty(detail, info)
+    };
+  }
+  if (direction === "income" || entryKind === "refund") {
+    const fromEntity = labelValue || "counterparty unavailable";
+    return {
+      fromEntity,
+      toEntity: "Me",
+      from_entity: fromEntity,
+      to_entity: "me",
+      displayFromTo: `${fromEntity} → Me`,
+      operationType: "service_in",
+      operation_type: "service_in",
+      exchangeGroupId: "",
+      exchange_group_id: "",
+      exchangeLeg: "",
+      rawMetadata: getPayPalCounterparty(detail, info)
+    };
+  }
+  const toEntity = labelValue || "counterparty unavailable";
+  return {
+    fromEntity: "me",
+    toEntity,
+    from_entity: "me",
+    to_entity: toEntity,
+    displayFromTo: `Me → ${toEntity}`,
+    operationType: entryKind === "fee" ? "fee" : "payout",
+    operation_type: entryKind === "fee" ? "fee" : "payout",
+    exchangeGroupId: "",
+    exchange_group_id: "",
+    exchangeLeg: "",
+    rawMetadata: getPayPalCounterparty(detail, info)
+  };
+}
+
+function resolvePayPalExchangeFlow(info, amount, exchangeLookup) {
+  const exchangeGroupId = getPayPalExchangeGroupId(info);
+  const currencies = collectPayPalExchangeCurrencies(info, exchangeLookup);
+  const ownCurrency = String(amount?.currency || "").trim().toUpperCase();
+  const pairedCurrency = currencies.find((currency) => currency && currency !== ownCurrency) || ownCurrency;
+  const isOutgoing = Number(amount?.value || 0) < 0;
+  return {
+    fromEntity: `PayPal ${isOutgoing ? ownCurrency : pairedCurrency}`,
+    toEntity: `PayPal ${isOutgoing ? pairedCurrency : ownCurrency}`,
+    exchangeGroupId,
+    exchangeLeg: isOutgoing ? "out" : "in"
+  };
+}
+
+function buildPayPalExchangeLookup(details = []) {
+  const lookup = new Map();
+  details.forEach((detail) => {
+    const info = detail?.transaction_info || {};
+    const eventCode = String(info?.transaction_event_code || "").trim().toUpperCase();
+    if (!PAYPAL_EXCHANGE_EVENT_CODES.has(eventCode)) return;
+    const currency = normalizeMoney(info.transaction_amount).currency;
+    if (!currency) return;
+    for (const key of getPayPalExchangeLookupKeys(info)) {
+      const currencies = lookup.get(key) || [];
+      if (!currencies.includes(currency)) currencies.push(currency);
+      lookup.set(key, currencies);
+    }
+  });
+  return lookup;
+}
+
+function getPayPalExchangeGroupId(info = {}) {
+  return firstNonEmpty(info.invoice_id, info.paypal_reference_id, info.reference_id, info.transaction_id);
+}
+
+function getPayPalExternalId(info = {}) {
+  return firstNonEmpty(info.invoice_id, info.transaction_id, info.paypal_reference_id, info.reference_id);
+}
+
+function getPayPalExchangeLookupKeys(info = {}) {
+  return [...new Set([
+    String(info.invoice_id || "").trim(),
+    String(info.paypal_reference_id || "").trim(),
+    String(info.reference_id || "").trim(),
+    String(info.transaction_id || "").trim(),
+  ].filter(Boolean))];
+}
+
+function collectPayPalExchangeCurrencies(info = {}, exchangeLookup = new Map()) {
+  const merged = [];
+  for (const key of getPayPalExchangeLookupKeys(info)) {
+    for (const currency of exchangeLookup.get(key) || []) {
+      if (!merged.includes(currency)) merged.push(currency);
+    }
+  }
+  return merged;
+}
+
+export function getReadablePayPalCounterparty(detail, options = {}) {
+  const payer = options.payer || normalizePayPalPartyInfo(detail?.payer_info, "payer");
+  const payee = options.payee || normalizePayPalPartyInfo(detail?.payee_info || detail?.payee || detail?.seller_info, "payee");
+  const merchantName = String(options.merchantName || detail?.cart_info?.merchant_name || detail?.incentive_info?.merchant_name || options.info?.business_partner_name || "").trim();
+  const info = options.info || detail?.transaction_info || {};
+  const direction = String(options.direction || "").trim();
+  const entryKind = String(options.entryKind || "").trim();
+  const invoiceId = String(info.invoice_id || "").trim();
+  const transactionId = String(info.transaction_id || "").trim();
+  const customField = String(info.custom_field || "").trim();
+  const blockedValues = new Set([invoiceId, transactionId, customField].filter(Boolean).map((value) => value.toLowerCase()));
+  const orderedCandidates = (entryKind === "refund" || direction === "income")
+    ? [
+        { label: payer.name, name: payer.name, email: "" },
+        { label: payer.email, name: "", email: payer.email },
+        { label: payee.name, name: payee.name, email: "" },
+        { label: merchantName, name: merchantName, email: "" },
+        { label: payee.email, name: "", email: payee.email },
+        { label: info.transaction_subject, name: "", email: "" },
+        { label: info.transaction_note, name: "", email: "" },
+      ]
+    : [
+        { label: payee.name, name: payee.name, email: "" },
+        { label: merchantName, name: merchantName, email: "" },
+        { label: payee.email, name: "", email: payee.email },
+        { label: payer.name, name: payer.name, email: "" },
+        { label: payer.email, name: "", email: payer.email },
+        { label: info.transaction_subject, name: "", email: "" },
+        { label: info.transaction_note, name: "", email: "" },
+      ];
+
+  for (const candidate of orderedCandidates) {
+    const normalized = sanitizePayPalCounterpartyLabel(candidate.label, blockedValues);
+    if (!normalized) continue;
+    return {
+      label: normalized,
+      name: candidate.name && normalized === String(candidate.name).trim() ? normalized : "",
+      email: candidate.email && normalized === String(candidate.email).trim() ? normalized : "",
+      unavailable: false,
+    };
+  }
+
+  return {
+    label: "counterparty unavailable",
+    name: "",
+    email: "",
+    unavailable: true,
   };
 }
 
@@ -673,4 +878,23 @@ function compactPayPalDescription(parts) {
     })
     .join(" | ")
     .slice(0, 240);
+}
+
+function sanitizePayPalCounterpartyLabel(value, blockedValues = new Set()) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+  if (blockedValues.has(lower)) return "";
+  if (isEmailValue(normalized)) return normalized;
+  if (/^invoice\b/i.test(normalized) || /^event\s+t\d+$/i.test(normalized) || /^custom\b/i.test(normalized)) return "";
+  if (/^\d+$/.test(normalized)) return "";
+  if (/^[a-z0-9_:-]+$/i.test(normalized) && /[_:]/.test(normalized)) return "";
+  if (/^[a-z0-9-]+$/i.test(normalized) && /\d/.test(normalized) && !/[aeiouаеиоуыэюя]/i.test(normalized)) return "";
+  if (!/[a-zа-яё]/i.test(normalized)) return "";
+  return normalized;
+}
+
+function isEmailValue(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 }
