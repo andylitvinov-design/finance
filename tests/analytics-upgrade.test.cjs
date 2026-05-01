@@ -116,7 +116,7 @@ test("metric UI and rendering hooks are wired", () => {
 test("analytics balance and period sections use two mobile columns", () => {
   assert.match(uiJs, /normalizeCell\(section\.title\) === normalizeCell\("ИТОГО ЗА ПЕРИОД USD"\)/);
   assert.match(uiJs, /normalizeCell\(section\.title\) === normalizeCell\("БАЛАНС"\)/);
-  assert.match(uiJs, /renderResponsiveDataView\(section\.rows, \{ mobileTableColumnCount: 2 \}\)/);
+  assert.match(uiJs, /renderResponsiveDataView\(sectionRows, \{ mobileTableColumnCount: 2 \}\)/);
   assert.match(uiJs, /truncateTableValues\(values, mobileTableColumnCount\)/);
   assert.match(styleCss, /\.mobile-table table \{ min-width: unset; width: 100%; \}/);
 });

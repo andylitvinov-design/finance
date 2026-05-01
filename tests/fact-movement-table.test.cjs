@@ -83,6 +83,69 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+class TestElement {
+  constructor(tagName) {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.parentElement = null;
+    this.className = "";
+    this.style = {};
+    this.attributes = {};
+    this._textContent = "";
+    this._innerHTML = "";
+  }
+
+  appendChild(child) {
+    child.parentElement = this;
+    this.children.push(child);
+    return child;
+  }
+
+  append(...children) {
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  set textContent(value) {
+    this._textContent = String(value ?? "");
+  }
+
+  get textContent() {
+    return this._textContent + this.children.map((child) => child.textContent).join("");
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value ?? "");
+    this._textContent = this._innerHTML.replace(/<[^>]*>/g, "");
+  }
+
+  get innerHTML() {
+    return this._innerHTML;
+  }
+
+  setAttribute(name, value) {
+    this.attributes[name] = value;
+  }
+}
+
+function createTestDocument() {
+  return {
+    createElement(tagName) {
+      return new TestElement(tagName);
+    },
+  };
+}
+
+function findElements(rootNode, predicate, matches = []) {
+  if (predicate(rootNode)) matches.push(rootNode);
+  (rootNode.children || []).forEach((child) => findElements(child, predicate, matches));
+  return matches;
+}
+
+function tableRows(table) {
+  const trs = findElements(table, (node) => node.tagName === "TR");
+  return trs.map((tr) => tr.children.map((cell) => cell.textContent));
+}
+
 function createContext() {
   const context = {
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",
@@ -330,6 +393,146 @@ test("rebuilt analytics uses aggregated manual rows for the factual movement tab
     "40,0000",
     "500,0000",
   ]);
+});
+
+test("rendered Движение 1 DOM table uses aggregated rows instead of stale analytics rows", () => {
+  const document = createTestDocument();
+  const container = document.createElement("div");
+  const aggregatedRows = [
+    {
+      channel: "приват 24-грн",
+      now: "11480,0000",
+      serviceIncome: "17480,0000",
+      business: "5329,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "5329,0000",
+      exchange: "-9832,0000",
+      exchangeUsd: "-222,1921",
+      totalUsd: "120,4294",
+      nowUsd: "259,4400",
+    },
+    {
+      channel: "Яндекс руб",
+      now: "139786,0000",
+      serviceIncome: "0,0000",
+      business: "11287,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "11287,0000",
+      exchange: "-74669,0000",
+      exchangeUsd: "-883,0684",
+      totalUsd: "133,4850",
+      nowUsd: "1653,1700",
+    },
+    {
+      channel: "Итого",
+      now: "151266,0000",
+      serviceIncome: "17480,0000",
+      business: "16616,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "16616,0000",
+      exchange: "-84501,0000",
+      exchangeUsd: "-1105,2605",
+      totalUsd: "253,9144",
+      nowUsd: "1912,6100",
+    },
+  ];
+  const context = {
+    document,
+    state: {
+      aggregatedManualRange: { rows: aggregatedRows },
+      config: { manualFinance: {} },
+      data: { manual: { warnings: [] } },
+      googleAuth: {},
+    },
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_HEADERS: ["канал", "now", "приход от услуг"],
+    normalizeCell,
+    parseLooseNumber,
+    hasAnyValue,
+    clone2dArray(values) {
+      return (values || []).map((row) => (row || []).slice());
+    },
+    formatCellForDisplay(value) {
+      return String(value ?? "").trim();
+    },
+    getAnalyticsSections: splitAnalyticsSections,
+    isAnalyticsPersonalSection(section) {
+      return normalizeCell(section?.title) === normalizeCell("Личные расходы");
+    },
+    getManualFinanceDisplayHeaders() {
+      return [
+        "канал",
+        "now",
+        "приход от услуг",
+        "spent for business",
+        "spent for flat",
+        "spent for food",
+        "spent for fun",
+        "spent for study",
+        "spent for travel",
+        "затраты-мои",
+        "обмен",
+        "обмен_usd",
+        "затраты-мои usd",
+        "now_usd",
+      ];
+    },
+    getCurrentAnalyticsManualRows() {
+      return aggregatedRows;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "renderPlainTable")}\n` +
+    `${extractFunction(uiJs, "truncateTableValues")}\n` +
+    `${extractFunction(uiJs, "renderMobileCards")}\n` +
+    `${extractFunction(uiJs, "renderResponsiveDataView")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionDisplayTitle")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsPersonalSectionRenderRows")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionRenderRows")}\n` +
+    `${extractFunction(uiJs, "getManualOverlayUnavailableMessage")}\n` +
+    `${extractFunction(uiJs, "shouldShowManualOverlayWarningInsteadOfSection")}\n` +
+    `${extractFunction(uiJs, "isZeroOnlyAnalyticsRow")}\n` +
+    `${extractFunction(uiJs, "appendCollapsibleZeroAnalyticsTable")}\n` +
+    `${extractFunction(uiJs, "renderAnalyticsSections")}\n` +
+    "this.renderAnalyticsSections = renderAnalyticsSections;",
+    context
+  );
+
+  context.renderAnalyticsSections(container, [
+    ["Личные расходы"],
+    ["канал", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+    ["приват 24-грн", "11480,0000", "8740,0000", "2664,0000", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000", "2664,0000", "-4916,0000", "-111,0960", "60,2147", "259,4400"],
+    ["Яндекс руб", "139786,0000", "0,0000", "11287,0000", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000", "11287,0000", "0,0000", "0,0000", "133,4850", "1653,1700"],
+  ]);
+
+  const movementBlocks = findElements(container, (node) =>
+    node.className === "analytics-section" &&
+    node.children.some((child) => child.className === "tab-note" && child.textContent === "Движение 1")
+  );
+  assert.equal(movementBlocks.length, 1);
+  const table = findElements(movementBlocks[0], (node) => node.tagName === "TABLE")[0];
+  const rows = tableRows(table);
+  const rowByChannel = Object.fromEntries(rows.slice(1).map((row) => [row[0], row]));
+
+  assert.equal(rowByChannel["приват 24-грн"][2], "17480,0000");
+  assert.equal(rowByChannel["приват 24-грн"][3], "5329,0000");
+  assert.equal(rowByChannel["приват 24-грн"][10], "-9832,0000");
+  assert.equal(rowByChannel["Яндекс руб"][10], "-74669,0000");
+  assert.equal(rowByChannel["Итого"][2], "17480,0000");
+  assert.equal(rowByChannel["Итого"][9], "16616,0000");
 });
 
 test("analytics UI shows one Движение 1 and renames the stale movement summary", () => {
