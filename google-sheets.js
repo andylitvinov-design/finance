@@ -198,6 +198,20 @@ function getManualLedgerSheetName() {
   return String(state.config?.manualFinance?.ledgerSheetName || MANUAL_FINANCE_LEDGER_TITLE).trim() || MANUAL_FINANCE_LEDGER_TITLE;
 }
 
+function normalizeManualLedgerSource(value, fallback = "") {
+  const token = String(value || "").trim().toLowerCase();
+  if (!token) return fallback;
+  if (["manual", "mcp", "photo"].includes(token)) return token;
+  if (["fact", "manual fact"].includes(token)) return "manual";
+  if (["paypal", "wise", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "paypal-mcp"].includes(token)) return "mcp";
+  if (["ocr", "browser ocr", "screenshot", "image"].includes(token)) return "photo";
+  return fallback;
+}
+
+function getManualLedgerDisplaySource(value) {
+  return normalizeManualLedgerSource(value, "") || "unknown";
+}
+
 function assertIncomingTransferHeaders(values) {
   const rows = values || [];
   if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
@@ -243,9 +257,15 @@ function assertIncomingCommissionHeaders(values) {
 function assertManualLedgerHeaders(values) {
   const rows = values || [];
   if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
-  const actual = MANUAL_LEDGER_HEADERS.map((_, index) => String(rows[0]?.[index] || "").trim());
-  if (JSON.stringify(actual) !== JSON.stringify(MANUAL_LEDGER_HEADERS)) {
-    throw new Error(`Ledger sheet header mismatch. Expected ${MANUAL_LEDGER_HEADERS.join(" | ")}, got ${actual.join(" | ")}`);
+  const actual = (rows[0] || []).map((cell) => String(cell || "").trim());
+  const legacyExpected = MANUAL_LEDGER_HEADERS.filter((name) => name !== "source");
+  const nextExpected = MANUAL_LEDGER_HEADERS.slice();
+  const actualNext = nextExpected.map((_, index) => actual[index] || "");
+  const actualLegacy = legacyExpected.map((_, index) => actual[index] || "");
+  const matchesNext = JSON.stringify(actualNext) === JSON.stringify(nextExpected);
+  const matchesLegacy = JSON.stringify(actualLegacy) === JSON.stringify(legacyExpected);
+  if (!matchesNext && !matchesLegacy) {
+    throw new Error(`Ledger sheet header mismatch. Expected ${nextExpected.join(" | ")} or legacy ${legacyExpected.join(" | ")}, got ${actual.join(" | ")}`);
   }
 }
 
@@ -413,10 +433,13 @@ function parseManualLedgerSheetValues(values) {
       subcategory: String(read("subcategory") || "").trim(),
       direction: normalizeManualLedgerDirection(read("direction"), operation),
       comment: [String(read("comment") || "").trim(), ...warningParts].filter(Boolean).join(" | "),
+      source: indexByName.source === -1 ? "" : normalizeManualLedgerSource(read("source"), ""),
+      displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source")),
       rawSourceId,
       transferGroupId: String(read("transfer_group_id") || "").trim(),
       createdAt: String(read("created_at") || "").trim(),
-      updatedAt: String(read("updated_at") || "").trim()
+      updatedAt: String(read("updated_at") || "").trim(),
+      sheetRowNumber: rowIndex + 1
     });
   }
   return { rows: ledgerRows, warnings };
@@ -503,6 +526,7 @@ function buildManualLedgerSheetValues(rows) {
       row.subcategory || "",
       row.direction || "",
       row.comment || "",
+      normalizeManualLedgerSource(row.source, ""),
       row.rawSourceId || row.raw_source_id || "",
       row.transferGroupId || row.transfer_group_id || "",
       row.createdAt || row.created_at || "",
@@ -551,6 +575,7 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       subcategory: String(row?.subcategory || "").trim(),
       direction: normalizeManualLedgerDirection(row?.direction, operation),
       comment: String(row?.comment || "").trim(),
+      source: normalizeManualLedgerSource(row?.source, ""),
       rawSourceId,
       transferGroupId: String(row?.transferGroupId || row?.transfer_group_id || "").trim(),
       createdAt: String(row?.createdAt || row?.created_at || "").trim() || timestamp,
@@ -560,9 +585,74 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
   return { rows: output, warnings };
 }
 
+function trimTrailingEmptySheetRows(values) {
+  const next = (values || []).map((row) => Array.isArray(row) ? row.slice() : []);
+  while (next.length > 1 && !next[next.length - 1].some((cell) => String(cell || "").trim())) {
+    next.pop();
+  }
+  return next;
+}
+
+function buildUpdatedManualLedgerSheetValues(values, rowPatch) {
+  const rows = (values || []).map((row) => Array.isArray(row) ? row.slice() : []);
+  assertManualLedgerHeaders(rows);
+  const sheetRowNumber = Number(rowPatch?.sheetRowNumber || 0);
+  if (!Number.isInteger(sheetRowNumber) || sheetRowNumber < 2 || sheetRowNumber > rows.length) {
+    throw new Error("Ledger row was not found. Reload the Operations list and try again.");
+  }
+  if (!rows[sheetRowNumber - 1]?.some((cell) => String(cell || "").trim())) {
+    throw new Error("Ledger row was not found. Reload the Operations list and try again.");
+  }
+  const ledgerParse = parseManualLedgerSheetValues(rows);
+  const targetRow = ledgerParse.rows.find((row) => row.sheetRowNumber === sheetRowNumber);
+  if (!targetRow) {
+    throw new Error("Ledger row was not found. Reload the Operations list and try again.");
+  }
+  const normalized = normalizeManualLedgerRowsForSave(
+    [{ ...targetRow, ...rowPatch }],
+    ledgerParse.rows.filter((row) => row.sheetRowNumber !== sheetRowNumber)
+  );
+  if (!normalized.rows.length) {
+    throw new Error(normalized.warnings[0] || "Ledger row update failed.");
+  }
+  rows[sheetRowNumber - 1] = buildManualLedgerSheetValues(normalized.rows).slice(1)[0];
+  return trimTrailingEmptySheetRows(rows);
+}
+
+function buildDeletedManualLedgerSheetValues(values, sheetRowNumber) {
+  const rows = (values || []).map((row) => Array.isArray(row) ? row.slice() : []);
+  assertManualLedgerHeaders(rows);
+  const rowNumber = Number(sheetRowNumber || 0);
+  if (!Number.isInteger(rowNumber) || rowNumber < 2 || rowNumber > rows.length) {
+    throw new Error("Ledger row was not found. Reload the Operations list and try again.");
+  }
+  if (!rows[rowNumber - 1]?.some((cell) => String(cell || "").trim())) {
+    throw new Error("Ledger row was not found. Reload the Operations list and try again.");
+  }
+  rows.splice(rowNumber - 1, 1);
+  return trimTrailingEmptySheetRows(rows);
+}
+
+async function updateManualLedgerRowDirect(rowPatch) {
+  const ledgerValues = await getSheetValuesByTitle(getManualLedgerSheetName());
+  const updatedValues = buildUpdatedManualLedgerSheetValues(ledgerValues, rowPatch);
+  await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(getManualLedgerSheetName(), updatedValues, getManualFinanceSpreadsheetId());
+  return { sheetRowNumber: Number(rowPatch?.sheetRowNumber || 0), savedAt: new Date().toLocaleString("ru-RU") };
+}
+
+async function deleteManualLedgerRowDirect(sheetRowNumber) {
+  const ledgerValues = await getSheetValuesByTitle(getManualLedgerSheetName());
+  const updatedValues = buildDeletedManualLedgerSheetValues(ledgerValues, sheetRowNumber);
+  await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(getManualLedgerSheetName(), updatedValues, getManualFinanceSpreadsheetId());
+  return { sheetRowNumber: Number(sheetRowNumber || 0), savedAt: new Date().toLocaleString("ru-RU") };
+}
+
 function buildLedgerRowsFromExpenseRows(expenseRows, options = {}) {
   const rows = [];
   const timestamp = options.timestamp || new Date().toISOString();
+  const ledgerSource = normalizeManualLedgerSource(options.ledgerSource || options.source, "manual");
   (expenseRows || []).forEach((expenseRow, rowIndex) => {
     const date = normalizeIncomingSheetDateValue(expenseRow?.date || options.date);
     if (!date) return;
@@ -580,22 +670,23 @@ function buildLedgerRowsFromExpenseRows(expenseRows, options = {}) {
       }
       const isIncome = category === "servicein" || category === "ezoin";
       const operation = isIncome ? "income" : (category === "business" ? "business_expense" : "personal_expense");
-      rows.push({
-        date,
-        operation,
-        fromChannel: isIncome ? "" : channel,
-        toChannel: isIncome ? channel : "",
+        rows.push({
+          date,
+          operation,
+          fromChannel: isIncome ? "" : channel,
+          toChannel: isIncome ? channel : "",
         amount: formatSheetNumber(Math.abs(amount)),
         currency: inferManualFinanceChannelCurrency(channel),
         amountUsd: "",
-        category,
-        subcategory: "",
-        direction: isIncome ? "in" : "out",
-        comment: options.comment || "legacy fact save",
-        rawSourceId: `${options.source || "legacy"}:${date}:${legacyCategory}:${channel}:${rowIndex}`,
-        transferGroupId: "",
-        createdAt: timestamp,
-        updatedAt: timestamp
+          category,
+          subcategory: "",
+          direction: isIncome ? "in" : "out",
+          comment: options.comment || "legacy fact save",
+          source: ledgerSource,
+          rawSourceId: `${options.source || "legacy"}:${date}:${legacyCategory}:${channel}:${rowIndex}`,
+          transferGroupId: "",
+          createdAt: timestamp,
+          updatedAt: timestamp
       });
     });
     if (exchangeEntries.length) {
@@ -616,6 +707,7 @@ function buildLedgerRowsFromExpenseRows(expenseRows, options = {}) {
           subcategory: "",
           direction: isIn ? "in" : "out",
           comment: options.comment || "legacy exchange save",
+          source: ledgerSource,
           rawSourceId: `${groupId}:${entry.channel}:${entryIndex}`,
           transferGroupId: groupId,
           createdAt: timestamp,
@@ -665,6 +757,11 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
     const rawSourceId = String(entry.sourceTransactionId || entry.id || `expense-accounting:${date}:${channel}:${index}`).trim();
+    const ledgerSource = normalizeManualLedgerSource(
+      entry.source ||
+        (Number.isInteger(entry.sourceImageIndex) ? "photo" : ""),
+      Number.isInteger(entry.sourceImageIndex) ? "photo" : "mcp"
+    );
     if (entry.direction === "income") {
       rows.push({
         date,
@@ -677,6 +774,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         category: category === "extra" ? "servicein" : category,
         direction: "in",
         comment: entry.description || entry.transactionSubject || entry.organization || "",
+        source: ledgerSource,
         rawSourceId,
         transferGroupId: "",
         createdAt: timestamp,
@@ -696,6 +794,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         category: "exchange",
         direction: "out",
         comment: entry.description || entry.transactionSubject || "exchange import without paired in-row",
+        source: ledgerSource,
         rawSourceId,
         transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
         createdAt: timestamp,
@@ -714,6 +813,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
           category: "exchange",
           direction: "in",
           comment: entry.description || entry.transactionSubject || "exchange paired in-row",
+          source: ledgerSource,
           rawSourceId: `${rawSourceId}:in`,
           transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
           createdAt: timestamp,
@@ -733,6 +833,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
       category,
       direction: "out",
       comment: entry.description || entry.transactionSubject || entry.organization || "",
+      source: ledgerSource,
       rawSourceId,
       transferGroupId: "",
       createdAt: timestamp,
@@ -1032,6 +1133,7 @@ async function saveManualSheetDirect(params) {
   const factLedgerRows = buildLedgerRowsFromExpenseRows(rawExpenseRows, {
     date: snapshotDate,
     source: "fact",
+    ledgerSource: "manual",
     comment: `fact ${snapshotDate}`
   });
   const preservedLedgerRows = (existingLedgerParse.rows || []).filter((row) => {
