@@ -1731,6 +1731,38 @@ function getAnalyticsSectionDisplayTitle(section) {
   return String(section?.title || "").trim();
 }
 
+function getAnalyticsPersonalSectionRenderRows(section) {
+  if (!state.aggregatedManualRange?.rows?.length) return section.rows;
+  const rows = getCurrentAnalyticsManualRows();
+  const header = typeof getManualFinanceDisplayHeaders === "function"
+    ? getManualFinanceDisplayHeaders(MANUAL_FINANCE_HEADERS)
+    : (section.rows?.[0] || []);
+  return [
+    header,
+    ...rows.map((row) => [
+      row.channel || "",
+      row.now || "",
+      row.serviceIncome || "",
+      row.business || "",
+      row.flat || "",
+      row.food || "",
+      row.fun || "",
+      row.study || "",
+      row.travel || "",
+      row.total || "",
+      row.exchange || "",
+      row.exchangeUsd || "",
+      row.totalUsd || "",
+      row.nowUsd || "",
+    ])
+  ];
+}
+
+function getAnalyticsSectionRenderRows(section) {
+  const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
+  return isPersonalSection ? getAnalyticsPersonalSectionRenderRows(section) : section.rows;
+}
+
 function setExpenseAccountingStatus(message, isError = false) {
   state.expenseAccounting.status = message;
   state.expenseAccounting.error = Boolean(isError);
@@ -2295,6 +2327,7 @@ function renderAnalyticsSections(container, values) {
   sections.forEach((section) => {
     const displayTitle = getAnalyticsSectionDisplayTitle(section);
     const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
+    const sectionRows = getAnalyticsSectionRenderRows(section);
     const block = document.createElement("div");
     block.className = "analytics-section";
     const title = document.createElement("div");
@@ -2309,14 +2342,14 @@ function renderAnalyticsSections(container, values) {
       warning.textContent = manualOverlayWarning;
       block.appendChild(warning);
     } else if (isPersonalSection) {
-      appendCollapsibleZeroAnalyticsTable(block, section.rows);
+      appendCollapsibleZeroAnalyticsTable(block, sectionRows);
     } else if (
       normalizeCell(section.title) === normalizeCell("ИТОГО ЗА ПЕРИОД USD") ||
       normalizeCell(section.title) === normalizeCell("БАЛАНС")
     ) {
-      block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 2 }));
+      block.appendChild(renderResponsiveDataView(sectionRows, { mobileTableColumnCount: 2 }));
     } else {
-      block.appendChild(renderResponsiveDataView(section.rows, { mobileTableColumnCount: 10 }));
+      block.appendChild(renderResponsiveDataView(sectionRows, { mobileTableColumnCount: 10 }));
     }
     container.appendChild(block);
   });
