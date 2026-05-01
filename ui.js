@@ -255,6 +255,10 @@ function renderExpenseAccountingBlock() {
   input.accept = "image/png,image/jpeg,image/webp";
   input.multiple = true;
   input.disabled = state.expenseAccounting.loading;
+  const privat24Input = document.createElement("input");
+  privat24Input.type = "file";
+  privat24Input.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+  privat24Input.disabled = state.expenseAccounting.loading || state.expenseAccounting.privat24ImportLoading;
   const parseButton = document.createElement("button");
   parseButton.type = "button";
   parseButton.className = "primary";
@@ -270,6 +274,7 @@ function renderExpenseAccountingBlock() {
     || state.expenseAccounting.yoomoneyLoading
     || state.expenseAccounting.monobankLoading
     || state.expenseAccounting.privatBankLoading
+    || state.expenseAccounting.privat24ImportLoading
     || state.expenseAccounting.tdBankLoading;
   const paypalButton = document.createElement("button");
   paypalButton.type = "button";
@@ -304,19 +309,28 @@ function renderExpenseAccountingBlock() {
   const privatBankButton = document.createElement("button");
   privatBankButton.type = "button";
   privatBankButton.className = "secondary";
-  privatBankButton.textContent = state.expenseAccounting.privatBankLoading ? "Загружаю Privat..." : "Подтянуть Privat";
+  privatBankButton.textContent = state.expenseAccounting.privatBankLoading ? "Загружаю Privat API..." : "Privat API (business)";
   privatBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   privatBankButton.addEventListener("click", loadPrivatBankExpenseStatement);
+  const privat24ImportButton = document.createElement("button");
+  privat24ImportButton.type = "button";
+  privat24ImportButton.className = "secondary";
+  privat24ImportButton.textContent = state.expenseAccounting.privat24ImportLoading ? "Импортирую Privat24..." : "Импорт Privat24 CSV/XLSX";
+  privat24ImportButton.disabled = state.expenseAccounting.loading || statementLoading;
+  privat24ImportButton.addEventListener("click", async () => {
+    await importPrivat24StatementFile(privat24Input.files?.[0] || null);
+  });
   const tdBankButton = document.createElement("button");
   tdBankButton.type = "button";
   tdBankButton.className = "secondary";
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Подтянуть TD Bank";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
-  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privatBankButton, tdBankButton);
-  upload.append(input, actions);
+  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  upload.append(input, privat24Input, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
+  shell.appendChild(renderPrivat24ImportHelper());
   shell.appendChild(renderTdBankExpenseHelper());
   shell.appendChild(renderExpenseAccountingResultTabs());
 
@@ -326,6 +340,17 @@ function renderExpenseAccountingBlock() {
   const bottomSave = renderExpenseAccountingSaveButton();
   if (bottomSave) shell.appendChild(bottomSave);
   return shell;
+}
+
+function renderPrivat24ImportHelper() {
+  const helper = document.createElement("div");
+  helper.className = "expense-helper";
+  helper.innerHTML = `
+    <div class="expense-helper-title">Privat24 personal import</div>
+    <div class="config-note">Для личного Приват24 используйте импорт выписки CSV/XLSX. Business API доступен только для бизнес-счетов.</div>
+    <div class="config-note">Экспорт: Privat24 → карта/счёт → Выписка/История → выбрать период → Экспорт CSV или Excel/XLSX → загрузить файл здесь.</div>
+  `;
+  return helper;
 }
 
 function renderExpenseAccountingSaveButton() {
@@ -1597,6 +1622,7 @@ async function loadMonobankExpenseStatement() {
 }
 
 async function loadPrivatBankExpenseStatement() {
+  setExpenseAccountingStatus("Для личного Приват24 используйте импорт выписки CSV/XLSX. Business API доступен только для бизнес-счетов.", false);
   await loadBankExpenseStatement({
     provider: "privatbank",
     apiPath: "./api/privatbank-transactions",
@@ -1605,6 +1631,80 @@ async function loadPrivatBankExpenseStatement() {
     title: "PrivatBank",
     progressMessage: "Запрашиваю PrivatBank-выписку за выбранный период...",
     emptyMessage: "PrivatBank-выписка загружена, но строк за период не найдено."
+  });
+}
+
+async function importPrivat24StatementFile(file) {
+  if (!file) {
+    setExpenseAccountingStatus("Выберите CSV/XLSX файл выписки из личного Privat24.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.privat24ImportLoading = true;
+  setExpenseAccountingStatus("Импортирую выписку личного Privat24...", false);
+  renderTabs();
+  try {
+    const statementText = await readPrivat24StatementFile(file);
+    const response = await fetch("./api/privatbank-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "parseStatement", statementText, fileName: file.name || "" })
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `Privat24 import failed (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "privat24" && entry.source !== "privatbank"),
+      ...entries
+    ];
+    state.expenseAccounting.privatBankSummary = hasProviderSummaryData(payload.summary)
+      ? payload.summary
+      : buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = payload.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    setExpenseAccountingStatus(
+      entries.length
+        ? `Privat24 CSV/XLSX импортирован: ${entries.length} строк. Проверьте needs_review перед внесением.`
+        : "Privat24 файл прочитан, но операций не найдено.",
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось импортировать Privat24 CSV/XLSX.", true);
+  } finally {
+    state.expenseAccounting.privat24ImportLoading = false;
+    renderTabs();
+  }
+}
+
+async function readPrivat24StatementFile(file) {
+  const name = String(file?.name || "").toLowerCase();
+  if (/\.(xlsx|xls)$/.test(name)) {
+    return readPrivat24XlsxFile(file);
+  }
+  return file.text();
+}
+
+function readPrivat24XlsxFile(file) {
+  if (typeof XLSX === "undefined" || !XLSX?.read || !XLSX?.utils) {
+    throw new Error("XLSX библиотека не загрузилась. Сохраните выписку Privat24 как CSV или обновите страницу.");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Не удалось прочитать ${file.name || "Privat24 XLSX"}.`));
+    reader.onload = () => {
+      try {
+        const workbook = XLSX.read(reader.result, { type: "array" });
+        const sheetName = workbook.SheetNames?.[0];
+        const sheet = workbook.Sheets?.[sheetName];
+        if (!sheet) throw new Error("В XLSX выписке Privat24 не найден первый лист.");
+        resolve(XLSX.utils.sheet_to_csv(sheet, { FS: ";", blankrows: false }));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   });
 }
 

@@ -21,6 +21,7 @@ test("parsePrivatStatement maps JSON UAH rows with fallback USD", () => {
   assert.equal(rows[0].amount_usd, "100");
   assert.equal(rows[0].counterparty, "ТОВ Сервіс");
   assert.equal(rows[0].external_id, "PB-JSON-1");
+  assert.equal(rows[0].source, "privat24");
 });
 
 test("parsePrivatStatement maps CSV rows with decimal comma", () => {
@@ -31,6 +32,38 @@ test("parsePrivatStatement maps CSV rows with decimal comma", () => {
   assert.equal(rows[0].amount, "4517.6");
   assert.equal(rows[0].amount_usd, "103.0005");
   assert.equal(rows[0].description, "Оплата кави");
+  assert.equal(rows[0].source, "privat24");
+});
+
+test("parsePrivatStatement maps personal Privat24 income rows", () => {
+  const rows = parsePrivatStatement("Дата операции;Приход;Валюта карты;Описание;Отправитель;Номер операции\n22.04.2026;4386;UAH;Переказ на картку;Іван Петренко;PB-IN-1");
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].date, "2026-04-22");
+  assert.equal(rows[0].operation, "income");
+  assert.equal(rows[0].to_channel, "приват 24-грн");
+  assert.equal(rows[0].amount_usd, "100");
+  assert.equal(rows[0].counterparty, "Іван Петренко");
+  assert.equal(rows[0].source, "privat24");
+});
+
+test("parsePrivatStatement maps transfers between own Privat24 accounts", () => {
+  const rows = parsePrivatStatement([
+    {
+      id: "PB-TR-1",
+      date: "2026-04-23",
+      amount: "-1000",
+      currency: "UAH",
+      description: "Переказ між своїми рахунками"
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, "partner_transfer");
+  assert.equal(rows[0].category, "partner");
+  assert.equal(rows[0].transfer_group_id, "PB-TR-1");
+  assert.equal(rows[0].review_status, "");
+  assert.equal(rows[0].source, "privat24");
 });
 
 test("parsePrivatStatement maps fallback text rows", () => {
@@ -64,4 +97,23 @@ test("parsePrivatStatement splits exchange into out and in ledger rows", () => {
   assert.equal(rows[1].transfer_group_id, "PB-EX-1");
   assert.equal(rows[0].amount_usd, "-98.0392");
   assert.equal(rows[1].amount_usd, "100");
+  assert.deepEqual(rows.map((row) => row.source), ["privat24", "privat24"]);
+});
+
+test("parsePrivatStatement marks unclear personal Privat24 rows as needs_review", () => {
+  const rows = parsePrivatStatement([
+    {
+      id: "PB-UNK-1",
+      date: "2026-04-24",
+      amount: "-123.45",
+      currency: "UAH",
+      description: "Невідомий тип операції"
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, "correction");
+  assert.equal(rows[0].review_status, "needs_review");
+  assert.match(rows[0].comment, /^needs_review:/);
+  assert.equal(rows[0].source, "privat24");
 });

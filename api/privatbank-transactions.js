@@ -21,6 +21,10 @@ export default async function handler(request, response) {
 
   try {
     const payload = typeof request.body === "string" ? JSON.parse(request.body || "{}") : request.body || {};
+    if (payload.action === "parseStatement" || payload.statementText || payload.statementRows) {
+      const result = parsePrivat24PersonalStatementPayload(payload);
+      return response.status(200).json({ ok: true, ...result });
+    }
     const result = await fetchPrivatBankStatementEntries({
       startDate: payload.startDate,
       endDate: payload.endDate,
@@ -33,6 +37,21 @@ export default async function handler(request, response) {
   } catch (error) {
     return response.status(400).json({ ok: false, error: String(error?.message || error) });
   }
+}
+
+export function parsePrivat24PersonalStatementPayload(payload = {}) {
+  const input = payload.statementRows || payload.rows || payload.statementText || payload.text || "";
+  const ledgerRows = parsePrivatStatement(input);
+  const entries = buildPrivatEntriesFromLedgerRows(ledgerRows);
+  return {
+    entries,
+    ledgerRows,
+    summary: summarizePrivatBankStatementEntries(entries),
+    transactionCount: ledgerRows.length,
+    source: "privat24",
+    mode: "personal-statement-import",
+    warnings: ledgerRows.filter((row) => row.review_status === "needs_review").map((row) => `${row.external_id || row.raw_source_id}: needs_review`)
+  };
 }
 
 export async function fetchPrivatBankStatementEntries(options = {}) {
@@ -131,6 +150,67 @@ export function normalizePrivatBankStatementItem(item, account = {}, index = 0) 
     feeCurrency: currency,
     entryKind: isExchange ? "exchange" : "payment"
   };
+}
+
+function buildPrivatEntriesFromLedgerRows(rows = []) {
+  return (rows || []).map((row, index) => {
+    const direction = row.operation === "income" || row.operation === "exchange_in"
+      ? "income"
+      : (row.operation === "exchange_out" ? "exchange" : "expense");
+    const channel = row.operation === "income" || row.operation === "exchange_in"
+      ? getLedgerChannel(row.to_channel || row.toChannel || row.from_channel || row.fromChannel)
+      : getLedgerChannel(row.from_channel || row.fromChannel || row.to_channel || row.toChannel);
+    return {
+      id: `privat24-${row.external_id || row.raw_source_id || index}`,
+      date: row.date || "",
+      channel,
+      direction,
+      localAmount: Math.abs(parseBankNumber(row.amount)),
+      currency: String(row.currency || "UAH").trim().toUpperCase(),
+      usdAmount: Math.abs(parseBankNumber(row.amount_usd || row.amountUsd)),
+      amountClientPaid: Math.abs(parseBankNumber(row.amount)),
+      amount_client_paid: Math.abs(parseBankNumber(row.amount)),
+      amountNetReceived: Math.max(0, Math.abs(parseBankNumber(row.amount)) - Math.abs(parseBankNumber(row.fee_amount))),
+      amount_net_received: Math.max(0, Math.abs(parseBankNumber(row.amount)) - Math.abs(parseBankNumber(row.fee_amount))),
+      suggestedCategory: row.review_status === "needs_review" ? "extra" : mapLedgerCategoryToUi(row.category),
+      organization: row.description || row.comment || row.counterparty || "",
+      counterparty: row.counterparty || "",
+      counterpartyName: row.counterparty || "",
+      counterpartyRole: direction === "income" ? "payer" : "payee",
+      counterpartyLabel: `${direction === "income" ? "От" : "Кому"}: ${firstNonEmpty(row.counterparty, row.description, row.comment, "needs_review")}`,
+      description: row.description || row.comment || "",
+      confidence: row.review_status === "needs_review" ? 0.35 : 0.85,
+      source: "privat24",
+      provider: "privatbank",
+      sourceTransactionId: String(row.external_id || row.raw_source_id || ""),
+      externalId: String(row.external_id || row.raw_source_id || ""),
+      external_id: String(row.external_id || row.raw_source_id || ""),
+      exchangeGroupId: String(row.transfer_group_id || ""),
+      exchange_group_id: String(row.transfer_group_id || ""),
+      feeAmount: Math.abs(parseBankNumber(row.fee_amount)) || null,
+      feeCurrency: String(row.fee_currency || row.currency || "").trim().toUpperCase(),
+      entryKind: row.review_status === "needs_review" ? "needs_review" : (direction === "exchange" ? "exchange" : "payment"),
+      reviewStatus: row.review_status || "",
+      review_status: row.review_status || ""
+    };
+  });
+}
+
+function getLedgerChannel(value) {
+  const raw = String(value || "").trim();
+  if (/дол|usd/i.test(raw)) return "приват 24-дол";
+  if (/евро|евр|eur/i.test(raw)) return "приват 24-евро";
+  return raw || "приват 24-грн";
+}
+
+function mapLedgerCategoryToUi(category) {
+  const normalized = String(category || "").trim().toLowerCase();
+  if (normalized === "servicein" || normalized === "ezoin") return "serviceIncome";
+  if (normalized === "house") return "flat";
+  if (normalized === "travel") return "travel";
+  if (normalized === "partner") return "exchange";
+  if (normalized === "exchange") return "exchange";
+  return normalized || "extra";
 }
 
 export function summarizePrivatBankStatementEntries(entries = []) {

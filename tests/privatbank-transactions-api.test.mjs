@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   fetchPrivatBankStatementEntries,
   normalizePrivatBankStatementItem,
+  parsePrivat24PersonalStatementPayload,
   summarizePrivatBankStatementEntries,
 } from "../api/privatbank-transactions.js";
 
@@ -106,4 +107,23 @@ test("fetchPrivatBankStatementEntries calls configured endpoint with date range"
   assert.equal(result.ledgerRows[0].amount_usd, "2.28");
   assert.equal(result.transactionCount, 1);
   assert.equal(result.source, "privatbank");
+});
+
+test("parsePrivat24PersonalStatementPayload imports personal CSV without business credentials", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    statementText: "Дата операции;Сумма операции;Валюта карты;Детали операции;Получатель;Комиссия;Номер операции\n24.04.2026;-123,45;UAH;Невідомий тип операції;Сервіс;1,50;PB-PERSONAL-1"
+  });
+
+  assert.equal(result.source, "privat24");
+  assert.equal(result.mode, "personal-statement-import");
+  assert.equal(result.transactionCount, 1);
+  assert.equal(result.ledgerRows[0].source, "privat24");
+  assert.equal(result.ledgerRows[0].external_id, "PB-PERSONAL-1");
+  assert.equal(result.ledgerRows[0].fee_amount, "1.5");
+  assert.equal(result.ledgerRows[0].review_status, "needs_review");
+  assert.equal(result.entries[0].source, "privat24");
+  assert.equal(result.entries[0].provider, "privatbank");
+  assert.equal(result.entries[0].reviewStatus, "needs_review");
+  assert.deepEqual(result.warnings, ["PB-PERSONAL-1: needs_review"]);
 });

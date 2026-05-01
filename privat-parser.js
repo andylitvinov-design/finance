@@ -30,20 +30,25 @@ function extractInputRows(input) {
 }
 
 function normalizePrivatLedgerRows(row, index = 0) {
-  const date = normalizeDate(firstNonEmpty(row.date, row.operationDate, row.trandate, row.dat_od, row.time));
-  const description = firstNonEmpty(row.description, row.purpose, row.nazn, row.paymentPurpose, row.details, row.info);
-  const counterparty = firstNonEmpty(row.counterparty, row.counterpartyName, row.name, row.contragentName, row.AUT_MY_NAM, row.merchant, row.merchantName);
+  const date = normalizeDate(firstNonEmpty(row.date, row.operationDate, row.operation_date, row.trandate, row.dat_od, row.time, row.дата, row["Дата операции"], row["Дата"]));
+  const description = firstNonEmpty(row.description, row.purpose, row.nazn, row.paymentPurpose, row.details, row.info, row["Описание"], row["Назначение платежа"], row["Детали операции"]);
+  const counterparty = firstNonEmpty(row.counterparty, row.counterpartyName, row.name, row.contragentName, row.AUT_MY_NAM, row.merchant, row.merchantName, row["Контрагент"], row["Получатель"], row["Отправитель"]);
   const externalId = firstNonEmpty(row.external_id, row.externalId, row.id, row.transactionId, row.ref, row.reference, row.trn_id, row.docNumber, `privat-${date || "unknown"}-${index}`);
   if (looksLikeExchange(row, description)) return buildExchangeRows(row, { date, description, counterparty, externalId });
 
-  const amount = parseBankNumber(firstNonEmpty(row.amount, row.sum, row.value, row.amt, row.trantype === "D" ? row.debit : row.credit));
-  const currency = normalizeCurrency(firstNonEmpty(row.currency, row.ccy, row.currencyCode, row.cardCurrency, row.accountCurrency));
+  const amount = parseSignedAmount(row);
+  const currency = normalizeCurrency(firstNonEmpty(row.currency, row.ccy, row.currencyCode, row.cardCurrency, row.accountCurrency, row["Валюта"], row["Валюта карты"]));
   const direction = inferDirection(row, amount);
   const channel = getPrivatChannel(currency);
-  const category = direction === "income" ? "servicein" : inferCategory(row);
+  const transfer = looksLikeOwnTransfer(row, description);
+  const needsReview = !transfer && looksAmbiguous(row, description);
+  const category = direction === "income" ? "servicein" : (transfer ? "partner" : (needsReview ? "extra" : inferCategory(row)));
+  const operation = transfer ? "partner_transfer" : (needsReview ? "correction" : (direction === "income" ? "income" : (category === "business" ? "business_expense" : "personal_expense")));
+  const reviewPrefix = needsReview ? "needs_review: " : "";
+  const feeAmount = Math.abs(parseBankNumber(firstNonEmpty(row.fee, row.commission, row["Комиссия"], row["Комісія"])));
   return [{
     date,
-    operation: direction === "income" ? "income" : (category === "business" ? "business_expense" : "personal_expense"),
+    operation,
     from_channel: direction === "income" ? "" : channel,
     to_channel: direction === "income" ? channel : "",
     amount: formatNumber(Math.abs(amount)),
@@ -51,14 +56,17 @@ function normalizePrivatLedgerRows(row, index = 0) {
     amount_usd: formatNumber(convertToUsd(Math.abs(amount), currency, row)),
     category,
     subcategory: "",
-    direction: direction === "income" ? "in" : "out",
-    comment: description,
+    direction: direction === "income" ? "in" : (needsReview ? "neutral" : "out"),
+    comment: `${reviewPrefix}${description}`.trim(),
     counterparty,
     description,
-    source: "mcp",
+    source: "privat24",
     external_id: externalId,
     raw_source_id: externalId,
-    transfer_group_id: ""
+    transfer_group_id: transfer ? externalId : "",
+    review_status: needsReview ? "needs_review" : "",
+    fee_amount: feeAmount ? formatNumber(feeAmount) : "",
+    fee_currency: feeAmount ? currency : ""
   }];
 }
 
@@ -85,7 +93,7 @@ function buildExchangeRows(row, context) {
       comment: context.description || "PrivatBank exchange",
       counterparty: context.counterparty,
       description: context.description,
-      source: "mcp",
+      source: "privat24",
       external_id: `${context.externalId}:out`,
       raw_source_id: `${context.externalId}:out`,
       transfer_group_id: exchangeGroupId
@@ -104,7 +112,7 @@ function buildExchangeRows(row, context) {
       comment: context.description || "PrivatBank exchange",
       counterparty: context.counterparty,
       description: context.description,
-      source: "mcp",
+      source: "privat24",
       external_id: `${context.externalId}:in`,
       raw_source_id: `${context.externalId}:in`,
       transfer_group_id: exchangeGroupId
@@ -176,19 +184,41 @@ function normalizeHeader(value) {
   const token = String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-яіїєґ]+/g, "_").replace(/^_+|_+$/g, "");
   const aliases = {
     operation_date: "date",
+    дата_операции: "date",
+    дата: "date",
     trandate: "date",
     dat_od: "date",
     сумма: "amount",
+    сума: "amount",
+    сумма_операции: "amount",
+    сума_операції: "amount",
+    сумма_в_валюте_карты: "amount",
+    сума_у_валюті_картки: "amount",
     suma: "amount",
     sum: "amount",
+    расход: "debit",
+    витрати: "debit",
+    дебет: "debit",
+    приход: "credit",
+    надходження: "credit",
+    кредит: "credit",
     ccy: "currency",
     валюта: "currency",
+    валюта_карты: "currency",
     назначение_платежа: "description",
+    описание: "description",
+    детали_операции: "description",
     purpose: "description",
     nazn: "description",
     контрагент: "counterparty",
+    получатель: "counterparty",
+    отправитель: "counterparty",
     contragent_name: "counterparty",
-    ref: "external_id"
+    ref: "external_id",
+    номер_операции: "external_id",
+    id_операции: "external_id",
+    комиссия: "fee",
+    комісія: "fee"
   };
   return aliases[token] || token;
 }
@@ -199,12 +229,34 @@ function looksLikeExchange(row, description = "") {
   return Boolean(firstNonEmpty(row.toAmount, row.buyAmount, row.inAmount, row.receivedAmount) && firstNonEmpty(row.fromAmount, row.sellAmount, row.outAmount, row.amount));
 }
 
+function looksLikeOwnTransfer(row, description = "") {
+  const text = normalizeText([description, row.type, row.operationType, row.category].join(" "));
+  return /между своими|між своїми|власн|own account|between own|transfer between/.test(text);
+}
+
+function looksAmbiguous(row, description = "") {
+  const text = normalizeText([description, row.type, row.operationType, row.category].join(" "));
+  if (/невідом|неизвест|unknown|manual review|needs review/.test(text)) return true;
+  return !text && !firstNonEmpty(row.counterparty, row.counterpartyName, row.name, row.merchantName);
+}
+
 function inferDirection(row, amount) {
   const raw = normalizeText(firstNonEmpty(row.direction, row.type, row.trantype, row.operationType));
   if (/credit|income|in|c|приход|кредит/.test(raw)) return "income";
   if (/debit|expense|out|d|расход|дебет/.test(raw)) return "expense";
   return Number(amount) < 0 ? "expense" : "income";
 }
+
+function parseSignedAmount(row) {
+  const explicit = firstNonEmpty(row.amount, row.sum, row.value, row.amt, row["Сумма операции"]);
+  if (explicit) return parseBankNumber(explicit);
+  const debit = parseBankNumber(firstNonEmpty(row.debit, row["Дебет"], row["Расход"]));
+  if (debit) return -Math.abs(debit);
+  const credit = parseBankNumber(firstNonEmpty(row.credit, row["Кредит"], row["Приход"]));
+  if (credit) return Math.abs(credit);
+  return 0;
+}
+
 
 function inferCategory(row) {
   const text = normalizeText([row.description, row.purpose, row.mcc].filter(Boolean).join(" "));
