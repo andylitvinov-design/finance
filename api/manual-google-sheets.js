@@ -1,4 +1,5 @@
 import { createSign } from "node:crypto";
+import { createRequire } from "node:module";
 import {
   MANUAL_LEDGER_HEADERS,
   mapLedgerCategoryToLegacy,
@@ -9,6 +10,8 @@ import {
   resolveManualLedgerSource,
 } from "./manual-ledger-maps.js";
 
+const require = createRequire(import.meta.url);
+const LEDGER_CONTRACT = require("../manual-ledger-contract.js");
 const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -213,9 +216,12 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   }
   const normalizedOperations = parseNormalizedOperationRows(values, rateLookup);
   if (normalizedOperations) {
+    const ledgerV2Rows = normalizedOperations.map((row) => row.ledgerV2).filter(Boolean);
     return {
-      schema: "ledger-v1",
+      schema: hasLedgerV2Header(values) ? "ledger-v2-compatible" : "ledger-v1",
       operations: normalizedOperations,
+      ledgerV2Rows,
+      warnings: buildLedgerV2RepositoryWarnings(normalizedOperations, values),
       expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
       views: {
         byDateChannel: buildOperationsPivotByDateChannel(normalizedOperations),
@@ -226,6 +232,8 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   return {
     schema: "legacy-expense-grid",
     operations: [],
+    ledgerV2Rows: [],
+    warnings: ["Ledger v2 physical columns need verification: legacy expense grid fallback is active."],
     expenseRows: parseLegacyExpenseRows(values),
     views: null,
   };
@@ -287,12 +295,17 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
     amount: findHeaderIndex(header, ["amount", "сумма"]),
     currency: findHeaderIndex(header, ["currency", "валюта"]),
     amountUsd: findHeaderIndex(header, ["amount_usd", "amount usd", "сумма_usd", "usd amount"]),
+    amountGross: findHeaderIndex(header, ["amount_gross", "amount gross", "client_paid", "client paid", "gross"]),
+    amountFee: findHeaderIndex(header, ["amount_fee", "amount fee", "provider_fee", "provider fee", "fee"]),
+    amountNet: findHeaderIndex(header, ["amount_net", "amount net", "net_received", "net received", "net"]),
+    rate: findHeaderIndex(header, ["rate", "курс"]),
     category: findHeaderIndex(header, ["category", "категория"]),
     subcategory: findHeaderIndex(header, ["subcategory", "подкатегория"]),
     direction: findHeaderIndex(header, ["direction", "направление"]),
     comment: findHeaderIndex(header, ["comment", "комментарий"]),
     source: findHeaderIndex(header, ["source", "источник"]),
-    rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id"]),
+    rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id", "external_id", "external id"]),
+    externalId: findHeaderIndex(header, ["external_id", "external id", "source transaction id", "raw_source_id"]),
     transferGroupId: findHeaderIndex(header, ["transfer_group_id", "exchange_group_id", "transfer group id"]),
     createdAt: findHeaderIndex(header, ["created_at", "created at"]),
     updatedAt: findHeaderIndex(header, ["updated_at", "updated at"]),
@@ -313,20 +326,71 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         amount: String(row[indexes.amount] || "").trim(),
         currency: String(row[indexes.currency] || "").trim().toUpperCase(),
         amountUsd: String(row[indexes.amountUsd] || "").trim(),
+        amountGross: indexes.amountGross === -1 ? "" : String(row[indexes.amountGross] || "").trim(),
+        amountFee: indexes.amountFee === -1 ? "" : String(row[indexes.amountFee] || "").trim(),
+        amountNet: indexes.amountNet === -1 ? "" : String(row[indexes.amountNet] || "").trim(),
+        rate: indexes.rate === -1 ? "" : String(row[indexes.rate] || "").trim(),
         category,
         subcategory: String(row[indexes.subcategory] || "").trim(),
         direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
         comment: String(row[indexes.comment] || "").trim(),
         source: resolveManualLedgerSource(indexes.source === -1 ? "" : row[indexes.source], row[indexes.rawSourceId], ""),
         rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
+        externalId: indexes.externalId === -1 ? "" : String(row[indexes.externalId] || "").trim(),
         transferGroupId: String(row[indexes.transferGroupId] || "").trim(),
         createdAt: String(row[indexes.createdAt] || "").trim(),
         updatedAt: String(row[indexes.updatedAt] || "").trim(),
       };
       operationRow.amountUsd = formatNumberString(deriveOperationUsdAmount(operationRow, rateLookup));
+      const ledgerV2 = LEDGER_CONTRACT.normalizeLedgerRow({
+        ...operationRow,
+        operation,
+        amount_usd: operationRow.amountUsd,
+        amount_gross: operationRow.amountGross,
+        amount_fee: operationRow.amountFee,
+        amount_net: operationRow.amountNet,
+        external_id: operationRow.externalId || operationRow.rawSourceId,
+        raw_source_id: operationRow.rawSourceId,
+      }, { rateLookup });
+      operationRow.ledgerV2 = ledgerV2;
+      operationRow.amountGross = ledgerV2.amount_gross;
+      operationRow.amountFee = ledgerV2.amount_fee;
+      operationRow.amountNet = ledgerV2.amount_net;
+      operationRow.amount_gross = ledgerV2.amount_gross;
+      operationRow.amount_fee = ledgerV2.amount_fee;
+      operationRow.amount_net = ledgerV2.amount_net;
+      operationRow.external_id = ledgerV2.external_id;
+      operationRow.balanceAmount = ledgerV2.balance_amount;
       return operationRow;
     })
     .filter((row) => row.date && row.operation && (row.fromChannel || row.toChannel) && String(row.amount || "").trim());
+}
+
+function hasLedgerV2Header(values) {
+  const { header } = splitHeaderRows(values);
+  const normalizedHeader = new Set((header || []).map((cell) => normalizeCell(cell)));
+  return ["amount_gross", "amount_fee", "amount_net", "external_id"].some((name) => normalizedHeader.has(name));
+}
+
+function buildLedgerV2RepositoryWarnings(operations, values) {
+  const warnings = [];
+  if (!hasLedgerV2Header(values)) {
+    warnings.push("Ledger v2 physical columns need verification: current Sheet is Ledger v1; v2 rows are normalized in memory.");
+  }
+  const fallbackCount = (operations || []).filter((row) => {
+    return String(row?.amount || "").trim() && !String(row?.amountNet || row?.amount_net || "").trim();
+  }).length;
+  if (fallbackCount) {
+    warnings.push(`Ledger v2 fallback: ${fallbackCount} row(s) have empty amount_net; balance falls back to amount.`);
+  }
+  const exchangeMissingUsd = (operations || []).filter((row) => {
+    const operation = normalizeOperation(row?.operation, row?.category);
+    return (operation === "exchange_in" || operation === "exchange_out") && !String(row?.amountUsd || "").trim();
+  }).length;
+  if (exchangeMissingUsd) {
+    warnings.push(`Ledger v2 warning: ${exchangeMissingUsd} exchange row(s) still have empty amount_usd after normalization.`);
+  }
+  return warnings;
 }
 
 function looksLikeNormalizedOperationsHeader(header) {

@@ -62,6 +62,89 @@ test("manual ledger operation and direction normalize exchange rows", () => {
   assert.equal(contract.normalizeManualLedgerDirection("", "exchange_out"), "out");
 });
 
+test("ledger v2 normalizes income gross fee net and balance prefers net", () => {
+  const row = contract.normalizeLedgerRow({
+    date: "2026-05-01",
+    operation: "income",
+    from_channel: "Client A",
+    to_channel: "пейпал дол",
+    amount: "324",
+    currency: "USD",
+    amount_gross: "324",
+    amount_fee: "12.94",
+    amount_net: "311.06",
+    category: "serviceIncome",
+    source: "paypal",
+    raw_source_id: "TXN-1",
+    comment: "PayPal income"
+  });
+
+  assert.equal(row.category, "service");
+  assert.equal(row.source, "paypal");
+  assert.equal(row.external_id, "TXN-1");
+  assert.equal(row.amount_gross, "324");
+  assert.equal(row.amount_fee, "12.94");
+  assert.equal(row.amount_net, "311.06");
+  assert.equal(row.amount_usd, "311.06");
+  assert.equal(contract.getBalanceAmount(row), 311.06);
+  assert.equal(contract.validateLedgerRow(row).ok, true);
+});
+
+test("ledger v2 balance falls back to amount and records warning when net is missing", () => {
+  const warnings = [];
+  const row = contract.normalizeLedgerRow({
+    date: "2026-05-01",
+    operation: "income",
+    to_channel: "пейпал дол",
+    amount: "100",
+    currency: "USD",
+    category: "service",
+    external_id: "missing-net"
+  });
+  const balance = contract.getBalanceAmount(row, { warnings });
+
+  assert.equal(row.amount_net, "");
+  assert.equal(balance, 100);
+  assert.match(warnings[0], /amount_net missing.*missing-net/);
+});
+
+test("ledger v2 normalizes exchange amount_usd signs and two-row aggregation", () => {
+  const out = contract.normalizeLedgerRow({
+    date: "2026-05-01",
+    operation: "exchange_out",
+    from_channel: "Яндекс руб",
+    to_channel: "Бинанс spot",
+    amount: "74669",
+    currency: "RUB",
+    amount_usd: "883.0684",
+    category: "exchange",
+    raw_source_id: "ex-1"
+  });
+  const input = contract.normalizeLedgerRow({
+    date: "2026-05-01",
+    operation: "exchange_in",
+    from_channel: "Яндекс руб",
+    to_channel: "Бинанс spot",
+    amount: "874",
+    currency: "USD",
+    category: "exchange",
+    raw_source_id: "ex-1:in"
+  });
+
+  assert.equal(out.operation, "exchange");
+  assert.equal(out.legacy_operation, "exchange_out");
+  assert.equal(out.amount_usd, "-883.0684");
+  assert.equal(input.amount_usd, "874");
+  assert.equal(out.external_id, "ex-1");
+  assert.equal(input.external_id, "ex-1:in");
+  assert.equal([out, input].reduce((sum, row) => sum + Number(row.amount_usd || 0), 0).toFixed(4), "-9.0684");
+});
+
+test("ledger v2 recognizes physical v2 rows", () => {
+  assert.equal(contract.isLedgerV2Row({ amount_net: "10", external_id: "id" }), true);
+  assert.equal(contract.isLedgerV2Row({ amount: "10", raw_source_id: "id" }), false);
+});
+
 test("legacy wide migration helper is dry-run and emits ledger preview", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manual-ledger-"));
   const csvPath = path.join(dir, "legacy.csv");
