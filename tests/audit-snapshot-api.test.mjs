@@ -251,6 +251,44 @@ test("audit snapshot summarizes PayPal gross fee and net from normalized rows", 
   assert.equal(response.paypal.permission_status, "needs verification");
 });
 
+test("audit snapshot does not count PayPal net as exact when fee is missing", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          amount: "100",
+          amountUsd: "100",
+          amountGross: "100",
+          amountFee: "",
+          amountNet: "100",
+          source: "paypal",
+          rawSourceId: "TXN-NOFEE",
+          ledgerV2: {
+            amount: "100",
+            amount_usd: "100",
+            amount_gross: "100",
+            amount_fee: "",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "paypal",
+            external_id: "TXN-NOFEE",
+          },
+        }),
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.paypal.rows, 1);
+  assert.equal(response.paypal.gross_total_usd, 100);
+  assert.equal(response.paypal.fee_total_usd, null);
+  assert.equal(response.paypal.net_total_usd, null);
+  assert.equal(response.paypal.missing_fee_rows, 1);
+  assert.match(response.warnings.join("\n"), /PayPal warning: missing fee for TXN-NOFEE/);
+});
+
 test("audit snapshot counts unknown source rows", async () => {
   const response = await buildFixtureSnapshot();
 
