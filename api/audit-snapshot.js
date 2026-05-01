@@ -1,0 +1,466 @@
+import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+
+const PROJECT_NAME = "ezohata-incoming-ledger";
+const PUBLIC_SUMMARY_ONLY_WARNING =
+  "includeRows is disabled in Phase 1 public summary-only mode; raw and sanitized rows are not returned.";
+const SOURCE_KEYS = ["manual", "fact", "paypal", "monobank", "privatbank", "td_bank", "unknown"];
+
+export default async function handler(request, response) {
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Cache-Control", "no-store");
+
+  if (request.method === "OPTIONS") {
+    return response.status(200).json({ ok: true });
+  }
+  if (request.method !== "GET") {
+    return response.status(405).json({ ok: false, error: `Unsupported method: ${request.method}` });
+  }
+
+  const snapshot = await buildAuditSnapshot({
+    query: request.query || {},
+    repositoryLoader: loadManualRepositoryFromGoogleSheets,
+  });
+  return response.status(200).json(snapshot);
+}
+
+export async function buildAuditSnapshot(options = {}) {
+  const query = options.query || {};
+  const generatedAt = new Date().toISOString();
+  const periodFilter = parsePeriodFilter(query);
+  const includeRowsRequested = parseBoolean(query.includeRows);
+  const warnings = [];
+  const auditChecks = [];
+
+  if (includeRowsRequested) warnings.push(PUBLIC_SUMMARY_ONLY_WARNING);
+
+  const repository = await loadRepository(options.repositoryLoader);
+  if (!repository.ok) {
+    warnings.push("needs verification: manual Google Sheets read access is unavailable.");
+    if (repository.warning) warnings.push(toSafeWarning(repository.warning));
+    auditChecks.push({
+      name: "manual_google_sheets_access",
+      status: "needs verification",
+      message: "Audit snapshot could not read live ledger data.",
+    });
+    return emptySnapshot({ generatedAt, period: periodFilter.period, warnings, auditChecks });
+  }
+
+  const operations = filterOperations(repository.operations || [], periodFilter);
+  const period = resolvePeriod(periodFilter, operations);
+  const schema = buildSchema(repository);
+  const summary = buildSummary(operations, repository);
+  const balanceResult = buildBalances(operations);
+  const paypal = buildPayPalSummary(operations);
+  const exchange = buildExchangeSummary(operations);
+  const sources = buildSourcesSummary(operations);
+
+  warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
+  warnings.push(...balanceResult.warnings);
+  warnings.push(...exchange.warnings);
+  warnings.push(...buildSourceWarnings(sources, summary.ledger_rows));
+  warnings.push(...buildAnalyticsWarnings(repository));
+
+  auditChecks.push(
+    {
+      name: "ledger_contract",
+      status: schema.ledger_contract === "v2-compatible" ? "ok" : "needs verification",
+      message: `Ledger schema reported as ${repository.schema || "unknown"}.`,
+    },
+    {
+      name: "balance_amount_source",
+      status: balanceResult.fallback_amount_rows ? "needs verification" : "ok",
+      message: balanceResult.fallback_amount_rows
+        ? "Some balance rows used amount fallback because amount_net was missing."
+        : "Balance uses amount_net-compatible normalized ledger values.",
+    },
+    {
+      name: "paypal_permissions",
+      status: paypal.permission_status,
+      message: "Live PayPal Transaction Search permissions are not exercised by the public audit snapshot.",
+    },
+    {
+      name: "analytics_source",
+      status: repository.views ? "ok" : "needs verification",
+      message: repository.views
+        ? "Analytics-compatible views are derived from normalized ledger operations."
+        : "Analytics source normalization needs verification.",
+    }
+  );
+
+  return {
+    ok: true,
+    generated_at: generatedAt,
+    project: PROJECT_NAME,
+    period,
+    schema,
+    summary,
+    balances: {
+      by_channel: balanceResult.by_channel,
+      total_usd: balanceResult.total_usd,
+      uses_amount_net: true,
+      fallback_amount_rows: balanceResult.fallback_amount_rows,
+    },
+    paypal,
+    exchange: omitInternalWarnings(exchange),
+    sources,
+    warnings: unique(warnings),
+    audit_checks: auditChecks,
+  };
+}
+
+async function loadRepository(repositoryLoader = loadManualRepositoryFromGoogleSheets) {
+  try {
+    return await repositoryLoader();
+  } catch (error) {
+    return {
+      ok: false,
+      warning: `Manual Google Sheets overlay failed: ${String(error?.message || error)}`,
+    };
+  }
+}
+
+function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
+  return {
+    ok: true,
+    generated_at: generatedAt,
+    project: PROJECT_NAME,
+    period,
+    schema: {
+      ledger_contract: "v2-compatible",
+      sheet_layout: "v1-compatible",
+      source_of_truth: "ledger",
+      physical_sheet_migration: false,
+    },
+    summary: {
+      ledger_rows: 0,
+      income_rows: 0,
+      expense_rows: 0,
+      transfer_rows: 0,
+      exchange_rows: 0,
+      unknown_source_rows: 0,
+    },
+    balances: {
+      by_channel: [],
+      total_usd: null,
+      uses_amount_net: true,
+      fallback_amount_rows: 0,
+    },
+    paypal: {
+      rows: 0,
+      gross_total_usd: null,
+      fee_total_usd: null,
+      net_total_usd: null,
+      missing_counterparty_rows: 0,
+      permission_status: "needs verification",
+    },
+    exchange: {
+      rows: 0,
+      missing_amount_usd_rows: 0,
+      total_out_usd: null,
+      total_in_usd: null,
+      compatibility_mode: true,
+    },
+    sources: Object.fromEntries(SOURCE_KEYS.map((key) => [key, 0])),
+    warnings: unique(warnings),
+    audit_checks: auditChecks,
+  };
+}
+
+function parsePeriodFilter(query = {}) {
+  const period = String(query.period || "").trim();
+  if (/^\d{4}-\d{2}$/.test(period)) {
+    return {
+      from: `${period}-01`,
+      to: lastDayOfMonth(period),
+      period: { from: `${period}-01`, to: lastDayOfMonth(period) },
+    };
+  }
+  const from = normalizeDate(query.from);
+  const to = normalizeDate(query.to);
+  return {
+    from,
+    to,
+    period: {
+      from: from || "needs verification",
+      to: to || "needs verification",
+    },
+  };
+}
+
+function resolvePeriod(periodFilter, operations) {
+  if (periodFilter.from || periodFilter.to) return periodFilter.period;
+  const dates = (operations || []).map((row) => normalizeDate(row?.date)).filter(Boolean).sort();
+  return {
+    from: dates[0] || "needs verification",
+    to: dates.at(-1) || "needs verification",
+  };
+}
+
+function filterOperations(operations, periodFilter) {
+  return (operations || []).filter((row) => {
+    const date = normalizeDate(row?.date);
+    if (!date) return false;
+    if (periodFilter.from && date < periodFilter.from) return false;
+    if (periodFilter.to && date > periodFilter.to) return false;
+    return true;
+  });
+}
+
+function buildSchema(repository) {
+  const schema = String(repository?.schema || "");
+  return {
+    ledger_contract: /^ledger-v[12]|ledger-v2-compatible/.test(schema) ? "v2-compatible" : "needs verification",
+    sheet_layout: schema === "ledger-v2-compatible" ? "v2-compatible" : "v1-compatible",
+    source_of_truth: "ledger",
+    physical_sheet_migration: false,
+  };
+}
+
+function buildSummary(operations, repository) {
+  const counts = {
+    ledger_rows: operations.length,
+    income_rows: 0,
+    expense_rows: 0,
+    transfer_rows: 0,
+    exchange_rows: 0,
+    unknown_source_rows: 0,
+  };
+  for (const row of operations) {
+    const operation = getV2Operation(row);
+    if (operation === "income") counts.income_rows += 1;
+    else if (operation === "expense") counts.expense_rows += 1;
+    else if (operation === "transfer") counts.transfer_rows += 1;
+    else if (operation === "exchange") counts.exchange_rows += 1;
+    if (normalizeSource(row) === "unknown") counts.unknown_source_rows += 1;
+  }
+  counts.expense_rows += Array.isArray(repository?.commissionRows) ? repository.commissionRows.length : 0;
+  counts.transfer_rows += Array.isArray(repository?.transfers) ? repository.transfers.length : 0;
+  counts.exchange_rows += (operations || []).filter((row) => isExchangeRow(row)).length - counts.exchange_rows;
+  return counts;
+}
+
+function buildBalances(operations) {
+  const grouped = new Map();
+  const warnings = [];
+  let fallbackAmountRows = 0;
+  let totalUsd = 0;
+  let hasTotalUsd = false;
+
+  for (const row of operations) {
+    const ledger = row?.ledgerV2 || {};
+    const balanceAmount = parseNumber(ledger.balance_amount ?? row.balanceAmount);
+    if (balanceAmount === null) continue;
+    const channel = getBalanceChannel(row, balanceAmount);
+    if (!channel) continue;
+    const existing = grouped.get(channel) || { channel, balance_amount: 0, balance_usd: 0, rows: 0 };
+    existing.balance_amount += balanceAmount;
+    existing.rows += 1;
+    const usd = parseNumber(ledger.amount_usd ?? row.amountUsd);
+    if (usd !== null) {
+      existing.balance_usd += usd;
+      totalUsd += usd;
+      hasTotalUsd = true;
+    }
+    grouped.set(channel, existing);
+    if (!String(ledger.amount_net ?? row.amountNet ?? "").trim()) fallbackAmountRows += 1;
+  }
+
+  if (fallbackAmountRows) {
+    warnings.push(`Ledger v2 fallback: ${fallbackAmountRows} row(s) have empty amount_net; balance falls back to amount.`);
+  }
+
+  return {
+    by_channel: Array.from(grouped.values())
+      .sort((left, right) => left.channel.localeCompare(right.channel))
+      .map((row) => ({
+        channel: row.channel,
+        balance_amount: round(row.balance_amount),
+        balance_usd: row.rows ? round(row.balance_usd) : null,
+        rows: row.rows,
+      })),
+    total_usd: hasTotalUsd ? round(totalUsd) : null,
+    fallback_amount_rows: fallbackAmountRows,
+    warnings,
+  };
+}
+
+function buildPayPalSummary(operations) {
+  const paypalRows = (operations || []).filter(isPayPalRow);
+  let gross = 0;
+  let fee = 0;
+  let net = 0;
+  let hasGross = false;
+  let hasFee = false;
+  let hasNet = false;
+  let missingCounterpartyRows = 0;
+
+  for (const row of paypalRows) {
+    const ledger = row?.ledgerV2 || {};
+    const grossValue = parseNumber(ledger.amount_gross ?? row.amountGross ?? row.amount);
+    const feeValue = parseNumber(ledger.amount_fee ?? row.amountFee);
+    const netValue = parseNumber(ledger.amount_net ?? row.amountNet ?? ledger.balance_amount ?? row.balanceAmount);
+    if (grossValue !== null) {
+      gross += Math.abs(grossValue);
+      hasGross = true;
+    }
+    if (feeValue !== null) {
+      fee += Math.abs(feeValue);
+      hasFee = true;
+    }
+    if (netValue !== null) {
+      net += netValue;
+      hasNet = true;
+    }
+    if (!String(row.counterparty || row.description || row.comment || "").trim()) missingCounterpartyRows += 1;
+  }
+
+  return {
+    rows: paypalRows.length,
+    gross_total_usd: hasGross ? round(gross) : null,
+    fee_total_usd: hasFee ? round(fee) : null,
+    net_total_usd: hasNet ? round(net) : null,
+    missing_counterparty_rows: missingCounterpartyRows,
+    permission_status: "needs verification",
+  };
+}
+
+function buildExchangeSummary(operations) {
+  const exchangeRows = (operations || []).filter(isExchangeRow);
+  let missingAmountUsdRows = 0;
+  let totalOut = 0;
+  let totalIn = 0;
+  let hasOut = false;
+  let hasIn = false;
+
+  for (const row of exchangeRows) {
+    const amountUsd = parseNumber(row?.ledgerV2?.amount_usd ?? row.amountUsd);
+    if (amountUsd === null) {
+      missingAmountUsdRows += 1;
+      continue;
+    }
+    if (amountUsd < 0) {
+      totalOut += amountUsd;
+      hasOut = true;
+    } else if (amountUsd > 0) {
+      totalIn += amountUsd;
+      hasIn = true;
+    }
+  }
+
+  return {
+    rows: exchangeRows.length,
+    missing_amount_usd_rows: missingAmountUsdRows,
+    total_out_usd: hasOut ? round(totalOut) : null,
+    total_in_usd: hasIn ? round(totalIn) : null,
+    compatibility_mode: true,
+    warnings: missingAmountUsdRows
+      ? [`Ledger v2 warning: ${missingAmountUsdRows} exchange row(s) have empty amount_usd.`]
+      : [],
+  };
+}
+
+function buildSourcesSummary(operations) {
+  const sources = Object.fromEntries(SOURCE_KEYS.map((key) => [key, 0]));
+  for (const row of operations || []) {
+    const source = normalizeSource(row);
+    sources[source] = (sources[source] || 0) + 1;
+  }
+  return sources;
+}
+
+function buildSourceWarnings(sources, totalRows) {
+  const warnings = [];
+  if (sources.unknown) warnings.push(`needs verification: ${sources.unknown} ledger row(s) have unknown source.`);
+  if (sources.manual || sources.fact) warnings.push("source note: manual/fact rows may include inferred legacy sources.");
+  if (totalRows && sources.unknown / totalRows >= 0.25) {
+    warnings.push("needs verification: source=unknown is high relative to ledger row count.");
+  }
+  return warnings;
+}
+
+function buildAnalyticsWarnings(repository) {
+  if (repository?.views) return [];
+  return ["needs verification: analytics normalized ledger view is unavailable."];
+}
+
+function getV2Operation(row) {
+  const operation = String(row?.ledgerV2?.operation || "").trim();
+  if (operation) return operation;
+  const raw = String(row?.operation || "").trim();
+  if (raw === "exchange_in" || raw === "exchange_out") return "exchange";
+  if (raw === "business_expense" || raw === "personal_expense") return "expense";
+  if (raw === "partner_transfer") return "transfer";
+  return raw || "adjustment";
+}
+
+function isExchangeRow(row) {
+  return getV2Operation(row) === "exchange" || String(row?.category || row?.ledgerV2?.category || "") === "exchange";
+}
+
+function isPayPalRow(row) {
+  const source = normalizeSource(row);
+  const channel = `${row?.fromChannel || ""} ${row?.toChannel || ""} ${row?.ledgerV2?.from_channel || ""} ${row?.ledgerV2?.to_channel || ""}`.toLowerCase();
+  return source === "paypal" || /paypal|пейпал/.test(channel);
+}
+
+function normalizeSource(row) {
+  const raw = String(row?.source || row?.ledgerV2?.source || "").trim().toLowerCase();
+  if (raw === "privat_bank") return "privatbank";
+  if (raw === "tdbank") return "td_bank";
+  if (SOURCE_KEYS.includes(raw)) return raw;
+  if (!raw || raw === "other" || raw === "google_sheets" || raw === "migration") return "unknown";
+  return SOURCE_KEYS.includes(raw) ? raw : "unknown";
+}
+
+function getBalanceChannel(row, balanceAmount) {
+  const ledger = row?.ledgerV2 || {};
+  if (balanceAmount < 0) return String(ledger.from_channel || row.fromChannel || row.toChannel || "").trim();
+  return String(ledger.to_channel || row.toChannel || row.fromChannel || "").trim();
+}
+
+function omitInternalWarnings(exchange) {
+  const { warnings, ...safeExchange } = exchange;
+  return safeExchange;
+}
+
+function parseBoolean(value) {
+  return ["1", "true", "yes"].includes(String(value || "").trim().toLowerCase());
+}
+
+function normalizeDate(value) {
+  const raw = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function lastDayOfMonth(period) {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+}
+
+function parseNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.+-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function round(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function unique(values) {
+  return [...new Set((values || []).map(toSafeWarning).filter(Boolean))];
+}
+
+function toSafeWarning(value) {
+  return String(value || "")
+    .replace(/service account credentials/gi, "service account access")
+    .replace(/\bcredentials\b/gi, "access")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, "Bearer [redacted]")
+    .replace(/Basic\s+[A-Za-z0-9+/=._~-]+/gi, "Basic [redacted]")
+    .replace(/access_token['":=\s]+[A-Za-z0-9._~+/-]+/gi, "access_token [redacted]")
+    .replace(/refresh_token['":=\s]+[A-Za-z0-9._~+/-]+/gi, "refresh_token [redacted]")
+    .trim();
+}
