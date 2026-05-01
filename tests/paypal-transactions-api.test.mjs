@@ -110,7 +110,7 @@ test("normalizePayPalTransactionDetails maps expenses and fees to ledger entries
   assert.equal(entries[2].feeAmount, null);
   assert.equal(entries[2].amountGross, 20);
   assert.equal(entries[2].amountFee, null);
-  assert.equal(entries[2].amountNet, 20);
+  assert.equal(entries[2].amountNet, null);
   assert.equal(entries[2].counterpartyName, "Jane Doe");
   assert.equal(entries[2].counterpartyEmail, "payer@example.com");
   assert.equal(entries[2].counterpartyType, "person");
@@ -146,6 +146,24 @@ test("normalizePayPalTransactionDetails keeps fee metadata on income entries", (
   assert.equal(income?.usdAmount, 311.06);
   assert.equal(income?.feeAmount, 12.94);
   assert.equal(income?.feeCurrency, "USD");
+});
+
+test("normalizePayPalTransactionDetails does not set net without explicit fee", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "TXN-NOFEE",
+        transaction_initiation_date: "2026-04-23T10:00:00Z",
+        transaction_amount: { value: "100.00", currency_code: "USD" },
+      }
+    }
+  ]);
+
+  const income = entries.find((entry) => entry.direction === "income");
+  assert.equal(income?.amountGross, 100);
+  assert.equal(income?.amountFee, null);
+  assert.equal(income?.amountNet, null);
+  assert.equal(income?.usdAmount, null);
 });
 
 test("normalizePayPalTransactionDetails classifies currency conversion legs as exchange", () => {
@@ -433,6 +451,51 @@ test("fetchPayPalStatementEntries requests token and transactions", async () => 
   assert.equal(result.entries[0].channel, "пейпал сad");
   assert.deepEqual(result.summary.totalsByCurrency.CAD, { income: 0, expense: 5, net: -5 });
   assert.equal(result.transactionCount, 1);
+});
+
+test("fetchPayPalStatementEntries warns when income fee is missing", async () => {
+  const result = await fetchPayPalStatementEntries({
+    startDate: "2026-04-01",
+    endDate: "2026-04-01",
+    clientId: "client",
+    clientSecret: "secret",
+    environment: "sandbox",
+    fetchImpl: async (url, options) => {
+      if (String(url).endsWith("/v1/oauth2/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "token" };
+          }
+        };
+      }
+      assert.match(options.headers.Authorization, /^Bearer token$/);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            total_pages: 1,
+            transaction_details: [
+              {
+                transaction_info: {
+                  transaction_id: "TXN-NOFEE",
+                  transaction_initiation_date: "2026-04-01T10:00:00Z",
+                  transaction_amount: { value: "100", currency_code: "USD" }
+                }
+              }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(result.entries[0].amountNet, null);
+  assert.equal(result.entries[0].usdAmount, null);
+  assert.equal(result.entries[0].sourceTransactionId, "TXN-NOFEE");
+  assert.match(String(result.warnings[0] || ""), /missing fee on income transaction TXN-NOFEE/);
 });
 
 test("fetchPayPalStatementEntriesFromMcp refreshes OAuth and calls list_transactions", async () => {

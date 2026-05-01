@@ -68,6 +68,11 @@ export default async function handler(request, response) {
         fetchImpl: fetch
       });
     }
+    if (Array.isArray(result?.warnings) && result.warnings.length) {
+      for (const warning of result.warnings) {
+        console.warn(String(warning));
+      }
+    }
     return response.status(200).json({ ok: true, ...result });
   } catch (error) {
     return response.status(400).json({
@@ -94,8 +99,10 @@ export async function fetchPayPalStatementEntries(options = {}) {
     details.push(...(await fetchPayPalTransactionDetails({ fetchImpl, baseUrl, accessToken, ...chunk })));
   }
   const entries = normalizePayPalTransactionDetails(details);
+  const missingFeeWarnings = collectPayPalFeeWarnings(entries, { source: "PayPal" });
   return {
     entries,
+    warnings: missingFeeWarnings,
     summary: summarizePayPalStatementEntries(entries),
     transactionCount: details.length,
     periodStart: startDate,
@@ -143,6 +150,7 @@ export async function fetchPayPalStatementEntriesFromMcp(options = {}) {
     baseUrl: options.baseUrl,
   });
   const entries = normalizePayPalTransactionDetails(enrichment.details);
+  const warnings = [...enrichment.warnings, ...collectPayPalFeeWarnings(entries, { source: "PayPal MCP" })];
   return {
     entries,
     summary: summarizePayPalStatementEntries(entries),
@@ -150,7 +158,7 @@ export async function fetchPayPalStatementEntriesFromMcp(options = {}) {
     periodStart: startDate,
     periodEnd: endDate,
     source: "paypal-mcp",
-    warnings: enrichment.warnings,
+    warnings,
     counterpartyDebugSamples: enrichment.debugSamples
   };
 }
@@ -325,6 +333,23 @@ export function summarizePayPalStatementEntries(entries = []) {
       })),
     totalsByCurrency: serializePayPalCurrencyTotals(totalLookup)
   };
+}
+
+function collectPayPalFeeWarnings(entries = [], options = {}) {
+  const source = String(options.source || "PayPal").trim() || "PayPal";
+  const warnings = [];
+  const seen = new Set();
+  for (const entry of entries || []) {
+    if (String(entry?.direction || "") !== "income") continue;
+    const hasFee = hasExplicitMoneyValue(entry?.feeAmount);
+    const hasNet = hasExplicitMoneyValue(entry?.netAmount);
+    if (hasFee || hasNet) continue;
+    const key = String(entry?.sourceTransactionId || entry?.id || "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    warnings.push(`${source} warning: missing fee on income transaction ${key}; net is not set.`);
+  }
+  return warnings;
 }
 
 function addPayPalSummaryAmount(lookup, currency, direction, amount) {
@@ -594,15 +619,17 @@ export function normalizePayPalTransactionDetails(details = []) {
     const date = normalizeIsoDate(String(info.transaction_initiation_date || info.transaction_updated_date || "").slice(0, 10));
     const amount = normalizeMoney(info.transaction_amount);
     const fee = normalizeMoney(info.fee_amount);
+    const rawFee = parsePayPalMoneyValue(info?.fee_amount);
+    const feeAmount = rawFee === null ? null : Math.abs(Number(rawFee));
     const organization = getPayPalCounterparty(detail, info);
     const direction = getPayPalEntryDirection(info, amount.value);
     const entryKind = getPayPalEntryKind(detail, info, amount.value);
     const counterparty = buildPayPalCounterparty(detail, info, direction, entryKind, amount, exchangeLookup);
     const externalId = getPayPalExternalId(info);
-    const feeAmount = fee.value < 0 ? Math.abs(fee.value) : null;
     const grossAmount = Math.abs(amount.value);
+    const hasFeeAmount = feeAmount !== null;
     const netAmount = direction === "income"
-      ? Math.max(0, grossAmount - (feeAmount || 0))
+      ? (hasFeeAmount ? Math.max(0, grossAmount - feeAmount) : null)
       : grossAmount;
     if (date && amount.value) {
       entries.push({
@@ -612,7 +639,7 @@ export function normalizePayPalTransactionDetails(details = []) {
         direction,
         localAmount: grossAmount,
         currency: amount.currency,
-        usdAmount: amount.currency === "USD" ? (netAmount ?? grossAmount) : null,
+        usdAmount: amount.currency === "USD" && hasExplicitMoneyValue(netAmount) ? netAmount : null,
         grossAmount,
         amountGross: grossAmount,
         amount_gross: grossAmount,
@@ -758,6 +785,17 @@ function normalizeMoney(value) {
     value: Number.parseFloat(String(value?.value || "0").replace(",", ".")) || 0,
     currency: String(value?.currency_code || value?.currency || "").trim().toUpperCase()
   };
+}
+
+function parsePayPalMoneyValue(raw = null) {
+  const rawValue = String(raw?.value || "").trim().replace(",", ".");
+  if (!rawValue) return null;
+  const parsed = Number.parseFloat(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasExplicitMoneyValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "" && Number.isFinite(Number(value));
 }
 
 function getPayPalChannel(currency) {
