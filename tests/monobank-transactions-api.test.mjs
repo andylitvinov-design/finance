@@ -1,11 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
+import handler, {
+  fetchMonobankClientInfo,
+  summarizeMonobankClientAccounts,
   fetchMonobankStatementEntries,
   normalizeMonobankStatementItem,
   summarizeMonobankStatementEntries,
 } from "../api/monobank-transactions.js";
+
+function createResponseRecorder() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: null,
+    setHeader(name, value) {
+      this.headers[name.toLowerCase()] = value;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    }
+  };
+}
 
 test("normalizeMonobankStatementItem maps UAH card statement rows to ledger entries", () => {
   const entry = normalizeMonobankStatementItem(
@@ -38,8 +59,28 @@ test("normalizeMonobankStatementItem maps UAH card statement rows to ledger entr
   assert.equal(entry.counterpartyLabel, "Кому: ФОП Ковалев");
   assert.equal(entry.counterIban, "UA123");
   assert.equal(entry.feeAmount, 15);
+  assert.equal(entry.operationType, "expense");
   assert.equal(entry.source, "monobank");
   assert.equal(entry.sourceTransactionId, "MONO-1");
+});
+
+test("normalizeMonobankStatementItem marks exchange-like outflows for ledger mapping", () => {
+  const entry = normalizeMonobankStatementItem(
+    {
+      id: "MONO-EX-1",
+      time: 1776679200,
+      description: "P2P Binance top up",
+      comment: "crypto exchange",
+      amount: -100000,
+      currencyCode: 980
+    },
+    { id: "acc-uah", currencyCode: 980, type: "black", maskedPan: ["444111******2222"] },
+    0
+  );
+
+  assert.equal(entry.direction, "exchange");
+  assert.equal(entry.suggestedCategory, "exchange");
+  assert.equal(entry.operationType, "exchange");
 });
 
 test("summarizeMonobankStatementEntries groups income and expenses by month", () => {
@@ -49,6 +90,82 @@ test("summarizeMonobankStatementEntries groups income and expenses by month", ()
   ]);
 
   assert.deepEqual(summary.totalsByCurrency.UAH, { income: 100, expense: 40, net: 60 });
+});
+
+test("summarizeMonobankClientAccounts masks cards and keeps ids for account selection", () => {
+  const accounts = summarizeMonobankClientAccounts({
+    accounts: [
+      {
+        id: "acc-uah",
+        currencyCode: 980,
+        type: "black",
+        maskedPan: ["444111******2222"],
+        iban: "UA123456789012345678901234567",
+      }
+    ]
+  });
+
+  assert.deepEqual(accounts, [
+    {
+      id: "acc-uah",
+      currency: "UAH",
+      type: "black",
+      label: "UAH black ****2222",
+      maskedPan: "****2222",
+      maskedIban: "UA12...4567",
+    }
+  ]);
+});
+
+test("fetchMonobankClientInfo validates token and returns masked account summaries", async () => {
+  const result = await fetchMonobankClientInfo({
+    apiToken: "mono-token",
+    baseUrl: "https://mono.example.com",
+    fetchImpl: async (url, options) => {
+      assert.equal(String(url), "https://mono.example.com/personal/client-info");
+      assert.equal(options.headers["X-Token"], "mono-token");
+      return {
+        ok: true,
+        async json() {
+          return {
+            name: "Mono User",
+            accounts: [
+              { id: "acc-uah", currencyCode: 980, type: "black", maskedPan: ["444111******2222"] }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(result.client.name, "Mono User");
+  assert.deepEqual(result.accounts, [
+    {
+      id: "acc-uah",
+      currency: "UAH",
+      type: "black",
+      label: "UAH black ****2222",
+      maskedPan: "****2222",
+      maskedIban: "",
+    }
+  ]);
+});
+
+test("fetchMonobankClientInfo surfaces invalid-token failures", async () => {
+  await assert.rejects(
+    () => fetchMonobankClientInfo({
+      apiToken: "mono-token",
+      baseUrl: "https://mono.example.com",
+      fetchImpl: async () => ({
+        ok: false,
+        status: 403,
+        async json() {
+          return { errorDescription: "invalid token" };
+        }
+      })
+    }),
+    /invalid token/i
+  );
 });
 
 test("fetchMonobankStatementEntries loads client accounts and statements", async () => {
@@ -96,4 +213,34 @@ test("fetchMonobankStatementEntries loads client accounts and statements", async
   assert.equal(result.entries[0].direction, "income");
   assert.equal(result.transactionCount, 1);
   assert.equal(result.source, "monobank");
+});
+
+test("handler validate action redacts token from error responses", async () => {
+  const previousFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: false,
+    status: 403,
+    async json() {
+      return { errorDescription: "Token mono-secret-token is invalid." };
+    }
+  });
+
+  try {
+    const request = {
+      method: "POST",
+      body: {
+        action: "validate",
+        apiToken: "mono-secret-token"
+      }
+    };
+    const response = createResponseRecorder();
+    await handler(request, response);
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.body?.ok, false);
+    assert.doesNotMatch(response.body?.error || "", /mono-secret-token/);
+    assert.match(response.body?.error || "", /invalid/i);
+  } finally {
+    global.fetch = previousFetch;
+  }
 });
