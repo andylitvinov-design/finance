@@ -329,17 +329,18 @@ async function maybeOverlayManualRepositoryData(data) {
     return appendManualWarning(data, manualRepository.warning);
   }
 
-  const isLedgerRepository = String(manualRepository.schema || "").startsWith("ledger-v1");
+  const isLedgerRepository = /^ledger-v[12]/.test(String(manualRepository.schema || ""));
   const nextManual = {
     ...(data.manual || {}),
     schema: manualRepository.schema,
-    warnings: [],
+    warnings: manualRepository.warnings || [],
     expenseRows: manualRepository.expenseRows,
     balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
     balanceRows: manualRepository.balances,
     transfers: manualRepository.transfers,
     commissionRows: manualRepository.commissionRows,
     views: manualRepository.views,
+    ledgerV2Rows: manualRepository.ledgerV2Rows || [],
     sourceType: "manual-google-sheets",
     manualSpreadsheetId: manualRepository.spreadsheetId,
     fallbackSchema: manualRepository.fallbackSchema || null,

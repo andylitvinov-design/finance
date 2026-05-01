@@ -151,6 +151,7 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerSource")}\n` +
     `${extractFunction(googleSheetsJs, "getManualLedgerDisplaySource")}\n` +
     `${extractFunction(googleSheetsJs, "assertManualLedgerHeaders")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeLedgerRowForContract")}\n` +
     `${extractFunction(googleSheetsJs, "parseManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "buildManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerRowsForSave")}\n` +

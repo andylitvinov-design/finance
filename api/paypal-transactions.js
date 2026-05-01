@@ -599,17 +599,30 @@ export function normalizePayPalTransactionDetails(details = []) {
     const entryKind = getPayPalEntryKind(detail, info, amount.value);
     const counterparty = buildPayPalCounterparty(detail, info, direction, entryKind, amount, exchangeLookup);
     const externalId = getPayPalExternalId(info);
+    const feeAmount = fee.value < 0 ? Math.abs(fee.value) : null;
+    const grossAmount = Math.abs(amount.value);
+    const netAmount = direction === "income"
+      ? (feeAmount !== null ? Math.max(0, grossAmount - feeAmount) : null)
+      : grossAmount;
     if (date && amount.value) {
       entries.push({
         id: `paypal-${info.transaction_id || detailIndex}`,
         date,
         channel: getPayPalChannel(amount.currency),
         direction,
-        localAmount: Math.abs(amount.value),
+        localAmount: grossAmount,
         currency: amount.currency,
-        usdAmount: amount.currency === "USD" ? Math.abs(amount.value) : null,
-        feeAmount: fee.value < 0 ? Math.abs(fee.value) : null,
+        usdAmount: amount.currency === "USD" ? (netAmount ?? grossAmount) : null,
+        grossAmount,
+        amountGross: grossAmount,
+        amount_gross: grossAmount,
+        feeAmount,
+        amountFee: feeAmount,
+        amount_fee: feeAmount,
         feeCurrency: fee.currency || amount.currency,
+        netAmount,
+        amountNet: netAmount,
+        amount_net: netAmount,
         suggestedCategory: getPayPalSuggestedCategory(direction),
         organization,
         ...counterparty,
@@ -630,8 +643,16 @@ export function normalizePayPalTransactionDetails(details = []) {
         localAmount: Math.abs(fee.value),
         currency: fee.currency || amount.currency,
         usdAmount: (fee.currency || amount.currency) === "USD" ? Math.abs(fee.value) : null,
+        grossAmount: Math.abs(fee.value),
+        amountGross: Math.abs(fee.value),
+        amount_gross: Math.abs(fee.value),
         feeAmount: null,
+        amountFee: "",
+        amount_fee: "",
         feeCurrency: fee.currency || amount.currency,
+        netAmount: Math.abs(fee.value),
+        amountNet: Math.abs(fee.value),
+        amount_net: Math.abs(fee.value),
         suggestedCategory: "business",
         organization: `PayPal fee${organization ? `: ${organization}` : ""}`,
         ...buildPayPalFeeCounterparty(detail, info, counterparty, externalId),

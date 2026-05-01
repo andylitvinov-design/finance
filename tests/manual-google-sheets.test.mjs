@@ -134,8 +134,13 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.equal(repository.ok, true);
     assert.equal(repository.schema, "ledger-v1");
     assert.equal(repository.operations.length, 6);
+    assert.equal(repository.ledgerV2Rows.length, 6);
     assert.equal(repository.operations[0].source, "mcp");
+    assert.equal(repository.operations[0].ledgerV2.operation, "exchange");
+    assert.equal(repository.operations[0].ledgerV2.external_id, "");
     assert.equal(repository.operations[4].source, "manual");
+    assert.equal(repository.operations[4].ledgerV2.category, "service");
+    assert.match((repository.warnings || []).join(" | "), /amount_net.*falls back to amount/);
     assert.equal(repository.operations[5].source, "photo");
     assert.deepEqual(repository.expenseRows, [
       {

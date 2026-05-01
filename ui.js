@@ -520,7 +520,7 @@ function renderExpenseAccountingTableRow(entry) {
   channel.appendChild(buildExpenseAccountingChannelNode(entry));
   const amount = document.createElement("td");
   amount.className = "expense-amount";
-  amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
+  amount.innerHTML = buildExpenseAmountHtml(entry);
   const category = document.createElement("td");
   category.appendChild(buildExpenseAccountingCategorySelect(entry));
   const counterparty = document.createElement("td");
@@ -537,7 +537,7 @@ function renderExpenseAccountingMobileCard(entry) {
 
   const amount = document.createElement("div");
   amount.className = "expense-amount";
-  amount.innerHTML = `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(entry.currency || "")}<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`;
+  amount.innerHTML = buildExpenseAmountHtml(entry);
   card.appendChild(amount);
 
   const counterpartyLabel = document.createElement("div");
@@ -547,6 +547,23 @@ function renderExpenseAccountingMobileCard(entry) {
   card.appendChild(buildExpenseAccountingCounterpartyNode(entry));
   card.appendChild(buildExpenseAccountingCategorySelect(entry));
   return card;
+}
+
+function buildExpenseAmountHtml(entry) {
+  const currency = entry.currency || "";
+  const gross = parseLooseNumber(entry.amountGross ?? entry.amount_gross ?? entry.grossAmount ?? entry.localAmount);
+  const fee = parseLooseNumber(entry.amountFee ?? entry.amount_fee ?? entry.feeAmount);
+  const net = parseLooseNumber(entry.amountNet ?? entry.amount_net ?? entry.netAmount);
+  const parts = [
+    `${escapeHtml(formatSheetNumber(entry.localAmount))} ${escapeHtml(currency)}`,
+    `<div class="expense-usd">${escapeHtml(entry.usdAmount ? `${formatSheetNumber(entry.usdAmount)} USD` : "USD не распознан")}</div>`
+  ];
+  if (/paypal/i.test(String(entry.source || "")) || fee || net) {
+    parts.push(`<div class="expense-usd">client paid: ${escapeHtml(formatSheetNumber(gross))} ${escapeHtml(currency)}</div>`);
+    parts.push(`<div class="expense-usd">fee: ${escapeHtml(fee ? formatSheetNumber(fee) : "needs verification")} ${escapeHtml(currency)}</div>`);
+    parts.push(`<div class="expense-usd">net: ${escapeHtml(net ? formatSheetNumber(net) : "needs verification")} ${escapeHtml(currency)}</div>`);
+  }
+  return parts.join("");
 }
 
 function renderExpenseFinancialAnalysis() {
@@ -1973,6 +1990,15 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     operation_type: String(entry.operationType || entry.operation_type || "").trim(),
     externalId: String(entry.externalId || entry.external_id || "").trim(),
     external_id: String(entry.externalId || entry.external_id || "").trim(),
+    amountGross: parseLooseNumber(entry.amountGross ?? entry.amount_gross ?? entry.grossAmount ?? entry.localAmount),
+    amount_gross: parseLooseNumber(entry.amountGross ?? entry.amount_gross ?? entry.grossAmount ?? entry.localAmount),
+    amountFee: parseLooseNumber(entry.amountFee ?? entry.amount_fee ?? entry.feeAmount),
+    amount_fee: parseLooseNumber(entry.amountFee ?? entry.amount_fee ?? entry.feeAmount),
+    amountNet: parseLooseNumber(entry.amountNet ?? entry.amount_net ?? entry.netAmount),
+    amount_net: parseLooseNumber(entry.amountNet ?? entry.amount_net ?? entry.netAmount),
+    feeAmount: parseLooseNumber(entry.feeAmount ?? entry.amountFee ?? entry.amount_fee),
+    feeCurrency: String(entry.feeCurrency || entry.currency || "").trim().toUpperCase(),
+    netAmount: parseLooseNumber(entry.netAmount ?? entry.amountNet ?? entry.amount_net),
     exchangeGroupId: String(entry.exchangeGroupId || entry.exchange_group_id || "").trim(),
     exchange_group_id: String(entry.exchangeGroupId || entry.exchange_group_id || "").trim(),
     exchangeLeg: String(entry.exchangeLeg || "").trim(),
@@ -2225,9 +2251,13 @@ function getExpenseOperationsRows() {
     amount: String(row.amount || "").trim(),
     currency: String(row.currency || "").trim(),
     amountUsd: String(row.amountUsd || row.amount_usd || "").trim(),
+    amountGross: String(row.amountGross || row.amount_gross || row.ledgerV2?.amount_gross || "").trim(),
+    amountFee: String(row.amountFee || row.amount_fee || row.ledgerV2?.amount_fee || "").trim(),
+    amountNet: String(row.amountNet || row.amount_net || row.ledgerV2?.amount_net || "").trim(),
     category: String(row.category || "").trim(),
     comment: String(row.comment || "").trim(),
     rawSourceId: String(row.rawSourceId || row.raw_source_id || "").trim(),
+    externalId: String(row.externalId || row.external_id || row.ledgerV2?.external_id || row.rawSourceId || row.raw_source_id || "").trim(),
     transferGroupId: String(row.transferGroupId || row.transfer_group_id || "").trim(),
     sheetRowNumber: Number(row.sheetRowNumber || 0)
   }));
@@ -2289,7 +2319,7 @@ function renderExpenseOperationsBlock() {
   const table = document.createElement("table");
   const body = document.createElement("tbody");
   const header = document.createElement("tr");
-  ["date", "operation", "source", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "comment", "actions"].forEach((label) => {
+  ["date", "operation", "source", "from_channel", "to_channel", "amount", "currency", "amount_usd", "gross", "fee", "net", "category", "comment", "actions"].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
     header.appendChild(th);
@@ -2307,6 +2337,9 @@ function renderExpenseOperationsBlock() {
       row.amount || "—",
       row.currency || "—",
       row.amountUsd || "—",
+      row.amountGross || "—",
+      row.amountFee || "—",
+      row.amountNet || "—",
       row.category || "—",
       row.comment || "—"
     ].forEach((value) => {
@@ -2391,6 +2424,9 @@ function beginExpenseOperationEdit(row) {
     amount: row.amount || "",
     currency: row.currency || "",
     amountUsd: row.amountUsd || "",
+    amountGross: row.amountGross || "",
+    amountFee: row.amountFee || "",
+    amountNet: row.amountNet || "",
     category: row.category || "",
     comment: row.comment || "",
     source: row.source || ""
@@ -2402,7 +2438,7 @@ function renderExpenseOperationEditorRow(row) {
   const tr = document.createElement("tr");
   tr.className = "expense-operation-editor-row";
   const td = document.createElement("td");
-  td.colSpan = 11;
+  td.colSpan = 14;
   const grid = document.createElement("div");
   grid.className = "expense-operation-editor-grid";
   [
@@ -2413,6 +2449,9 @@ function renderExpenseOperationEditorRow(row) {
     ["amount", "amount"],
     ["currency", "currency"],
     ["amountUsd", "amount_usd"],
+    ["amountGross", "amount_gross"],
+    ["amountFee", "amount_fee"],
+    ["amountNet", "amount_net"],
     ["category", "category"],
     ["comment", "comment"],
     ["source", "source"],

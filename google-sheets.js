@@ -381,7 +381,14 @@ function parseManualLedgerSheetValues(values) {
   const rows = values || [];
   assertManualLedgerHeaders(rows);
   const header = rows[0] || MANUAL_LEDGER_HEADERS;
-  const indexByName = Object.fromEntries(MANUAL_LEDGER_HEADERS.map((name) => [name, findHeaderIndexByAliases(header, [name])]));
+  const indexByName = Object.fromEntries([
+    ...MANUAL_LEDGER_HEADERS,
+    "amount_gross",
+    "amount_fee",
+    "amount_net",
+    "rate",
+    "external_id"
+  ].map((name) => [name, findHeaderIndexByAliases(header, [name])]));
   const warnings = [];
   const seenRawSourceIds = new Set();
   const ledgerRows = [];
@@ -412,6 +419,7 @@ function parseManualLedgerSheetValues(values) {
     if (rawFrom && fromChannel === rawFrom && !getManualFinanceChannels().includes(fromChannel)) warningParts.push(`unknown from_channel: ${rawFrom}`);
     if (rawTo && toChannel === rawTo && !getManualFinanceChannels().includes(toChannel)) warningParts.push(`unknown to_channel: ${rawTo}`);
     const rawSourceId = String(read("raw_source_id") || "").trim();
+    const externalId = String(read("external_id") || rawSourceId).trim();
     if (rawSourceId) {
       if (seenRawSourceIds.has(rawSourceId)) {
         warnings.push(`Ledger row ${rowIndex + 1}: skipped duplicate raw_source_id ${rawSourceId}.`);
@@ -421,7 +429,7 @@ function parseManualLedgerSheetValues(values) {
     }
     if (warningParts.length) warnings.push(`Ledger row ${rowIndex + 1}: ${warningParts.join("; ")}.`);
     const operation = normalizeManualLedgerOperation(read("operation"), category);
-    ledgerRows.push({
+    const ledgerRow = {
       date,
       operation,
       fromChannel,
@@ -429,6 +437,10 @@ function parseManualLedgerSheetValues(values) {
       amount,
       currency: String(read("currency") || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase(),
       amountUsd: normalizeManualFinancePersistedNumberInput(read("amount_usd")),
+      amountGross: normalizeManualFinancePersistedNumberInput(read("amount_gross")),
+      amountFee: normalizeManualFinancePersistedNumberInput(read("amount_fee")),
+      amountNet: normalizeManualFinancePersistedNumberInput(read("amount_net")),
+      rate: normalizeManualFinancePersistedNumberInput(read("rate")),
       category,
       subcategory: String(read("subcategory") || "").trim(),
       direction: normalizeManualLedgerDirection(read("direction"), operation),
@@ -436,13 +448,35 @@ function parseManualLedgerSheetValues(values) {
       source: indexByName.source === -1 ? "" : normalizeManualLedgerSource(read("source"), ""),
       displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source")),
       rawSourceId,
+      externalId,
       transferGroupId: String(read("transfer_group_id") || "").trim(),
       createdAt: String(read("created_at") || "").trim(),
       updatedAt: String(read("updated_at") || "").trim(),
       sheetRowNumber: rowIndex + 1
-    });
+    };
+    ledgerRow.ledgerV2 = normalizeLedgerRowForContract(ledgerRow);
+    if (!ledgerRow.amountGross) ledgerRow.amountGross = ledgerRow.ledgerV2?.amount_gross || "";
+    if (!ledgerRow.amountFee) ledgerRow.amountFee = ledgerRow.ledgerV2?.amount_fee || "";
+    if (!ledgerRow.amountNet) ledgerRow.amountNet = ledgerRow.ledgerV2?.amount_net || "";
+    ledgerRows.push(ledgerRow);
   }
   return { rows: ledgerRows, warnings };
+}
+
+function normalizeLedgerRowForContract(row) {
+  const contract = typeof EzohataManualLedgerContract === "object" ? EzohataManualLedgerContract : null;
+  if (!contract?.normalizeLedgerRow) return null;
+  return contract.normalizeLedgerRow({
+    ...row,
+    from_channel: row.fromChannel,
+    to_channel: row.toChannel,
+    amount_usd: row.amountUsd,
+    amount_gross: row.amountGross,
+    amount_fee: row.amountFee,
+    amount_net: row.amountNet,
+    external_id: row.externalId || row.rawSourceId,
+    raw_source_id: row.rawSourceId
+  });
 }
 
 function normalizeIncomingSheetDateValue(value) {
@@ -563,6 +597,21 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     if (rawSourceId) seen.add(rawSourceId);
     const operation = normalizeManualLedgerOperation(row?.operation, category);
     const amountUsd = normalizeManualFinancePersistedNumberInput(row?.amountUsd ?? row?.amount_usd ?? "");
+    const ledgerV2 = normalizeLedgerRowForContract({
+      ...row,
+      date,
+      operation,
+      fromChannel,
+      toChannel,
+      amount,
+      amountUsd,
+      currency: String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase(),
+      amountGross: row?.amountGross ?? row?.amount_gross ?? row?.localAmount ?? row?.amount,
+      amountFee: row?.amountFee ?? row?.amount_fee ?? row?.feeAmount ?? "",
+      amountNet: row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "",
+      externalId: row?.externalId || row?.external_id || rawSourceId,
+      rawSourceId
+    });
     output.push({
       date,
       operation,
@@ -571,6 +620,10 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       amount,
       currency: String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase(),
       amountUsd,
+      amountGross: ledgerV2?.amount_gross || normalizeManualFinancePersistedNumberInput(row?.amountGross ?? row?.amount_gross ?? ""),
+      amountFee: ledgerV2?.amount_fee || normalizeManualFinancePersistedNumberInput(row?.amountFee ?? row?.amount_fee ?? ""),
+      amountNet: ledgerV2?.amount_net || normalizeManualFinancePersistedNumberInput(row?.amountNet ?? row?.amount_net ?? ""),
+      externalId: ledgerV2?.external_id || String(row?.externalId || row?.external_id || rawSourceId || "").trim(),
       category,
       subcategory: String(row?.subcategory || "").trim(),
       direction: normalizeManualLedgerDirection(row?.direction, operation),
@@ -769,6 +822,8 @@ function buildLedgerRowsFromAccountingEntries(entries) {
       Number.isInteger(entry.sourceImageIndex) ? "photo" : "mcp"
     );
     if (entry.direction === "income") {
+      const feeAmount = Math.abs(parseLooseNumber(entry.feeAmount));
+      const netAmount = parseLooseNumber(entry.netAmount);
       rows.push({
         date,
         operation: category === "ezoin" ? "income" : "income",
@@ -777,11 +832,15 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         amount: formatSheetNumber(amount),
         currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
         amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+        amountGross: formatSheetNumber(amount),
+        amountFee: feeAmount ? formatSheetNumber(feeAmount) : "",
+        amountNet: Number.isFinite(netAmount) && netAmount ? formatSheetNumber(Math.abs(netAmount)) : (feeAmount ? formatSheetNumber(Math.max(0, amount - feeAmount)) : ""),
         category: category === "extra" ? "servicein" : category,
         direction: "in",
         comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || entry.organization || "",
         source: ledgerSource,
         rawSourceId,
+        externalId: String(entry.externalId || entry.external_id || rawSourceId).trim(),
         transferGroupId: "",
         createdAt: timestamp,
         updatedAt: timestamp
@@ -797,11 +856,15 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         amount: formatSheetNumber(amount),
         currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
         amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+        amountGross: formatSheetNumber(amount),
+        amountFee: entry.feeAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.feeAmount))) : "",
+        amountNet: entry.netAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount))) : "",
         category: "exchange",
         direction: "out",
         comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || "exchange import without paired in-row",
         source: ledgerSource,
         rawSourceId,
+        externalId: String(entry.externalId || entry.external_id || rawSourceId).trim(),
         transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
         createdAt: timestamp,
         updatedAt: timestamp
@@ -816,11 +879,15 @@ function buildLedgerRowsFromAccountingEntries(entries) {
           amount: formatSheetNumber(Math.abs(parseLooseNumber(entry.toAmount || entry.receivedAmount))),
           currency: String(entry.toCurrency || inferManualFinanceChannelCurrency(toChannel)).trim().toUpperCase(),
           amountUsd: entry.toUsdAmount ? formatSheetNumber(parseLooseNumber(entry.toUsdAmount)) : "",
+          amountGross: formatSheetNumber(Math.abs(parseLooseNumber(entry.toAmount || entry.receivedAmount))),
+          amountFee: "",
+          amountNet: "",
           category: "exchange",
           direction: "in",
           comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || "exchange paired in-row",
           source: ledgerSource,
           rawSourceId: `${rawSourceId}:in`,
+          externalId: `${String(entry.externalId || entry.external_id || rawSourceId).trim()}:in`,
           transferGroupId: String(entry.transferGroupId || entry.rawSourceId || rawSourceId).trim(),
           createdAt: timestamp,
           updatedAt: timestamp
@@ -836,11 +903,15 @@ function buildLedgerRowsFromAccountingEntries(entries) {
       amount: formatSheetNumber(amount),
       currency: String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
       amountUsd: entry.usdAmount ? formatSheetNumber(parseLooseNumber(entry.usdAmount)) : "",
+      amountGross: formatSheetNumber(amount),
+      amountFee: entry.feeAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.feeAmount))) : "",
+      amountNet: entry.netAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount))) : "",
       category,
       direction: "out",
       comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || entry.organization || "",
       source: ledgerSource,
       rawSourceId,
+      externalId: String(entry.externalId || entry.external_id || rawSourceId).trim(),
       transferGroupId: "",
       createdAt: timestamp,
       updatedAt: timestamp

@@ -909,7 +909,8 @@ test("GET getDashboardData exposes ledger-v1 manual metadata without fallback-lo
     assert.equal(response.body?.data?.manual?.schema, "ledger-v1");
     assert.equal(response.body?.data?.manual?.primarySource, "ledger");
     assert.equal(response.body?.data?.manual?.compatibilityMode, undefined);
-    assert.deepEqual(response.body?.data?.manual?.warnings || [], []);
+    assert.match((response.body?.data?.manual?.warnings || []).join(" | "), /amount_net.*falls back to amount/);
+    assert.equal(response.body?.data?.manual?.ledgerV2Rows?.[0]?.external_id, "raw-1");
     assert.ok((response.body?.data?.manual?.operations || []).length > 0);
   } finally {
     global.fetch = previousFetch;
