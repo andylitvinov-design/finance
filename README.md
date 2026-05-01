@@ -125,6 +125,16 @@ PayPal live app setup:
 Monobank personal API setup:
 [Monobank API cabinet](https://api.monobank.ua/)
 
+Current Monobank flow:
+- `Учет расходов -> Подключить Monobank`
+- paste personal token
+- validate via `/api/monobank-transactions` -> `/personal/client-info`
+- choose a masked account or import all found accounts
+- run `Подтянуть Mono` for a period up to 31 days
+
+Limitation:
+- this is a temporary personal-token flow, not a persisted OAuth/link integration; token is kept only in page memory for the current session
+
 PrivatBank setup depends on the enabled account product. Use `PRIVATBANK_STATEMENT_URL` for the JSON statement endpoint issued by Privat24 Business/Open Banking/AutoClient and keep the token in `PRIVATBANK_API_TOKEN`.
 
 YooMoney wallet OAuth setup:

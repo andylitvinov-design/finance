@@ -298,6 +298,29 @@ tr:nth-child(even) td { background: #fffcf7; }
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(247,239,230,0.88));
 }
+.provider-connect-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(244,236,226,0.92));
+}
+.provider-connect-title { font-size: 14px; font-weight: 700; }
+.provider-connect-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.provider-token-input { width: 100%; min-width: 0; }
+.provider-connect-status {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef6ee;
+  color: #214a25;
+  font-size: 13px;
+}
+.provider-connect-status.error {
+  background: #f9e7e3;
+  color: #7a2d20;
+}
 .expense-summary-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .expense-summary-value { margin-top: 8px; font-size: 22px; font-weight: 700; }
 .expense-currency-line + .expense-currency-line { margin-top: 4px; }
@@ -341,7 +364,8 @@ tr:nth-child(even) td { background: #fffcf7; }
   .tab-actions,
   .expense-subtabs,
   .expense-actions,
-  .expense-operations-filters { display: grid; grid-template-columns: 1fr; }
+  .expense-operations-filters,
+  .provider-connect-controls { display: grid; grid-template-columns: 1fr; }
   .tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

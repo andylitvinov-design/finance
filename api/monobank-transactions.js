@@ -21,20 +21,57 @@ export default async function handler(request, response) {
     return response.status(405).json({ ok: false, error: `Unsupported method: ${request.method}` });
   }
 
+  let requestToken = "";
   try {
     const payload = typeof request.body === "string" ? JSON.parse(request.body || "{}") : request.body || {};
+    requestToken = String(payload.apiToken || "").trim();
+    const action = normalizeMonobankAction(payload.action);
+    const apiToken = resolveMonobankApiToken(payload.apiToken, process.env.MONOBANK_API_TOKEN);
+    const baseUrl = String(payload.baseUrl || process.env.MONOBANK_API_BASE || MONOBANK_LIVE_BASE).replace(/\/+$/, "");
+
+    if (action === "validate") {
+      const result = await fetchMonobankClientInfo({
+        apiToken,
+        baseUrl,
+        fetchImpl: fetch
+      });
+      return response.status(200).json({
+        ok: true,
+        valid: true,
+        source: "monobank",
+        mode: requestToken ? "manual" : "env",
+        ...result
+      });
+    }
+
     const result = await fetchMonobankStatementEntries({
       startDate: payload.startDate,
       endDate: payload.endDate,
-      apiToken: process.env.MONOBANK_API_TOKEN,
-      accountId: process.env.MONOBANK_ACCOUNT_ID,
-      baseUrl: process.env.MONOBANK_API_BASE || MONOBANK_LIVE_BASE,
+      apiToken,
+      accountId: payload.accountId || process.env.MONOBANK_ACCOUNT_ID,
+      baseUrl,
       fetchImpl: fetch
     });
-    return response.status(200).json({ ok: true, ...result });
+    return response.status(200).json({ ok: true, mode: requestToken ? "manual" : "env", ...result });
   } catch (error) {
-    return response.status(400).json({ ok: false, error: String(error?.message || error) });
+    return response.status(400).json({
+      ok: false,
+      error: sanitizeMonobankErrorMessage(String(error?.message || error), requestToken)
+    });
   }
+}
+
+export async function fetchMonobankClientInfo(options = {}) {
+  const apiToken = String(options.apiToken || "").trim();
+  if (!apiToken) throw new Error("Monobank token is required.");
+  const fetchImpl = options.fetchImpl || fetch;
+  const baseUrl = String(options.baseUrl || MONOBANK_LIVE_BASE).replace(/\/+$/, "");
+  const rawClient = await fetchMonobankJson({ fetchImpl, baseUrl, apiToken, path: "/personal/client-info" });
+  return {
+    client: summarizeMonobankClient(rawClient),
+    accounts: summarizeMonobankClientAccounts(rawClient),
+    rawClient
+  };
 }
 
 export async function fetchMonobankStatementEntries(options = {}) {
@@ -45,8 +82,8 @@ export async function fetchMonobankStatementEntries(options = {}) {
   if (!apiToken) throw new Error("Monobank credentials are not configured. Set MONOBANK_API_TOKEN.");
   const fetchImpl = options.fetchImpl || fetch;
   const baseUrl = String(options.baseUrl || MONOBANK_LIVE_BASE).replace(/\/+$/, "");
-  const clientInfo = await fetchMonobankJson({ fetchImpl, baseUrl, apiToken, path: "/personal/client-info" });
-  const accounts = resolveMonobankAccounts(clientInfo, options.accountId);
+  const clientInfo = await fetchMonobankClientInfo({ fetchImpl, baseUrl, apiToken });
+  const accounts = resolveMonobankAccounts(clientInfo.rawClient, options.accountId);
   const from = toUnixSeconds(startDate, false);
   const to = toUnixSeconds(endDate, true);
   const statementPayloads = await Promise.all(accounts.map(async (account) => {
@@ -63,6 +100,7 @@ export async function fetchMonobankStatementEntries(options = {}) {
     .filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
   return {
     entries,
+    accounts: clientInfo.accounts,
     summary: summarizeMonobankStatementEntries(entries),
     transactionCount: statementPayloads.reduce((sum, payload) => sum + payload.rows.length, 0),
     periodStart: startDate,
@@ -88,32 +126,62 @@ async function fetchMonobankJson(options) {
 
 function resolveMonobankAccounts(clientInfo, requestedAccountId) {
   const requested = String(requestedAccountId || "").trim();
-  const ownAccounts = Array.isArray(clientInfo?.accounts) ? clientInfo.accounts : [];
-  const jars = Array.isArray(clientInfo?.jars) ? clientInfo.jars : [];
-  const managedAccounts = (Array.isArray(clientInfo?.managedClients) ? clientInfo.managedClients : [])
-    .flatMap((client) => Array.isArray(client?.accounts) ? client.accounts : []);
-  const accounts = [...ownAccounts, ...jars, ...managedAccounts].filter((account) => account?.id);
+  const accounts = collectMonobankAccounts(clientInfo);
   const filtered = requested ? accounts.filter((account) => String(account.id) === requested) : accounts;
   if (requested && !filtered.length) throw new Error(`Monobank account ${requested} was not found for this token.`);
   if (filtered.length) return filtered;
   return [{ id: requested || "0", currencyCode: 980, type: "default" }];
 }
 
+function collectMonobankAccounts(clientInfo) {
+  const ownAccounts = Array.isArray(clientInfo?.accounts) ? clientInfo.accounts : [];
+  const jars = Array.isArray(clientInfo?.jars) ? clientInfo.jars : [];
+  const managedAccounts = (Array.isArray(clientInfo?.managedClients) ? clientInfo.managedClients : [])
+    .flatMap((client) => Array.isArray(client?.accounts) ? client.accounts : []);
+  return [...ownAccounts, ...jars, ...managedAccounts].filter((account) => account?.id);
+}
+
+export function summarizeMonobankClientAccounts(clientInfo) {
+  return collectMonobankAccounts(clientInfo).map((account) => {
+    const currency = currencyByCode(account?.currencyCode);
+    const type = String(account?.type || account?.sendId || "account").trim();
+    const maskedPan = maskTail(account?.maskedPan);
+    const maskedIban = maskIban(account?.iban);
+    return {
+      id: String(account?.id || "").trim(),
+      currency,
+      type,
+      label: [currency, type, maskedPan || maskedIban].filter(Boolean).join(" ").trim(),
+      maskedPan,
+      maskedIban,
+    };
+  });
+}
+
+function summarizeMonobankClient(clientInfo) {
+  return {
+    name: String(clientInfo?.name || "").trim(),
+    clientId: String(clientInfo?.clientId || "").trim(),
+    accountCount: collectMonobankAccounts(clientInfo).length,
+  };
+}
+
 export function normalizeMonobankStatementItem(item, account = {}, index = 0) {
   const amount = centsToMajor(item?.amount);
   const currency = currencyByCode(item?.currencyCode || account?.currencyCode);
-  const direction = amount < 0 ? "expense" : "income";
   const date = item?.time ? new Date(Number(item.time) * 1000).toISOString().slice(0, 10) : "";
-  const counterparty = buildMonobankCounterparty(item, direction);
+  const classification = classifyMonobankOperation(item, amount);
+  const counterparty = buildMonobankCounterparty(item, classification.direction);
   return {
     id: `monobank-${item?.id || account?.id || index}`,
     date,
     channel: getMonobankChannel(currency),
-    direction,
+    direction: classification.direction,
     localAmount: Math.abs(amount),
     currency,
     usdAmount: currency === "USD" ? Math.abs(amount) : null,
-    suggestedCategory: direction === "income" ? "serviceIncome" : inferBankExpenseCategory(item),
+    suggestedCategory: classification.suggestedCategory,
+    receivedType: classification.receivedType,
     organization: buildMonobankDescription(item, account),
     ...counterparty,
     confidence: 0.9,
@@ -124,7 +192,52 @@ export function normalizeMonobankStatementItem(item, account = {}, index = 0) {
     mcc: String(item?.mcc || item?.originalMcc || "").trim(),
     receiptId: String(item?.receiptId || "").trim(),
     invoiceId: String(item?.invoiceId || "").trim(),
-    entryKind: "payment"
+    entryKind: classification.entryKind,
+    operationType: classification.operationType
+  };
+}
+
+function classifyMonobankOperation(item, amount) {
+  const text = normalizeLookupText([
+    item?.description,
+    item?.comment,
+    item?.counterName,
+    item?.mcc
+  ].filter(Boolean).join(" "));
+  const isExpense = amount < 0;
+  if (isExpense && /exchange|обмен|crypto|крипт|binance|p2p/.test(text)) {
+    return {
+      direction: "exchange",
+      suggestedCategory: "exchange",
+      receivedType: "",
+      entryKind: "exchange",
+      operationType: "exchange"
+    };
+  }
+  if (/transfer|перевод|переказ|iban|card2card|карта/.test(text)) {
+    return {
+      direction: isExpense ? "expense" : "income",
+      suggestedCategory: isExpense ? "business" : "serviceIncome",
+      receivedType: isExpense ? "" : "serviceincome",
+      entryKind: "payment",
+      operationType: "transfer"
+    };
+  }
+  if (!isExpense && /exchange|обмен|crypto|крипт|binance|p2p/.test(text)) {
+    return {
+      direction: "income",
+      suggestedCategory: "exchange",
+      receivedType: "exchange_in",
+      entryKind: "payment",
+      operationType: "exchange"
+    };
+  }
+  return {
+    direction: isExpense ? "expense" : "income",
+    suggestedCategory: isExpense ? inferBankExpenseCategory(item) : "serviceIncome",
+    receivedType: isExpense ? "" : "serviceincome",
+    entryKind: "payment",
+    operationType: isExpense ? "expense" : "income"
   };
 }
 
@@ -196,6 +309,14 @@ function maskTail(maskedPan) {
   return tail ? `****${tail}` : "";
 }
 
+function maskIban(value) {
+  const raw = String(value || "").replace(/\s+/g, "");
+  if (!raw) return "";
+  const head = raw.slice(0, 4);
+  const tail = raw.slice(-4);
+  return `${head}...${tail}`;
+}
+
 function inferBankExpenseCategory(item) {
   const text = normalizeLookupText([item?.description, item?.comment, item?.mcc].filter(Boolean).join(" "));
   if (/курс|обуч|навч|учеб|school|study|8299/.test(text)) return "study";
@@ -234,10 +355,10 @@ function addSummaryAmount(lookup, currency, direction, amount) {
   if (direction === "income") {
     totals.income += amount;
     totals.net += amount;
-  } else {
-    totals.expense += amount;
-    totals.net -= amount;
+    return;
   }
+  totals.expense += amount;
+  totals.net -= amount;
 }
 
 function serializeSummary(lookup) {
@@ -262,21 +383,42 @@ function compactDescription(parts) {
 }
 
 function firstNonEmpty(...values) {
-  for (const value of values) {
-    const normalized = String(value || "").trim();
-    if (normalized) return normalized;
-  }
-  return "";
+  return values.map((value) => String(value || "").trim()).find(Boolean) || "";
 }
 
-function inferCounterpartyType(value) {
-  return /тов|фоп|llc|inc|ltd|corp|company/i.test(String(value || "")) ? "company" : "unknown";
-}
-
-function normalizeLookupText(value) {
-  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-яіїєґ]+/g, " ").replace(/\s+/g, " ").trim();
+function inferCounterpartyType(name) {
+  if (!name) return "unknown";
+  return /fop|фоп|llc|inc|ltd|тов|магаз|market/i.test(String(name)) ? "company" : "person";
 }
 
 function roundAmount(value) {
-  return Math.round((Number(value) || 0) * 10000) / 10000;
+  return Math.round(Number(value || 0) * 10000) / 10000;
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveMonobankApiToken(requestToken, envToken) {
+  const manual = String(requestToken || "").trim();
+  if (manual) return manual;
+  return String(envToken || "").trim();
+}
+
+function normalizeMonobankAction(value) {
+  const action = String(value || "import").trim().toLowerCase();
+  return action === "validate" ? "validate" : "import";
+}
+
+function sanitizeMonobankErrorMessage(message, token) {
+  const raw = String(message || "").trim() || "Monobank request failed.";
+  const secret = String(token || "").trim();
+  if (!secret) return raw;
+  return raw.split(secret).join("[redacted]");
 }
