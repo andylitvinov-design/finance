@@ -600,9 +600,12 @@ async function loadPayPalProviderEntries(startDate, endDate) {
       endDate,
       clientId: mcpClientId,
       refreshToken: mcpRefreshToken,
+      restClientId: clientId,
+      restClientSecret: clientSecret,
+      environment: process.env.PAYPAL_ENVIRONMENT || "live",
       fetchImpl: fetch,
     });
-    return { entries: result.entries || [], warnings: [] };
+    return { entries: result.entries || [], warnings: result.warnings || [] };
   } catch (error) {
     return { entries: [], warnings: [`PayPal real income: ${String(error?.message || error)}`] };
   }
