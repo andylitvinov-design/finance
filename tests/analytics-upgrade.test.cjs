@@ -121,6 +121,14 @@ test("analytics balance and period sections use two mobile columns", () => {
   assert.match(styleCss, /\.mobile-table table \{ min-width: unset; width: 100%; \}/);
 });
 
+test("analytics renderer can rebuild visible sections from aggregated manual rows", () => {
+  assert.match(uiJs, /function getAggregatedManualAnalyticsSections\(sourceValues\)/);
+  assert.match(uiJs, /buildFullRangeBasedAnalyticsValuesFromClosedFact/);
+  assert.match(uiJs, /const aggregateSections = getAggregatedManualAnalyticsSections\(values\)/);
+  assert.match(uiJs, /function findAggregatedManualAnalyticsSection\(section, aggregateSections = \[\]\)/);
+  assert.match(uiJs, /getAnalyticsSectionRenderRows\(section, aggregateSections\)/);
+});
+
 test("analytics UI shows explicit authorization warning instead of misleading Plan and Balance zeros", () => {
   assert.match(uiJs, /function getManualOverlayUnavailableMessage\(\)/);
   assert.match(uiJs, /Plan \/ Balance \/ Fact требуют авторизацию или server-side manual overlay/);
