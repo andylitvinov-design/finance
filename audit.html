@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent-Auditor</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page audit-page">
+      <section class="hero audit-hero">
+        <div class="hero-top">
+          <div>
+            <h1>Agent-Auditor</h1>
+            <p class="subtle">Audit bridge for ezohata-incoming-ledger snapshot.</p>
+          </div>
+          <div id="auditStatus" class="status" aria-live="polite">Ready.</div>
+        </div>
+
+        <div class="controls audit-controls">
+          <div class="actions audit-actions">
+            <button id="runAuditButton" class="primary" type="button">Run Audit</button>
+            <button id="copyPromptButton" class="secondary" type="button">Copy Prompt</button>
+          </div>
+        </div>
+
+        <div id="auditFallback" class="field audit-fallback" hidden>
+          <label for="auditPromptText">Prompt</label>
+          <textarea id="auditPromptText" readonly></textarea>
+          <div class="actions audit-fallback-actions">
+            <button id="selectPromptButton" class="secondary" type="button">Select all</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="./audit-bridge.js"></script>
+  </body>
+</html>
