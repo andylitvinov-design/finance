@@ -122,7 +122,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
-      warnings,
+      warnings: [...(ledgerRepository.warnings || []), ...warnings],
       fallbackSchema: null,
     };
   } catch (error) {
@@ -180,7 +180,7 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
   const url = new URL(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values:batchGet`);
   sheetNames.forEach((name) => {
     const escaped = name.replace(/'/g, "''");
-    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:P` : `'${escaped}'`;
+    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:S` : `'${escaped}'`;
     url.searchParams.append("ranges", range);
   });
   const response = await fetchImpl(url.toString(), {
@@ -303,9 +303,11 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
     subcategory: findHeaderIndex(header, ["subcategory", "подкатегория"]),
     direction: findHeaderIndex(header, ["direction", "направление"]),
     comment: findHeaderIndex(header, ["comment", "комментарий"]),
+    counterparty: findHeaderIndex(header, ["counterparty", "контрагент", "от кого / кому"]),
+    description: findHeaderIndex(header, ["description", "описание", "details"]),
     source: findHeaderIndex(header, ["source", "источник"]),
     rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id", "external_id", "external id"]),
-    externalId: findHeaderIndex(header, ["external_id", "external id", "source transaction id", "raw_source_id"]),
+    externalId: findHeaderIndex(header, ["external_id", "external id"]),
     transferGroupId: findHeaderIndex(header, ["transfer_group_id", "exchange_group_id", "transfer group id"]),
     createdAt: findHeaderIndex(header, ["created_at", "created at"]),
     updatedAt: findHeaderIndex(header, ["updated_at", "updated at"]),
@@ -334,6 +336,8 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         subcategory: String(row[indexes.subcategory] || "").trim(),
         direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
         comment: String(row[indexes.comment] || "").trim(),
+        counterparty: String(row[indexes.counterparty] || "").trim(),
+        description: String(row[indexes.description] || "").trim(),
         source: resolveManualLedgerSource(indexes.source === -1 ? "" : row[indexes.source], row[indexes.rawSourceId], ""),
         rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
         externalId: indexes.externalId === -1 ? "" : String(row[indexes.externalId] || "").trim(),
@@ -374,11 +378,13 @@ function hasLedgerV2Header(values) {
 
 function buildLedgerV2RepositoryWarnings(operations, values) {
   const warnings = [];
-  if (!hasLedgerV2Header(values)) {
+  const ledgerV2Header = hasLedgerV2Header(values);
+  if (!ledgerV2Header) {
     warnings.push("Ledger v2 physical columns need verification: current Sheet is Ledger v1; v2 rows are normalized in memory.");
   }
   const fallbackCount = (operations || []).filter((row) => {
-    return String(row?.amount || "").trim() && !String(row?.amountNet || row?.amount_net || "").trim();
+    if (!ledgerV2Header) return String(row?.amount || "").trim();
+    return (row?.ledgerV2?.warnings || []).some((warning) => /amount_net missing/.test(String(warning || "")));
   }).length;
   if (fallbackCount) {
     warnings.push(`Ledger v2 fallback: ${fallbackCount} row(s) have empty amount_net; balance falls back to amount.`);

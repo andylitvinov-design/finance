@@ -53,6 +53,7 @@ const state = {
     monobankClientName: "",
     monobankMode: "",
     privatBankLoading: false,
+    privat24ImportLoading: false,
     privatBankSummary: null,
     tdBankLoading: false,
     tdBankSummary: null,

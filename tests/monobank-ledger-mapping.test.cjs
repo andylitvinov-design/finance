@@ -69,10 +69,22 @@ test("buildLedgerRowsFromAccountingEntries maps Monobank exchange outflow into l
     formatSheetNumber(value, digits = 4) {
       return Number(value || 0).toFixed(digits).replace(".", ",");
     },
+    normalizeManualFinancePersistedNumberInput(value) {
+      const raw = String(value ?? "").trim();
+      return raw ? raw.replace(".", ",") : "";
+    },
+    normalizeManualLedgerOperation(value) {
+      return String(value || "").trim() || "correction";
+    },
+    MANUAL_FINANCE_FALLBACK_USD_RATES: { UAH: 1 / 43.86, LOCAL: 1 / 18 },
   };
   vm.createContext(context);
   vm.runInContext(
-    `${extractFunction(sheetsJs, "buildLedgerRowsFromAccountingEntries")}\nthis.buildLedgerRowsFromAccountingEntries = buildLedgerRowsFromAccountingEntries;`,
+    `${extractFunction(sheetsJs, "normalizeLedgerAmountUsdForSave")}\n` +
+    `${extractFunction(sheetsJs, "getLedgerUsdPerLocalRate")}\n` +
+    `${extractFunction(sheetsJs, "normalizeLedgerExchangeUsdSign")}\n` +
+    `${extractFunction(sheetsJs, "buildLedgerRowsFromAccountingEntries")}\n` +
+    "this.buildLedgerRowsFromAccountingEntries = buildLedgerRowsFromAccountingEntries;",
     context
   );
 
@@ -98,16 +110,18 @@ test("buildLedgerRowsFromAccountingEntries maps Monobank exchange outflow into l
       toChannel: "",
       amount: "4517,6000",
       currency: "UAH",
-      amountUsd: "",
+      amountUsd: "-103,0005",
       amountGross: "4517,6000",
       amountFee: "",
       amountNet: "",
       category: "exchange",
       direction: "out",
       comment: "P2P Binance top up",
+      counterparty: "",
+      description: "P2P Binance top up",
       source: "mcp",
+      externalId: "MONO-EX-1:out",
       rawSourceId: "MONO-EX-1",
-      externalId: "MONO-EX-1",
       transferGroupId: "MONO-EX-1",
       createdAt: "2026-05-01T10:00:00.000Z",
       updatedAt: "2026-05-01T10:00:00.000Z"

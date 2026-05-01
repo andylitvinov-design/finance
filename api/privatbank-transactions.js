@@ -1,3 +1,7 @@
+import { parsePrivatStatement } from "../privat-parser.js";
+
+const UAH_USD_FALLBACK_RATE = 1 / 43.86;
+
 const PRIVATBANK_CHANNEL_BY_CURRENCY = {
   USD: "приват 24-дол",
   EUR: "приват 24-евро",
@@ -17,6 +21,10 @@ export default async function handler(request, response) {
 
   try {
     const payload = typeof request.body === "string" ? JSON.parse(request.body || "{}") : request.body || {};
+    if (payload.action === "parseStatement" || payload.statementText || payload.statementRows) {
+      const result = parsePrivat24PersonalStatementPayload(payload);
+      return response.status(200).json({ ok: true, ...result });
+    }
     const result = await fetchPrivatBankStatementEntries({
       startDate: payload.startDate,
       endDate: payload.endDate,
@@ -29,6 +37,21 @@ export default async function handler(request, response) {
   } catch (error) {
     return response.status(400).json({ ok: false, error: String(error?.message || error) });
   }
+}
+
+export function parsePrivat24PersonalStatementPayload(payload = {}) {
+  const input = payload.statementRows || payload.rows || payload.statementText || payload.text || "";
+  const ledgerRows = parsePrivatStatement(input);
+  const entries = buildPrivatEntriesFromLedgerRows(ledgerRows);
+  return {
+    entries,
+    ledgerRows,
+    summary: summarizePrivatBankStatementEntries(entries),
+    transactionCount: ledgerRows.length,
+    source: "privat24",
+    mode: "personal-statement-import",
+    warnings: ledgerRows.filter((row) => row.review_status === "needs_review").map((row) => `${row.external_id || row.raw_source_id}: needs_review`)
+  };
 }
 
 export async function fetchPrivatBankStatementEntries(options = {}) {
@@ -57,11 +80,13 @@ export async function fetchPrivatBankStatementEntries(options = {}) {
   }
   const rows = extractPrivatBankRows(payload);
   const account = { accountId, currency: payload?.currency || payload?.account?.currency || "" };
+  const ledgerRows = parsePrivatStatement(rows);
   const entries = rows
     .map((row, index) => normalizePrivatBankStatementItem(row, account, index))
     .filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
   return {
     entries,
+    ledgerRows,
     summary: summarizePrivatBankStatementEntries(entries),
     transactionCount: rows.length,
     periodStart: startDate,
@@ -74,12 +99,16 @@ export async function fetchPrivatBankStatementEntries(options = {}) {
 export function normalizePrivatBankStatementItem(item, account = {}, index = 0) {
   const amount = parseBankNumber(firstNonEmpty(item?.amount, item?.sum, item?.value, item?.amt, item?.trantype === "D" ? item?.debit : item?.credit));
   const currency = normalizeCurrency(firstNonEmpty(item?.currency, item?.ccy, item?.currencyCode, account?.currency));
-  const direction = inferPrivatBankDirection(item, amount);
+  const isExchange = looksLikePrivatBankExchange(item);
+  const direction = isExchange ? "exchange" : inferPrivatBankDirection(item, amount);
   const signedAmount = direction === "expense" ? -Math.abs(amount) : Math.abs(amount);
   const date = normalizeBankDate(firstNonEmpty(item?.date, item?.operationDate, item?.trandate, item?.dat_od, item?.time));
   const counterpartyName = firstNonEmpty(item?.counterparty, item?.counterpartyName, item?.name, item?.contragentName, item?.AUT_MY_NAM, item?.description);
   const description = firstNonEmpty(item?.description, item?.purpose, item?.nazn, item?.paymentPurpose, item?.details, item?.info);
   const sourceId = firstNonEmpty(item?.id, item?.transactionId, item?.ref, item?.reference, item?.trn_id, item?.docNumber, `${account?.accountId || "account"}-${date}-${index}`);
+  const usdAmount = convertPrivatAmountToUsd(Math.abs(signedAmount), currency, item);
+  const toCurrency = normalizeCurrency(firstNonEmpty(item?.toCurrency, item?.buyCurrency, item?.targetCurrency, item?.inCurrency, isExchange ? "USD" : ""));
+  const toAmount = Math.abs(parseBankNumber(firstNonEmpty(item?.toAmount, item?.buyAmount, item?.receivedAmount, item?.inAmount, item?.usdAmount, item?.amountUsd)));
   return {
     id: `privatbank-${sourceId}`,
     date,
@@ -87,8 +116,12 @@ export function normalizePrivatBankStatementItem(item, account = {}, index = 0) 
     direction,
     localAmount: Math.abs(signedAmount),
     currency,
-    usdAmount: currency === "USD" ? Math.abs(signedAmount) : null,
-    suggestedCategory: direction === "income" ? "serviceIncome" : inferBankExpenseCategory(item),
+    usdAmount,
+    amountClientPaid: Math.abs(signedAmount),
+    amount_client_paid: Math.abs(signedAmount),
+    amountNetReceived: Math.max(0, Math.abs(signedAmount) - Math.abs(parseBankNumber(firstNonEmpty(item?.fee, item?.commission)))),
+    amount_net_received: Math.max(0, Math.abs(signedAmount) - Math.abs(parseBankNumber(firstNonEmpty(item?.fee, item?.commission)))),
+    suggestedCategory: direction === "income" ? "serviceIncome" : (isExchange ? "exchange" : inferBankExpenseCategory(item)),
     organization: compactDescription([
       description,
       item?.purpose && item.purpose !== description ? item.purpose : "",
@@ -105,10 +138,79 @@ export function normalizePrivatBankStatementItem(item, account = {}, index = 0) 
     confidence: 0.85,
     source: "privatbank",
     sourceTransactionId: String(sourceId),
+    externalId: String(sourceId),
+    external_id: String(sourceId),
+    toChannel: isExchange ? getPrivatBankChannel(toCurrency || "USD") : "",
+    toAmount: isExchange ? (toAmount || usdAmount) : "",
+    toCurrency: isExchange ? (toCurrency || "USD") : "",
+    toUsdAmount: isExchange ? (toCurrency === "USD" ? (toAmount || usdAmount) : convertPrivatAmountToUsd(toAmount, toCurrency, item)) : "",
+    exchangeGroupId: isExchange ? String(sourceId) : "",
+    exchange_group_id: isExchange ? String(sourceId) : "",
     feeAmount: Math.abs(parseBankNumber(firstNonEmpty(item?.fee, item?.commission))) || null,
     feeCurrency: currency,
-    entryKind: "payment"
+    entryKind: isExchange ? "exchange" : "payment"
   };
+}
+
+function buildPrivatEntriesFromLedgerRows(rows = []) {
+  return (rows || []).map((row, index) => {
+    const direction = row.operation === "income" || row.operation === "exchange_in"
+      ? "income"
+      : (row.operation === "exchange_out" ? "exchange" : "expense");
+    const channel = row.operation === "income" || row.operation === "exchange_in"
+      ? getLedgerChannel(row.to_channel || row.toChannel || row.from_channel || row.fromChannel)
+      : getLedgerChannel(row.from_channel || row.fromChannel || row.to_channel || row.toChannel);
+    return {
+      id: `privat24-${row.external_id || row.raw_source_id || index}`,
+      date: row.date || "",
+      channel,
+      direction,
+      localAmount: Math.abs(parseBankNumber(row.amount)),
+      currency: String(row.currency || "UAH").trim().toUpperCase(),
+      usdAmount: Math.abs(parseBankNumber(row.amount_usd || row.amountUsd)),
+      amountClientPaid: Math.abs(parseBankNumber(row.amount)),
+      amount_client_paid: Math.abs(parseBankNumber(row.amount)),
+      amountNetReceived: Math.max(0, Math.abs(parseBankNumber(row.amount)) - Math.abs(parseBankNumber(row.fee_amount))),
+      amount_net_received: Math.max(0, Math.abs(parseBankNumber(row.amount)) - Math.abs(parseBankNumber(row.fee_amount))),
+      suggestedCategory: row.review_status === "needs_review" ? "extra" : mapLedgerCategoryToUi(row.category),
+      organization: row.description || row.comment || row.counterparty || "",
+      counterparty: row.counterparty || "",
+      counterpartyName: row.counterparty || "",
+      counterpartyRole: direction === "income" ? "payer" : "payee",
+      counterpartyLabel: `${direction === "income" ? "От" : "Кому"}: ${firstNonEmpty(row.counterparty, row.description, row.comment, "needs_review")}`,
+      description: row.description || row.comment || "",
+      confidence: row.review_status === "needs_review" ? 0.35 : 0.85,
+      source: "privat24",
+      provider: "privatbank",
+      sourceTransactionId: String(row.external_id || row.raw_source_id || ""),
+      externalId: String(row.external_id || row.raw_source_id || ""),
+      external_id: String(row.external_id || row.raw_source_id || ""),
+      exchangeGroupId: String(row.transfer_group_id || ""),
+      exchange_group_id: String(row.transfer_group_id || ""),
+      feeAmount: Math.abs(parseBankNumber(row.fee_amount)) || null,
+      feeCurrency: String(row.fee_currency || row.currency || "").trim().toUpperCase(),
+      entryKind: row.review_status === "needs_review" ? "needs_review" : (direction === "exchange" ? "exchange" : "payment"),
+      reviewStatus: row.review_status || "",
+      review_status: row.review_status || ""
+    };
+  });
+}
+
+function getLedgerChannel(value) {
+  const raw = String(value || "").trim();
+  if (/дол|usd/i.test(raw)) return "приват 24-дол";
+  if (/евро|евр|eur/i.test(raw)) return "приват 24-евро";
+  return raw || "приват 24-грн";
+}
+
+function mapLedgerCategoryToUi(category) {
+  const normalized = String(category || "").trim().toLowerCase();
+  if (normalized === "servicein" || normalized === "ezoin") return "serviceIncome";
+  if (normalized === "house") return "flat";
+  if (normalized === "travel") return "travel";
+  if (normalized === "partner") return "exchange";
+  if (normalized === "exchange") return "exchange";
+  return normalized || "extra";
 }
 
 export function summarizePrivatBankStatementEntries(entries = []) {
@@ -129,6 +231,12 @@ function inferPrivatBankDirection(item, amount) {
   if (/credit|income|in|c|приход|кредит/.test(rawDirection)) return "income";
   if (/debit|expense|out|d|расход|дебет/.test(rawDirection)) return "expense";
   return amount < 0 ? "expense" : "income";
+}
+
+function looksLikePrivatBankExchange(item) {
+  const text = normalizeLookupText([item?.description, item?.purpose, item?.type, item?.operationType, item?.category].filter(Boolean).join(" "));
+  if (/обмiн|обмін|обмен|exchange|конвертац|купiвля валюти|купівля валюти|продаж валюти/.test(text)) return true;
+  return Boolean(firstNonEmpty(item?.toAmount, item?.buyAmount, item?.receivedAmount, item?.inAmount) && firstNonEmpty(item?.amount, item?.fromAmount, item?.sellAmount, item?.outAmount));
 }
 
 function validateDateRange(startDate, endDate) {
@@ -162,6 +270,22 @@ function parseUtcDate(value) {
 function parseBankNumber(value) {
   const raw = String(value || "0").replace(/\s+/g, "").replace(",", ".");
   return Number.parseFloat(raw) || 0;
+}
+
+function convertPrivatAmountToUsd(amount, currency, item = {}) {
+  const numeric = Math.abs(Number(amount || 0));
+  if (!numeric) return 0;
+  const normalizedCurrency = normalizeCurrency(currency);
+  if (normalizedCurrency === "USD") return roundAmount(numeric);
+  const rate = parsePrivatUsdRate(firstNonEmpty(item?.rate, item?.uah_rate, item?.uahRate, item?.exchangeRate, item?.kurs));
+  const usdPerLocal = rate || (normalizedCurrency === "UAH" ? UAH_USD_FALLBACK_RATE : 0);
+  return roundAmount(usdPerLocal ? numeric * usdPerLocal : 0);
+}
+
+function parsePrivatUsdRate(value) {
+  const numeric = parseBankNumber(value);
+  if (!numeric) return 0;
+  return numeric > 2 ? 1 / numeric : numeric;
 }
 
 function normalizeCurrency(value) {
