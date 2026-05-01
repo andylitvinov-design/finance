@@ -417,6 +417,228 @@ test("fetchPayPalStatementEntriesFromMcp refreshes OAuth and calls list_transact
   assert.deepEqual(result.summary.totalsByCurrency.EUR, { income: 0, expense: 1.82, net: -1.82 });
 });
 
+test("fetchPayPalStatementEntriesFromMcp enriches sparse rows through REST transaction search", async () => {
+  let streamController;
+  const searchedUrls = [];
+  const result = await fetchPayPalStatementEntriesFromMcp({
+    startDate: "2026-04-01",
+    endDate: "2026-04-01",
+    clientId: "mcp-client",
+    refreshToken: "mcp-refresh",
+    restClientId: "rest-client",
+    restClientSecret: "rest-secret",
+    environment: "sandbox",
+    fetchImpl: async (url, options = {}) => {
+      const href = String(url);
+      if (href === "https://mcp.paypal.com/token") {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "mcp-access", expires_in: 3600 };
+          }
+        };
+      }
+      if (href.endsWith("/v1/oauth2/token")) {
+        assert.match(options.headers.Authorization, /^Basic /);
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "rest-access" };
+          }
+        };
+      }
+      if (href.endsWith("/sse")) {
+        return {
+          ok: true,
+          status: 200,
+          body: new ReadableStream({
+            start(controller) {
+              streamController = controller;
+              controller.enqueue(new TextEncoder().encode("event: endpoint\ndata: /sse/message?sessionId=enrich\n\n"));
+            },
+            cancel() {}
+          })
+        };
+      }
+      if (href.includes("/sse/message?sessionId=enrich")) {
+        const body = JSON.parse(options.body);
+        if (body.method === "initialize") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "PayPal MCP Agent", version: "1.0.0" } }
+          })}\n\n`));
+        }
+        if (body.method === "tools/call") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    total_pages: 1,
+                    transaction_details: [
+                      {
+                        transaction_info: {
+                          transaction_id: "MCP-ENRICH-1",
+                          transaction_initiation_date: "2026-04-01T18:29:03Z",
+                          transaction_amount: { currency_code: "CAD", value: "-50.00" },
+                          invoice_id: "2202611623284821200_1",
+                          transaction_event_code: "T0006"
+                        }
+                      }
+                    ]
+                  })
+                }
+              ]
+            }
+          })}\n\n`));
+        }
+        return { ok: true, status: 202, async text() { return ""; } };
+      }
+      if (href.includes("/v1/reporting/transactions")) {
+        searchedUrls.push(href);
+        assert.equal(options.headers.Authorization, "Bearer rest-access");
+        assert.match(href, /transaction_id=MCP-ENRICH-1/);
+        assert.match(href, /fields=all/);
+        assert.match(href, /balance_affecting_records_only=N/);
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              total_pages: 1,
+              transaction_details: [
+                {
+                  transaction_info: {
+                    transaction_id: "MCP-ENRICH-1",
+                    transaction_initiation_date: "2026-04-01T18:29:03Z",
+                    transaction_amount: { currency_code: "USD", value: "-15.00" }
+                  },
+                  payee_info: { payee_name: "Wrong Currency LLC" }
+                },
+                {
+                  transaction_info: {
+                    transaction_id: "MCP-ENRICH-1",
+                    transaction_initiation_date: "2026-04-01T18:29:03Z",
+                    transaction_amount: { currency_code: "CAD", value: "-50.00" },
+                    transaction_subject: "invoice 2202611623284821200_1"
+                  },
+                  payee_info: {
+                    email_address: "merchant@example.com",
+                    payee_name: { alternate_full_name: "Merchant Company Ltd" }
+                  },
+                  cart_info: {
+                    item_details: [{ item_name: "Technical fallback should not win" }]
+                  }
+                }
+              ]
+            };
+          }
+        };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    }
+  });
+
+  assert.equal(searchedUrls.length, 1);
+  assert.equal(result.warnings.length, 0);
+  assert.equal(result.counterpartyDebugSamples.length, 0);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].counterpartyName, "Merchant Company Ltd");
+  assert.equal(result.entries[0].counterpartyEmail, "merchant@example.com");
+  assert.equal(result.entries[0].counterpartyLabel, "Кому: Merchant Company Ltd");
+  assert.equal(result.entries[0].displayFromTo, "Me → Merchant Company Ltd");
+  assert.equal(result.entries[0].localAmount, 50);
+  assert.equal(result.entries[0].currency, "CAD");
+});
+
+test("fetchPayPalStatementEntriesFromMcp reports sanitized samples when REST enrichment is unavailable", async () => {
+  let streamController;
+  const result = await fetchPayPalStatementEntriesFromMcp({
+    startDate: "2026-04-01",
+    endDate: "2026-04-01",
+    clientId: "mcp-client",
+    refreshToken: "mcp-refresh",
+    fetchImpl: async (url, options = {}) => {
+      const href = String(url);
+      if (href.endsWith("/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "mcp-access", expires_in: 3600 };
+          }
+        };
+      }
+      if (href.endsWith("/sse")) {
+        return {
+          ok: true,
+          status: 200,
+          body: new ReadableStream({
+            start(controller) {
+              streamController = controller;
+              controller.enqueue(new TextEncoder().encode("event: endpoint\ndata: /sse/message?sessionId=no-rest\n\n"));
+            },
+            cancel() {}
+          })
+        };
+      }
+      if (href.includes("/sse/message?sessionId=no-rest")) {
+        const body = JSON.parse(options.body);
+        if (body.method === "initialize") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "PayPal MCP Agent", version: "1.0.0" } }
+          })}\n\n`));
+        }
+        if (body.method === "tools/call") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    total_pages: 1,
+                    transaction_details: [
+                      {
+                        transaction_info: {
+                          transaction_id: "NO-REST-1",
+                          transaction_initiation_date: "2026-04-01T18:29:03Z",
+                          transaction_amount: { currency_code: "EUR", value: "-1.82" },
+                          invoice_id: "2202611623284821200_1",
+                          transaction_event_code: "T0006"
+                        }
+                      }
+                    ]
+                  })
+                }
+              ]
+            }
+          })}\n\n`));
+        }
+        return { ok: true, status: 202, async text() { return ""; } };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    }
+  });
+
+  assert.match(result.warnings[0], /REST enrichment skipped/);
+  assert.equal(result.counterpartyDebugSamples[0].reason, "missing_rest_credentials");
+  assert.equal(result.counterpartyDebugSamples[0].transactionId, "NO-REST-1");
+  assert.deepEqual(result.counterpartyDebugSamples[0].detailFields, ["transaction_info"]);
+  assert.equal(result.entries[0].counterpartyName, "");
+  assert.equal(result.entries[0].displayFromTo, "Me → counterparty unavailable");
+  assert.doesNotMatch(result.entries[0].counterpartyLabel, /invoice|event|220261/i);
+});
+
 test("handler falls back to PayPal MCP when REST credentials fail", async () => {
   const previousEnv = {
     PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,

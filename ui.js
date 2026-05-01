@@ -36,6 +36,8 @@ function renderTabs() {
 // HELPERS
 // ============================================================
 
+const PAYPAL_COUNTERPARTY_OVERRIDES_STORAGE_KEY = "ezohata:paypal-counterparty-overrides:v1";
+
 async function handleTabClick(tabId) {
   if (tabId === "manualFinance") {
     await openManualFinanceToday();
@@ -944,32 +946,55 @@ function buildExpenseAccountingCategorySelect(entry) {
 function buildExpenseAccountingCounterpartyNode(entry) {
   const wrap = document.createElement("div");
   wrap.className = "expense-table-counterparty";
-  const label = buildExpenseAccountingFromToLabel(entry);
-  const operationLabel = buildExpenseAccountingOperationTypeLabel(entry);
-  const details = buildExpenseAccountingCounterpartyDetails(entry);
+  const label = buildExpenseAccountingReadableCounterparty(entry);
+  const details = buildExpenseAccountingTechnicalDetails(entry);
 
   const labelNode = document.createElement("div");
   labelNode.className = "expense-counterparty-label";
   labelNode.textContent = label;
-  labelNode.title = details ? `${label}\n${details}` : label;
+  labelNode.title = label;
   wrap.appendChild(labelNode);
 
-  if (operationLabel) {
-    const operationNode = document.createElement("div");
-    operationNode.className = "expense-counterparty-details";
-    operationNode.textContent = operationLabel;
-    operationNode.title = operationLabel;
-    wrap.appendChild(operationNode);
+  if (isUnknownPayPalCounterparty(entry)) {
+    const hintNode = document.createElement("div");
+    hintNode.className = "expense-counterparty-hint";
+    hintNode.textContent = "PayPal MCP не передал имя/компанию";
+    hintNode.title = "PayPal MCP не передал имя/компанию. Для точного получателя нужен PayPal transaction details endpoint или CSV/export с полем Name.";
+    wrap.appendChild(hintNode);
+    wrap.appendChild(buildExpenseAccountingManualCounterpartyNode(entry));
   }
 
   if (details) {
-    const detailsNode = document.createElement("div");
+    const detailsNode = document.createElement("details");
     detailsNode.className = "expense-counterparty-details";
-    detailsNode.textContent = details;
-    detailsNode.title = details;
+    const summary = document.createElement("summary");
+    summary.textContent = "технические детали";
+    const body = document.createElement("div");
+    body.className = "expense-counterparty-details-body";
+    body.textContent = details;
+    body.title = details;
+    detailsNode.append(summary, body);
     wrap.appendChild(detailsNode);
   }
   return wrap;
+}
+
+function buildExpenseAccountingReadableCounterparty(entry) {
+  if (isPayPalExchangeEntry(entry)) {
+    const flow = buildExpenseAccountingFromToLabel(entry);
+    return flow ? `Обмен: ${flow}` : "Обмен PayPal";
+  }
+  if (entry.entryKind === "fee" || String(entry.operationType || entry.operation_type || "").trim().toLowerCase() === "fee") {
+    return "Me → Комиссия PayPal";
+  }
+  if (isUnknownPayPalCounterparty(entry)) {
+    return "Получатель не распознан";
+  }
+  const paypalName = getReadablePayPalCounterpartyName(entry);
+  if (paypalName) {
+    return entry.direction === "income" ? `${paypalName} → Me` : `Me → ${paypalName}`;
+  }
+  return buildExpenseAccountingFromToLabel(entry);
 }
 
 function buildExpenseAccountingFromToLabel(entry) {
@@ -986,6 +1011,58 @@ function normalizeExpenseAccountingEntityLabel(value) {
   if (!normalized) return "";
   if (normalized.toLowerCase() === "me") return "Me";
   return normalized;
+}
+
+function isPayPalExchangeEntry(entry) {
+  return entry?.source === "paypal" && (
+    entry.direction === "exchange" ||
+    String(entry.operationType || entry.operation_type || "").trim().toLowerCase() === "exchange" ||
+    entry.entryKind === "exchange"
+  );
+}
+
+function isUnknownPayPalCounterparty(entry) {
+  if (entry?.source !== "paypal" || isPayPalExchangeEntry(entry) || entry.entryKind === "fee") return false;
+  if (getReadablePayPalCounterpartyName(entry)) return false;
+  const flowValues = [
+    entry.displayFromTo,
+    entry.fromEntity,
+    entry.from_entity,
+    entry.toEntity,
+    entry.to_entity,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  if (!flowValues.length) return true;
+  return flowValues.some((value) => (
+    value.includes("counterparty unavailable") ||
+    value.includes("контрагент не определен") ||
+    value.includes("получатель не распознан") ||
+    isTechnicalPayPalCounterpartyValue(value)
+  ));
+}
+
+function getReadablePayPalCounterpartyName(entry) {
+  if (entry?.source !== "paypal") return "";
+  return [
+    entry.counterpartyName,
+    entry.counterpartyEmail,
+    entry.payeeName,
+    entry.payeeEmail,
+    entry.merchantName,
+    entry.payerName,
+    entry.payerEmail,
+  ].map((value) => String(value || "").trim())
+    .find((value) => value && !/counterparty unavailable|контрагент не определен|получатель не распознан/i.test(value) && !isTechnicalPayPalCounterpartyValue(value)) || "";
+}
+
+function isTechnicalPayPalCounterpartyValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return false;
+  const parts = normalized.split(/[→|]/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1 && parts.some((part) => isTechnicalPayPalCounterpartyValue(part))) return true;
+  if (/\b(invoice|event|external id|exchange group|raw)\b/.test(normalized)) return true;
+  if (/^[:\w!\\-]{10,}$/.test(normalized) && /[0-9_!:\\-]/.test(normalized)) return true;
+  if (/\b[0-9a-z]{10,}_[0-9a-z_]+\b/i.test(normalized)) return true;
+  return false;
 }
 
 function buildExpenseAccountingOperationTypeLabel(entry) {
@@ -1011,6 +1088,10 @@ function buildExpenseAccountingCounterpartyLabel(entry) {
 }
 
 function buildExpenseAccountingCounterpartyDetails(entry) {
+  return buildExpenseAccountingTechnicalDetails(entry);
+}
+
+function buildExpenseAccountingTechnicalDetails(entry) {
   const parts = [
     entry.operationType || entry.operation_type ? `operation: ${entry.operationType || entry.operation_type}` : "",
     entry.externalId || entry.external_id ? `external id: ${entry.externalId || entry.external_id}` : "",
@@ -1030,6 +1111,90 @@ function buildExpenseAccountingCounterpartyDetails(entry) {
     entry.rawMetadata ? `raw: ${entry.rawMetadata}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function buildExpenseAccountingManualCounterpartyNode(entry) {
+  const wrap = document.createElement("div");
+  wrap.className = "expense-counterparty-manual";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "finance-input expense-counterparty-manual-input";
+  input.placeholder = "Имя или компания";
+  input.value = String(entry.manualCounterpartyDraft || "").trim();
+  input.addEventListener("input", (event) => {
+    entry.manualCounterpartyDraft = event.target.value;
+  });
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary expense-counterparty-manual-button";
+  button.textContent = "Указать вручную";
+  button.addEventListener("click", () => {
+    const saved = savePayPalCounterpartyOverride(entry, input.value);
+    if (!saved) {
+      setExpenseAccountingStatus("Введите имя или компанию получателя PayPal.", true);
+      renderTabs();
+      return;
+    }
+    setExpenseAccountingStatus("Получатель PayPal сохранён локально и будет применён при следующем импорте в этом браузере.", false);
+    renderTabs();
+  });
+  wrap.append(input, button);
+  return wrap;
+}
+
+function getPayPalCounterpartyOverrideKey(entry) {
+  if (entry?.source !== "paypal") return "";
+  const id = String(entry.sourceTransactionId || entry.externalId || entry.external_id || "").trim();
+  return id ? `paypal:${id}` : "";
+}
+
+function loadPayPalCounterpartyOverrides() {
+  try {
+    const raw = localStorage.getItem(PAYPAL_COUNTERPARTY_OVERRIDES_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePayPalCounterpartyOverride(entry, value) {
+  const readable = String(value || "").trim();
+  const key = getPayPalCounterpartyOverrideKey(entry);
+  if (!key || !readable) return false;
+  const overrides = loadPayPalCounterpartyOverrides();
+  overrides[key] = {
+    name: readable,
+    updatedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(PAYPAL_COUNTERPARTY_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
+  applyPayPalCounterpartyOverride(entry, overrides);
+  return true;
+}
+
+function applyPayPalCounterpartyOverride(entry, overrides = loadPayPalCounterpartyOverrides()) {
+  const key = getPayPalCounterpartyOverrideKey(entry);
+  const readable = String(overrides?.[key]?.name || "").trim();
+  if (!key || !readable) return entry;
+  entry.counterpartyName = readable;
+  entry.counterpartyEmail = "";
+  entry.counterpartyLabel = `${entry.direction === "income" ? "От" : "Кому"}: ${readable}`;
+  if (entry.direction === "income") {
+    entry.fromEntity = readable;
+    entry.from_entity = readable;
+    entry.toEntity = "me";
+    entry.to_entity = "me";
+    entry.displayFromTo = `${readable} → Me`;
+  } else {
+    entry.fromEntity = "me";
+    entry.from_entity = "me";
+    entry.toEntity = readable;
+    entry.to_entity = readable;
+    entry.displayFromTo = `Me → ${readable}`;
+  }
+  entry.manualCounterpartyOverride = true;
+  entry.manualCounterpartyComment = `PayPal counterparty override: ${readable}`;
+  return entry;
 }
 function normalizeReceivedEntryType(value) {
   const normalized = String(value || "").trim().toLowerCase().replace(/[ -]+/g, "_");
@@ -1615,7 +1780,7 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
   const fallbackDate = normalizeIncomingSheetDateValue(entry.uploadedAtDate) || elements.endDate.value;
   const direction = entry.direction === "income" || entry.direction === "exchange" ? entry.direction : "expense";
   const receivedType = direction === "income" ? normalizeReceivedEntryType(entry.receivedType || entry.suggestedCategory || entry.category) : "";
-  return {
+  const normalized = {
     id: `expense-${Date.now()}-${index}`,
     date: normalizedDate || fallbackDate,
     dateSource: entry.dateSource === "screenshot" || normalizedDate ? "screenshot" : "upload_fallback",
@@ -1636,13 +1801,20 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     counterpartyRole: String(entry.counterpartyRole || "").trim(),
     counterpartyLabel: String(entry.counterpartyLabel || "").trim(),
     fromEntity: String(entry.fromEntity || entry.from_entity || "").trim(),
+    from_entity: String(entry.fromEntity || entry.from_entity || "").trim(),
     toEntity: String(entry.toEntity || entry.to_entity || "").trim(),
+    to_entity: String(entry.toEntity || entry.to_entity || "").trim(),
     operationType: String(entry.operationType || entry.operation_type || "").trim(),
+    operation_type: String(entry.operationType || entry.operation_type || "").trim(),
     externalId: String(entry.externalId || entry.external_id || "").trim(),
+    external_id: String(entry.externalId || entry.external_id || "").trim(),
     exchangeGroupId: String(entry.exchangeGroupId || entry.exchange_group_id || "").trim(),
+    exchange_group_id: String(entry.exchangeGroupId || entry.exchange_group_id || "").trim(),
     exchangeLeg: String(entry.exchangeLeg || "").trim(),
     displayFromTo: String(entry.displayFromTo || "").trim(),
     rawMetadata: String(entry.rawMetadata || "").trim(),
+    manualCounterpartyOverride: Boolean(entry.manualCounterpartyOverride),
+    manualCounterpartyComment: String(entry.manualCounterpartyComment || "").trim(),
     entryKind: String(entry.entryKind || "").trim(),
     payerName: String(entry.payerName || "").trim(),
     payerEmail: String(entry.payerEmail || "").trim(),
@@ -1663,6 +1835,7 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     source: String(entry.source || "").trim(),
     sourceTransactionId: String(entry.sourceTransactionId || "").trim()
   };
+  return applyPayPalCounterpartyOverride(normalized);
 }
 
 async function saveExpenseAccountingEntries() {

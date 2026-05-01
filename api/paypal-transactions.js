@@ -50,6 +50,9 @@ export default async function handler(request, response) {
           endDate: payload.endDate,
           clientId: mcpClientId,
           refreshToken: mcpRefreshToken,
+          restClientId: clientId,
+          restClientSecret: clientSecret,
+          environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
           fetchImpl: fetch
         });
       }
@@ -59,6 +62,9 @@ export default async function handler(request, response) {
         endDate: payload.endDate,
         clientId: mcpClientId,
         refreshToken: mcpRefreshToken,
+        restClientId: clientId,
+        restClientSecret: clientSecret,
+        environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
         fetchImpl: fetch
       });
     }
@@ -127,14 +133,25 @@ export async function fetchPayPalStatementEntriesFromMcp(options = {}) {
     totalPages = Math.max(1, Number(payload?.total_pages || 1));
     page += 1;
   } while (page <= totalPages);
-  const entries = normalizePayPalTransactionDetails(details);
+  const enrichment = await enrichPayPalMcpTransactionDetails(details, {
+    fetchImpl,
+    startDate,
+    endDate,
+    clientId: options.restClientId,
+    clientSecret: options.restClientSecret,
+    environment: options.environment,
+    baseUrl: options.baseUrl,
+  });
+  const entries = normalizePayPalTransactionDetails(enrichment.details);
   return {
     entries,
     summary: summarizePayPalStatementEntries(entries),
     transactionCount: details.length,
     periodStart: startDate,
     periodEnd: endDate,
-    source: "paypal-mcp"
+    source: "paypal-mcp",
+    warnings: enrichment.warnings,
+    counterpartyDebugSamples: enrichment.debugSamples
   };
 }
 
@@ -398,6 +415,177 @@ export async function fetchPayPalTransactionDetails(options = {}) {
   return details;
 }
 
+export async function fetchPayPalTransactionDetailsById(options = {}) {
+  const transactionId = String(options.transactionId || "").trim();
+  const transactionDate = normalizeIsoDate(options.transactionDate);
+  if (!transactionId || !transactionDate) return [];
+  const fetchImpl = options.fetchImpl || fetch;
+  const window = buildPayPalTransactionSearchWindow(transactionDate);
+  const url = new URL(`${options.baseUrl}/v1/reporting/transactions`);
+  url.searchParams.set("start_date", toPayPalDateTime(window.startDate, false));
+  url.searchParams.set("end_date", toPayPalDateTime(window.endDate, true));
+  url.searchParams.set("transaction_id", transactionId);
+  url.searchParams.set("fields", "all");
+  url.searchParams.set("balance_affecting_records_only", "N");
+  url.searchParams.set("page_size", String(PAYPAL_PAGE_SIZE));
+  url.searchParams.set("page", "1");
+  const upstream = await fetchImpl(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      Accept: "application/json",
+      "Accept-Language": "en_US",
+      "Content-Type": "application/json"
+    }
+  });
+  const payload = await upstream.json().catch(() => null);
+  if (!upstream.ok) {
+    throw new Error(payload?.message || payload?.name || `PayPal transaction detail lookup failed (${upstream.status}).`);
+  }
+  return Array.isArray(payload?.transaction_details) ? payload.transaction_details : [];
+}
+
+async function enrichPayPalMcpTransactionDetails(details = [], options = {}) {
+  const targets = (details || []).filter(shouldEnrichPayPalMcpDetail);
+  const warnings = [];
+  const debugSamples = [];
+  if (!targets.length) return { details, warnings, debugSamples };
+
+  const clientId = String(options.clientId || "").trim();
+  const clientSecret = String(options.clientSecret || "").trim();
+  if (!clientId || !clientSecret) {
+    warnings.push("PayPal REST enrichment skipped: PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET are not configured.");
+    debugSamples.push(...targets.slice(0, 5).map((detail) => buildPayPalCounterpartyDebugSample(detail, "missing_rest_credentials")));
+    return { details, warnings, debugSamples };
+  }
+
+  const fetchImpl = options.fetchImpl || fetch;
+  const baseUrl = getPayPalBaseUrl(options.environment, options.baseUrl);
+  let accessToken = "";
+  try {
+    accessToken = await getPayPalAccessToken({ fetchImpl, baseUrl, clientId, clientSecret });
+  } catch (error) {
+    warnings.push(`PayPal REST enrichment token failed: ${String(error?.message || error)}`);
+    debugSamples.push(...targets.slice(0, 5).map((detail) => buildPayPalCounterpartyDebugSample(detail, "rest_token_failed")));
+    return { details, warnings, debugSamples };
+  }
+
+  const enrichedByTransactionId = new Map();
+  for (const target of targets) {
+    const info = target?.transaction_info || {};
+    const transactionId = String(info.transaction_id || "").trim();
+    const transactionDate = getPayPalTransactionDate(info);
+    if (!transactionId || !transactionDate || enrichedByTransactionId.has(transactionId)) continue;
+    try {
+      const candidates = await fetchPayPalTransactionDetailsById({
+        fetchImpl,
+        baseUrl,
+        accessToken,
+        transactionId,
+        transactionDate,
+      });
+      const best = pickBestPayPalTransactionDetailMatch(target, candidates);
+      if (best) {
+        enrichedByTransactionId.set(transactionId, best);
+      } else {
+        debugSamples.push(buildPayPalCounterpartyDebugSample(target, "rest_detail_not_found", candidates));
+      }
+    } catch (error) {
+      warnings.push(`PayPal REST enrichment failed for ${transactionId}: ${String(error?.message || error)}`);
+      debugSamples.push(buildPayPalCounterpartyDebugSample(target, "rest_lookup_failed"));
+    }
+  }
+
+  const enrichedDetails = details.map((detail) => {
+    const transactionId = String(detail?.transaction_info?.transaction_id || "").trim();
+    const enriched = enrichedByTransactionId.get(transactionId);
+    return enriched ? mergePayPalTransactionDetail(detail, enriched) : detail;
+  });
+  const stillSparse = enrichedDetails.filter(shouldEnrichPayPalMcpDetail);
+  debugSamples.push(...stillSparse.slice(0, Math.max(0, 5 - debugSamples.length)).map((detail) => buildPayPalCounterpartyDebugSample(detail, "no_readable_counterparty_after_enrichment")));
+
+  return {
+    details: enrichedDetails,
+    warnings,
+    debugSamples: debugSamples.slice(0, 5)
+  };
+}
+
+function shouldEnrichPayPalMcpDetail(detail) {
+  const info = detail?.transaction_info || {};
+  if (!String(info.transaction_id || "").trim()) return false;
+  const amount = normalizeMoney(info.transaction_amount);
+  const direction = getPayPalEntryDirection(info, amount.value);
+  const entryKind = getPayPalEntryKind(detail, info, amount.value);
+  if (direction === "exchange" || entryKind === "exchange") return false;
+  return getReadablePayPalCounterparty(detail, { direction, entryKind, info }).unavailable;
+}
+
+function pickBestPayPalTransactionDetailMatch(original, candidates = []) {
+  const originalInfo = original?.transaction_info || {};
+  const transactionId = String(originalInfo.transaction_id || "").trim();
+  const originalAmount = normalizeMoney(originalInfo.transaction_amount);
+  const originalDate = getPayPalTransactionDate(originalInfo);
+  return (candidates || [])
+    .filter((candidate) => String(candidate?.transaction_info?.transaction_id || "").trim() === transactionId)
+    .map((candidate) => {
+      const info = candidate?.transaction_info || {};
+      const amount = normalizeMoney(info.transaction_amount);
+      const date = getPayPalTransactionDate(info);
+      const readable = !shouldEnrichPayPalMcpDetail(candidate);
+      return {
+        candidate,
+        score:
+          (readable ? 8 : 0) +
+          (amount.currency && amount.currency === originalAmount.currency ? 4 : 0) +
+          (Math.abs(Math.abs(amount.value) - Math.abs(originalAmount.value)) < 0.0001 ? 4 : 0) +
+          (date && date === originalDate ? 2 : 0)
+      };
+    })
+    .sort((left, right) => right.score - left.score)[0]?.candidate || null;
+}
+
+function mergePayPalTransactionDetail(original, enriched) {
+  return {
+    ...enriched,
+    ...original,
+    payer_info: enriched?.payer_info || original?.payer_info,
+    payee_info: enriched?.payee_info || original?.payee_info,
+    payee: enriched?.payee || original?.payee,
+    seller_info: enriched?.seller_info || original?.seller_info,
+    shipping_info: enriched?.shipping_info || original?.shipping_info,
+    cart_info: enriched?.cart_info || original?.cart_info,
+    incentive_info: enriched?.incentive_info || original?.incentive_info,
+    transaction_info: mergePayPalTransactionInfo(original?.transaction_info || {}, enriched?.transaction_info || {})
+  };
+}
+
+function mergePayPalTransactionInfo(originalInfo, enrichedInfo) {
+  const output = { ...enrichedInfo };
+  Object.entries(originalInfo || {}).forEach(([key, value]) => {
+    if (value == null || value === "") return;
+    output[key] = value;
+  });
+  return output;
+}
+
+function buildPayPalCounterpartyDebugSample(detail, reason, candidates = []) {
+  const info = detail?.transaction_info || {};
+  return {
+    reason,
+    transactionId: String(info.transaction_id || ""),
+    eventCode: String(info.transaction_event_code || ""),
+    date: getPayPalTransactionDate(info),
+    currency: normalizeMoney(info.transaction_amount).currency,
+    hasPayerInfo: Boolean(detail?.payer_info),
+    hasPayeeInfo: Boolean(detail?.payee_info || detail?.payee || detail?.seller_info),
+    hasCartInfo: Boolean(detail?.cart_info),
+    transactionInfoFields: Object.keys(info || {}).sort(),
+    detailFields: Object.keys(detail || {}).sort(),
+    candidateCount: Array.isArray(candidates) ? candidates.length : 0
+  };
+}
+
 export function normalizePayPalTransactionDetails(details = []) {
   const entries = [];
   const exchangeLookup = buildPayPalExchangeLookup(details);
@@ -526,6 +714,22 @@ function parseUtcDate(value) {
 
 function formatUtcDate(date) {
   return date.toISOString().slice(0, 10);
+}
+
+function addUtcDays(date, days) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
+}
+
+function buildPayPalTransactionSearchWindow(date) {
+  const parsed = parseUtcDate(date);
+  return {
+    startDate: formatUtcDate(addUtcDays(parsed, -1)),
+    endDate: formatUtcDate(addUtcDays(parsed, 1))
+  };
+}
+
+function getPayPalTransactionDate(info = {}) {
+  return normalizeIsoDate(String(info.transaction_initiation_date || info.transaction_updated_date || "").slice(0, 10));
 }
 
 function normalizeMoney(value) {
@@ -786,7 +990,14 @@ function collectPayPalExchangeCurrencies(info = {}, exchangeLookup = new Map()) 
 export function getReadablePayPalCounterparty(detail, options = {}) {
   const payer = options.payer || normalizePayPalPartyInfo(detail?.payer_info, "payer");
   const payee = options.payee || normalizePayPalPartyInfo(detail?.payee_info || detail?.payee || detail?.seller_info, "payee");
-  const merchantName = String(options.merchantName || detail?.cart_info?.merchant_name || detail?.incentive_info?.merchant_name || options.info?.business_partner_name || "").trim();
+  const itemNames = getPayPalCartItemNames(detail);
+  const merchantName = firstNonEmpty(
+    options.merchantName,
+    detail?.cart_info?.merchant_name,
+    detail?.incentive_info?.merchant_name,
+    options.info?.business_partner_name
+  );
+  const shippingName = String(detail?.shipping_info?.name || "").trim();
   const info = options.info || detail?.transaction_info || {};
   const direction = String(options.direction || "").trim();
   const entryKind = String(options.entryKind || "").trim();
@@ -801,17 +1012,21 @@ export function getReadablePayPalCounterparty(detail, options = {}) {
         { label: payee.name, name: payee.name, email: "" },
         { label: merchantName, name: merchantName, email: "" },
         { label: payee.email, name: "", email: payee.email },
+        { label: shippingName, name: shippingName, email: "" },
         { label: info.transaction_subject, name: "", email: "" },
         { label: info.transaction_note, name: "", email: "" },
+        { label: itemNames, name: "", email: "" },
       ]
     : [
         { label: payee.name, name: payee.name, email: "" },
         { label: merchantName, name: merchantName, email: "" },
         { label: payee.email, name: "", email: payee.email },
+        { label: shippingName, name: shippingName, email: "" },
         { label: payer.name, name: payer.name, email: "" },
         { label: payer.email, name: "", email: payer.email },
         { label: info.transaction_subject, name: "", email: "" },
         { label: info.transaction_note, name: "", email: "" },
+        { label: itemNames, name: "", email: "" },
       ];
 
   for (const candidate of orderedCandidates) {
@@ -838,6 +1053,12 @@ function normalizePayPalPartyInfo(raw, role) {
   const explicitName = firstNonEmpty(
     typeof source[`${role}_name`] === "string" ? source[`${role}_name`] : "",
     typeof source.name === "string" ? source.name : "",
+    source[`${role}_name`]?.alternate_full_name,
+    source?.payer_name?.alternate_full_name,
+    source?.payee_name?.alternate_full_name,
+    source.business_name,
+    source.company_name,
+    source.merchant_name,
     [source[`${role}_name`]?.given_name, source[`${role}_name`]?.surname].filter(Boolean).join(" "),
     [source?.payer_name?.given_name, source?.payer_name?.surname].filter(Boolean).join(" "),
     [source?.payee_name?.given_name, source?.payee_name?.surname].filter(Boolean).join(" ")
@@ -847,6 +1068,15 @@ function normalizePayPalPartyInfo(raw, role) {
     email: firstNonEmpty(source.email_address, source.email, source[`${role}_email`]),
     id: firstNonEmpty(source.account_id, source.payer_id, source.payee_id, source.merchant_id)
   };
+}
+
+function getPayPalCartItemNames(detail) {
+  const items = Array.isArray(detail?.cart_info?.item_details) ? detail.cart_info.item_details : [];
+  return items
+    .map((item) => firstNonEmpty(item?.item_name, item?.item_description))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join("; ");
 }
 
 function inferCounterpartyType(value) {

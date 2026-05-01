@@ -228,7 +228,8 @@ tr:nth-child(even) td { background: #fffcf7; }
 .expense-table-shell { display: grid; gap: 10px; }
 .expense-table-counterparty { min-width: 0; }
 .expense-counterparty-label,
-.expense-counterparty-details {
+.expense-counterparty-hint,
+.expense-counterparty-details-body {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -236,7 +237,22 @@ tr:nth-child(even) td { background: #fffcf7; }
   white-space: nowrap;
 }
 .expense-counterparty-label { font-weight: 600; color: var(--ink); }
-.expense-counterparty-details { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.expense-counterparty-hint { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.expense-counterparty-details { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.expense-counterparty-details summary {
+  cursor: pointer;
+  display: inline-block;
+  color: var(--accent-2);
+}
+.expense-counterparty-details-body { margin-top: 4px; }
+.expense-counterparty-manual {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.expense-counterparty-manual-input { flex: 1 1 140px; min-width: 0; }
+.expense-counterparty-manual-button { padding: 7px 10px; font-size: 12px; }
 .expense-table-mobile { display: none; gap: 10px; }
 .expense-table-mobile-card {
   display: grid;
@@ -352,7 +368,8 @@ tr:nth-child(even) td { background: #fffcf7; }
   .expense-table-mobile { display: grid; }
   .expense-operation-editor-grid { grid-template-columns: 1fr; }
   .expense-counterparty-label,
-  .expense-counterparty-details { white-space: normal; overflow: visible; text-overflow: clip; }
+  .expense-counterparty-hint,
+  .expense-counterparty-details-body { white-space: normal; overflow: visible; text-overflow: clip; }
   .table-wrap { -webkit-overflow-scrolling: touch; }
   .table-wrap table tr > :first-child {
     position: sticky;
