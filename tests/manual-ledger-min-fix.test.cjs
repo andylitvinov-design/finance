@@ -131,6 +131,57 @@ test("normalizeManualFinanceExpenseRows merges duplicate date-category rows by c
   ]);
 });
 
+test("normalizeServerExpenseRows preserves server payload amounts for personal movement aggregate", () => {
+  const context = {
+    state: {
+      config: {
+        manualFinance: {}
+      }
+    },
+    getManualFinanceChannels() {
+      return ["Яндекс руб", "пейпал дол"];
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return value;
+    },
+    normalizeManualExpenseCategory(value) {
+      return value;
+    },
+    normalizeManualFinancePersistedNumberInput(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return "";
+      return raw.replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeServerExpenseRows")}\nthis.normalizeServerExpenseRows = normalizeServerExpenseRows;`,
+    context
+  );
+
+  const result = plain(context.normalizeServerExpenseRows([
+    {
+      date: "2026-04-24",
+      category: "business",
+      amounts: {
+        "Яндекс руб": "11287",
+        "пейпал дол": "33",
+      }
+    }
+  ]));
+
+  assert.deepEqual(result, [
+    {
+      date: "2026-04-24",
+      category: "business",
+      amounts: {
+        "Яндекс руб": "11287",
+        "пейпал дол": "33",
+      }
+    }
+  ]);
+});
+
 test("config keeps exchange in expense accounting categories", () => {
   assert.match(configJs, /MANUAL_EXPENSE_ACCOUNTING_CATEGORIES = \[[^\]]*"exchange"/);
 });

@@ -2176,10 +2176,10 @@ function normalizeServerExpenseRows(rows) {
   return (rows || []).map((row) => ({
     date: normalizeIncomingSheetDateValue(row?.date),
     category: normalizeManualExpenseCategory(row?.category),
-    amounts: getCanonicalManualExpenseAmounts({
-      ...(row?.amounts || {}),
-      ...Object.fromEntries(getManualFinanceChannels().map((channel) => [channel, row?.[channel] ?? ""]))
-    })
+    amounts: Object.fromEntries(getManualFinanceChannels().map((channel) => [
+      channel,
+      normalizeManualFinancePersistedNumberInput(row?.amounts?.[channel] ?? row?.[channel] ?? "")
+    ]))
   })).filter((row) => row.date && row.category);
 }
 
