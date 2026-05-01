@@ -58,6 +58,7 @@ export async function buildAuditSnapshot(options = {}) {
 
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...balanceResult.warnings);
+  warnings.push(...paypal.warnings);
   warnings.push(...exchange.warnings);
   warnings.push(...buildSourceWarnings(sources, summary.ledger_rows));
   warnings.push(...buildAnalyticsWarnings(repository));
@@ -299,12 +300,23 @@ function buildPayPalSummary(operations) {
   let hasFee = false;
   let hasNet = false;
   let missingCounterpartyRows = 0;
+  let missingFeeRows = 0;
+  const warnings = [];
 
   for (const row of paypalRows) {
     const ledger = row?.ledgerV2 || {};
     const grossValue = parseNumber(ledger.amount_gross ?? row.amountGross ?? row.amount);
     const feeValue = parseNumber(ledger.amount_fee ?? row.amountFee);
     const netValue = parseNumber(ledger.amount_net ?? row.amountNet ?? ledger.balance_amount ?? row.balanceAmount);
+    const externalId = String(
+      ledger.external_id ||
+        ledger.raw_source_id ||
+        row.external_id ||
+        row.rawSourceId ||
+        row.sourceTransactionId ||
+        row.id ||
+        ""
+    ).trim();
     if (grossValue !== null) {
       gross += Math.abs(grossValue);
       hasGross = true;
@@ -312,8 +324,11 @@ function buildPayPalSummary(operations) {
     if (feeValue !== null) {
       fee += Math.abs(feeValue);
       hasFee = true;
+    } else {
+      missingFeeRows += 1;
+      warnings.push(`PayPal warning: missing fee${externalId ? ` for ${externalId}` : ""}; net is not counted as exact.`);
     }
-    if (netValue !== null) {
+    if (feeValue !== null && netValue !== null) {
       net += netValue;
       hasNet = true;
     }
@@ -325,8 +340,10 @@ function buildPayPalSummary(operations) {
     gross_total_usd: hasGross ? round(gross) : null,
     fee_total_usd: hasFee ? round(fee) : null,
     net_total_usd: hasNet ? round(net) : null,
+    missing_fee_rows: missingFeeRows,
     missing_counterparty_rows: missingCounterpartyRows,
     permission_status: "needs verification",
+    warnings: unique(warnings),
   };
 }
 
