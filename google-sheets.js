@@ -750,6 +750,12 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
 function buildLedgerRowsFromAccountingEntries(entries) {
   const timestamp = new Date().toISOString();
   const rows = [];
+  const normalizeLedgerSource = typeof normalizeManualLedgerSource === "function"
+    ? normalizeManualLedgerSource
+    : (value, fallback = "") => {
+        const normalized = String(value || "").trim().toLowerCase();
+        return normalized || String(fallback || "").trim().toLowerCase();
+      };
   (entries || []).forEach((entry, index) => {
     const date = normalizeIncomingSheetDateValue(entry.date);
     const channel = canonicalManualFinanceChannel(entry.channel || "");
@@ -757,7 +763,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
     const rawSourceId = String(entry.sourceTransactionId || entry.id || `expense-accounting:${date}:${channel}:${index}`).trim();
-    const ledgerSource = normalizeManualLedgerSource(
+    const ledgerSource = normalizeLedgerSource(
       entry.source ||
         (Number.isInteger(entry.sourceImageIndex) ? "photo" : ""),
       Number.isInteger(entry.sourceImageIndex) ? "photo" : "mcp"

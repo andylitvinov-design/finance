@@ -102,6 +102,7 @@ test("buildLedgerRowsFromAccountingEntries maps Monobank exchange outflow into l
       category: "exchange",
       direction: "out",
       comment: "P2P Binance top up",
+      source: "mcp",
       rawSourceId: "MONO-EX-1",
       transferGroupId: "MONO-EX-1",
       createdAt: "2026-05-01T10:00:00.000Z",
