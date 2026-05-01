@@ -2218,7 +2218,7 @@ function getExpenseOperationsRows() {
     operation: String(row.operation || "").trim(),
     source: String(row.source || "").trim(),
     displaySource: typeof getManualLedgerDisplaySource === "function"
-      ? getManualLedgerDisplaySource(row.source || "")
+      ? getManualLedgerDisplaySource(row.source || "", row.rawSourceId || row.raw_source_id || "")
       : (String(row.source || "").trim() || "unknown"),
     fromChannel: String(row.fromChannel || row.from_channel || "").trim(),
     toChannel: String(row.toChannel || row.to_channel || "").trim(),

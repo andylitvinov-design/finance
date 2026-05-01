@@ -6,7 +6,7 @@ import {
   normalizeManualLedgerChannel,
   normalizeManualLedgerDirection,
   normalizeManualLedgerOperation,
-  normalizeManualLedgerSource,
+  resolveManualLedgerSource,
 } from "./manual-ledger-maps.js";
 
 const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
@@ -307,7 +307,7 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         subcategory: String(row[indexes.subcategory] || "").trim(),
         direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
         comment: String(row[indexes.comment] || "").trim(),
-        source: indexes.source === -1 ? "" : normalizeManualLedgerSource(row[indexes.source], ""),
+        source: resolveManualLedgerSource(indexes.source === -1 ? "" : row[indexes.source], row[indexes.rawSourceId], ""),
         rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
         transferGroupId: String(row[indexes.transferGroupId] || "").trim(),
         createdAt: String(row[indexes.createdAt] || "").trim(),

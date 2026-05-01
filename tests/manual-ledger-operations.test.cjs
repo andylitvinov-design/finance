@@ -149,6 +149,7 @@ function buildLedgerTestContext() {
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerSource")}\n` +
+    `${extractFunction(googleSheetsJs, "resolveManualLedgerSource")}\n` +
     `${extractFunction(googleSheetsJs, "getManualLedgerDisplaySource")}\n` +
     `${extractFunction(googleSheetsJs, "assertManualLedgerHeaders")}\n` +
     `${extractFunction(googleSheetsJs, "parseManualLedgerSheetValues")}\n` +
@@ -180,6 +181,18 @@ test("parseManualLedgerSheetValues tolerates missing source and exposes sheetRow
   assert.equal(parsed.rows[0].sheetRowNumber, 2);
   assert.equal(parsed.rows[0].source, "");
   assert.equal(parsed.rows[0].displaySource, "unknown");
+});
+
+test("parseManualLedgerSheetValues normalizes migration raw_source_id rows as manual", () => {
+  const context = buildLedgerTestContext();
+  const parsed = plain(context.parseManualLedgerSheetValues([
+    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+    ["2026-05-01", "personal_expense", "Яндекс руб", "", "1000", "RUB", "12", "food", "", "out", "migrated row", "migration:2026-04-25:19:8", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
+  ]));
+
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0].source, "manual");
+  assert.equal(parsed.rows[0].displaySource, "manual");
 });
 
 test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger row only", () => {

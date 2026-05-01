@@ -174,3 +174,10 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["fact", "manual fact", "manual finance"].includes(token)) return "manual";
   return fallback;
 }
+
+export function resolveManualLedgerSource(value, rawSourceId = "", fallback = "") {
+  const normalized = normalizeManualLedgerSource(value, "");
+  if (normalized) return normalized;
+  if (/^migration:/i.test(String(rawSourceId || "").trim())) return "manual";
+  return fallback;
+}
