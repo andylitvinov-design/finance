@@ -602,7 +602,7 @@ export function normalizePayPalTransactionDetails(details = []) {
     const feeAmount = fee.value < 0 ? Math.abs(fee.value) : null;
     const grossAmount = Math.abs(amount.value);
     const netAmount = direction === "income"
-      ? (feeAmount !== null ? Math.max(0, grossAmount - feeAmount) : null)
+      ? Math.max(0, grossAmount - (feeAmount || 0))
       : grossAmount;
     if (date && amount.value) {
       entries.push({

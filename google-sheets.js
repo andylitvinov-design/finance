@@ -669,6 +669,9 @@ function buildManualLedgerSheetValues(rows) {
       row.amount || "",
       row.currency || "",
       row.amountUsd || row.amount_usd || "",
+      row.amountGross || row.amount_gross || "",
+      row.amountFee || row.amount_fee || "",
+      row.amountNet || row.amount_net || "",
       row.category || "",
       row.subcategory || "",
       row.direction || "",
@@ -727,6 +730,12 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       toChannel,
       category
     });
+    const amountGross = normalizeManualFinancePersistedNumberInput(row?.amountGross ?? row?.amount_gross ?? row?.localAmount ?? row?.amount ?? amount);
+    const amountFee = normalizeManualFinancePersistedNumberInput(row?.amountFee ?? row?.amount_fee ?? row?.feeAmount ?? "");
+    const derivedAmountNet = formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))));
+    const amountNet = normalizeManualFinancePersistedNumberInput(
+      row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? derivedAmountNet
+    );
     const ledgerV2 = normalizeLedgerRowForContract({
       ...row,
       date,
@@ -736,9 +745,9 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       amount,
       amountUsd,
       currency,
-      amountGross: row?.amountGross ?? row?.amount_gross ?? row?.localAmount ?? row?.amount,
-      amountFee: row?.amountFee ?? row?.amount_fee ?? row?.feeAmount ?? "",
-      amountNet: row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "",
+      amountGross,
+      amountFee,
+      amountNet,
       externalId: row?.externalId || row?.external_id || rawSourceId,
       rawSourceId
     });
@@ -750,9 +759,9 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       amount,
       currency,
       amountUsd,
-      amountGross: ledgerV2?.amount_gross || normalizeManualFinancePersistedNumberInput(row?.amountGross ?? row?.amount_gross ?? ""),
-      amountFee: ledgerV2?.amount_fee || normalizeManualFinancePersistedNumberInput(row?.amountFee ?? row?.amount_fee ?? ""),
-      amountNet: ledgerV2?.amount_net || normalizeManualFinancePersistedNumberInput(row?.amountNet ?? row?.amount_net ?? ""),
+      amountGross: ledgerV2?.amount_gross || amountGross,
+      amountFee: ledgerV2?.amount_fee || amountFee,
+      amountNet: ledgerV2?.amount_net || amountNet,
       externalId: ledgerV2?.external_id || String(row?.externalId || row?.external_id || rawSourceId || "").trim(),
       category,
       subcategory: String(row?.subcategory || "").trim(),
@@ -1031,7 +1040,9 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         amountUsd: normalizeLedgerAmountUsdForSave({ ...entry, amount, amountUsd: entry.usdAmount, currency: outCurrency }, { amountNumber: amount, currency: outCurrency, operation: "exchange_out", category: "exchange", fromChannel: channel }),
         amountGross: formatSheetNumber(amount),
         amountFee: entry.feeAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.feeAmount))) : "",
-        amountNet: entry.netAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount))) : "",
+        amountNet: entry.netAmount
+          ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount)))
+          : formatSheetNumber(Math.max(0, amount - Math.abs(parseLooseNumber(entry.feeAmount)))),
         category: "exchange",
         direction: "out",
         comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || "exchange import without paired in-row",
@@ -1058,7 +1069,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
           amountUsd: normalizeLedgerAmountUsdForSave({ ...entry, amount: inAmount, amountUsd: entry.toUsdAmount || entry.usdAmount, currency: inCurrency }, { amountNumber: inAmount, currency: inCurrency, operation: "exchange_in", category: "exchange", toChannel }),
           amountGross: formatSheetNumber(inAmount),
           amountFee: "",
-          amountNet: "",
+          amountNet: formatSheetNumber(inAmount),
           category: "exchange",
           direction: "in",
           comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || "exchange paired in-row",
@@ -1089,7 +1100,9 @@ function buildLedgerRowsFromAccountingEntries(entries) {
       amount: formatSheetNumber(amount),
       amountGross: formatSheetNumber(amount),
       amountFee: entry.feeAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.feeAmount))) : "",
-      amountNet: entry.netAmount ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount))) : "",
+      amountNet: entry.netAmount
+        ? formatSheetNumber(Math.abs(parseLooseNumber(entry.netAmount)))
+        : formatSheetNumber(Math.max(0, amount - Math.abs(parseLooseNumber(entry.feeAmount)))),
       category,
       direction: "out",
       comment: entry.manualCounterpartyComment || entry.description || entry.transactionSubject || entry.organization || "",

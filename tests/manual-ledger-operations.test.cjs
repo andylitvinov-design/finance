@@ -207,8 +207,8 @@ test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger ro
   const context = buildLedgerTestContext();
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
-    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "edit me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "120", "", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "edit me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildUpdatedManualLedgerSheetValues(values, {
@@ -218,27 +218,27 @@ test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger ro
     source: "mcp",
   }));
 
-  assert.equal(updated[1][10], "keep me");
-  assert.equal(updated[1][13], "manual");
+  assert.equal(updated[1][13], "keep me");
+  assert.equal(updated[1][16], "manual");
   assert.equal(updated[2][4], "700");
-  assert.equal(updated[2][10], "updated row");
-  assert.equal(updated[2][13], "mcp");
+  assert.equal(updated[2][13], "updated row");
+  assert.equal(updated[2][16], "mcp");
 });
 
 test("buildDeletedManualLedgerSheetValues deletes the correct physical Ledger row", () => {
   const context = buildLedgerTestContext();
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
-    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "food", "", "out", "remove me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
-    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "servicein", "", "in", "keep me too", "", "", "mcp", "raw-3", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
+    ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "120", "", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "remove me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "87", "", "87", "servicein", "", "in", "keep me too", "", "", "mcp", "raw-3", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildDeletedManualLedgerSheetValues(values, 3));
 
   assert.equal(updated.length, 3);
-  assert.equal(updated[1][10], "keep me");
-  assert.equal(updated[2][10], "keep me too");
+  assert.equal(updated[1][13], "keep me");
+  assert.equal(updated[2][13], "keep me too");
 });
 
 test("buildLedgerRowsFromExpenseRows marks fact-created rows as source=manual", () => {

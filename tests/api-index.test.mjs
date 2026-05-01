@@ -551,19 +551,19 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
             return {
               valueRanges: [
                 {
-                  range: "'Ledger'!A:P",
+                  range: "'Ledger'!A:Q",
                   values: [
-                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
-                    ["2026-04-24", "business_expense", "Яндекс руб", "", "74669", "RUB", "883.0684", "business", "", "out", "ledger source", "manual", "fact:2026-04-24:business:Яндекс руб:0", "", "", ""],
-                    ["2026-04-24", "exchange_out", "Яндекс руб", "", "74669", "RUB", "883.0684", "exchange", "", "out", "ledger source", "manual", "fact:exchange:2026-04-24:0", "g1", "", ""],
-                    ["2026-04-08", "business_expense", "пейпал дол", "", "15", "USD", "15", "business", "", "out", "ledger source", "manual", "fact:2026-04-08:business:пейпал дол:0", "", "", ""],
-                    ["2026-04-10", "exchange_in", "", "пейпал дол", "10", "USD", "10", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-10:0", "g2", "", ""],
-                    ["2026-04-11", "personal_expense", "приват 24-грн", "", "860", "UAH", "20", "food", "", "out", "ledger source", "manual", "fact:2026-04-11:food:приват 24-грн:0", "", "", ""],
-                    ["2026-04-12", "exchange_in", "", "приват 24-грн", "4300", "UAH", "100", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-12:0", "g3", "", ""],
-                    ["2026-04-15", "personal_expense", "приват 24-грн", "", "430", "UAH", "10", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:приват 24-грн:0", "", "", ""],
-                    ["2026-04-15", "personal_expense", "БАНК КАНАДА cad", "", "300", "CAD", "", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:БАНК КАНАДА cad:0", "", "", ""],
-                    ["2026-04-25", "income", "", "пейпал дол", "369", "USD", "369", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:пейпал дол:0", "", "", ""],
-                    ["2026-04-25", "income", "", "Бинанс spot", "108.15", "USD", "108.15", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:Бинанс spot:0", "", "", ""]
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                    ["2026-04-24", "business_expense", "Яндекс руб", "", "74669", "RUB", "883.0684", "74669", "business", "", "out", "ledger source", "manual", "fact:2026-04-24:business:Яндекс руб:0", "", "", ""],
+                    ["2026-04-24", "exchange_out", "Яндекс руб", "", "74669", "RUB", "883.0684", "74669", "exchange", "", "out", "ledger source", "manual", "fact:exchange:2026-04-24:0", "g1", "", ""],
+                    ["2026-04-08", "business_expense", "пейпал дол", "", "15", "USD", "15", "15", "business", "", "out", "ledger source", "manual", "fact:2026-04-08:business:пейпал дол:0", "", "", ""],
+                    ["2026-04-10", "exchange_in", "", "пейпал дол", "10", "USD", "10", "10", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-10:0", "g2", "", ""],
+                    ["2026-04-11", "personal_expense", "приват 24-грн", "", "860", "UAH", "20", "860", "food", "", "out", "ledger source", "manual", "fact:2026-04-11:food:приват 24-грн:0", "", "", ""],
+                    ["2026-04-12", "exchange_in", "", "приват 24-грн", "4300", "UAH", "100", "4300", "exchange", "", "in", "ledger source", "manual", "fact:exchange:2026-04-12:0", "g3", "", ""],
+                    ["2026-04-15", "personal_expense", "приват 24-грн", "", "430", "UAH", "10", "430", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:приват 24-грн:0", "", "", ""],
+                    ["2026-04-15", "personal_expense", "БАНК КАНАДА cad", "", "300", "CAD", "", "300", "travel", "", "out", "ledger source", "manual", "fact:2026-04-15:travel:БАНК КАНАДА cad:0", "", "", ""],
+                    ["2026-04-25", "income", "", "пейпал дол", "369", "USD", "369", "369", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:пейпал дол:0", "", "", ""],
+                    ["2026-04-25", "income", "", "Бинанс spot", "108.15", "USD", "108.15", "108.15", "servicein", "", "in", "ledger source", "manual", "fact:2026-04-25:servicein:Бинанс spot:0", "", "", ""]
                   ]
                 },
                 {
@@ -801,7 +801,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
   }
 });
 
-test("GET getDashboardData exposes ledger-v1 manual metadata without fallback-looking compatibility mode", async () => {
+test("GET getDashboardData blocks manual ledger overlay when amount_net is missing", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -922,12 +922,9 @@ test("GET getDashboardData exposes ledger-v1 manual metadata without fallback-lo
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
-    assert.equal(response.body?.data?.manual?.schema, "ledger-v1");
-    assert.equal(response.body?.data?.manual?.primarySource, "ledger");
-    assert.equal(response.body?.data?.manual?.compatibilityMode, undefined);
-    assert.match((response.body?.data?.manual?.warnings || []).join(" | "), /amount_net.*falls back to amount/);
-    assert.equal(response.body?.data?.manual?.ledgerV2Rows?.[0]?.external_id, "raw-1");
-    assert.ok((response.body?.data?.manual?.operations || []).length > 0);
+    assert.match((response.body?.data?.manual?.warnings || []).join(" | "), /amount_net.*balance was not calculated/);
+    assert.equal(response.body?.data?.manual?.ledgerV2Rows, undefined);
+    assert.equal(response.body?.data?.manual?.operations, undefined);
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {

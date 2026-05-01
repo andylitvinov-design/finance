@@ -113,7 +113,7 @@ test("buildLedgerRowsFromAccountingEntries maps Monobank exchange outflow into l
       amountUsd: "-103,0005",
       amountGross: "4517,6000",
       amountFee: "",
-      amountNet: "",
+      amountNet: "4517,6000",
       category: "exchange",
       direction: "out",
       comment: "P2P Binance top up",

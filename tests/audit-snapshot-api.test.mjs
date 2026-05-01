@@ -224,11 +224,11 @@ test("audit snapshot reports ledger v2 compatibility metadata", async () => {
   assert.equal(response.schema.physical_sheet_migration, false);
 });
 
-test("audit snapshot counts fallback amount rows and warns when amount_net is missing", async () => {
+test("audit snapshot never falls back to amount when amount_net is missing", async () => {
   const response = await buildFixtureSnapshot();
 
-  assert.equal(response.balances.fallback_amount_rows, 1);
-  assert.match(response.warnings.join("\n"), /amount_net.*balance falls back to amount/i);
+  assert.equal(response.balances.fallback_amount_rows, 0);
+  assert.match(response.warnings.join("\n"), /amount_net.*balance was not calculated/i);
 });
 
 test("audit snapshot warns when exchange amount_usd is missing", async () => {
@@ -236,7 +236,7 @@ test("audit snapshot warns when exchange amount_usd is missing", async () => {
 
   assert.equal(response.exchange.rows, 2);
   assert.equal(response.exchange.missing_amount_usd_rows, 1);
-  assert.equal(response.exchange.compatibility_mode, true);
+  assert.equal(response.exchange.compatibility_mode, false);
   assert.match(response.warnings.join("\n"), /exchange row\(s\).*amount_usd/i);
 });
 
