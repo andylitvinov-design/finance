@@ -54,6 +54,12 @@ h2, h3, p { margin: 0; }
   border-radius: 12px; background: #fffdf9; color: var(--ink);
 }
 .field textarea { min-height: 72px; resize: vertical; }
+.audit-controls { grid-template-columns: minmax(0, 1fr); }
+.audit-actions { align-items: center; }
+.audit-fallback { display: grid; gap: 10px; }
+.audit-fallback[hidden] { display: none; }
+.audit-fallback textarea { min-height: 320px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; }
+.audit-fallback-actions { padding: 0; border: 0; background: transparent; }
 .actions { display: flex; gap: 10px; align-items: end; justify-content: flex-start; flex-wrap: wrap; }
 button {
   appearance: none; border: 0; border-radius: 999px; padding: 11px 16px; font: inherit; font-weight: 700;

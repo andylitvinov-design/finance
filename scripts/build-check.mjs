@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const requiredFiles = [
   "index.html",
+  "audit.html",
+  "audit-bridge.js",
   "style.css",
   "config.js",
   "main.js",
@@ -47,22 +49,24 @@ export async function main() {
   await parseJsonFile("ops/deployment-manifest.json");
   const packageJson = await parseJsonFile("package.json");
 
-  const indexHtml = await readFile(path.join(root, "index.html"), "utf8");
   const localAssetPattern = /\b(?:src|href)=["']([^"']+)["']/g;
   const missingAssets = [];
-  for (const match of indexHtml.matchAll(localAssetPattern)) {
-    const target = match[1];
-    if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
-    const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
-    try {
-      await access(path.join(root, normalized));
-    } catch {
-      missingAssets.push(target);
+  for (const htmlFile of ["index.html", "audit.html"]) {
+    const html = await readFile(path.join(root, htmlFile), "utf8");
+    for (const match of html.matchAll(localAssetPattern)) {
+      const target = match[1];
+      if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
+      const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
+      try {
+        await access(path.join(root, normalized));
+      } catch {
+        missingAssets.push(`${htmlFile}: ${target}`);
+      }
     }
   }
 
   if (missingAssets.length) {
-    throw new Error(`Missing assets referenced by index.html: ${missingAssets.join(", ")}`);
+    throw new Error(`Missing assets referenced by HTML files: ${missingAssets.join(", ")}`);
   }
 
   const appBuildVersionMatch = (await readFile(path.join(root, "config.js"), "utf8"))
