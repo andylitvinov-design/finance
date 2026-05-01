@@ -26,6 +26,14 @@ const state = {
   expenseAccounting: {
     activeSubtab: "list",
     resultTab: "spent",
+    operationsFilters: {
+      source: "all",
+      operation: "all",
+      fromChannel: "all",
+      toChannel: "all"
+    },
+    editingSheetRowNumber: 0,
+    operationDraft: null,
     loading: false,
     paypalLoading: false,
     paypalSummary: null,

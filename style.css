@@ -179,6 +179,19 @@ tr:nth-child(even) td { background: #fffcf7; }
   gap: 8px;
   flex-wrap: wrap;
 }
+.expense-operations-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.expense-operations-wrap table { min-width: 1120px; }
+.expense-operations-wrap td:last-child { min-width: 180px; }
+.expense-operation-editor-row td { background: #fff7ee; }
+.expense-operation-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
 .expense-helper {
   display: grid;
   gap: 12px;
@@ -311,7 +324,8 @@ tr:nth-child(even) td { background: #fffcf7; }
   .finance-actions,
   .tab-actions,
   .expense-subtabs,
-  .expense-actions { display: grid; grid-template-columns: 1fr; }
+  .expense-actions,
+  .expense-operations-filters { display: grid; grid-template-columns: 1fr; }
   .tabs {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -336,6 +350,7 @@ tr:nth-child(even) td { background: #fffcf7; }
   .analysis-table-wrap table { min-width: 560px; }
   .expense-table-desktop { display: none; }
   .expense-table-mobile { display: grid; }
+  .expense-operation-editor-grid { grid-template-columns: 1fr; }
   .expense-counterparty-label,
   .expense-counterparty-details { white-space: normal; overflow: visible; text-overflow: clip; }
   .table-wrap { -webkit-overflow-scrolling: touch; }

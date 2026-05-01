@@ -6,6 +6,7 @@ import {
   normalizeManualLedgerChannel,
   normalizeManualLedgerDirection,
   normalizeManualLedgerOperation,
+  normalizeManualLedgerSource,
 } from "./manual-ledger-maps.js";
 
 const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
@@ -170,7 +171,7 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
   const url = new URL(`${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values:batchGet`);
   sheetNames.forEach((name) => {
     const escaped = name.replace(/'/g, "''");
-    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:O` : `'${escaped}'`;
+    const range = name === LEDGER_SHEET_NAME ? `'${escaped}'!A:P` : `'${escaped}'`;
     url.searchParams.append("ranges", range);
   });
   const response = await fetchImpl(url.toString(), {
@@ -280,6 +281,7 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
     subcategory: findHeaderIndex(header, ["subcategory", "подкатегория"]),
     direction: findHeaderIndex(header, ["direction", "направление"]),
     comment: findHeaderIndex(header, ["comment", "комментарий"]),
+    source: findHeaderIndex(header, ["source", "источник"]),
     rawSourceId: findHeaderIndex(header, ["raw_source_id", "raw source id", "source transaction id"]),
     transferGroupId: findHeaderIndex(header, ["transfer_group_id", "exchange_group_id", "transfer group id"]),
     createdAt: findHeaderIndex(header, ["created_at", "created at"]),
@@ -305,11 +307,11 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         subcategory: String(row[indexes.subcategory] || "").trim(),
         direction: normalizeManualLedgerDirection(row[indexes.direction], operation),
         comment: String(row[indexes.comment] || "").trim(),
+        source: indexes.source === -1 ? "" : normalizeManualLedgerSource(row[indexes.source], ""),
         rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
         transferGroupId: String(row[indexes.transferGroupId] || "").trim(),
         createdAt: String(row[indexes.createdAt] || "").trim(),
         updatedAt: String(row[indexes.updatedAt] || "").trim(),
-        source: "manual-google-sheets",
       };
       operationRow.amountUsd = formatNumberString(deriveOperationUsdAmount(operationRow, rateLookup));
       return operationRow;

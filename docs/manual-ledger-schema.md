@@ -19,8 +19,20 @@ Analytics should prefer `Ledger`. If `Ledger` is missing or empty, the app falls
 `Ledger` headers:
 
 ```text
-date | operation | from_channel | to_channel | amount | currency | amount_usd | category | subcategory | direction | comment | raw_source_id | transfer_group_id | created_at | updated_at
+date | operation | from_channel | to_channel | amount | currency | amount_usd | category | subcategory | direction | comment | source | raw_source_id | transfer_group_id | created_at | updated_at
 ```
+
+`source` values:
+
+```text
+manual | mcp | photo
+```
+
+Backward-compatible fallback:
+
+- old Ledger sheets without `source` still load;
+- missing `source` is treated as empty on the data layer;
+- UI displays missing source as `unknown`.
 
 Allowed `operation` values:
 
@@ -42,6 +54,7 @@ Validation rules:
 - Empty or invalid `amount`: skip from sums and warn.
 - Missing `amount_usd`: derive only when a defensible rate exists; otherwise keep blank/null.
 - Duplicate `raw_source_id`: keep the first imported row and skip duplicates.
+- Unknown or missing `source`: keep the row and expose it as `unknown` in UI filters.
 
 ## Category Mapping
 

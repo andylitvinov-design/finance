@@ -10,6 +10,7 @@ export const MANUAL_LEDGER_HEADERS = [
   "subcategory",
   "direction",
   "comment",
+  "source",
   "raw_source_id",
   "transfer_group_id",
   "created_at",
@@ -28,6 +29,7 @@ export const MANUAL_LEDGER_OPERATIONS = [
 ];
 
 export const MANUAL_LEDGER_DIRECTIONS = ["in", "out", "neutral"];
+export const MANUAL_LEDGER_SOURCES = ["manual", "mcp", "photo"];
 export const CANONICAL_LEDGER_CATEGORIES = ["servicein", "ezoin", "exchange", "partner", "business", "house", "food", "fun", "travel", "extra"];
 
 const DEFAULT_CATEGORY_MAP = {
@@ -161,4 +163,14 @@ export function normalizeManualLedgerDirection(value, operation = "") {
   if (op === "income" || op === "exchange_in") return "in";
   if (op === "expense" || op === "exchange_out" || op === "business_expense" || op === "personal_expense" || op === "partner_transfer") return "out";
   return "neutral";
+}
+
+export function normalizeManualLedgerSource(value, fallback = "") {
+  const token = normalizeToken(value);
+  if (!token) return fallback;
+  if (MANUAL_LEDGER_SOURCES.includes(token)) return token;
+  if (["paypal", "paypal mcp", "wise", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "import", "mcp import"].includes(token)) return "mcp";
+  if (["ocr", "photo parsing", "screenshot", "browser ocr", "image"].includes(token)) return "photo";
+  if (["fact", "manual fact", "manual finance"].includes(token)) return "manual";
+  return fallback;
 }

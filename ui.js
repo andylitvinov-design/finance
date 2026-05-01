@@ -218,7 +218,7 @@ function renderExpenseAccountingBlock() {
 
   const subtabs = document.createElement("div");
   subtabs.className = "expense-subtabs";
-  [["list", "список затрат"], ["analysis", "анализ финансов"]].forEach(([id, label]) => {
+  [["list", "список затрат"], ["operations", "операции"], ["analysis", "анализ финансов"]].forEach(([id, label]) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "expense-subtab" + (state.expenseAccounting.activeSubtab === id ? " active" : "");
@@ -238,6 +238,11 @@ function renderExpenseAccountingBlock() {
 
   if (state.expenseAccounting.activeSubtab === "analysis") {
     shell.appendChild(renderExpenseFinancialAnalysis());
+    return shell;
+  }
+
+  if (state.expenseAccounting.activeSubtab === "operations") {
+    shell.appendChild(renderExpenseOperationsBlock());
     return shell;
   }
 
@@ -1863,6 +1868,335 @@ function getAnalyticsSectionRenderRows(section, aggregateSections = []) {
   const aggregateSection = findAggregatedManualAnalyticsSection(section, aggregateSections);
   if (aggregateSection?.rows?.length) return aggregateSection.rows;
   return isPersonalSection ? getAnalyticsPersonalSectionRenderRows(section) : section.rows;
+}
+
+function getExpenseOperationsRows() {
+  const serverRows = Array.isArray(state.data?.manual?.operations) ? state.data.manual.operations : [];
+  const directRows = Array.isArray(state.manualFinance.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
+  const sourceRows = serverRows.length ? serverRows : directRows;
+  return sourceRows.map((row, index) => ({
+    id: String(row.id || row.rawSourceId || row.raw_source_id || `${row.sheetRowNumber || row.date || "row"}-${index}`),
+    date: normalizeIncomingSheetDateValue(row.date || ""),
+    operation: String(row.operation || "").trim(),
+    source: String(row.source || "").trim(),
+    displaySource: typeof getManualLedgerDisplaySource === "function"
+      ? getManualLedgerDisplaySource(row.source || "")
+      : (String(row.source || "").trim() || "unknown"),
+    fromChannel: String(row.fromChannel || row.from_channel || "").trim(),
+    toChannel: String(row.toChannel || row.to_channel || "").trim(),
+    amount: String(row.amount || "").trim(),
+    currency: String(row.currency || "").trim(),
+    amountUsd: String(row.amountUsd || row.amount_usd || "").trim(),
+    category: String(row.category || "").trim(),
+    comment: String(row.comment || "").trim(),
+    rawSourceId: String(row.rawSourceId || row.raw_source_id || "").trim(),
+    transferGroupId: String(row.transferGroupId || row.transfer_group_id || "").trim(),
+    sheetRowNumber: Number(row.sheetRowNumber || 0)
+  }));
+}
+
+function filterExpenseOperationsRows(rows, filters) {
+  const startDate = normalizeIncomingSheetDateValue(filters?.startDate || "");
+  const endDate = normalizeIncomingSheetDateValue(filters?.endDate || "");
+  const sourceFilter = String(filters?.source || "all").trim();
+  const operationFilter = String(filters?.operation || "all").trim();
+  const fromFilter = String(filters?.fromChannel || "all").trim();
+  const toFilter = String(filters?.toChannel || "all").trim();
+  return (rows || []).filter((row) => {
+    if (startDate && row.date && row.date < startDate) return false;
+    if (endDate && row.date && row.date > endDate) return false;
+    if (sourceFilter !== "all" && (row.displaySource || "unknown") !== sourceFilter) return false;
+    if (operationFilter !== "all" && row.operation !== operationFilter) return false;
+    if (fromFilter !== "all" && row.fromChannel !== fromFilter) return false;
+    if (toFilter !== "all" && row.toChannel !== toFilter) return false;
+    return true;
+  });
+}
+
+function renderExpenseOperationsBlock() {
+  const block = document.createElement("div");
+  block.className = "finance-shell";
+  const rows = getExpenseOperationsRows();
+  const filteredRows = filterExpenseOperationsRows(rows, {
+    ...state.expenseAccounting.operationsFilters,
+    startDate: elements.startDate.value,
+    endDate: elements.endDate.value
+  });
+
+  const meta = document.createElement("div");
+  meta.className = "finance-meta";
+  const sourceName = rows.length
+    ? (state.data?.manual?.operations?.length ? "server manual overlay" : (state.manualFinance.data?.ledgerTitle || getManualLedgerSheetName()))
+    : (hasConfiguredManualFinanceEndpoint() ? getManualLedgerSheetName() : "read-only");
+  meta.innerHTML =
+    `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
+    `<div class="config-note">Ledger source: ${escapeHtml(sourceName)}</div>` +
+    `<div class="config-note">Rows: ${escapeHtml(String(filteredRows.length))} / ${escapeHtml(String(rows.length))}</div>`;
+  block.appendChild(meta);
+
+  block.appendChild(renderExpenseOperationsFilters(rows));
+
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = hasConfiguredManualFinanceEndpoint()
+      ? "Ledger за выбранный период пока не загружен. Обновите диапазон или проверьте Google workbook."
+      : "Operations доступны через server overlay или Google OAuth workbook.";
+    block.appendChild(empty);
+    return block;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap expense-operations-wrap";
+  const table = document.createElement("table");
+  const body = document.createElement("tbody");
+  const header = document.createElement("tr");
+  ["date", "operation", "source", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "comment", "actions"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    header.appendChild(th);
+  });
+  body.appendChild(header);
+
+  filteredRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    [
+      row.date || "—",
+      row.operation || "—",
+      row.displaySource || "unknown",
+      row.fromChannel || "—",
+      row.toChannel || "—",
+      row.amount || "—",
+      row.currency || "—",
+      row.amountUsd || "—",
+      row.category || "—",
+      row.comment || "—"
+    ].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
+    const actionTd = document.createElement("td");
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "ghost";
+    editButton.textContent = "Редактировать";
+    editButton.disabled = !hasConfiguredManualFinanceEndpoint() || !row.sheetRowNumber;
+    editButton.addEventListener("click", () => beginExpenseOperationEdit(row));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "ghost";
+    deleteButton.textContent = "Удалить";
+    deleteButton.disabled = !hasConfiguredManualFinanceEndpoint() || !row.sheetRowNumber;
+    deleteButton.addEventListener("click", async () => {
+      await deleteExpenseOperationRow(row);
+    });
+    actionTd.append(editButton, deleteButton);
+    tr.appendChild(actionTd);
+    body.appendChild(tr);
+
+    if (state.expenseAccounting.editingSheetRowNumber === row.sheetRowNumber && state.expenseAccounting.operationDraft) {
+      body.appendChild(renderExpenseOperationEditorRow(row));
+    }
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderExpenseOperationsFilters(rows) {
+  const wrap = document.createElement("div");
+  wrap.className = "expense-operations-filters";
+  const sourceOptions = ["all", "manual", "mcp", "photo", "unknown"];
+  const operationOptions = ["all", ...new Set(rows.map((row) => row.operation).filter(Boolean))];
+  const fromOptions = ["all", ...new Set(rows.map((row) => row.fromChannel).filter(Boolean))];
+  const toOptions = ["all", ...new Set(rows.map((row) => row.toChannel).filter(Boolean))];
+  [
+    ["source", "source", sourceOptions],
+    ["operation", "operation", operationOptions],
+    ["fromChannel", "from_channel", fromOptions],
+    ["toChannel", "to_channel", toOptions],
+  ].forEach(([key, label, options]) => {
+    const field = document.createElement("label");
+    field.className = "field expense-operations-filter";
+    const title = document.createElement("div");
+    title.className = "expense-mobile-label";
+    title.textContent = label;
+    const select = document.createElement("select");
+    select.className = "expense-select";
+    options.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value === "all" ? "all" : value;
+      option.selected = state.expenseAccounting.operationsFilters[key] === value;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", (event) => {
+      state.expenseAccounting.operationsFilters[key] = event.target.value;
+      renderTabs();
+    });
+    field.append(title, select);
+    wrap.appendChild(field);
+  });
+  return wrap;
+}
+
+function beginExpenseOperationEdit(row) {
+  state.expenseAccounting.editingSheetRowNumber = Number(row.sheetRowNumber || 0);
+  state.expenseAccounting.operationDraft = {
+    sheetRowNumber: Number(row.sheetRowNumber || 0),
+    date: row.date || "",
+    operation: row.operation || "",
+    fromChannel: row.fromChannel || "",
+    toChannel: row.toChannel || "",
+    amount: row.amount || "",
+    currency: row.currency || "",
+    amountUsd: row.amountUsd || "",
+    category: row.category || "",
+    comment: row.comment || "",
+    source: row.source || ""
+  };
+  renderTabs();
+}
+
+function renderExpenseOperationEditorRow(row) {
+  const tr = document.createElement("tr");
+  tr.className = "expense-operation-editor-row";
+  const td = document.createElement("td");
+  td.colSpan = 11;
+  const grid = document.createElement("div");
+  grid.className = "expense-operation-editor-grid";
+  [
+    ["date", "date"],
+    ["operation", "operation"],
+    ["fromChannel", "from_channel"],
+    ["toChannel", "to_channel"],
+    ["amount", "amount"],
+    ["currency", "currency"],
+    ["amountUsd", "amount_usd"],
+    ["category", "category"],
+    ["comment", "comment"],
+    ["source", "source"],
+  ].forEach(([key, label]) => {
+    const field = document.createElement("label");
+    field.className = "field";
+    const title = document.createElement("div");
+    title.className = "expense-mobile-label";
+    title.textContent = label;
+    let input;
+    if (key === "source") {
+      input = document.createElement("select");
+      input.className = "expense-select";
+      ["manual", "mcp", "photo"].forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = state.expenseAccounting.operationDraft?.[key] === value;
+        input.appendChild(option);
+      });
+    } else if (key === "operation") {
+      input = document.createElement("select");
+      input.className = "expense-select";
+      ["income", "expense", "exchange_in", "exchange_out", "partner_transfer", "business_expense", "personal_expense", "correction"].forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = state.expenseAccounting.operationDraft?.[key] === value;
+        input.appendChild(option);
+      });
+    } else if (key === "fromChannel" || key === "toChannel") {
+      input = document.createElement("select");
+      input.className = "expense-select";
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = "—";
+      input.appendChild(emptyOption);
+      getManualFinanceChannels().forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = state.expenseAccounting.operationDraft?.[key] === value;
+        input.appendChild(option);
+      });
+    } else {
+      input = document.createElement("input");
+      input.className = "finance-input";
+      input.value = state.expenseAccounting.operationDraft?.[key] || "";
+    }
+    input.addEventListener("input", (event) => {
+      state.expenseAccounting.operationDraft[key] = event.target.value;
+    });
+    input.addEventListener("change", (event) => {
+      state.expenseAccounting.operationDraft[key] = event.target.value;
+    });
+    field.append(title, input);
+    grid.appendChild(field);
+  });
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "primary";
+  saveButton.textContent = "Сохранить";
+  saveButton.addEventListener("click", async () => {
+    await saveExpenseOperationEdit(row);
+  });
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "ghost";
+  cancelButton.textContent = "Отмена";
+  cancelButton.addEventListener("click", () => {
+    state.expenseAccounting.editingSheetRowNumber = 0;
+    state.expenseAccounting.operationDraft = null;
+    renderTabs();
+  });
+  actions.append(saveButton, cancelButton);
+  td.append(grid, actions);
+  tr.appendChild(td);
+  return tr;
+}
+
+async function saveExpenseOperationEdit(row) {
+  if (!state.expenseAccounting.operationDraft?.sheetRowNumber) return;
+  state.expenseAccounting.loading = true;
+  renderTabs();
+  try {
+    const response = await updateManualLedgerRowDirect(state.expenseAccounting.operationDraft);
+    state.expenseAccounting.editingSheetRowNumber = 0;
+    state.expenseAccounting.operationDraft = null;
+    await loadDashboardData();
+    setExpenseAccountingStatus(`Ledger row ${row.sheetRowNumber} updated. ${response.savedAt || ""}`.trim(), false);
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось обновить Ledger row.", true);
+  } finally {
+    state.expenseAccounting.loading = false;
+    renderTabs();
+  }
+}
+
+async function deleteExpenseOperationRow(row) {
+  if (!row.sheetRowNumber) return;
+  if (typeof window !== "undefined" && typeof window.confirm === "function") {
+    const confirmed = window.confirm(`Удалить Ledger row ${row.sheetRowNumber}: ${row.date} ${row.operation} ${row.amount} ${row.currency}?`);
+    if (!confirmed) return;
+  }
+  state.expenseAccounting.loading = true;
+  renderTabs();
+  try {
+    const response = await deleteManualLedgerRowDirect(row.sheetRowNumber);
+    if (state.expenseAccounting.editingSheetRowNumber === row.sheetRowNumber) {
+      state.expenseAccounting.editingSheetRowNumber = 0;
+      state.expenseAccounting.operationDraft = null;
+    }
+    await loadDashboardData();
+    setExpenseAccountingStatus(`Ledger row ${row.sheetRowNumber} deleted. ${response.savedAt || ""}`.trim(), false);
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось удалить Ledger row.", true);
+  } finally {
+    state.expenseAccounting.loading = false;
+    renderTabs();
+  }
 }
 
 function setExpenseAccountingStatus(message, isError = false) {
