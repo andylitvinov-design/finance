@@ -49,14 +49,96 @@ test("expense analysis UI keeps refresh action and scrollable tables", () => {
 test("expense accounting UI renders dedicated counterparty column that stays visible on mobile", () => {
   assert.match(uiJs, /textContent = "От кого \/ Кому"/);
   assert.match(uiJs, /buildExpenseAccountingCounterpartyLabel\(entry\)/);
-  assert.match(uiJs, /buildExpenseAccountingFromToLabel\(entry\)/);
-  assert.match(uiJs, /buildExpenseAccountingOperationTypeLabel\(entry\)/);
-  assert.match(uiJs, /buildExpenseAccountingCounterpartyDetails\(entry\)/);
+  assert.match(uiJs, /buildExpenseAccountingReadableCounterparty\(entry\)/);
+  assert.match(uiJs, /buildExpenseAccountingTechnicalDetails\(entry\)/);
+  assert.match(uiJs, /summary\.textContent = "технические детали"/);
+  assert.match(uiJs, /button\.textContent = "Указать вручную"/);
   assert.match(uiJs, /→/);
   assert.match(styleCss, /\.expense-table-counterparty/);
   assert.match(styleCss, /\.expense-counterparty-label/);
+  assert.match(styleCss, /\.expense-counterparty-hint/);
   assert.match(styleCss, /\.expense-counterparty-details/);
+  assert.match(styleCss, /\.expense-counterparty-manual/);
   assert.match(styleCss, /\.expense-table-mobile-card/);
+});
+
+test("PayPal counterparty UI hides technical metadata from the main label", () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "normalizeExpenseAccountingEntityLabel")}\n` +
+    `${extractFunction(uiJs, "buildExpenseAccountingCounterpartyLabel")}\n` +
+    `${extractFunction(uiJs, "buildExpenseAccountingFromToLabel")}\n` +
+    `${extractFunction(uiJs, "isPayPalExchangeEntry")}\n` +
+    `${extractFunction(uiJs, "isTechnicalPayPalCounterpartyValue")}\n` +
+    `${extractFunction(uiJs, "getReadablePayPalCounterpartyName")}\n` +
+    `${extractFunction(uiJs, "isUnknownPayPalCounterparty")}\n` +
+    `${extractFunction(uiJs, "buildExpenseAccountingReadableCounterparty")}\n` +
+    `${extractFunction(uiJs, "buildExpenseAccountingTechnicalDetails")}\n` +
+    "this.buildExpenseAccountingReadableCounterparty = buildExpenseAccountingReadableCounterparty;\n" +
+    "this.buildExpenseAccountingTechnicalDetails = buildExpenseAccountingTechnicalDetails;",
+    context
+  );
+
+  const unknown = {
+    source: "paypal",
+    direction: "expense",
+    displayFromTo: "Me → :5sLyij!q6Kz\\z72hU8j",
+    counterpartyLabel: "Кому: :5sLyij!q6Kz\\z72hU8j",
+    operationType: "payout",
+    externalId: "2202611623284821200_1",
+    exchangeGroupId: "2202611623284821200_1",
+    rawMetadata: "2202611623284821200_1 | invoice 2202611623284821200_1 | event T0200",
+    description: "2202611623284821200_1 | invoice 2202611623284821200_1 | event T0200",
+  };
+  assert.equal(context.buildExpenseAccountingReadableCounterparty(unknown), "Получатель не распознан");
+  assert.doesNotMatch(context.buildExpenseAccountingReadableCounterparty(unknown), /invoice|event|external|raw|220261/i);
+  assert.match(context.buildExpenseAccountingTechnicalDetails(unknown), /external id: 2202611623284821200_1/);
+  assert.match(context.buildExpenseAccountingTechnicalDetails(unknown), /event T0200/);
+
+  assert.equal(context.buildExpenseAccountingReadableCounterparty({
+    source: "paypal",
+    direction: "exchange",
+    operationType: "exchange",
+    displayFromTo: "PayPal CAD → PayPal EUR",
+  }), "Обмен: PayPal CAD → PayPal EUR");
+});
+
+test("PayPal manual counterparty override maps stable provider ids to readable labels", () => {
+  const store = {};
+  const context = {
+    localStorage: {
+      getItem: (key) => store[key] || null,
+      setItem: (key, value) => {
+        store[key] = value;
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    "const PAYPAL_COUNTERPARTY_OVERRIDES_STORAGE_KEY = \"ezohata:paypal-counterparty-overrides:v1\";\n" +
+    `${extractFunction(uiJs, "getPayPalCounterpartyOverrideKey")}\n` +
+    `${extractFunction(uiJs, "loadPayPalCounterpartyOverrides")}\n` +
+    `${extractFunction(uiJs, "applyPayPalCounterpartyOverride")}\n` +
+    `${extractFunction(uiJs, "savePayPalCounterpartyOverride")}\n` +
+    "this.savePayPalCounterpartyOverride = savePayPalCounterpartyOverride;\n" +
+    "this.applyPayPalCounterpartyOverride = applyPayPalCounterpartyOverride;",
+    context
+  );
+
+  const entry = {
+    source: "paypal",
+    direction: "expense",
+    sourceTransactionId: "TXN-1",
+    toEntity: "counterparty unavailable",
+    displayFromTo: "Me → counterparty unavailable",
+  };
+  assert.equal(context.savePayPalCounterpartyOverride(entry, "Manual Name"), true);
+  assert.equal(entry.counterpartyName, "Manual Name");
+  assert.equal(entry.counterpartyLabel, "Кому: Manual Name");
+  assert.equal(entry.displayFromTo, "Me → Manual Name");
+  assert.equal(entry.manualCounterpartyOverride, true);
+  assert.match(store["ezohata:paypal-counterparty-overrides:v1"], /paypal:TXN-1/);
 });
 test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual rows for services/spend", () => {
   const context = {
