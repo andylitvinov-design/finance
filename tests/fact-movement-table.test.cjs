@@ -501,6 +501,8 @@ test("rendered Движение 1 DOM table uses aggregated rows instead of stal
     `${extractFunction(uiJs, "renderResponsiveDataView")}\n` +
     `${extractFunction(uiJs, "getAnalyticsSectionDisplayTitle")}\n` +
     `${extractFunction(uiJs, "getAnalyticsPersonalSectionRenderRows")}\n` +
+    `${extractFunction(uiJs, "getAggregatedManualAnalyticsSections")}\n` +
+    `${extractFunction(uiJs, "findAggregatedManualAnalyticsSection")}\n` +
     `${extractFunction(uiJs, "getAnalyticsSectionRenderRows")}\n` +
     `${extractFunction(uiJs, "getManualOverlayUnavailableMessage")}\n` +
     `${extractFunction(uiJs, "shouldShowManualOverlayWarningInsteadOfSection")}\n` +
@@ -533,6 +535,233 @@ test("rendered Движение 1 DOM table uses aggregated rows instead of stal
   assert.equal(rowByChannel["Яндекс руб"][10], "-74669,0000");
   assert.equal(rowByChannel["Итого"][2], "17480,0000");
   assert.equal(rowByChannel["Итого"][9], "16616,0000");
+});
+
+test("rendered Plan DOM table uses aggregate-backed rows instead of stale analytics rows", () => {
+  const document = createTestDocument();
+  const container = document.createElement("div");
+  const aggregatedRows = [
+    {
+      channel: "приват 24-грн",
+      now: "11480,0000",
+      serviceIncome: "17480,0000",
+      business: "5329,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "5329,0000",
+      exchange: "-9832,0000",
+      exchangeUsd: "-222,1921",
+      totalUsd: "120,4294",
+      nowUsd: "259,4400",
+    },
+    {
+      channel: "Яндекс руб",
+      now: "139786,0000",
+      serviceIncome: "0,0000",
+      business: "11287,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "11287,0000",
+      exchange: "-74669,0000",
+      exchangeUsd: "-883,0684",
+      totalUsd: "133,4850",
+      nowUsd: "1653,1700",
+    },
+    {
+      channel: "Бинанс spot",
+      now: "0,0000",
+      serviceIncome: "0,0000",
+      business: "0,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "0,0000",
+      exchange: "874,0000",
+      exchangeUsd: "874,0000",
+      totalUsd: "0,0000",
+      nowUsd: "0,0000",
+    },
+    {
+      channel: "binance save",
+      now: "0,0000",
+      serviceIncome: "0,0000",
+      business: "0,0000",
+      flat: "0,0000",
+      food: "0,0000",
+      fun: "0,0000",
+      study: "0,0000",
+      travel: "0,0000",
+      total: "0,0000",
+      exchange: "-950,0000",
+      exchangeUsd: "-950,0000",
+      totalUsd: "0,0000",
+      nowUsd: "0,0000",
+    },
+  ];
+  const buildPlanRowsFromAggregated = (rows) => {
+    const exchangeUsdTotal = rows.reduce((sum, row) => sum + parseLooseNumber(row.exchangeUsd), 0);
+    return [
+      ["Сверка Movement по каналам"],
+      ["канал переводов", "план = ACCRUED"],
+      ["Яндекс руб", "0,0000"],
+      [],
+      ["Plan"],
+      ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "обмен", "обмен_usd", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
+      ...rows.map((row) => [
+        row.channel,
+        row.serviceIncome,
+        row.serviceIncome,
+        "0,0000",
+        row.exchange,
+        row.exchangeUsd,
+        row.exchangeUsd,
+        row.total,
+        row.totalUsd,
+        formatSheetNumber(parseLooseNumber(row.exchangeUsd) - parseLooseNumber(row.totalUsd))
+      ]),
+      [
+        "Итого",
+        formatSheetNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row.serviceIncome), 0)),
+        formatSheetNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row.serviceIncome), 0)),
+        "0,0000",
+        formatSheetNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row.exchange), 0)),
+        formatSheetNumber(exchangeUsdTotal),
+        formatSheetNumber(exchangeUsdTotal),
+        formatSheetNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row.total), 0)),
+        formatSheetNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row.totalUsd), 0)),
+        formatSheetNumber(exchangeUsdTotal - rows.reduce((sum, row) => sum + parseLooseNumber(row.totalUsd), 0))
+      ],
+      ["Итого движение", "0,0000", "0,0000"],
+      [],
+      ["Личные расходы"],
+      ["канал", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+      ...rows.map((row) => [
+        row.channel,
+        row.now,
+        row.serviceIncome,
+        row.business,
+        row.flat,
+        row.food,
+        row.fun,
+        row.study,
+        row.travel,
+        row.total,
+        row.exchange,
+        row.exchangeUsd,
+        row.totalUsd,
+        row.nowUsd
+      ])
+    ];
+  };
+  const context = {
+    document,
+    state: {
+      aggregatedManualRange: { rows: aggregatedRows },
+      config: { manualFinance: {} },
+      data: {
+        manual: { warnings: [] },
+        tabs: {
+          movement: { values: [] },
+          payouts: { values: [] },
+          savings: { values: [] }
+        }
+      },
+      googleAuth: {},
+    },
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_HEADERS: ["канал", "now", "приход от услуг"],
+    normalizeCell,
+    parseLooseNumber,
+    hasAnyValue,
+    clone2dArray(values) {
+      return (values || []).map((row) => (row || []).slice());
+    },
+    formatCellForDisplay(value) {
+      return String(value ?? "").trim();
+    },
+    getAnalyticsSections: splitAnalyticsSections,
+    isAnalyticsPersonalSection(section) {
+      return normalizeCell(section?.title) === normalizeCell("Личные расходы");
+    },
+    getManualFinanceDisplayHeaders() {
+      return [
+        "канал",
+        "now",
+        "приход от услуг",
+        "spent for business",
+        "spent for flat",
+        "spent for food",
+        "spent for fun",
+        "spent for study",
+        "spent for travel",
+        "затраты-мои",
+        "обмен",
+        "обмен_usd",
+        "затраты-мои usd",
+        "now_usd",
+      ];
+    },
+    getCurrentAnalyticsManualRows() {
+      return aggregatedRows;
+    },
+    buildFullRangeBasedAnalyticsValuesFromClosedFact(sourceValues, movementValues, payoutsValues, savingsValues, aggregatedManual) {
+      return buildPlanRowsFromAggregated(aggregatedManual.rows);
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "renderPlainTable")}\n` +
+    `${extractFunction(uiJs, "truncateTableValues")}\n` +
+    `${extractFunction(uiJs, "renderMobileCards")}\n` +
+    `${extractFunction(uiJs, "renderResponsiveDataView")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionDisplayTitle")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsPersonalSectionRenderRows")}\n` +
+    `${extractFunction(uiJs, "getAggregatedManualAnalyticsSections")}\n` +
+    `${extractFunction(uiJs, "findAggregatedManualAnalyticsSection")}\n` +
+    `${extractFunction(uiJs, "getAnalyticsSectionRenderRows")}\n` +
+    `${extractFunction(uiJs, "getManualOverlayUnavailableMessage")}\n` +
+    `${extractFunction(uiJs, "shouldShowManualOverlayWarningInsteadOfSection")}\n` +
+    `${extractFunction(uiJs, "isZeroOnlyAnalyticsRow")}\n` +
+    `${extractFunction(uiJs, "appendCollapsibleZeroAnalyticsTable")}\n` +
+    `${extractFunction(uiJs, "renderAnalyticsSections")}\n` +
+    "this.renderAnalyticsSections = renderAnalyticsSections;",
+    context
+  );
+
+  context.renderAnalyticsSections(container, [
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "ушло", "обмен", "обмен_usd", "план-рост", "затраты-мои", "затраты-мои-дол", "plan-profit"],
+    ["приват 24-грн", "8740,0000", "8740,0000", "0,0000", "-4916,0000", "-111,0960", "-111,0960", "2664,0000", "60,2147", "-171,3107"],
+    ["Яндекс руб", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000", "11287,0000", "133,4850", "-133,4850"],
+    [],
+    ["Личные расходы"],
+    ["канал", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+    ["приват 24-грн", "11480,0000", "8740,0000", "2664,0000", "0,0000", "0,0000", "0,0000", "0,0000", "0,0000", "2664,0000", "-4916,0000", "-111,0960", "60,2147", "259,4400"],
+  ]);
+
+  const planBlocks = findElements(container, (node) =>
+    node.className === "analytics-section" &&
+    node.children.some((child) => child.className === "tab-note" && child.textContent === "Plan")
+  );
+  assert.equal(planBlocks.length, 1);
+  const table = findElements(planBlocks[0], (node) => node.tagName === "TABLE")[0];
+  const rows = tableRows(table);
+  const rowByChannel = Object.fromEntries(rows.slice(1).map((row) => [row[0], row]));
+
+  assert.equal(rowByChannel["приват 24-грн"][4], "-9832,0000");
+  assert.equal(rowByChannel["Яндекс руб"][4], "-74669,0000");
+  assert.equal(rowByChannel["Бинанс spot"][4], "874,0000");
+  assert.equal(rowByChannel["binance save"][4], "-950,0000");
+  assert.notEqual(rowByChannel["приват 24-грн"][4], "-4916,0000");
+  assert.notEqual(rowByChannel["Яндекс руб"][4], "0,0000");
 });
 
 test("analytics UI shows one Движение 1 and renames the stale movement summary", () => {

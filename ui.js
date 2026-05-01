@@ -1758,8 +1758,34 @@ function getAnalyticsPersonalSectionRenderRows(section) {
   ];
 }
 
-function getAnalyticsSectionRenderRows(section) {
+function getAggregatedManualAnalyticsSections(sourceValues) {
+  if (!state.aggregatedManualRange?.rows?.length) return [];
+  if (typeof buildFullRangeBasedAnalyticsValuesFromClosedFact !== "function") return [];
+  const rebuiltValues = buildFullRangeBasedAnalyticsValuesFromClosedFact(
+    Array.isArray(sourceValues) ? sourceValues : (state.data?.tabs?.analytics?.values || []),
+    state.data?.tabs?.movement?.values || [],
+    state.data?.tabs?.payouts?.values || [],
+    state.data?.tabs?.savings?.values || [],
+    state.aggregatedManualRange
+  );
+  return getAnalyticsSections(rebuiltValues);
+}
+
+function findAggregatedManualAnalyticsSection(section, aggregateSections = []) {
+  const normalizedTitle = normalizeCell(section?.title);
   const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
+  return aggregateSections.find((candidate) => {
+    if (isPersonalSection && (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(candidate)) {
+      return true;
+    }
+    return normalizeCell(candidate?.title) === normalizedTitle;
+  }) || null;
+}
+
+function getAnalyticsSectionRenderRows(section, aggregateSections = []) {
+  const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
+  const aggregateSection = findAggregatedManualAnalyticsSection(section, aggregateSections);
+  if (aggregateSection?.rows?.length) return aggregateSection.rows;
   return isPersonalSection ? getAnalyticsPersonalSectionRenderRows(section) : section.rows;
 }
 
@@ -2307,6 +2333,7 @@ function renderClosedFactTransfersBlock(headers, rows) {
 
 function renderAnalyticsSections(container, values) {
   const sections = getAnalyticsSections(values);
+  const aggregateSections = getAggregatedManualAnalyticsSections(values);
   const manualWorkbookUrl = state.config?.manualFinance?.spreadsheetUrl || "";
   const manualOverlayWarning = getManualOverlayUnavailableMessage();
   const needsGoogleManualOverlay = Boolean(manualOverlayWarning);
@@ -2327,7 +2354,7 @@ function renderAnalyticsSections(container, values) {
   sections.forEach((section) => {
     const displayTitle = getAnalyticsSectionDisplayTitle(section);
     const isPersonalSection = (typeof isAnalyticsPersonalSection === "function") && isAnalyticsPersonalSection(section);
-    const sectionRows = getAnalyticsSectionRenderRows(section);
+    const sectionRows = getAnalyticsSectionRenderRows(section, aggregateSections);
     const block = document.createElement("div");
     block.className = "analytics-section";
     const title = document.createElement("div");
