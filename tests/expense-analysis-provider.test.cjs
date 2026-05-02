@@ -38,6 +38,17 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function extractExpenseAnalysisIncomeCountHelpers() {
+  return [
+    "buildLedgerIncomeCountSummaryByChannel",
+    "normalizeExpenseAnalysisIncomeOperation",
+    "normalizeExpenseAnalysisIncomeSource",
+    "isExpenseAnalysisAutoIncomeSource",
+    "isExpenseAnalysisManualIncomeSource",
+    "isExpenseAnalysisScreenshotIncomeSource",
+  ].map((name) => extractFunction(financeJs, name)).join("\n") + "\n";
+}
+
 test("expense analysis UI keeps refresh action and scrollable tables", () => {
   assert.match(uiJs, /refreshExpenseFinancialAnalysis/);
   assert.match(uiJs, /refreshButton\.textContent = state\.expenseAccounting\.loading \? "Обновляю\.\.\." : "Обновить"/);
@@ -267,6 +278,7 @@ test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exi
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
@@ -502,6 +514,7 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
@@ -575,6 +588,13 @@ test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual
     formatSheetNumber(value, digits = 4) {
       return Number(value || 0).toFixed(digits).replace(".", ",");
     },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({ "paypal usd": "пейпал дол", "пейпал дол": "пейпал дол", "paypal eur": "пейпал евр", "пейпал евр": "пейпал евр" })[normalized] || String(value || "").trim();
+    },
   };
   vm.createContext(context);
   vm.runInContext(
@@ -639,6 +659,7 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -662,11 +683,95 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   }));
 
   assert.deepEqual(summary.rows, [
-    ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал", "разница"],
-    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000"],
-    ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500"],
-    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500"],
+    ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал", "разница", "план приходов, шт", "авто/MCP приходов, шт", "ручных приходов, шт", "скриншот приходов, шт"],
+    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000", "0", "0", "0", "0"],
+    ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500", "0", "0", "0", "0"],
+    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500", "0", "0", "0", "0"],
   ]);
+});
+
+test("buildExpenseAnalysisChannelSummary appends income counters by source group", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "трансервайз дол", "монобанк грн"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: { "пейпал дол": 103, "трансервайз дол": 206, "монобанк грн": 0 },
+      accruedPlusCountByChannel: { "пейпал дол": 1, "трансервайз дол": 1, "монобанк грн": 0 }
+    }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "paypal usd": "пейпал дол",
+        "пейпал дол": "пейпал дол",
+        "wise": "трансервайз дол",
+        "wise usd": "трансервайз дол",
+        "transferwise": "трансервайз дол",
+        "трансервайз дол": "трансервайз дол",
+        "mono": "монобанк грн",
+        "monobank": "монобанк грн",
+        "монобанк грн": "монобанк грн",
+      })[normalized] || String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [],
+    movementValues: [],
+    realIncomeSummaryByChannel: {},
+    providerExpenseByChannel: {},
+    ledgerRows: [
+      { operation: "income", source: "wise", toChannel: "wise usd", amountUsd: "100", currency: "USD" },
+      { operation: "servicein", source: "provider", to_channel: "paypal usd", amount_usd: "25", currency: "USD" },
+      { operation: "ezoin", source: "mcp", to_channel: "wise", amount_usd: "50", currency: "USD" },
+      { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "10", currency: "USD" },
+      { operation: "income", source: "fact", toChannel: "wise", amountUsd: "20", currency: "USD" },
+      { operation: "income", source: "migration", toChannel: "monobank", amountUsd: "30", currency: "USD" },
+      { operation: "income", source: "ocr", toChannel: "paypal usd", amountUsd: "40", currency: "USD" },
+      { operation: "income", source: "photo", toChannel: "wise", amountUsd: "50", currency: "USD" },
+      { operation: "income", source: "screenshot", toChannel: "monobank", amountUsd: "60", currency: "USD" },
+      { operation: "income", source: "image", toChannel: "monobank", amountUsd: "70", currency: "USD" },
+      { operation: "income", source: "browser_ocr", toChannel: "paypal usd", amountUsd: "80", currency: "USD" },
+      { operation: "business_expense", source: "wise", fromChannel: "wise", amountUsd: "90", currency: "USD" },
+      { operation: "exchange_out", source: "mcp", fromChannel: "paypal usd", amountUsd: "-12", currency: "USD" },
+    ],
+    usdRateLookup: {}
+  }));
+
+  const paypal = summary.rows.find((row) => row[0] === "пейпал дол");
+  const wise = summary.rows.find((row) => row[0] === "трансервайз дол");
+  const mono = summary.rows.find((row) => row[0] === "монобанк грн");
+  const total = summary.rows.find((row) => row[0] === "Итого");
+  assert.deepEqual(paypal.slice(-4), ["1", "1", "1", "2"]);
+  assert.deepEqual(wise.slice(-4), ["1", "2", "1", "1"]);
+  assert.deepEqual(mono.slice(-4), ["0", "0", "1", "2"]);
+  assert.deepEqual(total.slice(-4), ["2", "3", "3", "5"]);
 });
 
 test("buildBalanceReconciliationByChannel uses latest balance snapshots on or before period bounds", () => {
@@ -842,6 +947,11 @@ test("calculateMovementChannelStats returns accrued plus totals by channel for e
   assert.deepEqual(stats.accruedPlusByChannel, {
     "пейпал дол": 103,
     "пейпал евр": 206,
+    "пейпал сad": 0,
+  });
+  assert.deepEqual(stats.accruedPlusCountByChannel, {
+    "пейпал дол": 1,
+    "пейпал евр": 1,
     "пейпал сad": 0,
   });
 });

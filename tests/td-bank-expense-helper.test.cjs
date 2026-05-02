@@ -355,6 +355,7 @@ test("browser OCR parser keeps amount rows with upload date fallback", () => {
       organization: "AMOUNT:120.5 USD",
       counterparty: "AMOUNT:120.5 USD",
       confidence: 0.45,
+      source: "browser_ocr",
       sourceImageIndex: 2,
     },
   ]);

@@ -821,6 +821,7 @@ function getExpenseAnalysisChannelSummary() {
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
+    ledgerRows: state.data?.manual?.operations || state.data?.manual?.ledgerV2Rows || [],
     realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
@@ -2376,6 +2377,7 @@ function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
       organization: cleanupExpenseOcrOrganization(line),
       counterparty: cleanupExpenseOcrOrganization(line),
       confidence: 0.45,
+      source: "browser_ocr",
       sourceImageIndex
     }, entries.length));
   });
@@ -2552,7 +2554,7 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     confidence: Number(entry.confidence || 0),
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),
-    sourceTransactionId: String(entry.sourceTransactionId || "").trim()
+    sourceTransactionId: String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim()
   };
   return applyPayPalCounterpartyOverride(normalized);
 }
@@ -2574,7 +2576,10 @@ async function saveExpenseAccountingEntries() {
       throw new Error(getManualFinanceUnavailableMessage());
     }
     const response = await saveExpenseAccountingEntriesDirect(entries);
-    setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк. ${response.savedAt || ""}`.trim(), false);
+    const duplicateNote = Number(response.duplicate_count || 0) || Number(response.skipped_count || 0)
+      ? ` Добавлено: ${response.added_count || 0}, дубли: ${response.duplicate_count || 0}, пропущено: ${response.skipped_count || 0}.`
+      : "";
+    setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк.${duplicateNote} ${response.savedAt || ""}`.trim(), false);
     state.expenseAccounting.entries = [];
     state.expenseAccounting.paypalSummary = null;
     state.expenseAccounting.wiseSummary = null;
@@ -2610,6 +2615,9 @@ async function saveExpenseAccountingEntriesDirect(entries) {
   return {
     rowCount: replacementRows.length,
     ledgerRowCount: ledgerSave.rows.length,
+    added_count: ledgerSave.added_count || ledgerSave.rows.length,
+    duplicate_count: ledgerSave.duplicate_count || 0,
+    skipped_count: ledgerSave.skipped_count || 0,
     warnings: [...existingLedgerParse.warnings, ...ledgerSave.warnings],
     savedAt: new Date().toLocaleString("ru-RU")
   };

@@ -173,6 +173,9 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "buildUpdatedManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "buildDeletedManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "buildLedgerRowsFromExpenseRows")}\n` +
+    `${extractFunction(googleSheetsJs, "formatStableSourceIdPart")}\n` +
+    `${extractFunction(googleSheetsJs, "buildStableScreenshotIncomeSourceId")}\n` +
+    `${extractFunction(googleSheetsJs, "isScreenshotAccountingEntry")}\n` +
     `${extractFunction(googleSheetsJs, "buildLedgerRowsFromAccountingEntries")}\n` +
     `this.parseManualLedgerSheetValues = parseManualLedgerSheetValues;\n` +
     `this.buildManualLedgerSheetValues = buildManualLedgerSheetValues;\n` +
@@ -367,7 +370,7 @@ test("expense accounting imports write Ledger only and do not update legacy Ра
   assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
 
-test("buildLedgerRowsFromAccountingEntries maps provider rows to provider sources and OCR rows to generic other", () => {
+test("buildLedgerRowsFromAccountingEntries maps provider rows to provider sources and OCR rows to screenshot sources", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
     {
@@ -397,7 +400,7 @@ test("buildLedgerRowsFromAccountingEntries maps provider rows to provider source
 
   assert.equal(rows.length, 2);
   assert.equal(rows[0].source, "paypal");
-  assert.equal(rows[1].source, "other");
+  assert.equal(rows[1].source, "photo");
 });
 
 test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids", () => {
@@ -422,6 +425,85 @@ test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids"
   assert.equal(rows[0].source, "wise");
   assert.equal(rows[0].externalId, "WISE-TXN-1");
   assert.equal(rows[0].rawSourceId, "wise:WISE-TXN-1");
+});
+
+test("duplicate screenshot income is skipped and reported in save summary", () => {
+  const context = buildLedgerTestContext();
+  const entries = [
+    {
+      date: "2026-05-01",
+      channel: "paypal usd",
+      localAmount: 120,
+      currency: "USD",
+      usdAmount: 120,
+      category: "serviceIncome",
+      direction: "income",
+      source: "browser_ocr",
+      counterparty: "Client A",
+      description: "Client A"
+    },
+    {
+      date: "2026-05-01",
+      channel: "paypal usd",
+      localAmount: 120,
+      currency: "USD",
+      usdAmount: 120,
+      category: "serviceIncome",
+      direction: "income",
+      source: "browser_ocr",
+      counterparty: "Client A",
+      description: "Client A"
+    }
+  ];
+  const ledgerRows = plain(context.buildLedgerRowsFromAccountingEntries(entries));
+  assert.equal(ledgerRows[0].rawSourceId, ledgerRows[1].rawSourceId);
+
+  const saved = plain(context.normalizeManualLedgerRowsForSave(ledgerRows, []));
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 1);
+  assert.equal(saved.skipped_count, 0);
+});
+
+test("normalizeManualLedgerRowsForSave reports added duplicate and skipped counts", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-01",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "120",
+      currency: "USD",
+      category: "servicein",
+      source: "ocr",
+      externalId: "ocr:row-1",
+      rawSourceId: "ocr:row-1"
+    },
+    {
+      date: "2026-05-01",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "120",
+      currency: "USD",
+      category: "servicein",
+      source: "ocr",
+      externalId: "ocr:row-1",
+      rawSourceId: "ocr:row-1"
+    },
+    {
+      date: "",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "20",
+      currency: "USD",
+      category: "servicein",
+      source: "ocr"
+    }
+  ], []));
+
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 1);
+  assert.equal(saved.skipped_count, 1);
 });
 
 test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail fields", () => {

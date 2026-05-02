@@ -101,8 +101,14 @@
     "privatbank",
     "td_bank",
     "wise",
+    "yoomoney",
     "google_sheets",
     "migration",
+    "ocr",
+    "browser_ocr",
+    "screenshot",
+    "image",
+    "photo",
     "other"
   ];
 
@@ -199,9 +205,17 @@
 
   const LEDGER_V2_SOURCE_BY_LEGACY = {
     mcp: "other",
-    photo: "other",
+    photo: "photo",
     provider: "other",
     import: "other",
+    ocr: "ocr",
+    browser_ocr: "browser_ocr",
+    screenshot: "screenshot",
+    image: "image",
+    yoomoney: "yoomoney",
+    yoo_money: "yoomoney",
+    yamoney: "yoomoney",
+    yandex: "yoomoney",
     paypal_mcp: "paypal",
     paypal: "paypal",
     wise: "wise",

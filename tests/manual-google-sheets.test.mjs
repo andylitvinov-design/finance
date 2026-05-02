@@ -286,7 +286,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.equal(repository.operations[4].ledgerV2.category, "service");
 	    assert.equal(repository.views.fallback_amount_rows, 0);
 	    assert.equal(repository.operations[5].source, "wise");
-	    assert.equal(repository.operations[6].source, "other");
+	    assert.equal(repository.operations[6].source, "photo");
 	    assert.equal(repository.operations[7].amountUsd, "942");
 	    assert.deepEqual(repository.expenseRows, [
 	      {

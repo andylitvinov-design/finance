@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import handler, {
+  buildStableScreenshotIncomeSourceId,
   normalizeVisionResult,
   parseExpenseScreenshots,
   validateImages,
@@ -168,6 +169,39 @@ test("normalizeVisionResult splits received and spent and falls back to upload d
   assert.equal(result.received[0].receivedType, "ezofact");
   assert.equal(result.received[0].suggestedCategory, "serviceIncome");
   assert.match(result.warnings.join("\n"), /upload date/i);
+});
+
+test("normalizeVisionResult assigns stable screenshot ids to income rows", () => {
+  const payload = {
+    entries: [
+      {
+        date: "2026-04-29",
+        dateSource: "screenshot",
+        channel: "paypal usd",
+        direction: "income",
+        localAmount: 230,
+        currency: "usd",
+        usdAmount: 230,
+        counterparty: "EzoFact",
+        organization: "EzoFact",
+        receivedType: "serviceincome",
+        suggestedCategory: "",
+        confidence: 0.91,
+        sourceImageIndex: 0
+      }
+    ],
+    warnings: []
+  };
+  const first = normalizeVisionResult(payload, { channels: ["пейпал дол"], uploadDates: ["2026-04-29"] });
+  const second = normalizeVisionResult(payload, { channels: ["пейпал дол"], uploadDates: ["2026-04-29"] });
+
+  assert.equal(first.received[0].source, "ocr");
+  assert.equal(first.received[0].external_id, second.received[0].external_id);
+  assert.equal(first.received[0].raw_source_id, second.received[0].raw_source_id);
+  assert.equal(
+    first.received[0].external_id,
+    buildStableScreenshotIncomeSourceId(first.received[0], "ocr")
+  );
 });
 
 test("parseExpenseScreenshots sends images to OpenAI and parses JSON output", async () => {
