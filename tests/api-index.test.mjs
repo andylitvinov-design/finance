@@ -1046,10 +1046,10 @@ test("GET getDashboardData adds real income payload and movement net-income colu
             date: "2026-04-11",
             client: "William Test",
             service: "Wise payment",
-            priceBase: 100,
-            accruedPlus: 103,
-            paymentMethod: "трансервайз евро",
-            receivedUsd: 120,
+            priceBase: 950,
+            accruedPlus: 978.5,
+            paymentMethod: "трансервайз дол",
+            receivedUsd: 1210.25,
           }),
         ];
         return {
@@ -1121,8 +1121,9 @@ test("GET getDashboardData adds real income payload and movement net-income colu
                   type: "CREDIT",
                   date: "2026-04-11T09:00:00.000Z",
                   referenceNumber: "WISE-1",
-                  amount: { value: "100", currency: "EUR" },
-                  totalFees: { value: "5", currency: "EUR" },
+                  amount: { value: "1210.25", currency: "USD" },
+                  amountUsd: "978.5",
+                  totalFees: { value: "231.75", currency: "USD" },
                   details: { description: "Client payment", type: "TRANSFER" },
                 },
               ],
@@ -1160,14 +1161,14 @@ test("GET getDashboardData adds real income payload and movement net-income colu
     assert.equal(paypalRow?.[20], "311,06");
     assert.equal(paypalRow?.[21], "311,06");
     assert.equal(paypalRow?.[22], "-105,06");
-    assert.equal(wiseRow?.[18], "120");
-    assert.equal(wiseRow?.[19], "5,8");
-    assert.equal(wiseRow?.[20], "110,2");
-    assert.equal(wiseRow?.[21], "110,2");
-    assert.equal(wiseRow?.[22], "-7,2");
+    assert.equal(wiseRow?.[18], "1210,25");
+    assert.equal(wiseRow?.[19], "231,75");
+    assert.equal(wiseRow?.[20], "978,5");
+    assert.equal(wiseRow?.[21], "978,5");
+    assert.equal(wiseRow?.[22], "0");
     assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 2);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
-    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 110.2);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;

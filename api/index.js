@@ -692,6 +692,7 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
   const realGrossLocal = Math.abs(Number(entry?.localAmount || 0));
   const hasFeeAmount = hasExplicitMoneyValue(entry?.feeAmount);
   const hasNetAmount = hasExplicitMoneyValue(entry?.netAmount);
+  const explicitNetUsd = getExplicitRealIncomeNetUsd(entry);
   const realFeeLocal = hasFeeAmount ? Math.abs(Number(entry?.feeAmount || 0)) : null;
   const realNetLocal = hasNetAmount
     ? Math.abs(Number(entry?.netAmount || 0))
@@ -700,7 +701,9 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
   const realFeeUsd = realFeeLocal === null
     ? null
     : convertLocalAmountToUsd(realFeeLocal, feeCurrency, movementRateLookup, entry?.channel);
-  const derivedNetUsd = hasNetAmount
+  const derivedNetUsd = explicitNetUsd !== null
+    ? explicitNetUsd
+    : hasNetAmount
     ? convertLocalAmountToUsd(realNetLocal, currency, movementRateLookup, entry?.channel)
     : (realFeeUsd === null ? null : roundNumber(realGrossUsd - realFeeUsd));
   const realNetUsd = derivedNetUsd === null ? null : Math.max(0, roundNumber(derivedNetUsd));
@@ -727,6 +730,14 @@ function hasExplicitMoneyValue(value) {
   if (value === null || value === undefined) return false;
   if (typeof value === "string" && !value.trim()) return false;
   return Number.isFinite(Number(value));
+}
+
+function getExplicitRealIncomeNetUsd(entry) {
+  for (const value of [entry?.usdAmount, entry?.amountUsd, entry?.amount_usd]) {
+    if (!hasExplicitMoneyValue(value)) continue;
+    return Math.abs(parseLooseNumber(value));
+  }
+  return null;
 }
 
 function summarizeRealIncomeByChannel(entries, movementValues) {

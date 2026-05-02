@@ -124,6 +124,9 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   const amount = normalizeWiseMoney(transaction?.amount);
   const fee = normalizeWiseMoney(transaction?.totalFees);
   const details = transaction?.details || {};
+  const explicitUsdAmount = normalizeWiseOptionalNumber(
+    transaction?.usdAmount ?? transaction?.amountUsd ?? transaction?.amount_usd ?? details?.usdAmount ?? details?.amountUsd ?? details?.amount_usd
+  );
   const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
   const reference = String(transaction?.referenceNumber || "").trim();
   const direction = String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense";
@@ -135,7 +138,9 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     direction,
     localAmount: Math.abs(amount.value),
     currency: amount.currency || String(balance?.currency || "").toUpperCase(),
-    usdAmount: (amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null,
+    usdAmount: explicitUsdAmount !== null
+      ? Math.abs(explicitUsdAmount)
+      : ((amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null),
     suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
     organization: buildWiseDescription(transaction, balance, profileId),
     ...counterparty,
@@ -271,6 +276,14 @@ function normalizeWiseMoney(value) {
     value: Number.parseFloat(String(value?.value || value?.amount || "0").replace(",", ".")) || 0,
     currency: String(value?.currency_code || value?.currency || "").trim().toUpperCase()
   };
+}
+
+function normalizeWiseOptionalNumber(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const numeric = Number.parseFloat(raw.replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function getWiseChannel(currency) {

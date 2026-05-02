@@ -64,6 +64,28 @@ test("normalizeWiseTransaction falls back to description when merchant name is n
   assert.equal(entry.counterpartyLabel, "От: Invoice 441 from consulting client");
 });
 
+test("normalizeWiseTransaction preserves explicit USD net amount for real income", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "CREDIT",
+      date: "2026-04-21T08:00:00.000Z",
+      referenceNumber: "WISE-USD-1",
+      amount: { value: "1210.25", currency: "USD" },
+      amountUsd: "978.5",
+      totalFees: { value: "231.75", currency: "USD" },
+      details: {
+        description: "Client payment",
+        type: "TRANSFER"
+      }
+    },
+    { id: "balance-usd", currency: "USD" },
+    "profile-2"
+  );
+
+  assert.equal(entry.localAmount, 1210.25);
+  assert.equal(entry.usdAmount, 978.5);
+});
+
 test("summarizeWiseStatementEntries groups income and expense by month and currency", () => {
   const summary = summarizeWiseStatementEntries([
     { date: "2026-04-01", direction: "income", localAmount: 50, currency: "EUR" },

@@ -272,7 +272,9 @@ test("getExpenseAnalysisProviderExpenseByChannel counts exchange entries", () =>
   };
   vm.createContext(context);
   vm.runInContext(
-    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\nthis.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;`,
+    `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    "this.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;",
     context
   );
 
