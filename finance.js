@@ -1009,6 +1009,335 @@ function buildExpenseAnalysisChannelSummary({
   };
 }
 
+function buildMissingPaymentsAudit({
+  movementValues = [],
+  realIncomeEntries = [],
+  manualOperations = [],
+  expenseEntries = [],
+  startDate = "",
+  endDate = ""
+} = {}) {
+  const plannedRows = collectMissingPaymentPlannedRows(movementValues);
+  const providerActualRows = collectMissingPaymentActualRows({
+    realIncomeEntries,
+    manualOperations,
+    expenseEntries,
+    startDate,
+    endDate
+  });
+  const movementFallbackRows = collectMissingPaymentMovementFallbackRows(plannedRows);
+  const providerActualChannels = new Set(providerActualRows.map((row) => row.channel));
+  const actualRows = [
+    ...providerActualRows,
+    ...movementFallbackRows.filter((row) => !providerActualChannels.has(row.channel))
+  ];
+  const matchedActualIndexes = new Set();
+  const missingRows = [];
+
+  plannedRows.forEach((planned) => {
+    const match = actualRows
+      .map((actual, index) => ({ actual, index, score: scoreMissingPaymentMatch(planned, actual) }))
+      .filter((candidate) => candidate.score && !matchedActualIndexes.has(candidate.index))
+      .sort((left, right) => compareMissingPaymentScore(left.score, right.score))[0];
+
+    if (match) {
+      matchedActualIndexes.add(match.index);
+      return;
+    }
+
+    missingRows.push({
+      channel: planned.channel,
+      orderId: planned.orderId,
+      date: planned.date,
+      client: planned.client,
+      service: planned.service,
+      accrued: planned.accrued,
+      accruedPlus: planned.accruedPlus,
+      receivedUsd: planned.receivedUsd,
+      providerNet: planned.providerNet,
+      balance: planned.balance,
+      reason: providerActualChannels.has(planned.channel)
+        ? "no same-channel income within 1 USD"
+        : "no provider/ledger income; movement fallback did not match"
+    });
+  });
+
+  const summaryRows = MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => {
+    const canonicalChannel = getCanonicalManualChannelKey(channel);
+    const planned = plannedRows.filter((row) => row.channel === canonicalChannel);
+    const actual = actualRows.filter((row) => row.channel === canonicalChannel);
+    const missing = missingRows.filter((row) => row.channel === canonicalChannel);
+    return {
+      channel: canonicalChannel,
+      plannedCount: planned.length,
+      actualCount: actual.length,
+      missingCount: missing.length,
+      missingAmount: roundExpenseAnalysisAmount(missing.reduce((sum, row) => sum + Number(row.accruedPlus || 0), 0))
+    };
+  }).filter((row) => row.plannedCount || row.actualCount || row.missingCount);
+
+  return {
+    summaryRows,
+    detailRows: missingRows,
+    totals: {
+      plannedCount: plannedRows.length,
+      actualCount: actualRows.length,
+      missingCount: missingRows.length,
+      missingAmount: roundExpenseAnalysisAmount(missingRows.reduce((sum, row) => sum + Number(row.accruedPlus || 0), 0))
+    }
+  };
+}
+
+function collectMissingPaymentPlannedRows(values) {
+  const headerInfo = getMissingPaymentMovementHeaderInfo(values);
+  if (!headerInfo) return [];
+  const { header, dataRows } = headerInfo;
+  const indexes = {
+    orderId: findHeaderIndexByAliases(header, ["NUMBER", "ORDER ID", "ORDER", "ЗАКАЗ"]),
+    date: findHeaderIndexByAliases(header, ["DATE", "ДАТА"]),
+    client: findHeaderIndexByAliases(header, ["CLIENT", "КЛИЕНТ", "ИМЯ"]),
+    service: findHeaderIndexByAliases(header, ["SERVICE", "УСЛУГА"]),
+    paymentMethod: findHeaderIndexByAliases(header, ["PAYMENT METHOD", "CHANNEL"]),
+    accrued: findHeaderIndexByAliases(header, ["ACCRUED"]),
+    accruedPlus: findHeaderIndexByAliases(header, ["ACCRUED +3%"]),
+    receivedUsd: findHeaderIndexByAliases(header, ["ДОШЛО ДО НАС USD", "NET RECEIVED USD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD", "ОПЛАЧЕНО КЛИЕНТОМ USD"]),
+    providerNet: findHeaderIndexByAliases(header, ["ДОШЛО ФАКТ / PROVIDER NET", "REAL INCOME", "PROVIDER NET"]),
+    balance: findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"])
+  };
+  const nextPaymentByClient = buildMissingPaymentClientPaymentLookup(dataRows, indexes);
+
+  return dataRows
+    .filter((row) => hasAnyValue(row) && !isTableTotalRow(row) && /^\d+$/.test(String(readMissingPaymentCell(row, indexes.orderId) || "").trim()))
+    .map((row) => {
+      const channel = resolveMissingPaymentMovementChannel(row, indexes, nextPaymentByClient);
+      const accruedPlus = parseLooseNumber(readMissingPaymentCell(row, indexes.accruedPlus));
+      if (!channel || !accruedPlus) return null;
+      return {
+        channel,
+        orderId: String(readMissingPaymentCell(row, indexes.orderId) || "").trim(),
+        date: normalizeMissingPaymentDate(readMissingPaymentCell(row, indexes.date)),
+        client: String(readMissingPaymentCell(row, indexes.client) || "").trim(),
+        service: String(readMissingPaymentCell(row, indexes.service) || "").trim(),
+        accrued: roundExpenseAnalysisAmount(parseLooseNumber(readMissingPaymentCell(row, indexes.accrued))),
+        accruedPlus: roundExpenseAnalysisAmount(accruedPlus),
+        receivedUsd: roundExpenseAnalysisAmount(parseLooseNumber(readMissingPaymentCell(row, indexes.receivedUsd))),
+        providerNet: roundExpenseAnalysisAmount(parseLooseNumber(readMissingPaymentCell(row, indexes.providerNet))),
+        balance: roundExpenseAnalysisAmount(parseLooseNumber(readMissingPaymentCell(row, indexes.balance)))
+      };
+    })
+    .filter(Boolean);
+}
+
+function getMissingPaymentMovementHeaderInfo(values) {
+  if (!Array.isArray(values) || !values.length) return null;
+  for (let index = 0; index < Math.min(values.length, 4); index += 1) {
+    const header = values[index] || [];
+    const orderIndex = findHeaderIndexByAliases(header, ["NUMBER", "ORDER ID", "ORDER", "ЗАКАЗ"]);
+    const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
+    const paymentMethodIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD", "CHANNEL"]);
+    if (orderIndex !== -1 && accruedPlusIndex !== -1 && paymentMethodIndex !== -1) {
+      return { header, dataRows: values.slice(index + 1) };
+    }
+  }
+  return null;
+}
+
+function buildMissingPaymentClientPaymentLookup(rows, indexes) {
+  const lookup = {};
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index] || [];
+    const client = String(readMissingPaymentCell(row, indexes.client) || "").trim();
+    const paymentMethod = String(readMissingPaymentCell(row, indexes.paymentMethod) || "").trim();
+    if (!client || !paymentMethod || !resolvePaymentChannel(paymentMethod)) continue;
+    getClientPaymentLookupKeys(client).forEach((key) => {
+      if (!lookup[key]) lookup[key] = paymentMethod;
+    });
+  }
+  return lookup;
+}
+
+function resolveMissingPaymentMovementChannel(row, indexes, nextPaymentByClient = {}) {
+  const client = String(readMissingPaymentCell(row, indexes.client) || "").trim();
+  const paymentMethod = String(readMissingPaymentCell(row, indexes.paymentMethod) || "").trim();
+  const inferredPaymentMethod = getClientPaymentLookupKeys(client).map((key) => nextPaymentByClient[key]).find(Boolean) || "";
+  const fallbackChannel = !paymentMethod ? inferFallbackPaymentChannelFromClient(client) : "";
+  const cardFallbackChannel = paymentMethod && isAmbiguousPersonalCardPayment(paymentMethod)
+    ? inferFallbackPaymentChannelFromClient(client)
+    : "";
+  const canonicalPaymentChannel = getCanonicalManualChannelKey(paymentMethod);
+  const exactChannel = MANUAL_FINANCE_MONEY_CHANNELS.includes(canonicalPaymentChannel) ? canonicalPaymentChannel : "";
+  return cardFallbackChannel || resolvePaymentChannel(paymentMethod) || exactChannel || fallbackChannel || resolvePaymentChannel(inferredPaymentMethod);
+}
+
+function collectMissingPaymentActualRows({
+  realIncomeEntries = [],
+  manualOperations = [],
+  expenseEntries = [],
+  startDate = "",
+  endDate = ""
+} = {}) {
+  return [
+    ...(realIncomeEntries || []).map(mapRealIncomeEntryToMissingPaymentActual),
+    ...(manualOperations || []).map(mapManualOperationToMissingPaymentActual),
+    ...(expenseEntries || []).map(mapExpenseEntryToMissingPaymentActual)
+  ]
+    .filter(Boolean)
+    .filter((row) => isMissingPaymentIncomeOperation(row.operation))
+    .filter((row) => row.channel && row.amountUsd > 0)
+    .filter((row) => isMissingPaymentDateInPeriod(row.date, startDate, endDate));
+}
+
+function mapRealIncomeEntryToMissingPaymentActual(entry) {
+  const channel = getCanonicalManualChannelKey(entry?.channel || "");
+  const amountUsd = firstMissingPaymentNumber([
+    entry?.realNetUsd,
+    entry?.realGrossUsd,
+    entry?.usdAmount,
+    entry?.amountUsd,
+    entry?.amount_usd
+  ]);
+  return {
+    source: String(entry?.source || "provider").trim(),
+    operation: "income",
+    channel,
+    amountUsd,
+    date: normalizeMissingPaymentDate(entry?.date),
+    counterparty: String(entry?.counterparty || entry?.organization || entry?.description || entry?.sourceTransactionId || entry?.id || "").trim()
+  };
+}
+
+function mapManualOperationToMissingPaymentActual(operation) {
+  const normalizedOperation = normalizeCell(operation?.operation || operation?.category || "");
+  const channel = getCanonicalManualChannelKey(operation?.toChannel || operation?.to_channel || operation?.channel || "");
+  const currency = String(operation?.currency || "").trim().toUpperCase();
+  const amountUsd = firstMissingPaymentNumber([
+    operation?.amountUsd,
+    operation?.amount_usd,
+    currency === "USD" ? operation?.amountNet : "",
+    currency === "USD" ? operation?.amount_net : ""
+  ]);
+  return {
+    source: String(operation?.source || "manual").trim(),
+    operation: normalizedOperation,
+    channel,
+    amountUsd,
+    date: normalizeMissingPaymentDate(operation?.date),
+    counterparty: String(operation?.counterparty || operation?.description || operation?.comment || operation?.external_id || "").trim()
+  };
+}
+
+function mapExpenseEntryToMissingPaymentActual(entry) {
+  const direction = normalizeCell(entry?.direction || "");
+  const operation = normalizeCell(entry?.operation || entry?.operationType || entry?.category || direction);
+  const channel = getCanonicalManualChannelKey(entry?.channel || entry?.toChannel || entry?.to_channel || "");
+  const amountUsd = firstMissingPaymentNumber([
+    entry?.realNetUsd,
+    entry?.usdAmount,
+    entry?.amountUsd,
+    entry?.amount_usd,
+    entry?.netAmount,
+    entry?.localAmount
+  ]);
+  return {
+    source: String(entry?.source || "provider").trim(),
+    operation: direction === "income" ? "income" : operation,
+    channel,
+    amountUsd,
+    date: normalizeMissingPaymentDate(entry?.date),
+    counterparty: String(entry?.counterparty || entry?.counterpartyName || entry?.description || entry?.displayFromTo || entry?.externalId || "").trim()
+  };
+}
+
+function collectMissingPaymentMovementFallbackRows(plannedRows) {
+  return (plannedRows || [])
+    .map((row) => ({
+      source: "movement-fallback",
+      operation: "income",
+      channel: row.channel,
+      amountUsd: firstMissingPaymentNumber([row.providerNet, row.receivedUsd]),
+      date: row.date,
+      counterparty: row.client,
+      orderId: row.orderId
+    }))
+    .filter((row) => row.amountUsd > 0);
+}
+
+function scoreMissingPaymentMatch(planned, actual) {
+  if (!planned || !actual || planned.channel !== actual.channel) return null;
+  const amountDiffs = [
+    Math.abs(Number(planned.accruedPlus || 0) - Number(actual.amountUsd || 0)),
+    planned.receivedUsd ? Math.abs(Number(planned.receivedUsd || 0) - Number(actual.amountUsd || 0)) : null,
+    planned.providerNet ? Math.abs(Number(planned.providerNet || 0) - Number(actual.amountUsd || 0)) : null
+  ].filter((value) => Number.isFinite(value));
+  const amountDiff = Math.min(...amountDiffs);
+  if (!Number.isFinite(amountDiff) || amountDiff > 1) return null;
+  const dateDistance = getMissingPaymentDateDistance(planned.date, actual.date);
+  const fuzzyBoost = hasMissingPaymentCounterpartyOverlap(planned.client, actual.counterparty) ? -0.25 : 0;
+  return {
+    amountDiff: roundExpenseAnalysisAmount(amountDiff),
+    dateDistance,
+    fuzzyBoost
+  };
+}
+
+function compareMissingPaymentScore(left, right) {
+  const leftTotal = left.amountDiff + left.dateDistance + left.fuzzyBoost;
+  const rightTotal = right.amountDiff + right.dateDistance + right.fuzzyBoost;
+  if (leftTotal !== rightTotal) return leftTotal - rightTotal;
+  if (left.amountDiff !== right.amountDiff) return left.amountDiff - right.amountDiff;
+  return left.dateDistance - right.dateDistance;
+}
+
+function hasMissingPaymentCounterpartyOverlap(client, counterparty) {
+  const left = normalizeLookupText(client).split(" ").filter((token) => token.length >= 4);
+  const right = new Set(normalizeLookupText(counterparty).split(" ").filter((token) => token.length >= 4));
+  return left.some((token) => right.has(token));
+}
+
+function getMissingPaymentDateDistance(leftDate, rightDate) {
+  if (!leftDate || !rightDate) return 30;
+  const left = new Date(`${leftDate}T00:00:00Z`);
+  const right = new Date(`${rightDate}T00:00:00Z`);
+  if (!Number.isFinite(left.getTime()) || !Number.isFinite(right.getTime())) return 30;
+  return Math.abs(Math.round((left - right) / 86400000));
+}
+
+function isMissingPaymentIncomeOperation(value) {
+  return ["income", "servicein", "ezoin"].includes(normalizeCell(value).replace(/_/g, ""));
+}
+
+function isMissingPaymentDateInPeriod(date, startDate, endDate) {
+  const normalizedDate = normalizeMissingPaymentDate(date);
+  const normalizedStart = normalizeMissingPaymentDate(startDate);
+  const normalizedEnd = normalizeMissingPaymentDate(endDate);
+  if (!normalizedDate) return false;
+  if (normalizedStart && normalizedDate < normalizedStart) return false;
+  if (normalizedEnd && normalizedDate > normalizedEnd) return false;
+  return true;
+}
+
+function normalizeMissingPaymentDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const isoTimestamp = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoTimestamp) return isoTimestamp[1];
+  const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  return raw;
+}
+
+function firstMissingPaymentNumber(values) {
+  for (const value of values || []) {
+    const numeric = parseLooseNumber(value);
+    if (numeric) return roundExpenseAnalysisAmount(Math.abs(numeric));
+  }
+  return 0;
+}
+
+function readMissingPaymentCell(row, index) {
+  return index >= 0 && index < (row || []).length ? row[index] : "";
+}
+
 function getExpenseAnalysisPlannedIncomeCount(rawCount, ordersPlanUsd) {
   const count = Math.trunc(parseLooseNumber(rawCount));
   if (count > 0) return count;
