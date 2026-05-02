@@ -683,6 +683,7 @@ function renderExpenseFinancialAnalysis() {
   }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
+  block.appendChild(renderBalanceReconciliationBlock(getBalanceReconciliationSummary()));
   const paypalSummary = getActivePayPalSummary();
   if (hasProviderSummaryData(paypalSummary)) {
     block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
@@ -771,6 +772,46 @@ function renderExpenseAnalysisChannelBlock(summary) {
   return block;
 }
 
+function renderBalanceReconciliationBlock(summary) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Сверка изменения баланса";
+  block.appendChild(title);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderBalanceReconciliationTable(summary.rows || []));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderBalanceReconciliationTable(rows) {
+  const values = [[
+    "канал",
+    "баланс начало",
+    "баланс конец",
+    "факт Δ",
+    "ledger Δ",
+    "разница",
+    "статус"
+  ]];
+  (rows || []).forEach((row) => {
+    values.push([
+      row.channel || "",
+      row.openingBalanceUsd === null ? "" : formatSheetNumber(row.openingBalanceUsd),
+      row.closingBalanceUsd === null ? "" : formatSheetNumber(row.closingBalanceUsd),
+      row.realDelta === null ? "" : formatSheetNumber(row.realDelta),
+      formatSheetNumber(row.ledgerDelta || 0),
+      row.diff === null ? "" : formatSheetNumber(row.diff),
+      row.status || ""
+    ]);
+  });
+  return renderPlainTable(values);
+}
+
 function getExpenseAnalysisChannelSummary() {
   const manualRows = getCurrentAnalyticsManualRows();
   const usdRateLookup = buildManualFinanceUsdRateLookup(
@@ -783,6 +824,15 @@ function getExpenseAnalysisChannelSummary() {
     realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
+  });
+}
+
+function getBalanceReconciliationSummary() {
+  return buildBalanceReconciliationByChannel({
+    balances: state.data?.manual?.balances || [],
+    operations: state.data?.manual?.operations || [],
+    startDate: normalizeIncomingSheetDateValue(elements.startDate.value),
+    endDate: normalizeIncomingSheetDateValue(elements.endDate.value)
   });
 }
 
@@ -1624,11 +1674,12 @@ async function loadWiseExpenseStatement() {
       ? payload.summary
       : buildProviderExpenseSummary(entries);
     state.expenseAccounting.warnings = payload.warnings || [];
+    const snapshotResult = await saveWiseBalanceSnapshotsIfNeeded(payload.balances || []);
     state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
     setExpenseAccountingStatus(
       entries.length
-        ? `Wise-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.`
-        : "Wise-выписка загружена, но строк за период не найдено.",
+        ? `Wise-выписка загружена: ${entries.length} строк из ${payload.transactionCount || entries.length} транзакций. Проверьте категории перед внесением.${snapshotResult?.statusSuffix || ""}`
+        : `Wise-выписка загружена, но строк за период не найдено.${snapshotResult?.statusSuffix || ""}`,
       false
     );
   } catch (error) {
@@ -1637,6 +1688,74 @@ async function loadWiseExpenseStatement() {
     state.expenseAccounting.wiseLoading = false;
     renderTabs();
   }
+}
+
+function getWiseBalanceSnapshotAttemptKey(date, channel) {
+  return `${String(date || "").trim()}|${canonicalManualFinanceChannel(channel || "")}`;
+}
+
+function buildWiseBalanceSnapshotRows(balances, snapshotDate) {
+  const normalizedDate = normalizeIncomingSheetDateValue(snapshotDate);
+  const supportedBalances = (balances || []).filter((balance) => {
+    const channel = canonicalManualFinanceChannel(balance?.channel || "");
+    return normalizedDate && channel && ["трансервайз дол", "трансервайз евро"].includes(channel);
+  });
+  if (!supportedBalances.length) return [];
+  const transferRows = state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [];
+  const movementValues = state.data?.tabs?.movement?.values || [];
+  const amountsByChannel = {};
+  const balanceByChannel = new Map();
+  supportedBalances.forEach((balance) => {
+    const channel = canonicalManualFinanceChannel(balance.channel || "");
+    const amount = normalizeManualFinancePersistedNumberInput(balance.amount);
+    if (!channel || !String(amount || "").trim() || !parseLooseNumber(amount)) return;
+    amountsByChannel[channel] = amount;
+    balanceByChannel.set(channel, balance);
+  });
+  return buildManualBalanceRowsFromAmounts(normalizedDate, amountsByChannel, transferRows, movementValues).map((row) => {
+    const balance = balanceByChannel.get(row.channel) || {};
+    const explicitUsdAmount = normalizeManualFinancePersistedNumberInput(balance.amountUsd);
+    return {
+      ...row,
+      currency: String(balance.currency || row.currency || "").trim().toUpperCase(),
+      amount: normalizeManualFinancePersistedNumberInput(balance.amount ?? row.amount),
+      usdAmount: String(explicitUsdAmount || "").trim() ? explicitUsdAmount : row.usdAmount,
+      comment: "wise auto snapshot"
+    };
+  });
+}
+
+async function saveWiseBalanceSnapshotsIfNeeded(balances) {
+  const snapshotDate = formatDateInputValue(new Date());
+  const snapshotRows = buildWiseBalanceSnapshotRows(balances, snapshotDate);
+  if (!snapshotRows.length) return { saved: false, statusSuffix: "" };
+  if (!(state.expenseAccounting.wiseBalanceSnapshotKeys instanceof Set)) {
+    state.expenseAccounting.wiseBalanceSnapshotKeys = new Set(state.expenseAccounting.wiseBalanceSnapshotKeys || []);
+  }
+  const pendingRows = snapshotRows.filter((row) => {
+    const key = getWiseBalanceSnapshotAttemptKey(snapshotDate, row.channel);
+    return !state.expenseAccounting.wiseBalanceSnapshotKeys.has(key);
+  });
+  if (!pendingRows.length) {
+    return { saved: false, statusSuffix: " Баланс Wise за сегодня уже сохранялся в этой сессии." };
+  }
+  if (!hasConfiguredManualFinanceEndpoint()) {
+    return { saved: false, statusSuffix: " Snapshot баланса Wise пропущен: Google write access не подключен." };
+  }
+  const response = await saveBalanceSnapshotRowsDirect(pendingRows);
+  pendingRows.forEach((row) => {
+    state.expenseAccounting.wiseBalanceSnapshotKeys.add(getWiseBalanceSnapshotAttemptKey(snapshotDate, row.channel));
+  });
+  console.log("balance snapshot saved", pendingRows.map((row) => ({
+    date: row.date,
+    channel: row.channel,
+    amount: row.amount,
+    usdAmount: row.usdAmount
+  })));
+  return {
+    saved: true,
+    statusSuffix: ` Balance snapshot saved: ${response.rowCount} канал(ов).`
+  };
 }
 
 async function loadYooMoneyExpenseStatement() {

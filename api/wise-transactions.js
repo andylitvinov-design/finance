@@ -48,17 +48,17 @@ export async function fetchWiseStatementEntries(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const baseUrl = String(options.baseUrl || WISE_LIVE_BASE).replace(/\/+$/, "");
   const profileId = await resolveWiseProfileId({ fetchImpl, baseUrl, apiToken, profileId: options.profileId });
-  const balances = await fetchWiseJson({ fetchImpl, baseUrl, apiToken, path: `/v4/profiles/${profileId}/balances`, query: { types: "STANDARD,SAVINGS" } });
+  const rawBalances = await fetchWiseBalances({ fetchImpl, baseUrl, apiToken, resolvedProfileId: profileId });
   const statementPayloads = await Promise.all(
-    (Array.isArray(balances) ? balances : [])
-      .filter((balance) => balance?.id && balance?.currency)
+    (Array.isArray(rawBalances) ? rawBalances : [])
+      .filter((balance) => balance?.balanceId && balance?.currency)
       .map(async (balance) => {
         try {
           const statement = await fetchWiseJson({
             fetchImpl,
             baseUrl,
             apiToken,
-            path: `/v1/profiles/${profileId}/balance-statements/${balance.id}/statement.json`,
+            path: `/v1/profiles/${profileId}/balance-statements/${balance.balanceId}/statement.json`,
             query: {
               currency: balance.currency,
               intervalStart: toWiseDateTime(startDate, false),
@@ -80,6 +80,7 @@ export async function fetchWiseStatementEntries(options = {}) {
     .map((payload) => `${payload.balance?.currency || payload.balance?.id}: ${payload.error}`);
   return {
     entries,
+    balances: rawBalances,
     summary: summarizeWiseStatementEntries(entries),
     transactionCount: statementPayloads.reduce((sum, payload) => sum + payload.transactions.length, 0),
     periodStart: startDate,
@@ -87,6 +88,29 @@ export async function fetchWiseStatementEntries(options = {}) {
     source: "wise",
     warnings
   };
+}
+
+export async function fetchWiseBalances(options = {}) {
+  const apiToken = String(options.apiToken || "").trim();
+  if (!apiToken) throw new Error("Wise credentials are not configured. Set WISE_API_TOKEN.");
+  const fetchImpl = options.fetchImpl || fetch;
+  const baseUrl = String(options.baseUrl || WISE_LIVE_BASE).replace(/\/+$/, "");
+  const profileId = String(options.resolvedProfileId || "").trim() || await resolveWiseProfileId({
+    fetchImpl,
+    baseUrl,
+    apiToken,
+    profileId: options.profileId
+  });
+  const balances = await fetchWiseJson({
+    fetchImpl,
+    baseUrl,
+    apiToken,
+    path: `/v4/profiles/${profileId}/balances`,
+    query: { types: "STANDARD,SAVINGS" }
+  });
+  return (Array.isArray(balances) ? balances : [])
+    .map((balance) => normalizeWiseBalance(balance))
+    .filter((balance) => balance.balanceId && balance.currency && balance.channel);
 }
 
 async function resolveWiseProfileId(options) {
@@ -122,25 +146,21 @@ async function fetchWiseJson(options) {
 
 export function normalizeWiseTransaction(transaction, balance, profileId, index = 0) {
   const amount = normalizeWiseMoney(transaction?.amount);
+  const explicitUsdAmount = parseExplicitWiseUsdAmount(transaction);
   const fee = normalizeWiseMoney(transaction?.totalFees);
   const details = transaction?.details || {};
-  const explicitUsdAmount = normalizeWiseOptionalNumber(
-    transaction?.usdAmount ?? transaction?.amountUsd ?? transaction?.amount_usd ?? details?.usdAmount ?? details?.amountUsd ?? details?.amount_usd
-  );
   const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
   const reference = String(transaction?.referenceNumber || "").trim();
   const direction = String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense";
   const counterparty = buildWiseCounterparty(transaction, direction);
   return {
-    id: `wise-${reference || balance?.id || index}`,
+    id: `wise-${reference || balance?.balanceId || balance?.id || index}`,
     date,
     channel: getWiseChannel(amount.currency || balance?.currency),
     direction,
     localAmount: Math.abs(amount.value),
     currency: amount.currency || String(balance?.currency || "").toUpperCase(),
-    usdAmount: explicitUsdAmount !== null
-      ? Math.abs(explicitUsdAmount)
-      : ((amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null),
+    usdAmount: explicitUsdAmount ?? ((amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null),
     suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
     organization: buildWiseDescription(transaction, balance, profileId),
     ...counterparty,
@@ -278,12 +298,55 @@ function normalizeWiseMoney(value) {
   };
 }
 
-function normalizeWiseOptionalNumber(value) {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const numeric = Number.parseFloat(raw.replace(/\s/g, "").replace(",", "."));
-  return Number.isFinite(numeric) ? numeric : null;
+function parseExplicitWiseUsdAmount(transaction) {
+  const candidates = [
+    transaction?.amountUsd,
+    transaction?.amount_usd,
+    transaction?.usdAmount
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number.parseFloat(String(candidate ?? "").replace(",", "."));
+    if (Number.isFinite(numeric) && numeric !== 0) return Math.abs(numeric);
+  }
+  return null;
+}
+
+function normalizeWiseBalance(balance) {
+  const amount = normalizeWiseMoney(
+    balance?.cashAmount ||
+    balance?.availableAmount ||
+    balance?.amount ||
+    balance?.reservedAmount ||
+    balance
+  );
+  const currency = amount.currency || String(balance?.currency || "").trim().toUpperCase();
+  const amountValue = Math.abs(amount.value);
+  const explicitUsdAmount = extractWiseBalanceUsdAmount(balance, amountValue, currency);
+  return {
+    currency,
+    amount: roundWiseAmount(amountValue),
+    amountUsd: explicitUsdAmount === null ? "" : roundWiseAmount(explicitUsdAmount),
+    balanceId: String(balance?.id || "").trim(),
+    channel: getWiseChannel(currency)
+  };
+}
+
+function extractWiseBalanceUsdAmount(balance, amountValue, currency) {
+  if (currency === "USD") return amountValue;
+  const candidates = [
+    balance?.usdAmount,
+    balance?.amountUsd,
+    balance?.totalWorth,
+    balance?.totalValue,
+    balance?.availableAmountInHomeCurrency,
+    balance?.convertedAmount
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const normalized = normalizeWiseMoney(candidate);
+    if (normalized.currency === "USD" && normalized.value) return Math.abs(normalized.value);
+  }
+  return null;
 }
 
 function getWiseChannel(currency) {

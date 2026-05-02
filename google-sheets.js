@@ -954,7 +954,6 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
     if (!date || date < startDate || date > endDate) return;
     const legacyCategory = mapManualLedgerCategoryToLegacy(row?.category);
     if (!legacyCategory || legacyCategory === MANUAL_NOW_CATEGORY) return;
-    if (legacyCategory === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row)) return;
     const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
     const channel = operation === "income" || operation === "exchange_in"
       ? canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "")
@@ -974,11 +973,6 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
     return String(left.category).localeCompare(String(right.category));
   });
-}
-
-function shouldIncludeLedgerRowInManualServicePlan(row) {
-  const source = normalizeManualLedgerSource(row?.source, "");
-  return !source || ["manual"].includes(source);
 }
 
 function buildLedgerRowsFromAccountingEntries(entries) {
@@ -1259,6 +1253,39 @@ async function getManualSheetDirect(startDate, endDate) {
     expenseRows,
     writeEnabled: true,
     spreadsheetUrl: state.config?.manualFinance?.spreadsheetUrl || ""
+  };
+}
+
+async function saveBalanceSnapshotRowsDirect(rows) {
+  const snapshotRows = (rows || [])
+    .map((row) => ({
+      date: normalizeIncomingSheetDateValue(row?.date || ""),
+      channel: canonicalManualFinanceChannel(row?.channel || ""),
+      amount: normalizeManualFinancePersistedNumberInput(row?.amount),
+      currency: String(row?.currency || "").trim().toUpperCase(),
+      rate: normalizeManualFinancePersistedNumberInput(row?.rate),
+      usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount),
+      comment: String(row?.comment || "").trim()
+    }))
+    .filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+  if (!snapshotRows.length) {
+    return { rowCount: 0, savedAt: new Date().toLocaleString("ru-RU") };
+  }
+  const metadata = await getManualSpreadsheetMetadata();
+  const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
+  const existingBalances = titles.has(getManualBalancesSheetName())
+    ? parseIncomingBalanceSheetValues(await getSheetValuesByTitle(getManualBalancesSheetName()))
+    : [];
+  const mergedBalances = mergeManualBalanceRows(existingBalances, snapshotRows);
+  await ensureSheetExists(getManualBalancesSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(
+    getManualBalancesSheetName(),
+    buildIncomingBalanceSheetValues(mergedBalances),
+    getManualFinanceSpreadsheetId()
+  );
+  return {
+    rowCount: snapshotRows.length,
+    savedAt: new Date().toLocaleString("ru-RU")
   };
 }
 

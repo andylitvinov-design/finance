@@ -977,6 +977,127 @@ function buildExpenseAnalysisChannelSummary({
   };
 }
 
+function buildBalanceReconciliationByChannel({
+  balances = [],
+  operations = [],
+  startDate = "",
+  endDate = ""
+} = {}) {
+  const rows = [];
+  const statusCounts = { OK: 0, MISMATCH: 0, NO_BALANCE: 0 };
+  const channels = new Set((MANUAL_FINANCE_MONEY_CHANNELS || []).map((channel) => getCanonicalManualChannelKey(channel)));
+  const openingLookup = {};
+  const closingLookup = {};
+  const ledgerLookup = {};
+
+  (balances || []).forEach((row) => {
+    const date = String(row?.date || "").trim();
+    const channel = getCanonicalManualChannelKey(row?.channel || row?.accountName || "");
+    if (!date || !channel) return;
+    if (date >= startDate && date <= endDate) channels.add(channel);
+    const usdAmount = getBalanceReconciliationBalanceUsdAmount(row);
+    if (date === startDate) openingLookup[channel] = usdAmount;
+    if (date === endDate) closingLookup[channel] = usdAmount;
+  });
+
+  (operations || []).forEach((operation) => {
+    const date = String(operation?.date || "").trim();
+    if (!date || date < startDate || date > endDate) return;
+    const channel = getBalanceReconciliationOperationChannel(operation);
+    const delta = getBalanceReconciliationOperationUsdDelta(operation);
+    if (!channel || !delta) return;
+    channels.add(channel);
+    ledgerLookup[channel] = roundExpenseAnalysisAmount((ledgerLookup[channel] || 0) + delta);
+  });
+
+  Array.from(channels)
+    .filter(Boolean)
+    .sort((left, right) => String(left).localeCompare(String(right)))
+    .forEach((channel) => {
+      const hasOpening = Object.prototype.hasOwnProperty.call(openingLookup, channel);
+      const hasClosing = Object.prototype.hasOwnProperty.call(closingLookup, channel);
+      const openingBalanceUsd = hasOpening ? roundExpenseAnalysisAmount(openingLookup[channel]) : null;
+      const closingBalanceUsd = hasClosing ? roundExpenseAnalysisAmount(closingLookup[channel]) : null;
+      const ledgerDelta = roundExpenseAnalysisAmount(ledgerLookup[channel] || 0);
+      const hasBalances = hasOpening && hasClosing;
+      const realDelta = hasBalances
+        ? roundExpenseAnalysisAmount(closingBalanceUsd - openingBalanceUsd)
+        : null;
+      const diff = hasBalances
+        ? roundExpenseAnalysisAmount(realDelta - ledgerDelta)
+        : null;
+      const status = !hasBalances
+        ? "NO_BALANCE"
+        : Math.abs(diff) <= 1
+          ? "OK"
+          : "MISMATCH";
+      statusCounts[status] += 1;
+      rows.push({
+        channel,
+        openingBalanceUsd,
+        closingBalanceUsd,
+        realDelta,
+        ledgerDelta,
+        diff,
+        status
+      });
+    });
+
+  return {
+    rows,
+    counts: {
+      total: rows.length,
+      ...statusCounts
+    }
+  };
+}
+
+function getBalanceReconciliationBalanceUsdAmount(row) {
+  const storedUsdAmount = parseLooseNumber(row?.usdAmount ?? row?.amountUsd ?? "");
+  if (storedUsdAmount) return roundExpenseAnalysisAmount(storedUsdAmount);
+  const amount = parseLooseNumber(row?.amount ?? row?.balanceAmount ?? "");
+  if (!amount) return 0;
+  const channel = getCanonicalManualChannelKey(row?.channel || row?.accountName || "");
+  const currency = String(row?.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase();
+  if (currency === "USD") return roundExpenseAnalysisAmount(amount);
+  const localPerUsd = parseLooseNumber(row?.rate);
+  if (localPerUsd) return roundExpenseAnalysisAmount(amount / localPerUsd);
+  const usdPerLocal = MANUAL_FINANCE_FALLBACK_USD_RATES[currency] || MANUAL_FINANCE_FALLBACK_USD_RATES.LOCAL || 0;
+  return roundExpenseAnalysisAmount(amount * usdPerLocal);
+}
+
+function getBalanceReconciliationOperationChannel(operation) {
+  const normalizedOperation = normalizeCell(operation?.operation);
+  if (["income", "servicein", "ezoin", "exchange_in"].includes(normalizedOperation)) {
+    return getCanonicalManualChannelKey(operation?.toChannel || operation?.to_channel || operation?.fromChannel || operation?.from_channel || "");
+  }
+  return getCanonicalManualChannelKey(operation?.fromChannel || operation?.from_channel || operation?.toChannel || operation?.to_channel || "");
+}
+
+function getBalanceReconciliationOperationUsdDelta(operation) {
+  const normalizedOperation = normalizeCell(operation?.operation);
+  const sign = ({
+    income: 1,
+    servicein: 1,
+    ezoin: 1,
+    expense: -1,
+    business_expense: -1,
+    personal_expense: -1,
+    exchange_in: 1,
+    exchange_out: -1,
+    partner_transfer: -1
+  })[normalizedOperation];
+  if (!sign) return 0;
+  const amountUsd = parseLooseNumber(operation?.amountUsd ?? operation?.amount_usd ?? "");
+  const currency = String(operation?.currency || "").trim().toUpperCase();
+  const amountNet = currency === "USD"
+    ? parseLooseNumber(operation?.amountNet ?? operation?.amount_net ?? "")
+    : 0;
+  const baseAmount = amountUsd || amountNet;
+  if (!baseAmount) return 0;
+  return roundExpenseAnalysisAmount(sign * Math.abs(baseAmount));
+}
+
 function getLatestFactNowLookup() {
   const lookup = {};
   if (state.data?.tabs?.savings?.values?.length) {
@@ -2181,7 +2302,6 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (!date || date < startDate || date > endDate) return;
     const category = mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
     if (!category || category === MANUAL_NOW_CATEGORY) return;
-    if (category === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row, rawRow)) return;
     const amount = getLedgerBalanceAmountForFinance(row);
     if (!amount) return;
     const channel = getLedgerV2ManualChannel(row, amount);
@@ -2196,27 +2316,6 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
     return String(left.category).localeCompare(String(right.category));
   });
-}
-
-function shouldIncludeLedgerRowInManualServicePlan(row, rawRow = null) {
-  const source = normalizeLedgerServicePlanSource(
-    row?.source
-      || rawRow?.source
-      || row?.displaySource
-      || rawRow?.displaySource
-      || ""
-  );
-  return !source || ["manual", "fact", "migration"].includes(source);
-}
-
-function normalizeLedgerServicePlanSource(value) {
-  const token = normalizeLookupText(value);
-  if (!token) return "";
-  if (["manual", "fact", "migration"].includes(token)) return token;
-  if (["paypal", "paypal mcp", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "import", "mcp import", "mcp"].includes(token)) return "mcp";
-  if (["ocr", "photo parsing", "screenshot", "browser ocr", "image", "photo"].includes(token)) return "photo";
-  if (token === "wise") return "wise";
-  return token;
 }
 
 function getLedgerBalanceAmountForFinance(row) {
