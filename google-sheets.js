@@ -954,6 +954,7 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
     if (!date || date < startDate || date > endDate) return;
     const legacyCategory = mapManualLedgerCategoryToLegacy(row?.category);
     if (!legacyCategory || legacyCategory === MANUAL_NOW_CATEGORY) return;
+    if (legacyCategory === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row)) return;
     const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
     const channel = operation === "income" || operation === "exchange_in"
       ? canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "")
@@ -973,6 +974,11 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
     return String(left.category).localeCompare(String(right.category));
   });
+}
+
+function shouldIncludeLedgerRowInManualServicePlan(row) {
+  const source = normalizeManualLedgerSource(row?.source, "");
+  return !source || ["manual", "fact", "migration"].includes(source);
 }
 
 function buildLedgerRowsFromAccountingEntries(entries) {

@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
+const googleSheetsJs = fs.readFileSync(path.join(root, "google-sheets.js"), "utf8");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
 
@@ -35,6 +36,58 @@ function extractFunction(source, name) {
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function buildLedgerAnalysisTestContext(extra = {}) {
+  return {
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "трансервайз дол", "монобанк грн"],
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    roundProviderSummaryAmount(value) {
+      return Math.round((Number(value) || 0) * 10000) / 10000;
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "paypal usd": "пейпал дол",
+        "пейпал дол": "пейпал дол",
+        "wise": "трансервайз дол",
+        "wise usd": "трансервайз дол",
+        "transferwise": "трансервайз дол",
+        "трансервайз дол": "трансервайз дол",
+        "monobank": "монобанк грн",
+        "mono": "монобанк грн",
+        "монобанк грн": "монобанк грн",
+      })[normalized] || String(value || "").trim();
+    },
+    ...extra,
+  };
+}
+
+function loadLedgerAnalysisHelpers(context) {
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
+    `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
+    `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    "this.buildLedgerRealIncomeSummaryByChannel = buildLedgerRealIncomeSummaryByChannel;\n" +
+    "this.buildLedgerProviderExpenseByChannel = buildLedgerProviderExpenseByChannel;",
+    context
+  );
 }
 
 test("expense analysis UI keeps refresh action and scrollable tables", () => {
@@ -255,7 +308,7 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   ]);
 });
 
-test("buildBalanceReconciliationByChannel returns OK, MISMATCH, and NO_BALANCE from exact-date balance snapshots", () => {
+test("buildBalanceReconciliationByChannel uses latest balance snapshots on or before period bounds", () => {
   const context = {
     MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "Яндекс руб", "трансервайз евро"],
     MANUAL_FINANCE_FALLBACK_USD_RATES: { RUB: 1 / 84.5563, EUR: 1.16, LOCAL: 1 / 18 },
@@ -286,6 +339,7 @@ test("buildBalanceReconciliationByChannel returns OK, MISMATCH, and NO_BALANCE f
     `${extractFunction(financeJs, "getBalanceReconciliationBalanceUsdAmount")}\n` +
     `${extractFunction(financeJs, "getBalanceReconciliationOperationChannel")}\n` +
     `${extractFunction(financeJs, "getBalanceReconciliationOperationUsdDelta")}\n` +
+    `${extractFunction(financeJs, "buildLatestBalanceReconciliationSnapshotLookup")}\n` +
     `${extractFunction(financeJs, "buildBalanceReconciliationByChannel")}\n` +
     "this.buildBalanceReconciliationByChannel = buildBalanceReconciliationByChannel;",
     context
@@ -295,10 +349,10 @@ test("buildBalanceReconciliationByChannel returns OK, MISMATCH, and NO_BALANCE f
     startDate: "2026-05-01",
     endDate: "2026-05-31",
     balances: [
-      { date: "2026-05-01", channel: "пейпал дол", amount: "1000", currency: "USD", usdAmount: "1000" },
+      { date: "2026-04-29", channel: "пейпал дол", amount: "1000", currency: "USD", usdAmount: "1000" },
       { date: "2026-05-31", channel: "пейпал дол", amount: "1778.5", currency: "USD", usdAmount: "1778.5" },
-      { date: "2026-05-01", channel: "Яндекс руб", amount: "84000", currency: "RUB", usdAmount: "1000" },
-      { date: "2026-05-31", channel: "Яндекс руб", amount: "100000", currency: "RUB", usdAmount: "1200" },
+      { date: "2026-04-28", channel: "Яндекс руб", amount: "84000", currency: "RUB", usdAmount: "1000" },
+      { date: "2026-05-30", channel: "Яндекс руб", amount: "100000", currency: "RUB", usdAmount: "1200" },
       { date: "2026-05-31", channel: "трансервайз евро", amount: "200", currency: "EUR", usdAmount: "230" }
     ],
     operations: [
@@ -342,6 +396,7 @@ test("buildBalanceReconciliationByChannel applies mixed operation signs in ledge
     `${extractFunction(financeJs, "getBalanceReconciliationBalanceUsdAmount")}\n` +
     `${extractFunction(financeJs, "getBalanceReconciliationOperationChannel")}\n` +
     `${extractFunction(financeJs, "getBalanceReconciliationOperationUsdDelta")}\n` +
+    `${extractFunction(financeJs, "buildLatestBalanceReconciliationSnapshotLookup")}\n` +
     `${extractFunction(financeJs, "buildBalanceReconciliationByChannel")}\n` +
     "this.buildBalanceReconciliationByChannel = buildBalanceReconciliationByChannel;",
     context

@@ -986,8 +986,8 @@ function buildBalanceReconciliationByChannel({
   const rows = [];
   const statusCounts = { OK: 0, MISMATCH: 0, NO_BALANCE: 0 };
   const channels = new Set((MANUAL_FINANCE_MONEY_CHANNELS || []).map((channel) => getCanonicalManualChannelKey(channel)));
-  const openingLookup = {};
-  const closingLookup = {};
+  const openingLookup = buildLatestBalanceReconciliationSnapshotLookup(balances, startDate);
+  const closingLookup = buildLatestBalanceReconciliationSnapshotLookup(balances, endDate);
   const ledgerLookup = {};
 
   (balances || []).forEach((row) => {
@@ -995,9 +995,6 @@ function buildBalanceReconciliationByChannel({
     const channel = getCanonicalManualChannelKey(row?.channel || row?.accountName || "");
     if (!date || !channel) return;
     if (date >= startDate && date <= endDate) channels.add(channel);
-    const usdAmount = getBalanceReconciliationBalanceUsdAmount(row);
-    if (date === startDate) openingLookup[channel] = usdAmount;
-    if (date === endDate) closingLookup[channel] = usdAmount;
   });
 
   (operations || []).forEach((operation) => {
@@ -1050,6 +1047,22 @@ function buildBalanceReconciliationByChannel({
       ...statusCounts
     }
   };
+}
+
+function buildLatestBalanceReconciliationSnapshotLookup(balances, cutoffDate) {
+  const latest = {};
+  (balances || [])
+    .filter((row) => {
+      const date = String(row?.date || "").trim();
+      return date && date <= cutoffDate;
+    })
+    .sort((left, right) => String(left?.date || "").localeCompare(String(right?.date || "")))
+    .forEach((row) => {
+      const channel = getCanonicalManualChannelKey(row?.channel || row?.accountName || "");
+      if (!channel) return;
+      latest[channel] = getBalanceReconciliationBalanceUsdAmount(row);
+    });
+  return latest;
 }
 
 function getBalanceReconciliationBalanceUsdAmount(row) {
@@ -2302,6 +2315,7 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (!date || date < startDate || date > endDate) return;
     const category = mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
     if (!category || category === MANUAL_NOW_CATEGORY) return;
+    if (category === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row, rawRow)) return;
     const amount = getLedgerBalanceAmountForFinance(row);
     if (!amount) return;
     const channel = getLedgerV2ManualChannel(row, amount);
@@ -2316,6 +2330,27 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
     return String(left.category).localeCompare(String(right.category));
   });
+}
+
+function shouldIncludeLedgerRowInManualServicePlan(row, rawRow = null) {
+  const source = normalizeLedgerServicePlanSource(
+    row?.source
+      || rawRow?.source
+      || row?.displaySource
+      || rawRow?.displaySource
+      || ""
+  );
+  return !source || ["manual", "fact", "migration"].includes(source);
+}
+
+function normalizeLedgerServicePlanSource(value) {
+  const token = normalizeLookupText(value);
+  if (!token) return "";
+  if (["manual", "fact", "migration"].includes(token)) return token;
+  if (["paypal", "paypal mcp", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "import", "mcp import", "mcp"].includes(token)) return "mcp";
+  if (["ocr", "photo parsing", "screenshot", "browser ocr", "image", "photo"].includes(token)) return "photo";
+  if (token === "wise") return "wise";
+  return token;
 }
 
 function getLedgerBalanceAmountForFinance(row) {

@@ -57,6 +57,8 @@ const state = {
     privat24ImportLoading: false,
     privatBankSummary: null,
     tdBankLoading: false,
+    tdImportStep: "ready",
+    tdImportClipboardRetry: false,
     tdBankSummary: null,
     entries: [],
     warnings: [],
