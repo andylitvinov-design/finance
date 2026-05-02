@@ -2,7 +2,7 @@ import {
   mapLedgerCategoryToLegacy,
   normalizeManualLedgerCategory,
   normalizeManualLedgerChannel,
-} from "./manual-ledger-maps.js";
+} from "../server/manual-ledger-maps.js";
 
 const MAX_IMAGE_COUNT = 8;
 const MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;

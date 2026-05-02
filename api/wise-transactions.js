@@ -1,4 +1,4 @@
-import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
+import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
 
 const WISE_LIVE_BASE = "https://api.wise.com";
 const WISE_MAX_RANGE_DAYS = 469;

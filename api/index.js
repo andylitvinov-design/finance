@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { normalizeServerAnalyticsPayload } from "./analytics-normalizer.js";
-import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
+import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
   fetchPayPalStatementEntries,
