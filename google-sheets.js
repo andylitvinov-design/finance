@@ -203,7 +203,7 @@ async function ensureManualLedgerSourceColumn() {
     if (sourceValue || !/^migration:/i.test(rawSourceId)) continue;
     updates.push({
       range: `'${sheetTitle.replace(/'/g, "''")}'!${sourceColumnLetter}${rowIndex + 1}`,
-      values: [["manual"]]
+      values: [["migration"]]
     });
   }
   await batchUpdateSheetValues(updates, spreadsheetId);
@@ -291,25 +291,82 @@ function getManualLedgerSheetName() {
   return String(state.config?.manualFinance?.ledgerSheetName || MANUAL_FINANCE_LEDGER_TITLE).trim() || MANUAL_FINANCE_LEDGER_TITLE;
 }
 
+function normalizeManualLedgerSourceToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, "_")
+    .trim();
+}
+
+function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
+  const raw = String(rawSourceId || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (/^migration:/i.test(raw)) return "migration";
+  if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
+  if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
+  if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
+  if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
+  if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
+  return "";
+}
+
+function inferManualLedgerSourceFromChannels(...values) {
+  const normalized = values
+    .map((value) => String(value || "").trim().toLowerCase().replace(/ё/g, "е"))
+    .filter(Boolean)
+    .join(" ");
+  if (!normalized) return "";
+  if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+  if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
+  if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
+  if (/(privat|приват)/.test(normalized)) return "privatbank";
+  if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
+  return "";
+}
+
 function normalizeManualLedgerSource(value, fallback = "") {
-  const token = String(value || "").trim().toLowerCase();
+  const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "mcp", "photo", "wise"].includes(token)) return token;
-  if (["fact", "manual fact"].includes(token)) return "manual";
-  if (["paypal", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "paypal-mcp"].includes(token)) return "mcp";
-  if (["ocr", "browser ocr", "screenshot", "image"].includes(token)) return "photo";
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "google_sheets", "other"].includes(token)) return token;
+  if (["manual_fact", "manual_finance"].includes(token)) return "manual";
+  if (["paypal_mcp"].includes(token)) return "paypal";
+  if (["transferwise"].includes(token)) return "wise";
+  if (["mono"].includes(token)) return "monobank";
+  if (["privat24", "privat_24"].includes(token)) return "privatbank";
+  if (["tdbank"].includes(token)) return "td_bank";
+  if (["provider", "import", "mcp", "mcp_import", "ocr", "browser_ocr", "screenshot", "image", "photo", "photo_parsing"].includes(token)) return "other";
   return fallback;
 }
 
-function resolveManualLedgerSource(value, rawSourceId = "", fallback = "") {
-  const normalized = normalizeManualLedgerSource(value, "");
-  if (normalized) return normalized;
-  if (/^migration:/i.test(String(rawSourceId || "").trim())) return "manual";
-  return fallback;
+function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
+  const token = normalizeManualLedgerSourceToken(value);
+  let normalized = "";
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "google_sheets", "other"].includes(token)) normalized = token;
+  else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
+  else if (["paypal_mcp"].includes(token)) normalized = "paypal";
+  else if (["transferwise"].includes(token)) normalized = "wise";
+  else if (["mono"].includes(token)) normalized = "monobank";
+  else if (["privat24", "privat_24"].includes(token)) normalized = "privatbank";
+  else if (["tdbank"].includes(token)) normalized = "td_bank";
+  else if (["provider", "import", "mcp", "mcp_import", "ocr", "browser_ocr", "screenshot", "image", "photo", "photo_parsing"].includes(token)) normalized = "other";
+  if (normalized && normalized !== "other") return normalized;
+  const inferred = inferManualLedgerSourceFromRawSourceId(rawSourceId) ||
+    inferManualLedgerSourceFromChannels(
+      context?.channel,
+      context?.fromChannel,
+      context?.from_channel,
+      context?.toChannel,
+      context?.to_channel
+    );
+  if (inferred) return inferred;
+  return normalized || fallback;
 }
 
-function getManualLedgerDisplaySource(value, rawSourceId = "") {
-  return resolveManualLedgerSource(value, rawSourceId, "") || "unknown";
+function getManualLedgerDisplaySource(value, rawSourceId = "", context = {}) {
+  return resolveManualLedgerSource(value, rawSourceId, "", context) || "unknown";
 }
 
 function assertIncomingTransferHeaders(values) {
@@ -550,8 +607,14 @@ function parseManualLedgerSheetValues(values) {
       comment: [String(read("comment") || "").trim(), ...warningParts].filter(Boolean).join(" | "),
       counterparty: String(read("counterparty") || "").trim(),
       description: String(read("description") || "").trim(),
-      source: resolveManualLedgerSource(indexByName.source === -1 ? "" : read("source"), rawSourceId, ""),
-      displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source"), rawSourceId),
+      source: resolveManualLedgerSource(indexByName.source === -1 ? "" : read("source"), rawSourceId, "", {
+        fromChannel: read("from_channel"),
+        toChannel: read("to_channel"),
+      }),
+      displaySource: getManualLedgerDisplaySource(indexByName.source === -1 ? "" : read("source"), rawSourceId, {
+        fromChannel: read("from_channel"),
+        toChannel: read("to_channel"),
+      }),
       rawSourceId,
       externalId,
       transferGroupId: String(read("transfer_group_id") || "").trim(),
@@ -672,7 +735,15 @@ function buildManualLedgerSheetValues(rows, headers = MANUAL_LEDGER_HEADERS) {
       case "comment": return row.comment || "";
       case "counterparty": return row.counterparty || "";
       case "description": return row.description || "";
-      case "source": return normalizeManualLedgerSource(row.source, "");
+      case "source": return resolveManualLedgerSource(
+        row.source,
+        row.rawSourceId || row.raw_source_id || "",
+        "other",
+        {
+          fromChannel: row.fromChannel || row.from_channel || "",
+          toChannel: row.toChannel || row.to_channel || ""
+        }
+      );
       case "external_id": return row.externalId || row.external_id || row.rawSourceId || row.raw_source_id || "";
       case "raw_source_id": return row.rawSourceId || row.raw_source_id || "";
       case "transfer_group_id": return row.transferGroupId || row.transfer_group_id || "";
@@ -731,7 +802,11 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     });
     const amountGross = normalizeManualFinancePersistedNumberInput(row?.amountGross ?? row?.amount_gross ?? row?.localAmount ?? row?.amount ?? amount);
     const amountFee = normalizeManualFinancePersistedNumberInput(row?.amountFee ?? row?.amount_fee ?? row?.feeAmount ?? "");
-    const derivedAmountNet = formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))));
+    const resolvedSource = resolveManualLedgerSource(row?.source, rawSourceId, "other", { fromChannel, toChannel });
+    const hasExplicitFee = Number.isFinite(parseLooseNumber(amountFee));
+    const derivedAmountNet = hasExplicitFee
+      ? formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))))
+      : (resolvedSource === "paypal" ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
     const amountNet = normalizeManualFinancePersistedNumberInput(
       row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? derivedAmountNet
     );
@@ -768,7 +843,7 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       comment: String(row?.comment || "").trim(),
       counterparty: String(row?.counterparty || "").trim(),
       description: String(row?.description || "").trim(),
-      source: normalizeManualLedgerSource(row?.source, ""),
+      source: resolvedSource,
       rawSourceId,
       transferGroupId: String(row?.transferGroupId || row?.transfer_group_id || "").trim(),
       createdAt: String(row?.createdAt || row?.created_at || "").trim() || timestamp,
@@ -874,7 +949,7 @@ async function deleteManualLedgerRowDirect(sheetRowNumber) {
 function buildLedgerRowsFromExpenseRows(expenseRows, options = {}) {
   const rows = [];
   const timestamp = options.timestamp || new Date().toISOString();
-  const ledgerSource = normalizeManualLedgerSource(options.ledgerSource || options.source, "manual");
+  const ledgerSource = resolveManualLedgerSource(options.ledgerSource || options.source, "", "manual");
   (expenseRows || []).forEach((expenseRow, rowIndex) => {
     const date = normalizeIncomingSheetDateValue(expenseRow?.date || options.date);
     if (!date) return;
@@ -977,18 +1052,27 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
 }
 
 function shouldIncludeLedgerRowInManualServicePlan(row) {
-  const source = normalizeManualLedgerSource(row?.source, "");
-  return !source || ["manual"].includes(source);
+  const source = String(row?.source || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return !source || source === "manual";
 }
 
 function buildLedgerRowsFromAccountingEntries(entries) {
   const timestamp = new Date().toISOString();
   const rows = [];
-  const normalizeLedgerSource = typeof normalizeManualLedgerSource === "function"
-    ? normalizeManualLedgerSource
-    : (value, fallback = "") => {
+  const resolveLedgerSource = typeof resolveManualLedgerSource === "function"
+    ? resolveManualLedgerSource
+    : (value, rawSourceId = "", fallback = "", context = {}) => {
         const normalized = String(value || "").trim().toLowerCase();
-        return normalized || String(fallback || "").trim().toLowerCase();
+        if (normalized) return normalized;
+        const raw = String(rawSourceId || "").trim().toLowerCase();
+        const channelText = [context?.channel, context?.toChannel].map((item) => String(item || "").trim().toLowerCase()).join(" ");
+        if (/^migration:/i.test(raw)) return "migration";
+        if (/^(paypal|pp)/i.test(raw) || /paypal|пейпал/.test(channelText)) return "paypal";
+        if (/^(wise|transferwise)/i.test(raw) || /wise|трансервайз/.test(channelText)) return "wise";
+        if (/^(mono|monobank)/i.test(raw) || /mono|monobank|монобанк/.test(channelText)) return "monobank";
+        if (/^(privat|privat24|pb)/i.test(raw) || /privat|приват/.test(channelText)) return "privatbank";
+        if (/^(tdbank|td_bank|td)/i.test(raw) || /td bank|tdbank/.test(channelText)) return "td_bank";
+        return String(fallback || "").trim().toLowerCase();
       };
   (entries || []).forEach((entry, index) => {
     const date = normalizeIncomingSheetDateValue(entry.date);
@@ -997,10 +1081,11 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
     const rawSourceId = String(entry.sourceTransactionId || entry.id || `expense-accounting:${date}:${channel}:${index}`).trim();
-    const ledgerSource = normalizeLedgerSource(
-      entry.source ||
-        (Number.isInteger(entry.sourceImageIndex) ? "photo" : ""),
-      Number.isInteger(entry.sourceImageIndex) ? "photo" : "mcp"
+    const ledgerSource = resolveLedgerSource(
+      entry.source || (Number.isInteger(entry.sourceImageIndex) ? "photo" : ""),
+      rawSourceId,
+      "other",
+      { channel, toChannel: entry.toChannel || "" }
     );
     if (entry.direction === "income") {
       const feeAmount = Math.abs(parseLooseNumber(entry.feeAmount));

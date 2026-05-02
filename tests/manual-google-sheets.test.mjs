@@ -279,14 +279,14 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.equal(repository.schema, "ledger-v2-compatible");
     assert.equal(repository.operations.length, 8);
     assert.equal(repository.ledgerV2Rows.length, 8);
-    assert.equal(repository.operations[0].source, "mcp");
+    assert.equal(repository.operations[0].source, "other");
     assert.equal(repository.operations[0].ledgerV2.operation, "exchange");
     assert.equal(repository.operations[0].ledgerV2.external_id, "ledger-1");
     assert.equal(repository.operations[4].source, "manual");
     assert.equal(repository.operations[4].ledgerV2.category, "service");
 	    assert.equal(repository.views.fallback_amount_rows, 0);
 	    assert.equal(repository.operations[5].source, "wise");
-	    assert.equal(repository.operations[6].source, "photo");
+	    assert.equal(repository.operations[6].source, "other");
 	    assert.equal(repository.operations[7].amountUsd, "942");
 	    assert.deepEqual(repository.expenseRows, [
 	      {
@@ -526,7 +526,7 @@ test("loadManualRepositoryFromGoogleSheets tolerates missing Ledger source colum
     assert.equal(repository.ok, true);
     assert.equal(repository.schema, "ledger-v2-compatible");
     assert.equal(repository.operations.length, 1);
-    assert.equal(repository.operations[0].source, "");
+    assert.equal(repository.operations[0].source, "paypal");
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
@@ -535,7 +535,7 @@ test("loadManualRepositoryFromGoogleSheets tolerates missing Ledger source colum
   }
 });
 
-test("loadManualRepositoryFromGoogleSheets normalizes migration raw_source_id rows as manual without a physical source column", async () => {
+test("loadManualRepositoryFromGoogleSheets normalizes migration raw_source_id rows as migration without a physical source column", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
@@ -571,8 +571,52 @@ test("loadManualRepositoryFromGoogleSheets normalizes migration raw_source_id ro
     assert.equal(repository.ok, true);
     assert.equal(repository.schema, "ledger-v2-compatible");
     assert.equal(repository.operations.length, 1);
-    assert.equal(repository.operations[0].source, "manual");
+    assert.equal(repository.operations[0].source, "migration");
     assert.equal(repository.operations[0].rawSourceId, "migration:2026-04-25:19:8");
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets infers provider source from channels when legacy source is generic", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:R",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                  ["2026-04-25", "income", "", "пейпал дол", "100", "USD", "100", "100", "serviceincome", "", "in", "legacy provider", "mcp", "legacy-1", "", "2026-04-25T09:00:00.000Z", "2026-04-25T09:00:00.000Z"],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
+              { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
+              { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.operations.length, 1);
+    assert.equal(repository.operations[0].source, "paypal");
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;

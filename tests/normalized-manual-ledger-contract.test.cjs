@@ -109,6 +109,12 @@ test("ledger v2 refuses balance fallback when net is missing", () => {
   assert.deepEqual(contract.validateLedgerRow(row).errors, ["amount_net is required"]);
 });
 
+test("ledger v2 source normalization maps provider aliases to contract vocabulary", () => {
+  assert.equal(contract.normalizeLedgerRow({ source: "privat24" }).source, "privatbank");
+  assert.equal(contract.normalizeLedgerRow({ source: "paypal mcp" }).source, "paypal");
+  assert.equal(contract.normalizeLedgerRow({ source: "mcp" }).source, "other");
+});
+
 test("ledger v2 normalizes exchange amount_usd signs and two-row aggregation", () => {
   const out = contract.normalizeLedgerRow({
     date: "2026-05-01",
