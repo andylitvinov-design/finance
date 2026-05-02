@@ -148,19 +148,19 @@ async function ensureManualLedgerSourceColumn() {
   if (!sheetProperties?.sheetId) {
     return { insertedSourceColumn: false, backfilledRows: 0, missingSheet: true };
   }
-  const sourceIndex = MANUAL_LEDGER_HEADERS.indexOf("source");
-  const rawSourceIndex = MANUAL_LEDGER_HEADERS.indexOf("raw_source_id");
-  const sourceColumnLetter = columnLetter(sourceIndex + 1);
   const initialValues = await getSheetValuesByTitle(sheetTitle, spreadsheetId);
   const initialHeader = (initialValues[0] || []).map((cell) => String(cell || "").trim());
   if (!initialHeader.some(Boolean)) {
     return { insertedSourceColumn: false, backfilledRows: 0, missingHeader: true };
   }
-  const hasSourceColumn = initialHeader[sourceIndex] === "source";
+  const initialSourceIndex = findHeaderIndexByAliases(initialHeader, ["source"]);
+  const initialRawSourceIndex = findHeaderIndexByAliases(initialHeader, ["raw_source_id"]);
+  const hasSourceColumn = initialSourceIndex !== -1;
+  const insertSourceIndex = initialRawSourceIndex !== -1 ? initialRawSourceIndex : MANUAL_LEDGER_HEADERS.indexOf("source");
+  const sourceColumnLetter = columnLetter((hasSourceColumn ? initialSourceIndex : insertSourceIndex) + 1);
   if (!hasSourceColumn) {
-    const hasLegacyHeader = initialHeader[sourceIndex] === "raw_source_id" && !initialHeader.includes("source");
-    if (!hasLegacyHeader) {
-      throw new Error(`Ledger sheet header mismatch. Expected source at column ${sourceIndex + 1}.`);
+    if (initialRawSourceIndex === -1) {
+      throw new Error("Ledger sheet header mismatch. Expected source or raw_source_id column.");
     }
     await googleSheetsFetch(`/spreadsheets/${spreadsheetId}:batchUpdate`, {
       method: "POST",
@@ -171,8 +171,8 @@ async function ensureManualLedgerSourceColumn() {
               range: {
                 sheetId: sheetProperties.sheetId,
                 dimension: "COLUMNS",
-                startIndex: sourceIndex,
-                endIndex: sourceIndex + 1
+                startIndex: insertSourceIndex,
+                endIndex: insertSourceIndex + 1
               },
               inheritFromBefore: true
             }
@@ -190,7 +190,9 @@ async function ensureManualLedgerSourceColumn() {
 
   const ledgerValues = hasSourceColumn ? initialValues : await getSheetValuesByTitle(sheetTitle, spreadsheetId);
   const header = (ledgerValues[0] || []).map((cell) => String(cell || "").trim());
-  if (header[sourceIndex] !== "source") {
+  const sourceIndex = findHeaderIndexByAliases(header, ["source"]);
+  const rawSourceIndex = findHeaderIndexByAliases(header, ["raw_source_id"]);
+  if (sourceIndex === -1) {
     throw new Error("Ledger source column migration did not complete successfully.");
   }
   const updates = [];
@@ -292,9 +294,9 @@ function getManualLedgerSheetName() {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = String(value || "").trim().toLowerCase();
   if (!token) return fallback;
-  if (["manual", "mcp", "photo"].includes(token)) return token;
+  if (["manual", "mcp", "photo", "wise"].includes(token)) return token;
   if (["fact", "manual fact"].includes(token)) return "manual";
-  if (["paypal", "wise", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "paypal-mcp"].includes(token)) return "mcp";
+  if (["paypal", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "paypal-mcp"].includes(token)) return "mcp";
   if (["ocr", "browser ocr", "screenshot", "image"].includes(token)) return "photo";
   return fallback;
 }
@@ -355,21 +357,11 @@ function assertIncomingCommissionHeaders(values) {
 function assertManualLedgerHeaders(values) {
   const rows = values || [];
   if (!rows.length || !rows[0]?.some((cell) => String(cell || "").trim())) return;
-  const actual = (rows[0] || []).map((cell) => String(cell || "").trim());
-  const legacyExpected = MANUAL_LEDGER_HEADERS.filter((name) => !["source", "counterparty", "description", "external_id"].includes(name));
-  const sourceExpected = MANUAL_LEDGER_HEADERS.filter((name) => !["counterparty", "description", "external_id"].includes(name));
-  const detailNoSourceExpected = MANUAL_LEDGER_HEADERS.filter((name) => name !== "source");
-  const nextExpected = MANUAL_LEDGER_HEADERS.slice();
-  const actualNext = nextExpected.map((_, index) => actual[index] || "");
-  const actualSource = sourceExpected.map((_, index) => actual[index] || "");
-  const actualDetailNoSource = detailNoSourceExpected.map((_, index) => actual[index] || "");
-  const actualLegacy = legacyExpected.map((_, index) => actual[index] || "");
-  const matchesNext = JSON.stringify(actualNext) === JSON.stringify(nextExpected);
-  const matchesSource = JSON.stringify(actualSource) === JSON.stringify(sourceExpected);
-  const matchesDetailNoSource = JSON.stringify(actualDetailNoSource) === JSON.stringify(detailNoSourceExpected);
-  const matchesLegacy = JSON.stringify(actualLegacy) === JSON.stringify(legacyExpected);
-  if (!matchesNext && !matchesSource && !matchesDetailNoSource && !matchesLegacy) {
-    throw new Error(`Ledger sheet header mismatch. Expected ${nextExpected.join(" | ")} or legacy ${legacyExpected.join(" | ")}, got ${actual.join(" | ")}`);
+  const actual = (rows[0] || []).map((cell) => String(cell || "").trim()).filter(Boolean);
+  const required = ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd"];
+  const missing = required.filter((name) => findHeaderIndexByAliases(actual, [name]) === -1);
+  if (missing.length) {
+    throw new Error(`Ledger sheet header mismatch. Missing required columns: ${missing.join(" | ")}. Got ${actual.join(" | ")}`);
   }
 }
 
@@ -658,33 +650,40 @@ function buildIncomingBalanceSheetValues(rows) {
   ];
 }
 
-function buildManualLedgerSheetValues(rows) {
+function buildManualLedgerSheetValues(rows, headers = MANUAL_LEDGER_HEADERS) {
+  const outputHeaders = (Array.isArray(headers) && headers.length ? headers : MANUAL_LEDGER_HEADERS)
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  const readValue = (row, name) => {
+    switch (name) {
+      case "date": return row.date || "";
+      case "operation": return row.operation || "";
+      case "from_channel": return row.fromChannel || row.from_channel || "";
+      case "to_channel": return row.toChannel || row.to_channel || "";
+      case "amount": return row.amount || "";
+      case "currency": return row.currency || "";
+      case "amount_usd": return row.amountUsd || row.amount_usd || "";
+      case "amount_gross": return row.amountGross || row.amount_gross || "";
+      case "amount_fee": return row.amountFee || row.amount_fee || "";
+      case "amount_net": return row.amountNet || row.amount_net || "";
+      case "category": return row.category || "";
+      case "subcategory": return row.subcategory || "";
+      case "direction": return row.direction || "";
+      case "comment": return row.comment || "";
+      case "counterparty": return row.counterparty || "";
+      case "description": return row.description || "";
+      case "source": return normalizeManualLedgerSource(row.source, "");
+      case "external_id": return row.externalId || row.external_id || row.rawSourceId || row.raw_source_id || "";
+      case "raw_source_id": return row.rawSourceId || row.raw_source_id || "";
+      case "transfer_group_id": return row.transferGroupId || row.transfer_group_id || "";
+      case "created_at": return row.createdAt || row.created_at || "";
+      case "updated_at": return row.updatedAt || row.updated_at || "";
+      default: return "";
+    }
+  };
   return [
-    MANUAL_LEDGER_HEADERS.slice(),
-    ...(rows || []).map((row) => [
-      row.date || "",
-      row.operation || "",
-      row.fromChannel || row.from_channel || "",
-      row.toChannel || row.to_channel || "",
-      row.amount || "",
-      row.currency || "",
-      row.amountUsd || row.amount_usd || "",
-      row.amountGross || row.amount_gross || "",
-      row.amountFee || row.amount_fee || "",
-      row.amountNet || row.amount_net || "",
-      row.category || "",
-      row.subcategory || "",
-      row.direction || "",
-      row.comment || "",
-      row.counterparty || "",
-      row.description || "",
-      normalizeManualLedgerSource(row.source, ""),
-      row.externalId || row.external_id || row.rawSourceId || row.raw_source_id || "",
-      row.rawSourceId || row.raw_source_id || "",
-      row.transferGroupId || row.transfer_group_id || "",
-      row.createdAt || row.created_at || "",
-      row.updatedAt || row.updated_at || ""
-    ])
+    outputHeaders.slice(),
+    ...(rows || []).map((row) => outputHeaders.map((name) => readValue(row, name)))
   ];
 }
 
@@ -836,7 +835,7 @@ function buildUpdatedManualLedgerSheetValues(values, rowPatch) {
   if (!normalized.rows.length) {
     throw new Error(normalized.warnings[0] || "Ledger row update failed.");
   }
-  rows[sheetRowNumber - 1] = buildManualLedgerSheetValues(normalized.rows).slice(1)[0];
+  rows[sheetRowNumber - 1] = buildManualLedgerSheetValues(normalized.rows, rows[0]).slice(1)[0];
   return trimTrailingEmptySheetRows(rows);
 }
 
@@ -1358,9 +1357,10 @@ async function saveManualSheetDirect(params) {
   const existingTransfers = titles.has(getManualTransfersSheetName())
     ? parseIncomingTransferSheetValues(await getSheetValuesByTitle(getManualTransfersSheetName()))
     : [];
-  const existingLedgerParse = titles.has(getManualLedgerSheetName())
-    ? parseManualLedgerSheetValues(await getSheetValuesByTitle(getManualLedgerSheetName()))
-    : { rows: [], warnings: [] };
+  const existingLedgerValues = titles.has(getManualLedgerSheetName())
+    ? await getSheetValuesByTitle(getManualLedgerSheetName())
+    : buildManualLedgerSheetValues([]);
+  const existingLedgerParse = parseManualLedgerSheetValues(existingLedgerValues);
   const existingBalances = titles.has(getManualBalancesSheetName())
     ? parseIncomingBalanceSheetValues(await getSheetValuesByTitle(getManualBalancesSheetName()))
     : [];
@@ -1400,7 +1400,7 @@ async function saveManualSheetDirect(params) {
   await ensureSheetExists(getManualTransfersSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualBalancesSheetName(), getManualFinanceSpreadsheetId());
   await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
-  await overwriteSheetValues(getManualLedgerSheetName(), buildManualLedgerSheetValues(ledgerSave.rows), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(getManualLedgerSheetName(), buildManualLedgerSheetValues(ledgerSave.rows, existingLedgerValues[0]), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualTransfersSheetName(), buildIncomingTransferSheetValues(mergedTransfers), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(getManualBalancesSheetName(), buildIncomingBalanceSheetValues(mergedBalances), getManualFinanceSpreadsheetId());
   return {

@@ -55,6 +55,9 @@ function buildLedgerTestContext() {
       "amount",
       "currency",
       "amount_usd",
+      "amount_gross",
+      "amount_fee",
+      "amount_net",
       "category",
       "subcategory",
       "direction",
@@ -169,6 +172,7 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "buildLedgerRowsFromExpenseRows")}\n` +
     `${extractFunction(googleSheetsJs, "buildLedgerRowsFromAccountingEntries")}\n` +
     `this.parseManualLedgerSheetValues = parseManualLedgerSheetValues;\n` +
+    `this.buildManualLedgerSheetValues = buildManualLedgerSheetValues;\n` +
     `this.buildUpdatedManualLedgerSheetValues = buildUpdatedManualLedgerSheetValues;\n` +
     `this.buildDeletedManualLedgerSheetValues = buildDeletedManualLedgerSheetValues;\n` +
     `this.buildLedgerRowsFromExpenseRows = buildLedgerRowsFromExpenseRows;\n` +
@@ -177,6 +181,88 @@ function buildLedgerTestContext() {
   );
   return context;
 }
+
+const CURRENT_LEDGER_HEADER = [
+  "date",
+  "operation",
+  "from_channel",
+  "to_channel",
+  "amount",
+  "currency",
+  "amount_usd",
+  "category",
+  "subcategory",
+  "direction",
+  "comment",
+  "source",
+  "raw_source_id",
+  "transfer_group_id",
+  "created_at",
+  "updated_at",
+  "amount_gross",
+  "amount_fee",
+  "amount_net"
+];
+
+test("parseManualLedgerSheetValues accepts current, legacy, and canonical Ledger headers", () => {
+  const context = buildLedgerTestContext();
+  const legacyHeader = [
+    "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd",
+    "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"
+  ];
+  const canonicalHeader = context.MANUAL_LEDGER_HEADERS.slice();
+
+  for (const header of [CURRENT_LEDGER_HEADER, legacyHeader, canonicalHeader]) {
+    const row = new Array(header.length).fill("");
+    row[header.indexOf("date")] = "2026-05-01";
+    row[header.indexOf("operation")] = "income";
+    row[header.indexOf("to_channel")] = "paypal usd";
+    row[header.indexOf("amount")] = "120";
+    row[header.indexOf("currency")] = "USD";
+    row[header.indexOf("amount_usd")] = "120";
+    if (header.includes("category")) row[header.indexOf("category")] = "serviceIncome";
+    if (header.includes("direction")) row[header.indexOf("direction")] = "in";
+    if (header.includes("raw_source_id")) row[header.indexOf("raw_source_id")] = `raw-${header.length}`;
+    if (header.includes("amount_gross")) row[header.indexOf("amount_gross")] = "120";
+    if (header.includes("amount_fee")) row[header.indexOf("amount_fee")] = "5";
+    if (header.includes("amount_net")) row[header.indexOf("amount_net")] = "115";
+
+    const parsed = plain(context.parseManualLedgerSheetValues([header, row]));
+
+    assert.equal(parsed.rows.length, 1);
+    assert.equal(parsed.rows[0].amount, "120");
+    if (header.includes("amount_gross")) assert.equal(parsed.rows[0].amountGross, "120");
+    if (header.includes("amount_fee")) assert.equal(parsed.rows[0].amountFee, "5");
+    if (header.includes("amount_net")) assert.equal(parsed.rows[0].amountNet, "115");
+  }
+});
+
+test("buildManualLedgerSheetValues maps rows by the provided Ledger header", () => {
+  const context = buildLedgerTestContext();
+  const values = plain(context.buildManualLedgerSheetValues([{
+    date: "2026-05-01",
+    operation: "income",
+    toChannel: "трансервайз дол",
+    amount: "120",
+    currency: "USD",
+    amountUsd: "120",
+    amountGross: "120",
+    amountFee: "5",
+    amountNet: "115",
+    category: "servicein",
+    direction: "in",
+    source: "wise",
+    externalId: "WISE-TXN-1",
+    rawSourceId: "wise:WISE-TXN-1"
+  }], CURRENT_LEDGER_HEADER));
+
+  assert.deepEqual(values[0], CURRENT_LEDGER_HEADER);
+  assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("source")], "wise");
+  assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("raw_source_id")], "wise:WISE-TXN-1");
+  assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("amount_gross")], "120");
+  assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("amount_fee")], "5");
+  assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("amount_net")], "115");
+});
 
 test("parseManualLedgerSheetValues tolerates missing source and exposes sheetRowNumber plus unknown display source", () => {
   const context = buildLedgerTestContext();
@@ -307,6 +393,30 @@ test("buildLedgerRowsFromAccountingEntries maps provider rows to mcp and OCR row
   assert.equal(rows.length, 2);
   assert.equal(rows[0].source, "mcp");
   assert.equal(rows[1].source, "photo");
+});
+
+test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-01",
+      channel: "wise usd",
+      localAmount: 120,
+      currency: "USD",
+      usdAmount: 120,
+      category: "business",
+      direction: "expense",
+      source: "wise",
+      externalId: "WISE-TXN-1",
+      sourceTransactionId: "wise:WISE-TXN-1",
+      description: "Wise expense"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "wise");
+  assert.equal(rows[0].externalId, "WISE-TXN-1");
+  assert.equal(rows[0].rawSourceId, "wise:WISE-TXN-1");
 });
 
 test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail fields", () => {
