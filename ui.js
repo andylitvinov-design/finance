@@ -1171,7 +1171,7 @@ function buildTdBankBookmarklet() {
   const endDate = normalizeIncomingSheetDateValue(elements.endDate?.value) || "";
   const origin = window.location.origin.replace(/\/+$/, "");
   const payload = JSON.stringify({ startDate, endDate, importerUrl: `${origin}/td-easyweb-importer.js` });
-  return `javascript:(async()=>{const cfg=${payload};const s=document.createElement('script');s.src=cfg.importerUrl+'?ts='+Date.now();document.body.appendChild(s);await new Promise((r,e)=>{s.onload=r;s.onerror=e});const out=window.TD_EASYWEB_IMPORTER.collect({from:cfg.startDate,to:cfg.endDate});await navigator.clipboard.writeText(JSON.stringify(out));alert('TD Bank rows copied: '+(out.items||[]).length+'. Return to ledger and import from clipboard.');})().catch(e=>alert(e.message||e))`;
+  return `javascript:(async()=>{const cfg=${payload};const s=document.createElement('script');s.src=cfg.importerUrl+'?ts='+Date.now();document.body.appendChild(s);await new Promise((r,e)=>{s.onload=r;s.onerror=e});const out=window.TD_EASYWEB_IMPORTER.collect({from:cfg.startDate,to:cfg.endDate});await navigator.clipboard.writeText(JSON.stringify(out));const n=(out.items||[]).length;const d=out.debug||{};alert(n?'TD Bank rows copied: '+n+'. Return to ledger and import from clipboard.':'TD Bank rows copied: 0. TD Activity table found: '+(d.tdActivityTableFound?'yes':'no')+'; rows found: '+(d.rowsFound||0)+'; parsed rows: '+(d.parsedRows||0));})().catch(e=>alert(e.message||e))`;
 }
 
 function hasProviderSummaryData(summary) {
