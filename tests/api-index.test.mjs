@@ -237,7 +237,7 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(cryptoRow?.[18], "103");
     assert.equal(cryptoRow?.[19], "");
     assert.equal(cryptoRow?.[20], "");
-    assert.equal(cryptoRow?.[22], "");
+    assert.equal(cryptoRow?.[22], "-2");
     assert.equal(cryptoRow?.[23], "NEEDS VERIFICATION");
     assert.match(String(cryptoRow?.[24] || ""), /provider fee\/net missing/i);
     assert.equal(correctedLozinaRow?.[17], "14870");
@@ -247,7 +247,7 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(correctedAccruedRow?.[9], "206");
     assert.equal(correctedAccruedRow?.[17], "45175,8");
     assert.equal(correctedAccruedRow?.[18], "1030");
-    assert.equal(correctedAccruedRow?.[22], "824");
+    assert.equal(correctedAccruedRow?.[22], "-824");
     assert.equal(correctedKovalevRow?.[17], "22490,05");
     assert.equal(correctedKovalevRow?.[18], "515");
     assert.equal(correctedKovalevRow?.[22], "0");
@@ -262,7 +262,7 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
     assert.equal(quantityRow?.[9], "206");
     assert.equal(quantityRow?.[19], "");
     assert.equal(quantityRow?.[20], "");
-    assert.equal(quantityRow?.[22], "");
+    assert.equal(quantityRow?.[22], "206");
     assert.equal(quantityRow?.[23], "NEEDS VERIFICATION");
     assert.match(String(quantityRow?.[24] || ""), /provider fee\/net missing/i);
     assert.deepEqual(movementSummaryRows, [
@@ -503,10 +503,14 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
       "18108",
       "Итого"
     ]);
-    assert.equal(missingPaymentRow?.[22], "");
+    assert.equal(missingPaymentRow?.[22], "206");
     assert.equal(missingPaymentRow?.[23], "NEEDS VERIFICATION");
     assert.match(String(missingPaymentRow?.[24] || ""), /provider fee\/net missing|balance not calculated from incomplete source row/i);
-    assert.equal(fullyMissingRow?.[22], "");
+    assert.equal(fullyMissingRow?.[22], "206");
+    const clientRows = movementRows.filter((row) => /^\d+$/.test(String(row?.[0] || "")));
+    assert.ok(clientRows.length > 0);
+    assert.equal(clientRows.every((row) => String(row?.[22] || "").trim()), true);
+    assert.equal(clientRows.filter((row) => row?.[2] === "Сергей Ковалев").every((row) => String(row?.[22] || "").trim()), true);
     assert.equal(fullyMissingRow?.[23], "NEEDS VERIFICATION");
     assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
@@ -1155,12 +1159,12 @@ test("GET getDashboardData adds real income payload and movement net-income colu
     assert.equal(paypalRow?.[19], "12,94");
     assert.equal(paypalRow?.[20], "311,06");
     assert.equal(paypalRow?.[21], "311,06");
-    assert.equal(paypalRow?.[22], "105,06");
+    assert.equal(paypalRow?.[22], "-105,06");
     assert.equal(wiseRow?.[18], "120");
     assert.equal(wiseRow?.[19], "5,8");
     assert.equal(wiseRow?.[20], "110,2");
     assert.equal(wiseRow?.[21], "110,2");
-    assert.equal(wiseRow?.[22], "7,2");
+    assert.equal(wiseRow?.[22], "-7,2");
     assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 2);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 110.2);
@@ -1196,7 +1200,7 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     row[9] = String(priceBase);
     row[10] = String(accruedPlus);
     row[24] = paymentMethod;
-    row[30] = String(receivedUsd);
+    if (receivedUsd !== undefined) row[30] = String(receivedUsd);
     return row;
   };
 
@@ -1250,7 +1254,25 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
             priceBase: 100,
             accruedPlus: 206,
             paymentMethod: "сайт, дол, пэйпэл",
-            receivedUsd: 206,
+            receivedUsd: 103,
+          }),
+          makeSourceRow({
+            number: "18130",
+            date: "2026-04-18",
+            client: "Нет Оплаты",
+            service: "No payment",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "сайт, дол, пэйпэл",
+          }),
+          makeSourceRow({
+            number: "18131",
+            date: "2026-04-18",
+            client: "Сергей Ковалев",
+            service: "No received 515",
+            priceBase: 500,
+            accruedPlus: 515,
+            paymentMethod: "сайт, дол, пэйпэл",
           }),
         ];
         return {
@@ -1310,14 +1332,23 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
 
     assert.equal(response.statusCode, 200);
     const paypalRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18129");
-    assert.equal(paypalRow?.[18], "206");
+    assert.equal(paypalRow?.[18], "103");
     assert.equal(paypalRow?.[19], "");
     assert.equal(paypalRow?.[20], "");
     assert.equal(paypalRow?.[21], "");
-    assert.equal(paypalRow?.[22], "");
+    assert.equal(paypalRow?.[22], "0");
     assert.equal(paypalRow?.[23], "NEEDS VERIFICATION");
     assert.match(String(paypalRow?.[24] || ""), /needs verification/i);
     assert.match(String(paypalRow?.[24] || ""), /provider fee\/net missing/i);
+    const noPaymentRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18130");
+    assert.equal(noPaymentRow?.[18], "");
+    assert.equal(noPaymentRow?.[22], "103");
+    const kovalevNoPaymentRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18131");
+    assert.equal(kovalevNoPaymentRow?.[2], "Сергей Ковалев");
+    assert.equal(kovalevNoPaymentRow?.[18], "");
+    assert.equal(kovalevNoPaymentRow?.[22], "515");
+    const clientRows = response.body?.data?.tabs?.movement?.values?.filter((row) => /^\d+$/.test(String(row?.[0] || ""))) || [];
+    assert.equal(clientRows.every((row) => String(row?.[22] || "").trim()), true);
     const realIncomeWarnings = (response.body?.data?.realIncome?.warnings || []).join(" | ");
     assert.match(realIncomeWarnings, /needs verification/i);
     assert.match(realIncomeWarnings, /missing fee on income transaction PAYPAL-NOFEE-1/i);
