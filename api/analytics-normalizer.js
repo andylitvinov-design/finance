@@ -346,6 +346,7 @@ function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
       const date = normalizeDate(operation?.date);
       if (!isDateInRange(date, startDate, endDate)) continue;
       const category = mapOperationToManualCategory(operation);
+      if (category === "serviceIncome" && !shouldIncludeOperationInManualServiceIncome(operation)) continue;
       const channel = mapOperationToManualChannel(operation, category);
       const amount = mapOperationToManualAmount(operation, category);
       if (!category || !channel || amount === null) continue;
@@ -408,6 +409,7 @@ function collectManualPeriodChannels(manual, period = {}) {
       const date = normalizeDate(operation?.date);
       if (!isDateInRange(date, startDate, endDate)) continue;
       const category = mapOperationToManualCategory(operation);
+      if (category === "serviceIncome" && !shouldIncludeOperationInManualServiceIncome(operation)) continue;
       if (!category || category === "now") continue;
       const channel = mapOperationToManualChannel(operation, category);
       const amount = mapOperationToManualAmount(operation, category);
@@ -609,6 +611,11 @@ function mapOperationToManualAmount(operation, category) {
     return amount;
   }
   return Math.abs(amount);
+}
+
+function shouldIncludeOperationInManualServiceIncome(operation) {
+  const source = normalizeCell(operation?.source);
+  return !source || ["manual", "fact", "migration"].includes(source);
 }
 
 function isDateInRange(date, startDate, endDate) {

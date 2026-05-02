@@ -226,6 +226,47 @@ test("normalizeServerAnalyticsPayload rebuilds movement period columns from ledg
   assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "-950,0000");
 });
 
+test("normalizeServerAnalyticsPayload excludes provider income operations from manual service income rows", () => {
+  const values = [
+    ["Личные расходы"],
+    ["валюта", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+    ["трансервайз дол", "2112", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "319"],
+    ["пейпал евр", "208", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "241,28"],
+    ["Итого", "2320", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "560,28"],
+    [],
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["трансервайз дол", "", "", "", "", "0", "", "", "0", "0"],
+    ["пейпал евр", "", "", "", "", "0", "", "", "0", "0"],
+    ["Итого", "", "", "", "", "0", "", "", "0", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["трансервайз дол", "0", "", "", "0", "", "", "", "", ""],
+    ["пейпал евр", "0", "", "", "0", "", "", "", "", ""],
+    ["Итого", "0", "", "", "0", "", "", "", "", ""],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 14 } },
+    manual: {
+      operations: [
+        { date: "2026-04-24", operation: "income", toChannel: "трансервайз дол", amount: "1210.25", currency: "USD", amountUsd: "1210.25", category: "servicein", source: "wise" },
+        { date: "2026-04-24", operation: "income", toChannel: "paypal eur", amount: "200", currency: "EUR", amountUsd: "232", category: "servicein", source: "manual" },
+      ],
+      expenseRows: [],
+      transfers: [],
+      balances: []
+    }
+  });
+
+  const movement = sectionRows(payload.tabs.analytics.values, "Личные расходы");
+  assert.equal(rowByChannel(movement.header, movement.rows, "трансервайз дол")["приход от услуг"], "");
+  assert.equal(rowByChannel(movement.header, movement.rows, "пейпал евр")["приход от услуг"], "200,0000");
+});
+
 test("normalizeServerAnalyticsPayload sums timestamped exchange rows across the full inclusive period", () => {
   const values = [
     ["Plan"],
