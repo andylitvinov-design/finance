@@ -40,6 +40,7 @@ function plain(value) {
 
 function extractExpenseAnalysisIncomeCountHelpers() {
   return [
+    "getExpenseAnalysisPlannedIncomeCount",
     "buildLedgerIncomeCountSummaryByChannel",
     "normalizeExpenseAnalysisIncomeOperation",
     "normalizeExpenseAnalysisIncomeSource",
@@ -684,9 +685,9 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
 
   assert.deepEqual(summary.rows, [
     ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал", "разница", "план приходов, шт", "авто/MCP приходов, шт", "ручных приходов, шт", "скриншот приходов, шт"],
-    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000", "0", "0", "0", "0"],
+    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000", "1", "0", "0", "0"],
     ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500", "0", "0", "0", "0"],
-    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500", "0", "0", "0", "0"],
+    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500", "1", "0", "0", "0"],
   ]);
 });
 
@@ -954,6 +955,61 @@ test("calculateMovementChannelStats returns accrued plus totals by channel for e
     "пейпал евр": 1,
     "пейпал сad": 0,
   });
+});
+
+test("calculateMovementChannelStats counts Wise planned income from the same movement rows as plan orders", () => {
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол"],
+    findHeaderIndexByAliases(header, aliases) {
+      const normalizedAliases = aliases.map((value) => String(value).trim().toLowerCase());
+      return header.findIndex((cell) => normalizedAliases.includes(String(cell || "").trim().toLowerCase()));
+    },
+    hasAnyValue(row) {
+      return (row || []).some((cell) => String(cell || "").trim());
+    },
+    isTableTotalRow(row) {
+      return String(row?.[0] || "").trim().toLowerCase() === "итого";
+    },
+    getClientPaymentLookupKeys(client) {
+      return [String(client || "").trim().toLowerCase()];
+    },
+    inferFallbackPaymentChannelFromClient() {
+      return "";
+    },
+    isAmbiguousPersonalCardPayment() {
+      return false;
+    },
+    resolvePaymentChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (["wise", "wise usd", "transferwise", "transferwise usd"].includes(normalized)) return "трансервайз дол";
+      return "";
+    },
+    inferManualFinanceChannelCurrency() {
+      return "USD";
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "calculateMovementChannelStats")}\n` +
+    "this.calculateMovementChannelStats = calculateMovementChannelStats;",
+    context
+  );
+
+  const stats = plain(context.calculateMovementChannelStats([
+    ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+    ["1", "Wise Client A", "wise usd", "504", "504", "0"],
+    ["2", "Wise Client B", "transferwise usd", "500", "500", "0"],
+  ]));
+
+  assert.equal(stats.accruedPlusByChannel["трансервайз дол"], 1004);
+  assert.equal(stats.accruedPlusCountByChannel["трансервайз дол"], 2);
 });
 
 test("buildPreparedDashboardData keeps real income payload for expense analysis", () => {

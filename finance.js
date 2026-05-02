@@ -932,7 +932,10 @@ function buildExpenseAnalysisChannelSummary({
     const plannedExpenseUsd = roundExpenseAnalysisAmount(getManualFinancePlannedExpenseUsdNumber(manualRow, usdRateLookup));
     const realExpenseUsd = roundExpenseAnalysisAmount(providerExpenseByChannel?.[channel]);
     const expenseDifferenceUsd = roundExpenseAnalysisAmount(plannedExpenseUsd - realExpenseUsd);
-    const planIncomeCount = movementStats.accruedPlusCountByChannel?.[channel] || 0;
+    const planIncomeCount = getExpenseAnalysisPlannedIncomeCount(
+      movementStats.accruedPlusCountByChannel?.[channel],
+      ordersPlanUsd
+    );
     const autoIncomeCount = ledgerIncomeCounts.autoByChannel?.[channel] || 0;
     const manualIncomeCount = ledgerIncomeCounts.manualByChannel?.[channel] || 0;
     const screenshotIncomeCount = ledgerIncomeCounts.screenshotByChannel?.[channel] || 0;
@@ -1004,6 +1007,12 @@ function buildExpenseAnalysisChannelSummary({
       screenshot: incomeCountTotals.screenshot
     }
   };
+}
+
+function getExpenseAnalysisPlannedIncomeCount(rawCount, ordersPlanUsd) {
+  const count = Math.trunc(parseLooseNumber(rawCount));
+  if (count > 0) return count;
+  return roundExpenseAnalysisAmount(ordersPlanUsd) > 0 ? 1 : 0;
 }
 
 function buildLedgerIncomeCountSummaryByChannel(rows = []) {
