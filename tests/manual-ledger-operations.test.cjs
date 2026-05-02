@@ -155,6 +155,9 @@ function buildLedgerTestContext() {
   };
   vm.createContext(context);
   vm.runInContext(
+    `${extractFunction(googleSheetsJs, "normalizeManualLedgerSourceToken")}\n` +
+    `${extractFunction(googleSheetsJs, "inferManualLedgerSourceFromRawSourceId")}\n` +
+    `${extractFunction(googleSheetsJs, "inferManualLedgerSourceFromChannels")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerSource")}\n` +
     `${extractFunction(googleSheetsJs, "resolveManualLedgerSource")}\n` +
     `${extractFunction(googleSheetsJs, "getManualLedgerDisplaySource")}\n` +
@@ -264,7 +267,7 @@ test("buildManualLedgerSheetValues maps rows by the provided Ledger header", () 
   assert.equal(values[1][CURRENT_LEDGER_HEADER.indexOf("amount_net")], "115");
 });
 
-test("parseManualLedgerSheetValues tolerates missing source and exposes sheetRowNumber plus unknown display source", () => {
+test("parseManualLedgerSheetValues infers provider source from channel when source column is missing", () => {
   const context = buildLedgerTestContext();
   const parsed = plain(context.parseManualLedgerSheetValues([
     ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
@@ -273,11 +276,11 @@ test("parseManualLedgerSheetValues tolerates missing source and exposes sheetRow
 
   assert.equal(parsed.rows.length, 1);
   assert.equal(parsed.rows[0].sheetRowNumber, 2);
-  assert.equal(parsed.rows[0].source, "");
-  assert.equal(parsed.rows[0].displaySource, "unknown");
+  assert.equal(parsed.rows[0].source, "paypal");
+  assert.equal(parsed.rows[0].displaySource, "paypal");
 });
 
-test("parseManualLedgerSheetValues normalizes migration raw_source_id rows as manual", () => {
+test("parseManualLedgerSheetValues normalizes migration raw_source_id rows as migration", () => {
   const context = buildLedgerTestContext();
   const parsed = plain(context.parseManualLedgerSheetValues([
     ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
@@ -285,8 +288,8 @@ test("parseManualLedgerSheetValues normalizes migration raw_source_id rows as ma
   ]));
 
   assert.equal(parsed.rows.length, 1);
-  assert.equal(parsed.rows[0].source, "manual");
-  assert.equal(parsed.rows[0].displaySource, "manual");
+  assert.equal(parsed.rows[0].source, "migration");
+  assert.equal(parsed.rows[0].displaySource, "migration");
 });
 
 test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger row only", () => {
@@ -294,21 +297,21 @@ test("buildUpdatedManualLedgerSheetValues updates the correct physical Ledger ro
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
     ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "120", "", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "edit me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "edit me", "", "", "other", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildUpdatedManualLedgerSheetValues(values, {
     sheetRowNumber: 3,
     amount: "700",
     comment: "updated row",
-    source: "mcp",
+    source: "other",
   }));
 
   assert.equal(updated[1][13], "keep me");
   assert.equal(updated[1][16], "manual");
   assert.equal(updated[2][4], "700");
   assert.equal(updated[2][13], "updated row");
-  assert.equal(updated[2][16], "mcp");
+  assert.equal(updated[2][16], "other");
 });
 
 test("buildDeletedManualLedgerSheetValues deletes the correct physical Ledger row", () => {
@@ -316,8 +319,8 @@ test("buildDeletedManualLedgerSheetValues deletes the correct physical Ledger ro
   const values = [
     context.MANUAL_LEDGER_HEADERS.slice(),
     ["2026-05-01", "income", "", "пейпал дол", "120", "USD", "120", "120", "", "120", "servicein", "", "in", "keep me", "", "", "manual", "raw-1", "raw-1", "", "2026-05-01T09:00:00.000Z", "2026-05-01T09:00:00.000Z"],
-    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "remove me", "", "", "photo", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
-    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "87", "", "87", "servicein", "", "in", "keep me too", "", "", "mcp", "raw-3", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
+    ["2026-05-02", "personal_expense", "Яндекс руб", "", "500", "RUB", "6", "500", "", "500", "food", "", "out", "remove me", "", "", "other", "raw-2", "raw-2", "", "2026-05-02T09:00:00.000Z", "2026-05-02T09:00:00.000Z"],
+    ["2026-05-03", "income", "", "Бинанс spot", "87", "USD", "87", "87", "", "87", "servicein", "", "in", "keep me too", "", "", "other", "raw-3", "raw-3", "", "2026-05-03T09:00:00.000Z", "2026-05-03T09:00:00.000Z"],
   ];
 
   const updated = plain(context.buildDeletedManualLedgerSheetValues(values, 3));
@@ -364,7 +367,7 @@ test("expense accounting imports write Ledger only and do not update legacy Ра
   assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
 
-test("buildLedgerRowsFromAccountingEntries maps provider rows to mcp and OCR rows to photo", () => {
+test("buildLedgerRowsFromAccountingEntries maps provider rows to provider sources and OCR rows to generic other", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
     {
@@ -393,8 +396,8 @@ test("buildLedgerRowsFromAccountingEntries maps provider rows to mcp and OCR row
   ]));
 
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].source, "mcp");
-  assert.equal(rows[1].source, "photo");
+  assert.equal(rows[0].source, "paypal");
+  assert.equal(rows[1].source, "other");
 });
 
 test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids", () => {
@@ -443,7 +446,7 @@ test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail
   assert.equal(normalized.rows[0].counterparty, "ТОВ Сервіс");
   assert.equal(normalized.rows[0].description, "Privat payment");
   assert.equal(normalized.rows[0].externalId, "PB-DETAIL-1");
-  assert.equal(normalized.rows[0].source, "mcp");
+  assert.equal(normalized.rows[0].source, "privatbank");
 });
 
 test("filterExpenseOperationsRows filters by period, channels, and source", () => {
@@ -460,7 +463,7 @@ test("filterExpenseOperationsRows filters by period, channels, and source", () =
 
   const rows = [
     { date: "2026-05-01", source: "manual", displaySource: "manual", operation: "income", fromChannel: "", toChannel: "пейпал дол" },
-    { date: "2026-05-02", source: "mcp", displaySource: "mcp", operation: "personal_expense", fromChannel: "Яндекс руб", toChannel: "" },
+    { date: "2026-05-02", source: "other", displaySource: "other", operation: "personal_expense", fromChannel: "Яндекс руб", toChannel: "" },
     { date: "2026-05-03", source: "", displaySource: "unknown", operation: "business_expense", fromChannel: "монобанк грн", toChannel: "" },
   ];
 

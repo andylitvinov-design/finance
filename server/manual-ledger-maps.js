@@ -35,7 +35,18 @@ export const MANUAL_LEDGER_OPERATIONS = [
 ];
 
 export const MANUAL_LEDGER_DIRECTIONS = ["in", "out", "neutral"];
-export const MANUAL_LEDGER_SOURCES = ["manual", "mcp", "photo", "wise"];
+export const MANUAL_LEDGER_SOURCES = [
+  "manual",
+  "fact",
+  "paypal",
+  "wise",
+  "monobank",
+  "privatbank",
+  "td_bank",
+  "migration",
+  "google_sheets",
+  "other"
+];
 export const CANONICAL_LEDGER_CATEGORIES = ["servicein", "ezoin", "exchange", "partner", "business", "house", "food", "fun", "travel", "extra"];
 
 const DEFAULT_CATEGORY_MAP = {
@@ -174,16 +185,54 @@ export function normalizeManualLedgerDirection(value, operation = "") {
 export function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeToken(value);
   if (!token) return fallback;
-  if (MANUAL_LEDGER_SOURCES.includes(token)) return token;
-  if (["paypal", "paypal mcp", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "import", "mcp import"].includes(token)) return "mcp";
-  if (["ocr", "photo parsing", "screenshot", "browser ocr", "image"].includes(token)) return "photo";
-  if (["fact", "manual fact", "manual finance"].includes(token)) return "manual";
+  const normalizedToken = token.replace(/\s+/g, "_");
+  if (MANUAL_LEDGER_SOURCES.includes(normalizedToken)) return normalizedToken;
+  if (["manual_fact", "manual_finance"].includes(normalizedToken)) return "manual";
+  if (["paypal", "paypal_mcp"].includes(normalizedToken)) return "paypal";
+  if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
+  if (["monobank", "mono"].includes(normalizedToken)) return "monobank";
+  if (["privatbank", "privat24", "privat_24"].includes(normalizedToken)) return "privatbank";
+  if (["tdbank", "td_bank"].includes(normalizedToken)) return "td_bank";
+  if (["migration", "migrated"].includes(normalizedToken)) return "migration";
+  if (["sheet", "sheets"].includes(normalizedToken)) return "google_sheets";
+  if (["provider", "import", "mcp", "mcp_import", "ocr", "photo_parsing", "screenshot", "browser_ocr", "image", "photo"].includes(normalizedToken)) return "other";
   return fallback;
 }
 
-export function resolveManualLedgerSource(value, rawSourceId = "", fallback = "") {
+function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
+  const raw = String(rawSourceId || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (/^migration:/i.test(raw)) return "migration";
+  if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
+  if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
+  if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
+  if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
+  if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
+  return "";
+}
+
+function inferManualLedgerSourceFromChannels(...values) {
+  const normalized = values.map((value) => normalizeToken(value)).filter(Boolean).join(" ");
+  if (!normalized) return "";
+  if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+  if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
+  if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
+  if (/(privat|приват)/.test(normalized)) return "privatbank";
+  if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
+  return "";
+}
+
+export function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const normalized = normalizeManualLedgerSource(value, "");
-  if (normalized) return normalized;
-  if (/^migration:/i.test(String(rawSourceId || "").trim())) return "manual";
-  return fallback;
+  if (normalized && normalized !== "other") return normalized;
+  const inferred = inferManualLedgerSourceFromRawSourceId(rawSourceId) ||
+    inferManualLedgerSourceFromChannels(
+      context?.channel,
+      context?.fromChannel,
+      context?.from_channel,
+      context?.toChannel,
+      context?.to_channel
+    );
+  if (inferred) return inferred;
+  return normalized || fallback;
 }

@@ -289,11 +289,70 @@ test("audit snapshot does not count PayPal net as exact when fee is missing", as
   assert.match(response.warnings.join("\n"), /PayPal warning: missing fee for TXN-NOFEE/);
 });
 
+test("audit snapshot counts unknown source rows in balance when amount_net is valid", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          toChannel: "cash usd",
+          amount: "50",
+          amountUsd: "50",
+          amountGross: "50",
+          amountFee: "",
+          amountNet: "50",
+          source: "other",
+          ledgerV2: {
+            amount: "50",
+            amount_usd: "50",
+            amount_gross: "50",
+            amount_fee: "",
+            amount_net: "50",
+            balance_amount: 50,
+            source: "other",
+            to_channel: "cash usd",
+          },
+        }),
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.sources.unknown, 1);
+  assert.equal(response.balances.by_channel[0].channel, "cash usd");
+  assert.equal(response.balances.by_channel[0].balance_amount, 50);
+  assert.equal(response.balances.total_usd, 50);
+});
+
 test("audit snapshot counts unknown source rows", async () => {
   const response = await buildFixtureSnapshot();
 
   assert.equal(response.sources.unknown, 1);
   assert.equal(response.summary.unknown_source_rows, 1);
+});
+
+test("audit snapshot counts migration rows separately from unknown", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          source: "migration",
+          rawSourceId: "migration:2026-04-24:1:1",
+          ledgerV2: {
+            source: "migration",
+            external_id: "migration:2026-04-24:1:1",
+          },
+        }),
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.sources.migration, 1);
+  assert.equal(response.sources.unknown, 0);
 });
 
 test("audit snapshot includeRows=false does not expose raw rows", async () => {

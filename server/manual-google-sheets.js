@@ -424,7 +424,15 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         comment: String(row[indexes.comment] || "").trim(),
         counterparty: String(row[indexes.counterparty] || "").trim(),
         description: String(row[indexes.description] || "").trim(),
-        source: resolveManualLedgerSource(indexes.source === -1 ? "" : row[indexes.source], row[indexes.rawSourceId], ""),
+        source: resolveManualLedgerSource(
+          indexes.source === -1 ? "" : row[indexes.source],
+          row[indexes.rawSourceId],
+          "",
+          {
+            fromChannel: row[indexes.fromChannel],
+            toChannel: row[indexes.toChannel],
+          }
+        ),
         rawSourceId: String(row[indexes.rawSourceId] || "").trim(),
         externalId: indexes.externalId === -1 ? "" : String(row[indexes.externalId] || "").trim(),
         transferGroupId: String(row[indexes.transferGroupId] || "").trim(),

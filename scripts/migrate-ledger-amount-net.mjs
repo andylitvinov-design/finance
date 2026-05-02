@@ -54,8 +54,11 @@ console.log(JSON.stringify({
   rowCount: result.rowCount,
   hasChanges: result.hasChanges,
   missingAmountNetRows: result.missingAmountNetRows,
+  incompletePayPalRows: result.incompletePayPalRows,
   exchangeMissingAmountUsdRows: result.exchangeMissingAmountUsdRows,
   derivedExchangeAmountUsdRows: result.derivedExchangeAmountUsdRows,
+  sourceBackfilledRows: result.sourceBackfilledRows,
+  unknownSourceRows: result.unknownSourceRows,
   balanceDelta: round(result.balanceDelta),
   errors: result.errors
 }, null, 2));
@@ -128,7 +131,7 @@ function buildMigratedLedger(values) {
   }
   const header = values[headerIndex].slice();
   let hasChanges = false;
-  const required = ["amount_usd", "amount_gross", "amount_fee", "amount_net"];
+  const required = ["amount_usd", "amount_gross", "amount_fee", "amount_net", "source"];
   for (const name of required) {
     if (findIndex(header, [name]) === -1) {
       header.push(name);
@@ -143,13 +146,20 @@ function buildMigratedLedger(values) {
     amountGross: findIndex(header, ["amount_gross"]),
     amountFee: findIndex(header, ["amount_fee", "fee"]),
     amountNet: findIndex(header, ["amount_net"]),
+    source: findIndex(header, ["source"]),
+    rawSourceId: findIndex(header, ["raw_source_id", "raw source id", "source transaction id", "external_id", "external id"]),
+    fromChannel: findIndex(header, ["from_channel", "from channel"]),
+    toChannel: findIndex(header, ["to_channel", "to channel"]),
     rate: findIndex(header, ["rate", "курс", "exchange_rate", "kurs"]),
   };
   const nextValues = values.map((row, index) => index === headerIndex ? header.slice() : row.slice());
   let rowCount = 0;
   let missingAmountNetRows = 0;
+  let incompletePayPalRows = 0;
   let exchangeMissingAmountUsdRows = 0;
   let derivedExchangeAmountUsdRows = 0;
+  let sourceBackfilledRows = 0;
+  let unknownSourceRows = 0;
   let balanceDelta = 0;
   const errors = [];
 
@@ -158,29 +168,48 @@ function buildMigratedLedger(values) {
     if (!row.some((cell) => String(cell || "").trim())) continue;
     rowCount += 1;
     const amount = parseNumber(row[indexes.amount]);
+    const amountGross = parseNumber(row[indexes.amountGross]) ?? Math.abs(amount || 0);
     const amountFee = parseNumber(row[indexes.amountFee]);
     const existingNet = parseNumber(row[indexes.amountNet]);
-    const nextNet = existingNet === null ? Math.max(0, Math.abs(amount || 0) - Math.abs(amountFee || 0)) : existingNet;
+    const source = inferLedgerSource({
+      currentSource: row[indexes.source],
+      rawSourceId: row[indexes.rawSourceId],
+      fromChannel: row[indexes.fromChannel],
+      toChannel: row[indexes.toChannel],
+    });
+    if (source === "unknown") {
+      unknownSourceRows += 1;
+    } else if (String(row[indexes.source] || "").trim() !== source) {
+      row[indexes.source] = source;
+      sourceBackfilledRows += 1;
+      hasChanges = true;
+    }
+    const isPayPalSource = source === "paypal";
+    const nextNet = existingNet === null
+      ? deriveSafeAmountNet({ amount, amountGross, amountFee, isPayPalSource })
+      : existingNet;
     if (existingNet === null) {
       missingAmountNetRows += 1;
-      hasChanges = true;
+      if (isPayPalSource && amountFee === null) incompletePayPalRows += 1;
     }
     const nextGross = row[indexes.amountGross] || formatNumber(Math.abs(amount || 0));
     if (row[indexes.amountGross] !== nextGross) {
       row[indexes.amountGross] = nextGross;
       hasChanges = true;
     }
-    const formattedNet = formatNumber(nextNet);
-    if (row[indexes.amountNet] !== formattedNet) {
-      row[indexes.amountNet] = formattedNet;
-      hasChanges = true;
+    if (nextNet !== null) {
+      const formattedNet = formatNumber(nextNet);
+      if (row[indexes.amountNet] !== formattedNet) {
+        row[indexes.amountNet] = formattedNet;
+        hasChanges = true;
+      }
+      balanceDelta += signedAmount(nextNet, row[indexes.operation]) - signedAmount(amount || 0, row[indexes.operation]);
     }
-    balanceDelta += signedAmount(nextNet, row[indexes.operation]) - signedAmount(amount || 0, row[indexes.operation]);
     const operation = normalize(row[indexes.operation]);
     if (operation === "exchange_in" || operation === "exchange_out" || operation === "exchange") {
       const existingAmountUsd = parseNumber(row[indexes.amountUsd]);
       if (existingAmountUsd === null) {
-        const derivedAmountUsd = deriveExchangeAmountUsd(row, indexes, nextNet);
+        const derivedAmountUsd = deriveExchangeAmountUsd(row, indexes, nextNet ?? Math.abs(amountGross || amount || 0));
         if (derivedAmountUsd === null) {
           exchangeMissingAmountUsdRows += 1;
           errors.push(`Ledger row ${index + 1}: exchange amount_usd is required.`);
@@ -193,7 +222,76 @@ function buildMigratedLedger(values) {
     }
   }
 
-  return { values: nextValues, rowCount, hasChanges, missingAmountNetRows, exchangeMissingAmountUsdRows, derivedExchangeAmountUsdRows, balanceDelta, errors };
+  return {
+    values: nextValues,
+    rowCount,
+    hasChanges,
+    missingAmountNetRows,
+    incompletePayPalRows,
+    exchangeMissingAmountUsdRows,
+    derivedExchangeAmountUsdRows,
+    sourceBackfilledRows,
+    unknownSourceRows,
+    balanceDelta,
+    errors
+  };
+}
+
+function inferLedgerSource({ currentSource = "", rawSourceId = "", fromChannel = "", toChannel = "" } = {}) {
+  const normalized = normalizeSourceToken(currentSource);
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "google_sheets"].includes(normalized)) {
+    return normalized;
+  }
+  const fromRawSourceId = inferSourceFromRawSourceId(rawSourceId);
+  if (fromRawSourceId) return fromRawSourceId;
+  const fromChannels = inferSourceFromChannels(fromChannel, toChannel);
+  if (fromChannels) return fromChannels;
+  return "unknown";
+}
+
+function normalizeSourceToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, "_")
+    .trim();
+}
+
+function inferSourceFromRawSourceId(rawSourceId = "") {
+  const raw = String(rawSourceId || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (/^migration:/i.test(raw)) return "migration";
+  if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
+  if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
+  if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
+  if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
+  if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
+  return "";
+}
+
+function inferSourceFromChannels(...values) {
+  const normalized = values
+    .map((value) => String(value || "").trim().toLowerCase().replace(/ё/g, "е"))
+    .filter(Boolean)
+    .join(" ");
+  if (!normalized) return "";
+  if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+  if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
+  if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
+  if (/(privat|приват)/.test(normalized)) return "privatbank";
+  if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
+  return "";
+}
+
+function deriveSafeAmountNet({ amount, amountGross, amountFee, isPayPalSource = false } = {}) {
+  if (Number.isFinite(amountFee)) {
+    return Math.max(0, Math.abs(amountGross || amount || 0) - Math.abs(amountFee));
+  }
+  if (isPayPalSource) return null;
+  const base = Math.abs(amountGross || amount || 0);
+  return Number.isFinite(base) && base > 0 ? base : null;
 }
 
 function normalize(value) {
