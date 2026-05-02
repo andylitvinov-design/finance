@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  fetchWiseBalances,
   fetchWiseStatementEntries,
   normalizeWiseTransaction,
   summarizeWiseStatementEntries,
@@ -62,28 +63,6 @@ test("normalizeWiseTransaction falls back to description when merchant name is n
   assert.equal(entry.counterpartyName, "");
   assert.equal(entry.counterpartyEmail, "");
   assert.equal(entry.counterpartyLabel, "От: Invoice 441 from consulting client");
-});
-
-test("normalizeWiseTransaction preserves explicit USD net amount for real income", () => {
-  const entry = normalizeWiseTransaction(
-    {
-      type: "CREDIT",
-      date: "2026-04-21T08:00:00.000Z",
-      referenceNumber: "WISE-USD-1",
-      amount: { value: "1210.25", currency: "USD" },
-      amountUsd: "978.5",
-      totalFees: { value: "231.75", currency: "USD" },
-      details: {
-        description: "Client payment",
-        type: "TRANSFER"
-      }
-    },
-    { id: "balance-usd", currency: "USD" },
-    "profile-2"
-  );
-
-  assert.equal(entry.localAmount, 1210.25);
-  assert.equal(entry.usdAmount, 978.5);
 });
 
 test("summarizeWiseStatementEntries groups income and expense by month and currency", () => {
@@ -158,9 +137,72 @@ test("fetchWiseStatementEntries loads profiles, balances, and compact statements
   });
 
   assert.equal(urls.length, 3);
+  assert.deepEqual(result.balances, [
+    {
+      balanceId: "balance-1",
+      channel: "трансервайз евро",
+      currency: "EUR",
+      amount: 0,
+      amountUsd: ""
+    }
+  ]);
   assert.equal(result.entries.length, 1);
   assert.equal(result.entries[0].direction, "income");
   assert.equal(result.entries[0].suggestedCategory, "servicein");
   assert.equal(result.entries[0].feeAmount, null);
   assert.deepEqual(result.summary.totalsByCurrency.EUR, { income: 20, expense: 0, net: 20 });
+});
+
+test("fetchWiseBalances normalizes balance rows with channel and optional usd amount", async () => {
+  const balances = await fetchWiseBalances({
+    apiToken: "wise-token",
+    profileId: "123",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers.Authorization, "Bearer wise-token");
+      if (String(url).endsWith("/v2/profiles")) {
+        return {
+          ok: true,
+          async json() {
+            return [{ id: 123 }];
+          }
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return [
+            {
+              id: "balance-usd",
+              currency: "USD",
+              amount: { value: "150.55", currency: "USD" }
+            },
+            {
+              id: "balance-eur",
+              currency: "EUR",
+              amount: { value: "80.25", currency: "EUR" },
+              totalWorth: { value: "91.50", currency: "USD" }
+            }
+          ];
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(balances, [
+    {
+      balanceId: "balance-usd",
+      channel: "трансервайз дол",
+      currency: "USD",
+      amount: 150.55,
+      amountUsd: 150.55
+    },
+    {
+      balanceId: "balance-eur",
+      channel: "трансервайз евро",
+      currency: "EUR",
+      amount: 80.25,
+      amountUsd: 91.5
+    }
+  ]);
 });

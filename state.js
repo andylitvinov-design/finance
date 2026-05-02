@@ -39,6 +39,7 @@ const state = {
     paypalSummary: null,
     wiseLoading: false,
     wiseSummary: null,
+    wiseBalanceSnapshotKeys: new Set(),
     yoomoneyLoading: false,
     yoomoneySummary: null,
     monobankLoading: false,
