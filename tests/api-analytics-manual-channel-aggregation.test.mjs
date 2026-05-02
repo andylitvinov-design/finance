@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeServerAnalyticsPayload } from "../api/analytics-normalizer.js";
+import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 
 function sectionRows(values, title) {
   const index = values.findIndex((row) => String(row?.[0] || "").trim().toLowerCase() === title.toLowerCase());

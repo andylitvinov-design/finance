@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import { loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../api/manual-google-sheets.js";
+import { loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 

@@ -1,7 +1,7 @@
 const DEFAULT_PAYPAL_ENVIRONMENT = "live";
 const MAX_RANGE_DAYS = 366;
 const PAYPAL_PAGE_SIZE = 500;
-import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
+import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
 
 const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;

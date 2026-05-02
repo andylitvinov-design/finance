@@ -1,4 +1,4 @@
-import { MANUAL_SPREADSHEET_ID, probeGoogleSheetAccess } from "./manual-google-sheets.js";
+import { MANUAL_SPREADSHEET_ID, probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");

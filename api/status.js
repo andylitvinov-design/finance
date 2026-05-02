@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { probeGoogleSheetAccess } from "./manual-google-sheets.js";
+import { probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
