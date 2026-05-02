@@ -298,7 +298,7 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   if (normalizedOperations) {
     const ledgerV2Rows = normalizedOperations.map((row) => row.ledgerV2).filter(Boolean);
     const warnings = buildLedgerV2RepositoryWarnings(normalizedOperations, values);
-    const blockingWarnings = warnings.filter((warning) => /amount_net|amount_usd.*required/i.test(warning));
+    const blockingWarnings = warnings.filter((warning) => /amount_usd.*required/i.test(warning));
     if (blockingWarnings.length) {
       throw new Error(blockingWarnings.join(" "));
     }
