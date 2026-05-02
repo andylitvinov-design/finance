@@ -256,6 +256,9 @@ test("getExpenseAnalysisProviderExpenseByChannel counts exchange entries", () =>
     getManualFinanceFieldUsdNumber() {
       return 0;
     },
+    getExpenseAnalysisLedgerRows() {
+      return [];
+    },
     roundProviderSummaryAmount(value) {
       return Math.round((Number(value) || 0) * 10000) / 10000;
     },

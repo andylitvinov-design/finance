@@ -769,16 +769,86 @@ function getExpenseAnalysisChannelSummary() {
     state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
     state.data?.tabs?.movement?.values || []
   );
+  const ledgerRows = getExpenseAnalysisLedgerRows();
+  const hasLedgerRows = ledgerRows.length > 0;
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
-    realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
+    realIncomeSummaryByChannel: hasLedgerRows
+      ? buildLedgerRealIncomeSummaryByChannel(ledgerRows)
+      : (state.data?.realIncome?.summaryByChannel || {}),
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
   });
 }
 
+function getExpenseAnalysisLedgerRows() {
+  return getExpenseOperationsRows();
+}
+
+function getLedgerFactAmountUsd(row) {
+  const netRaw = String(row?.amountNet ?? row?.amount_net ?? "").trim();
+  const netAmount = parseLooseNumber(netRaw);
+  if (netRaw && netAmount) return Math.abs(netAmount);
+  return Math.abs(parseLooseNumber(row?.amountUsd ?? row?.amount_usd));
+}
+
+function getNormalizedLedgerFactOperation(row) {
+  return String(row?.operation || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
+function isExpenseAnalysisKnownChannel(channel) {
+  return MANUAL_FINANCE_MONEY_CHANNELS.includes(channel);
+}
+
+function getLedgerIncomeChannel(row) {
+  const operation = getNormalizedLedgerFactOperation(row);
+  if (!["income", "servicein", "ezoin"].includes(operation)) return "";
+  const channel = canonicalManualFinanceChannel(row?.toChannel ?? row?.to_channel);
+  return isExpenseAnalysisKnownChannel(channel) ? channel : "";
+}
+
+function getLedgerExpenseChannel(row) {
+  const operation = getNormalizedLedgerFactOperation(row);
+  if (!["expense", "business_expense", "personal_expense", "exchange_out", "partner_transfer"].includes(operation)) return "";
+  const channel = canonicalManualFinanceChannel(row?.fromChannel ?? row?.from_channel);
+  return isExpenseAnalysisKnownChannel(channel) ? channel : "";
+}
+
+function buildLedgerRealIncomeSummaryByChannel(rows) {
+  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, { realNetUsd: 0 }]));
+  (rows || []).forEach((row) => {
+    const channel = getLedgerIncomeChannel(row);
+    if (!channel) return;
+    totals[channel].realNetUsd += getLedgerFactAmountUsd(row);
+  });
+  return Object.fromEntries(
+    Object.entries(totals).map(([channel, summary]) => [
+      channel,
+      { realNetUsd: roundProviderSummaryAmount(summary.realNetUsd) }
+    ])
+  );
+}
+
+function buildLedgerProviderExpenseByChannel(rows) {
+  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+  (rows || []).forEach((row) => {
+    const channel = getLedgerExpenseChannel(row);
+    if (!channel) return;
+    totals[channel] += getLedgerFactAmountUsd(row);
+  });
+  return Object.fromEntries(
+    Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
+  );
+}
+
 function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
+  const ledgerRows = getExpenseAnalysisLedgerRows();
+  if (ledgerRows.length) return buildLedgerProviderExpenseByChannel(ledgerRows);
+
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (state.expenseAccounting.entries || []).forEach((entry) => {
     if (!entry?.channel || !["expense", "exchange"].includes(entry.direction)) return;
