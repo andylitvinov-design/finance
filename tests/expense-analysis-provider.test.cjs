@@ -399,7 +399,18 @@ test("repository ledger expense rows also exclude provider, wise, paypal, and mc
     `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
     `${extractFunction(financeJs, "buildEmptyExpenseAmounts")}\n` +
     `${extractFunction(financeJs, "createManualFinanceExpenseRow")}\n` +
-    `${extractFunction(googleSheetsJs, "normalizeManualLedgerSource")}\n` +
+    "function normalizeManualLedgerSource(value, fallback = \"\") {\n" +
+    "  const token = String(value || \"\").trim().toLowerCase().replace(/ё/g, \"е\").replace(/[^0-9a-zа-я]+/g, \" \").replace(/\\s+/g, \"_\").trim();\n" +
+    "  if (!token) return fallback;\n" +
+    "  if ([\"manual\", \"fact\", \"paypal\", \"wise\", \"monobank\", \"privatbank\", \"td_bank\", \"migration\", \"google_sheets\", \"other\"].includes(token)) return token;\n" +
+    "  if ([\"manual_fact\", \"manual_finance\"].includes(token)) return \"manual\";\n" +
+    "  if ([\"paypal_mcp\"].includes(token)) return \"paypal\";\n" +
+    "  if ([\"transferwise\"].includes(token)) return \"wise\";\n" +
+    "  if ([\"mono\"].includes(token)) return \"monobank\";\n" +
+    "  if ([\"privat24\", \"privat_24\"].includes(token)) return \"privatbank\";\n" +
+    "  if ([\"tdbank\", \"tdbank_mcp\", \"tdbank_import\", \"td_bank_import\", \"td\"].includes(token)) return \"td_bank\";\n" +
+    "  return token;\n" +
+    "}\n" +
     `${extractFunction(googleSheetsJs, "shouldIncludeLedgerRowInManualServicePlan")}\n` +
     `${extractFunction(googleSheetsJs, "buildExpenseRowsFromLedgerRows")}\n` +
     "this.buildExpenseRowsFromLedgerRows = buildExpenseRowsFromLedgerRows;",
