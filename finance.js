@@ -1175,6 +1175,12 @@ function getBalanceReconciliationOperationChannel(operation) {
 }
 
 function getBalanceReconciliationOperationUsdDelta(operation) {
+  const helper = (typeof window !== "undefined" ? window.EzohataLedgerAnalyticsHelper : null) || {};
+  if (helper.normalizeLedgerRow && helper.getSignedAmountUsd) {
+    const normalized = helper.normalizeLedgerRow(operation);
+    const signedUsd = helper.getSignedAmountUsd(normalized);
+    return roundExpenseAnalysisAmount(signedUsd);
+  }
   const normalizedOperation = normalizeCell(operation?.operation);
   const sign = ({
     income: 1,
@@ -1195,7 +1201,7 @@ function getBalanceReconciliationOperationUsdDelta(operation) {
     : 0;
   const baseAmount = amountUsd || amountNet;
   if (!baseAmount) return 0;
-  return roundExpenseAnalysisAmount(sign * Math.abs(baseAmount));
+  return roundExpenseAnalysisAmount(sign * (baseAmount < 0 ? -baseAmount : baseAmount));
 }
 
 function getLatestFactNowLookup() {

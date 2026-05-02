@@ -105,7 +105,7 @@ function renderStandardTab(tabId, label) {
   const values = tabId === "analytics"
     ? getAnalyticsMergedValues()
     : (state.data?.tabs?.[tabId]?.values || []);
-  if (!values.length) {
+  if (!values.length && tabId !== "analytics") {
     wrap.innerHTML = `<div class="empty">Нет данных для отображения.</div>`;
     block.appendChild(wrap);
     return block;
@@ -629,6 +629,145 @@ function formatOptionalProviderAmount(value, currency) {
   return `${formatSheetNumber(amount)} ${currency || ""}`.trim();
 }
 
+function getLedgerAnalyticsHelper() {
+  return (typeof window !== "undefined" ? window.EzohataLedgerAnalyticsHelper : null) || {};
+}
+
+function getLedgerAnalyticsRawRows() {
+  const serverRows = Array.isArray(state.data?.manual?.operations) ? state.data.manual.operations : [];
+  const serverV2Rows = Array.isArray(state.data?.manual?.ledgerV2Rows) ? state.data.manual.ledgerV2Rows : [];
+  const directRows = Array.isArray(state.manualFinance.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
+  return serverRows.length ? serverRows : (serverV2Rows.length ? serverV2Rows : directRows);
+}
+
+function getLedgerAnalyticsModel(planFactSummary = null) {
+  const helper = getLedgerAnalyticsHelper();
+  if (!helper.buildFinancialModel) {
+    return {
+      rows: [],
+      totals: {},
+      cards: [],
+      pnlRows: [],
+      balancesByChannel: [],
+      providerHealthRows: [],
+      expenseCategoryRows: [],
+      planVsFactRows: [],
+      exchangeControlRows: [],
+      warningRows: [],
+      drilldownRows: []
+    };
+  }
+  return helper.buildFinancialModel(getLedgerAnalyticsRawRows(), {
+    planFactSummary,
+    fallbackAmountRows: state.data?.manual?.views?.fallback_amount_rows || state.data?.manual?.fallback_amount_rows || 0
+  });
+}
+
+function formatLedgerUsd(value) {
+  return `${formatSheetNumber(value)} USD`;
+}
+
+function renderLedgerSummaryCards(cards) {
+  const grid = document.createElement("div");
+  grid.className = "expense-summary-grid";
+  (cards || []).forEach(([label, value]) => {
+    const display = label === "Data Warnings"
+      ? String(value ?? 0)
+      : (typeof value === "number" ? formatLedgerUsd(value) : String(value ?? ""));
+    grid.appendChild(renderExpenseSummaryCard(label, display));
+  });
+  return grid;
+}
+
+function renderLedgerSection(titleText, rows, options = {}) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = titleText;
+  block.appendChild(title);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderPlainTable(rows));
+  block.appendChild(wrap);
+  if (options.drilldownRows?.length) {
+    block.appendChild(renderLedgerRowsDrilldown(options.drilldownRows));
+  }
+  return block;
+}
+
+function renderLedgerRowsDrilldown(rows) {
+  const details = document.createElement("details");
+  details.className = "analytics-section";
+  details.style.marginTop = "12px";
+  const summary = document.createElement("summary");
+  summary.textContent = "show Ledger rows";
+  details.appendChild(summary);
+  const values = [[
+    "date", "operation", "source", "from_channel", "to_channel", "amount_usd",
+    "gross", "fee", "net", "category", "external_id", "comment"
+  ]];
+  (rows || []).forEach((row) => {
+    values.push([
+      row.date || "",
+      row.operation || "",
+      row.source || "",
+      row.from_channel || "",
+      row.to_channel || "",
+      row.amount_usd || "",
+      row.amount_gross || "",
+      row.amount_fee || "",
+      row.amount_net || "",
+      row.category || "",
+      row.external_id || "",
+      row.comment || ""
+    ]);
+  });
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderPlainTable(values));
+  details.appendChild(wrap);
+  return details;
+}
+
+function renderLedgerStrategicDashboard() {
+  const model = getLedgerAnalyticsModel(getExpenseAnalysisChannelSummary());
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(renderLedgerSummaryCards(model.cards));
+  fragment.appendChild(renderLedgerSection("P&L", [
+    ["Metric", "USD"],
+    ...(model.pnlRows || []).map(([label, value]) => [label, formatSheetNumber(value)])
+  ]));
+  fragment.appendChild(renderLedgerSection("Balances by channel", [
+    ["Channel", "Start Balance", "Inflow", "Outflow", "End Balance"],
+    ...(model.balancesByChannel || []).map((row) => [
+      row.channel,
+      formatSheetNumber(row.startBalance),
+      formatSheetNumber(row.inflow),
+      formatSheetNumber(row.outflow),
+      formatSheetNumber(row.endBalance)
+    ])
+  ]));
+  fragment.appendChild(renderLedgerSection("Plan vs Fact", [
+    ["Metric", "Plan", "Fact", "Delta", "Delta %", "Status"],
+    ...(model.planVsFactRows || []).map((row) => [
+      row.metric,
+      formatSheetNumber(row.plan),
+      formatSheetNumber(row.fact),
+      formatSheetNumber(row.delta),
+      formatSheetNumber(row.deltaPercent),
+      row.status
+    ])
+  ]));
+  fragment.appendChild(renderLedgerSection("Warnings", [
+    ["Warning", "Rows", "Status"],
+    ...(model.warningRows || []).map((row) => [row.name, row.count, row.status])
+  ], { drilldownRows: model.drilldownRows }));
+  return fragment;
+}
+
 function renderExpenseFinancialAnalysis() {
   const block = document.createElement("div");
   block.className = "finance-shell expense-analysis-shell";
@@ -654,96 +793,41 @@ function renderExpenseFinancialAnalysis() {
     warning.textContent = manualOverlayWarning;
     block.appendChild(warning);
   }
-  if (manualOverlayWarning) {
-    const paypalSummary = getActivePayPalSummary();
-    if (hasProviderSummaryData(paypalSummary)) {
-      block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
-    }
-    const wiseSummary = getActiveWiseSummary();
-    if (hasProviderSummaryData(wiseSummary)) {
-      block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
-    }
-    const yoomoneySummary = getActiveYooMoneySummary();
-    if (hasProviderSummaryData(yoomoneySummary)) {
-      block.appendChild(renderProviderMonthlyStatement("ЮMoney за месяц", yoomoneySummary));
-    }
-    const monobankSummary = getActiveMonobankSummary();
-    if (hasProviderSummaryData(monobankSummary)) {
-      block.appendChild(renderProviderMonthlyStatement("Monobank за месяц", monobankSummary));
-    }
-    const privatBankSummary = getActivePrivatBankSummary();
-    if (hasProviderSummaryData(privatBankSummary)) {
-      block.appendChild(renderProviderMonthlyStatement("PrivatBank за месяц", privatBankSummary));
-    }
-    const tdBankSummary = getActiveTdBankSummary();
-    if (hasProviderSummaryData(tdBankSummary)) {
-      block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
-    }
-    return block;
-  }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
+  const model = getLedgerAnalyticsModel(channelReconciliation);
+  block.appendChild(renderLedgerSection("Provider Health", [
+    ["Provider", "rows", "income", "expenses", "fees", "net", "last import", "warnings"],
+    ...(model.providerHealthRows || []).map((row) => [
+      row.provider,
+      row.rows,
+      formatSheetNumber(row.income),
+      formatSheetNumber(row.expenses),
+      formatSheetNumber(row.fees),
+      formatSheetNumber(row.net),
+      row.lastImport || "—",
+      row.warnings || ""
+    ])
+  ]));
+  block.appendChild(renderLedgerSection("Expense categories", [
+    ["category", "amount", "% of expenses"],
+    ...(model.expenseCategoryRows || []).map((row) => [
+      row.category,
+      formatSheetNumber(row.amount),
+      formatSheetNumber(row.percent)
+    ])
+  ]));
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
-  block.appendChild(renderBalanceReconciliationBlock(getBalanceReconciliationSummary()));
-  const paypalSummary = getActivePayPalSummary();
-  if (hasProviderSummaryData(paypalSummary)) {
-    block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
-  }
-  const wiseSummary = getActiveWiseSummary();
-  if (hasProviderSummaryData(wiseSummary)) {
-    block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
-  }
-  const yoomoneySummary = getActiveYooMoneySummary();
-  if (hasProviderSummaryData(yoomoneySummary)) {
-    block.appendChild(renderProviderMonthlyStatement("ЮMoney за месяц", yoomoneySummary));
-  }
-  const monobankSummary = getActiveMonobankSummary();
-  if (hasProviderSummaryData(monobankSummary)) {
-    block.appendChild(renderProviderMonthlyStatement("Monobank за месяц", monobankSummary));
-  }
-  const privatBankSummary = getActivePrivatBankSummary();
-  if (hasProviderSummaryData(privatBankSummary)) {
-    block.appendChild(renderProviderMonthlyStatement("PrivatBank за месяц", privatBankSummary));
-  }
-  const tdBankSummary = getActiveTdBankSummary();
-  if (hasProviderSummaryData(tdBankSummary)) {
-    block.appendChild(renderProviderMonthlyStatement("TD Bank за месяц", tdBankSummary));
-  }
-  const manualRows = getCurrentAnalyticsManualRows();
-  const usdRateLookup = buildManualFinanceUsdRateLookup(
-    state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
-    state.data?.tabs?.movement?.values || []
-  );
-  const expenseUsd = Object.fromEntries(MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, 0]));
-  manualRows.forEach((row) => {
-    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return;
-    expenseUsd.business += getManualFinanceFieldUsdNumber(row, "business", usdRateLookup);
-    expenseUsd.flat += getManualFinanceFieldUsdNumber(row, "flat", usdRateLookup);
-    expenseUsd.food += getManualFinanceFieldUsdNumber(row, "food", usdRateLookup);
-    expenseUsd.fun += getManualFinanceFieldUsdNumber(row, "fun", usdRateLookup);
-    expenseUsd.travel += getManualFinanceFieldUsdNumber(row, "travel", usdRateLookup);
-    expenseUsd.study += getManualFinanceFieldUsdNumber(row, "study", usdRateLookup);
-  });
-  const incomeUsd = manualRows.reduce((sum, row) => {
-    if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
-    return sum + getManualFinanceFieldUsdNumber(row, "serviceIncome", usdRateLookup);
-  }, 0);
-  const movementStats = calculateMovementChannelStats(state.data?.tabs?.movement?.values || []);
-  const movementIncomeUsd = Object.values(movementStats.usdByChannel || {}).reduce((sum, value) => sum + parseLooseNumber(value), 0);
-  const totalExpensesUsd = Object.values(expenseUsd).reduce((sum, value) => sum + value, 0);
-  const totalIncomeUsd = incomeUsd + movementIncomeUsd;
-  const cards = document.createElement("div");
-  cards.className = "expense-summary-grid";
-  [["прибыль", totalIncomeUsd - totalExpensesUsd], ["приход", totalIncomeUsd], ["расходы", totalExpensesUsd]]
-    .forEach(([label, value]) => cards.appendChild(renderExpenseSummaryCard(label, `${formatSheetNumber(value)} USD`)));
-  block.appendChild(cards);
-  const rows = [
-    ["тип расходов", "USD"],
-    ...MANUAL_EXPENSE_ACCOUNTING_CATEGORIES.map((category) => [category, formatSheetNumber(expenseUsd[category])])
-  ];
-  const wrap = document.createElement("div");
-  wrap.className = "table-wrap analysis-table-wrap";
-  wrap.appendChild(renderPlainTable(rows));
-  block.appendChild(wrap);
+  block.appendChild(renderLedgerSection("Exchange Control", [
+    ["metric", "exchange out", "exchange in", "difference", "missing pairs", "rate/loss"],
+    ...(model.exchangeControlRows || []).map((row) => [
+      row[0],
+      formatSheetNumber(row[1]),
+      formatSheetNumber(row[2]),
+      formatSheetNumber(row[3]),
+      row[4],
+      formatSheetNumber(row[5])
+    ])
+  ], { drilldownRows: model.drilldownRows }));
   return block;
 }
 
@@ -838,24 +922,21 @@ function getBalanceReconciliationSummary() {
 }
 
 function getExpenseAnalysisLedgerRows() {
-  return getExpenseOperationsRows();
+  const helper = typeof getLedgerAnalyticsHelper === "function" ? getLedgerAnalyticsHelper() : {};
+  return helper.normalizeLedgerRows ? helper.normalizeLedgerRows(getExpenseOperationsRows()) : getExpenseOperationsRows();
 }
 
 function getLedgerFactAmountUsd(row) {
+  const helper = typeof getLedgerAnalyticsHelper === "function" ? getLedgerAnalyticsHelper() : {};
+  if (helper.getSignedAmountUsd) return Math.abs(helper.getSignedAmountUsd(row));
   const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
-  if (amountUsdRaw) return Math.abs(parseLooseNumber(amountUsdRaw));
-  const currency = String(row?.currency || "").trim().toUpperCase();
-  if (currency !== "USD") return 0;
-  const netRaw = String(row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "").trim();
-  if (netRaw) return Math.abs(parseLooseNumber(netRaw));
-  return Math.abs(parseLooseNumber(row?.amount));
+  return amountUsdRaw ? Math.abs(parseLooseNumber(amountUsdRaw)) : 0;
 }
 
 function getNormalizedLedgerFactOperation(row) {
-  return String(row?.operation || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_");
+  const helper = typeof getLedgerAnalyticsHelper === "function" ? getLedgerAnalyticsHelper() : {};
+  if (helper.normalizeLegacyOperation) return helper.normalizeLegacyOperation(row?.operation || row?.legacy_operation || "");
+  return String(row?.operation || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
 
 function isExpenseAnalysisKnownChannel(channel) {
@@ -870,6 +951,11 @@ function getLedgerIncomeChannel(row) {
 }
 
 function isLedgerProviderIncomeSource(row) {
+  const helper = typeof getLedgerAnalyticsHelper === "function" ? getLedgerAnalyticsHelper() : {};
+  if (helper.isKnownProviderSource && helper.isManualLikeSource) {
+    const source = row?.source || row?.displaySource || "";
+    return helper.isKnownProviderSource(source) && !helper.isManualLikeSource(source);
+  }
   const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
   if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
   if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "mcp", "provider"].includes(source)) return true;
@@ -901,13 +987,10 @@ function buildLedgerRealIncomeSummaryByChannel(rows) {
 }
 
 function getProviderEntryExpenseAmountUsd(entry) {
+  const helper = typeof getLedgerAnalyticsHelper === "function" ? getLedgerAnalyticsHelper() : {};
+  if (helper.getSignedAmountUsd) return Math.abs(helper.getSignedAmountUsd(entry));
   const amountUsdRaw = String(entry?.usdAmount ?? entry?.amountUsd ?? entry?.amount_usd ?? "").trim();
-  if (amountUsdRaw) return Math.abs(parseLooseNumber(amountUsdRaw));
-  const currency = String(entry?.currency || "").trim().toUpperCase();
-  if (currency !== "USD") return 0;
-  const netRaw = String(entry?.amountNet ?? entry?.amount_net ?? entry?.netAmount ?? "").trim();
-  if (netRaw) return Math.abs(parseLooseNumber(netRaw));
-  return Math.abs(parseLooseNumber(entry?.localAmount ?? entry?.amount));
+  return amountUsdRaw ? Math.abs(parseLooseNumber(amountUsdRaw)) : 0;
 }
 
 function buildLedgerProviderExpenseByChannel(rows) {
@@ -3654,6 +3737,9 @@ function renderAnalyticsSections(container, values) {
   const manualWorkbookUrl = state.config?.manualFinance?.spreadsheetUrl || "";
   const manualOverlayWarning = getManualOverlayUnavailableMessage();
   const needsGoogleManualOverlay = Boolean(manualOverlayWarning);
+  if (typeof renderLedgerStrategicDashboard === "function") {
+    container.appendChild(renderLedgerStrategicDashboard());
+  }
   if (manualWorkbookUrl) {
     const linkNote = document.createElement("div");
     linkNote.className = "config-note";
