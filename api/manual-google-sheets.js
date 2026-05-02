@@ -642,7 +642,10 @@ function deriveOperationUsdAmount(operation, rateLookup = { byChannel: {}, byCur
   if (!Number.isFinite(amount)) return 0;
   const channel = mapOperationToLegacyChannel(operation) || canonicalManualFinanceChannel(operation?.fromChannel || operation?.toChannel || "");
   const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
-  if (currency === "USD") return normalizeExchangeUsdSign(amount, operation);
+  if (currency === "USD") {
+    const net = parseNumberString(operation?.amountNet ?? operation?.amount_net ?? "");
+    return normalizeExchangeUsdSign(Number.isFinite(net) && net ? net : amount, operation);
+  }
   const rate = parseNumberString(operation?.rate) ||
     parseNumberString(rateLookup.byChannel?.[channel]) ||
     parseNumberString(rateLookup.byCurrency?.[currency]) ||

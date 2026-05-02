@@ -769,14 +769,10 @@ function getExpenseAnalysisChannelSummary() {
     state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
     state.data?.tabs?.movement?.values || []
   );
-  const ledgerRows = getExpenseAnalysisLedgerRows();
-  const hasLedgerRows = ledgerRows.length > 0;
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
-    realIncomeSummaryByChannel: hasLedgerRows
-      ? buildLedgerRealIncomeSummaryByChannel(ledgerRows)
-      : (state.data?.realIncome?.summaryByChannel || {}),
+    realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
   });
@@ -787,10 +783,13 @@ function getExpenseAnalysisLedgerRows() {
 }
 
 function getLedgerFactAmountUsd(row) {
-  const netRaw = String(row?.amountNet ?? row?.amount_net ?? "").trim();
-  const netAmount = parseLooseNumber(netRaw);
-  if (netRaw && netAmount) return Math.abs(netAmount);
-  return Math.abs(parseLooseNumber(row?.amountUsd ?? row?.amount_usd));
+  const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
+  if (amountUsdRaw) return Math.abs(parseLooseNumber(amountUsdRaw));
+  const currency = String(row?.currency || "").trim().toUpperCase();
+  if (currency !== "USD") return 0;
+  const netRaw = String(row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "").trim();
+  if (netRaw) return Math.abs(parseLooseNumber(netRaw));
+  return Math.abs(parseLooseNumber(row?.amount));
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -811,6 +810,14 @@ function getLedgerIncomeChannel(row) {
   return isExpenseAnalysisKnownChannel(channel) ? channel : "";
 }
 
+function isLedgerProviderIncomeSource(row) {
+  const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
+  if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
+  if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "mcp", "provider"].includes(source)) return true;
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim().toLowerCase();
+  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|provider|mcp):/.test(rawSourceId);
+}
+
 function getLedgerExpenseChannel(row) {
   const operation = getNormalizedLedgerFactOperation(row);
   if (!["expense", "business_expense", "personal_expense", "exchange_out", "partner_transfer"].includes(operation)) return "";
@@ -821,6 +828,7 @@ function getLedgerExpenseChannel(row) {
 function buildLedgerRealIncomeSummaryByChannel(rows) {
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, { realNetUsd: 0 }]));
   (rows || []).forEach((row) => {
+    if (!isLedgerProviderIncomeSource(row)) return;
     const channel = getLedgerIncomeChannel(row);
     if (!channel) return;
     totals[channel].realNetUsd += getLedgerFactAmountUsd(row);
@@ -831,6 +839,16 @@ function buildLedgerRealIncomeSummaryByChannel(rows) {
       { realNetUsd: roundProviderSummaryAmount(summary.realNetUsd) }
     ])
   );
+}
+
+function getProviderEntryExpenseAmountUsd(entry) {
+  const amountUsdRaw = String(entry?.usdAmount ?? entry?.amountUsd ?? entry?.amount_usd ?? "").trim();
+  if (amountUsdRaw) return Math.abs(parseLooseNumber(amountUsdRaw));
+  const currency = String(entry?.currency || "").trim().toUpperCase();
+  if (currency !== "USD") return 0;
+  const netRaw = String(entry?.amountNet ?? entry?.amount_net ?? entry?.netAmount ?? "").trim();
+  if (netRaw) return Math.abs(parseLooseNumber(netRaw));
+  return Math.abs(parseLooseNumber(entry?.localAmount ?? entry?.amount));
 }
 
 function buildLedgerProviderExpenseByChannel(rows) {
@@ -854,14 +872,7 @@ function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
     if (!entry?.channel || !["expense", "exchange"].includes(entry.direction)) return;
     const channel = canonicalManualFinanceChannel(entry.channel);
     if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
-    const usdAmount = parseLooseNumber(entry.usdAmount);
-    const convertedUsd = usdAmount || getManualFinanceFieldUsdNumber({
-      channel,
-      business: entry.localAmount,
-      currency: entry.currency,
-      localAmount: entry.localAmount
-    }, "business", rateLookup);
-    totals[channel] += convertedUsd;
+    totals[channel] += getProviderEntryExpenseAmountUsd(entry);
   });
   if ((state.expenseAccounting.entries || []).length) {
     return Object.fromEntries(

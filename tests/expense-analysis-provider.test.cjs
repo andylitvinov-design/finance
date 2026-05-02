@@ -183,6 +183,7 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
@@ -192,49 +193,50 @@ function loadLedgerAnalysisHelpers(context) {
   );
 }
 
-test("ledger-first expense analysis aggregates real income and expense by canonical channels", () => {
+test("ledger expense analysis uses amount_usd first and excludes manual rows from real income", () => {
   const context = buildLedgerAnalysisTestContext();
   loadLedgerAnalysisHelpers(context);
 
   const rows = [
-    { operation: "income", toChannel: "paypal usd", amountUsd: "100", amountNet: "96" },
-    { operation: "servicein", toChannel: "wise usd", amountUsd: "200", amountNet: "0" },
-    { operation: "ezoin", to_channel: "wise", amount_usd: "50", amount_net: "48.5" },
-    { operation: "business_expense", fromChannel: "monobank", amountUsd: "30", amountNet: "28.75" },
-    { operation: "exchange_out", from_channel: "paypal usd", amount_usd: "-12", amount_net: "" },
+    { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "100", amountNet: "96", currency: "USD" },
+    { operation: "income", source: "migration", toChannel: "paypal usd", amountUsd: "75", amountNet: "75", currency: "USD" },
+    { operation: "servicein", source: "wise", toChannel: "wise usd", amountUsd: "200", amountNet: "1210.25", currency: "USD" },
+    { operation: "ezoin", source: "mcp", to_channel: "wise", amount_usd: "50", amount_net: "48.5", currency: "USD" },
+    { operation: "business_expense", source: "mcp", fromChannel: "monobank", amountUsd: "942", amountNet: "85956", currency: "RUB" },
+    { operation: "exchange_out", source: "mcp", from_channel: "paypal usd", amount_usd: "-12", amount_net: "", currency: "USD" },
   ];
 
   assert.deepEqual(plain(context.buildLedgerRealIncomeSummaryByChannel(rows)), {
-    "пейпал дол": { realNetUsd: 96 },
-    "трансервайз дол": { realNetUsd: 248.5 },
+    "пейпал дол": { realNetUsd: 0 },
+    "трансервайз дол": { realNetUsd: 250 },
     "монобанк грн": { realNetUsd: 0 },
   });
   assert.deepEqual(plain(context.buildLedgerProviderExpenseByChannel(rows)), {
     "пейпал дол": 12,
     "трансервайз дол": 0,
-    "монобанк грн": 28.75,
+    "монобанк грн": 942,
   });
 });
 
-test("expense analysis summary uses Ledger rows before stale real income and provider summaries", () => {
+test("expense analysis summary keeps provider real income even when Ledger rows exist", () => {
   const ledgerRows = [
-    { operation: "income", toChannel: "paypal usd", amountUsd: "100", amountNet: "96" },
-    { operation: "servicein", toChannel: "wise usd", amountUsd: "200", amountNet: "0" },
-    { operation: "business_expense", fromChannel: "monobank", amountUsd: "30", amountNet: "28.75" },
+    { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "100", amountNet: "96", currency: "USD" },
+    { operation: "servicein", source: "manual", toChannel: "wise usd", amountUsd: "200", amountNet: "0", currency: "USD" },
+    { operation: "business_expense", source: "mcp", fromChannel: "monobank", amountUsd: "30", amountNet: "85956", currency: "RUB" },
   ];
   const context = buildLedgerAnalysisTestContext({
     state: {
       aggregatedManualRange: null,
       manualTransfers: { data: null },
       manualFinance: { data: null },
-      expenseAccounting: {
-        entries: [],
-        paypalSummary: { totalsByCurrency: { USD: { expense: 999 } }, months: [{ totalsByCurrency: { USD: {} } }] },
-      },
-      data: {
-        realIncome: { summaryByChannel: { "пейпал дол": { realNetUsd: 999 } } },
-        tabs: { movement: { values: [] } },
-      },
+        expenseAccounting: {
+          entries: [],
+          paypalSummary: { totalsByCurrency: { USD: { expense: 999 } }, months: [{ totalsByCurrency: { USD: {} } }] },
+        },
+        data: {
+          realIncome: { summaryByChannel: { "пейпал дол": { realNetUsd: 999 }, "трансервайз дол": { realNetUsd: 978.5 } } },
+          tabs: { movement: { values: [] } },
+        },
     },
     getCurrentAnalyticsManualRows() {
       return [];
@@ -268,9 +270,11 @@ test("expense analysis summary uses Ledger rows before stale real income and pro
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
     "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
@@ -278,11 +282,11 @@ test("expense analysis summary uses Ledger rows before stale real income and pro
   );
 
   const summary = plain(context.getExpenseAnalysisChannelSummary());
-  assert.equal(summary.incomeTotals.realUsd, 296);
-  assert.equal(summary.expenseTotals.realUsd, 28.75);
-  assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "96,0000");
-  assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "200,0000");
-  assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "28,7500");
+  assert.equal(summary.incomeTotals.realUsd, 1977.5);
+  assert.equal(summary.expenseTotals.realUsd, 30);
+  assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "999,0000");
+  assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "978,5000");
+  assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "30,0000");
 });
 
 test("expense analysis falls back to existing summaries when Ledger is empty", () => {
@@ -354,9 +358,11 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
     "this.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;\n" +
@@ -372,6 +378,30 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
   const summary = plain(context.getExpenseAnalysisChannelSummary());
   assert.equal(summary.incomeTotals.realUsd, 123);
   assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "123,0000");
+});
+
+test("provider expense entries use explicit USD and never treat local RUB net as USD", () => {
+  const context = buildLedgerAnalysisTestContext({
+    state: {
+      expenseAccounting: {
+        entries: [
+          { direction: "expense", channel: "monobank", currency: "RUB", localAmount: 85956, amountNet: 85956, usdAmount: 942 },
+        ],
+      },
+    },
+    getExpenseAnalysisLedgerRows() {
+      return [];
+    },
+  });
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    "this.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;",
+    context
+  );
+
+  assert.equal(context.getExpenseAnalysisProviderExpenseByChannel({})["монобанк грн"], 942);
 });
 
 test("buildExpenseAnalysisProviderRows uses ACCRUED +3 as plan orders and manual rows for services/spend", () => {
@@ -487,6 +517,61 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
     ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500"],
     ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500"],
   ]);
+});
+
+test("buildExpenseAnalysisChannelSummary keeps Wise plan services manual-only", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: {
+        "трансервайз дол": 0
+      }
+    }),
+    sumManualFinanceFieldUsdNumber(rows, key) {
+      return rows.reduce((sum, row) => sum + context.getManualFinanceFieldUsdNumber(row, key), 0);
+    },
+    getManualFinanceFieldUsdNumber(row, key) {
+      const raw = String(row?.[key] ?? "").trim();
+      return raw ? Number(raw.replace(",", ".")) : 0;
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [
+      { channel: "трансервайз дол", serviceIncome: "", business: "0", flat: "0", food: "0", fun: "0", study: "0", travel: "0" },
+    ],
+    movementValues: [],
+    realIncomeSummaryByChannel: {
+      "трансервайз дол": { realNetUsd: 978.5 },
+    },
+    providerExpenseByChannel: {},
+    usdRateLookup: {}
+  }));
+
+  const wiseRow = summary.rows.find((row) => row[0] === "трансервайз дол");
+  assert.equal(wiseRow[2], "0,0000");
+  assert.equal(wiseRow[3], "0,0000");
+  assert.equal(wiseRow[4], "978,5000");
+  assert.equal(wiseRow[5], "-978,5000");
+  assert.equal(summary.incomeTotals.plannedUsd, summary.incomeTotals.ordersPlanUsd + summary.incomeTotals.servicePlanUsd);
 });
 
 test("calculateMovementChannelStats returns accrued plus totals by channel for expense analysis plan orders", () => {
