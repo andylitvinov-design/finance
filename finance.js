@@ -893,6 +893,7 @@ function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [],
 function buildExpenseAnalysisChannelSummary({
   manualRows = [],
   movementValues = [],
+  ledgerRows = [],
   realIncomeSummaryByChannel = {},
   providerExpenseByChannel = {},
   usdRateLookup = { byChannel: {}, byCurrency: {} }
@@ -906,11 +907,17 @@ function buildExpenseAnalysisChannelSummary({
     "разница",
     "потрачено план",
     "потрачено реал",
-    "разница"
+    "разница",
+    "план приходов, шт",
+    "авто/MCP приходов, шт",
+    "ручных приходов, шт",
+    "скриншот приходов, шт"
   ]];
   const incomeTotals = { ordersPlanUsd: 0, servicePlanUsd: 0, plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
   const expenseTotals = { plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
+  const incomeCountTotals = { plan: 0, auto: 0, manual: 0, screenshot: 0 };
   const movementStats = calculateMovementChannelStats(movementValues || []);
+  const ledgerIncomeCounts = buildLedgerIncomeCountSummaryByChannel(ledgerRows || []);
 
   MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
     const channelRows = (manualRows || []).filter((row) => row?.channel === channel);
@@ -925,6 +932,10 @@ function buildExpenseAnalysisChannelSummary({
     const plannedExpenseUsd = roundExpenseAnalysisAmount(getManualFinancePlannedExpenseUsdNumber(manualRow, usdRateLookup));
     const realExpenseUsd = roundExpenseAnalysisAmount(providerExpenseByChannel?.[channel]);
     const expenseDifferenceUsd = roundExpenseAnalysisAmount(plannedExpenseUsd - realExpenseUsd);
+    const planIncomeCount = movementStats.accruedPlusCountByChannel?.[channel] || 0;
+    const autoIncomeCount = ledgerIncomeCounts.autoByChannel?.[channel] || 0;
+    const manualIncomeCount = ledgerIncomeCounts.manualByChannel?.[channel] || 0;
+    const screenshotIncomeCount = ledgerIncomeCounts.screenshotByChannel?.[channel] || 0;
 
     rows.push([
       channel,
@@ -935,7 +946,11 @@ function buildExpenseAnalysisChannelSummary({
       formatSheetNumber(incomeDifferenceUsd),
       formatSheetNumber(plannedExpenseUsd),
       formatSheetNumber(realExpenseUsd),
-      formatSheetNumber(expenseDifferenceUsd)
+      formatSheetNumber(expenseDifferenceUsd),
+      String(planIncomeCount),
+      String(autoIncomeCount),
+      String(manualIncomeCount),
+      String(screenshotIncomeCount)
     ]);
 
     incomeTotals.ordersPlanUsd += ordersPlanUsd;
@@ -946,6 +961,10 @@ function buildExpenseAnalysisChannelSummary({
     expenseTotals.plannedUsd += plannedExpenseUsd;
     expenseTotals.realUsd += realExpenseUsd;
     expenseTotals.differenceUsd += expenseDifferenceUsd;
+    incomeCountTotals.plan += planIncomeCount;
+    incomeCountTotals.auto += autoIncomeCount;
+    incomeCountTotals.manual += manualIncomeCount;
+    incomeCountTotals.screenshot += screenshotIncomeCount;
   });
 
   rows.push([
@@ -957,7 +976,11 @@ function buildExpenseAnalysisChannelSummary({
     formatSheetNumber(incomeTotals.differenceUsd),
     formatSheetNumber(expenseTotals.plannedUsd),
     formatSheetNumber(expenseTotals.realUsd),
-    formatSheetNumber(expenseTotals.differenceUsd)
+    formatSheetNumber(expenseTotals.differenceUsd),
+    String(incomeCountTotals.plan),
+    String(incomeCountTotals.auto),
+    String(incomeCountTotals.manual),
+    String(incomeCountTotals.screenshot)
   ]);
 
   return {
@@ -973,8 +996,63 @@ function buildExpenseAnalysisChannelSummary({
       plannedUsd: roundExpenseAnalysisAmount(expenseTotals.plannedUsd),
       realUsd: roundExpenseAnalysisAmount(expenseTotals.realUsd),
       differenceUsd: roundExpenseAnalysisAmount(expenseTotals.differenceUsd)
+    },
+    incomeCountTotals: {
+      plan: incomeCountTotals.plan,
+      auto: incomeCountTotals.auto,
+      manual: incomeCountTotals.manual,
+      screenshot: incomeCountTotals.screenshot
     }
   };
+}
+
+function buildLedgerIncomeCountSummaryByChannel(rows = []) {
+  const empty = () => Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+  const summary = {
+    autoByChannel: empty(),
+    manualByChannel: empty(),
+    screenshotByChannel: empty()
+  };
+  (rows || []).forEach((rawRow) => {
+    const row = rawRow?.ledgerV2 || rawRow || {};
+    const operation = normalizeExpenseAnalysisIncomeOperation(row?.operation || row?.legacy_operation || rawRow?.operation || rawRow?.legacy_operation);
+    const category = normalizeExpenseAnalysisIncomeOperation(row?.category || rawRow?.category || row?.legacy_category || rawRow?.legacy_category);
+    if (!operation && !category) return;
+    const channel = canonicalManualFinanceChannel(row?.to_channel || row?.toChannel || rawRow?.to_channel || rawRow?.toChannel || "");
+    if (!channel || !Object.prototype.hasOwnProperty.call(summary.autoByChannel, channel)) return;
+    const source = normalizeExpenseAnalysisIncomeSource(row?.source || rawRow?.source || rawRow?.displaySource || "");
+    if (isExpenseAnalysisAutoIncomeSource(source)) summary.autoByChannel[channel] += 1;
+    else if (isExpenseAnalysisManualIncomeSource(source)) summary.manualByChannel[channel] += 1;
+    else if (isExpenseAnalysisScreenshotIncomeSource(source)) summary.screenshotByChannel[channel] += 1;
+  });
+  return summary;
+}
+
+function normalizeExpenseAnalysisIncomeOperation(value) {
+  const token = normalizeLookupText(value);
+  return ["income", "servicein", "serviceincome", "ezoin", "ezofact"].includes(token) ? token : "";
+}
+
+function normalizeExpenseAnalysisIncomeSource(value) {
+  const token = normalizeLookupText(value).replace(/\s+/g, "_");
+  if (token === "td_bank" || token === "tdbank") return "tdbank";
+  if (token === "privat24" || token === "privat_24") return "privatbank";
+  if (token === "paypal_mcp") return "paypal";
+  if (token === "mcp_import") return "mcp";
+  if (token === "photo_parsing") return "photo";
+  return token;
+}
+
+function isExpenseAnalysisAutoIncomeSource(source) {
+  return ["wise", "paypal", "monobank", "privatbank", "yoomoney", "tdbank", "provider", "mcp", "import"].includes(source);
+}
+
+function isExpenseAnalysisManualIncomeSource(source) {
+  return ["manual", "fact", "migration"].includes(source);
+}
+
+function isExpenseAnalysisScreenshotIncomeSource(source) {
+  return ["ocr", "photo", "screenshot", "image", "browser_ocr"].includes(source);
 }
 
 function buildBalanceReconciliationByChannel({
@@ -3150,7 +3228,7 @@ function extractLegacyBalanceExtraLookup(sections) {
 
 function calculateMovementChannelStats(values) {
   if (!values.length) {
-    return { localByChannel: {}, usdByChannel: {}, accruedPlusByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
+    return { localByChannel: {}, usdByChannel: {}, accruedPlusByChannel: {}, accruedPlusCountByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
   }
   const header = values[0] || [];
   const paymentMethodIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD"]);
@@ -3163,6 +3241,7 @@ function calculateMovementChannelStats(values) {
   const localByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const usdByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const accruedPlusByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
+  const accruedPlusCountByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const balanceByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const localByCurrency = {};
   const dataRows = values.slice(1);
@@ -3207,13 +3286,15 @@ function calculateMovementChannelStats(values) {
       usdByChannel[channel] += parseLooseNumber(row[receivedUsdIndex]);
     }
     if (accruedPlusIndex !== -1 && accruedPlusIndex < row.length) {
-      accruedPlusByChannel[channel] += parseLooseNumber(row[accruedPlusIndex]);
+      const accruedPlus = parseLooseNumber(row[accruedPlusIndex]);
+      accruedPlusByChannel[channel] += accruedPlus;
+      if (accruedPlus > 0) accruedPlusCountByChannel[channel] += 1;
     }
     if (balanceIndex !== -1 && balanceIndex < row.length) {
       balanceByChannel[channel] += parseLooseNumber(row[balanceIndex]);
     }
   });
-  return { localByChannel, usdByChannel, accruedPlusByChannel, balanceByChannel, localByCurrency };
+  return { localByChannel, usdByChannel, accruedPlusByChannel, accruedPlusCountByChannel, balanceByChannel, localByCurrency };
 }
 
 

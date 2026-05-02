@@ -43,8 +43,14 @@ export const MANUAL_LEDGER_SOURCES = [
   "monobank",
   "privatbank",
   "td_bank",
+  "yoomoney",
   "migration",
   "google_sheets",
+  "ocr",
+  "browser_ocr",
+  "screenshot",
+  "image",
+  "photo",
   "other"
 ];
 export const CANONICAL_LEDGER_CATEGORIES = ["servicein", "ezoin", "exchange", "partner", "business", "house", "food", "fun", "travel", "extra"];
@@ -193,9 +199,11 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["monobank", "mono"].includes(normalizedToken)) return "monobank";
   if (["privatbank", "privat24", "privat_24"].includes(normalizedToken)) return "privatbank";
   if (["tdbank", "td_bank"].includes(normalizedToken)) return "td_bank";
+  if (["yoomoney", "yoo_money", "yamoney", "yandex"].includes(normalizedToken)) return "yoomoney";
   if (["migration", "migrated"].includes(normalizedToken)) return "migration";
   if (["sheet", "sheets"].includes(normalizedToken)) return "google_sheets";
-  if (["provider", "import", "mcp", "mcp_import", "ocr", "photo_parsing", "screenshot", "browser_ocr", "image", "photo"].includes(normalizedToken)) return "other";
+  if (["photo_parsing"].includes(normalizedToken)) return "photo";
+  if (["provider", "import", "mcp", "mcp_import"].includes(normalizedToken)) return "other";
   return fallback;
 }
 

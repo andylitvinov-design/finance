@@ -310,6 +310,8 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
   if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
+  if (/^(yoomoney|yoo_money|yamoney|yandex)[:_-]/i.test(raw)) return "yoomoney";
+  if (/^(ocr|browser_ocr|screenshot|image|photo)[:_-]/i.test(raw)) return raw.split(/[:_-]/)[0] === "browser" ? "browser_ocr" : raw.split(/[:_-]/)[0];
   return "";
 }
 
@@ -330,28 +332,32 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "google_sheets", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "other"].includes(token)) return token;
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
   if (["transferwise"].includes(token)) return "wise";
   if (["mono"].includes(token)) return "monobank";
   if (["privat24", "privat_24"].includes(token)) return "privatbank";
   if (["tdbank"].includes(token)) return "td_bank";
-  if (["provider", "import", "mcp", "mcp_import", "ocr", "browser_ocr", "screenshot", "image", "photo", "photo_parsing"].includes(token)) return "other";
+  if (["yoo_money", "yamoney", "yandex"].includes(token)) return "yoomoney";
+  if (["photo_parsing"].includes(token)) return "photo";
+  if (["provider", "import", "mcp", "mcp_import"].includes(token)) return "other";
   return fallback;
 }
 
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "google_sheets", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "other"].includes(token)) normalized = token;
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
   else if (["transferwise"].includes(token)) normalized = "wise";
   else if (["mono"].includes(token)) normalized = "monobank";
   else if (["privat24", "privat_24"].includes(token)) normalized = "privatbank";
   else if (["tdbank"].includes(token)) normalized = "td_bank";
-  else if (["provider", "import", "mcp", "mcp_import", "ocr", "browser_ocr", "screenshot", "image", "photo", "photo_parsing"].includes(token)) normalized = "other";
+  else if (["yoo_money", "yamoney", "yandex"].includes(token)) normalized = "yoomoney";
+  else if (["photo_parsing"].includes(token)) normalized = "photo";
+  else if (["provider", "import", "mcp", "mcp_import"].includes(token)) normalized = "other";
   if (normalized && normalized !== "other") return normalized;
   const inferred = inferManualLedgerSourceFromRawSourceId(rawSourceId) ||
     inferManualLedgerSourceFromChannels(
@@ -760,6 +766,8 @@ function buildManualLedgerSheetValues(rows, headers = MANUAL_LEDGER_HEADERS) {
 
 function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
   const warnings = [];
+  let duplicateCount = 0;
+  let skippedCount = 0;
   const seen = new Set((existingRows || []).flatMap((row) => [
     String(row.externalId || row.external_id || "").trim(),
     String(row.rawSourceId || row.raw_source_id || "").trim()
@@ -770,12 +778,14 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const date = normalizeIncomingSheetDateValue(row?.date);
     if (!date) {
       warnings.push(`Ledger save row ${index + 1}: skipped empty date.`);
+      skippedCount += 1;
       return;
     }
     const amount = normalizeManualFinancePersistedNumberInput(row?.amount);
     const amountNumber = parseLooseNumber(amount);
     if (!String(amount || "").trim() || !Number.isFinite(amountNumber)) {
       warnings.push(`Ledger save row ${index + 1}: skipped invalid amount.`);
+      skippedCount += 1;
       return;
     }
     const category = normalizeManualLedgerCategoryForStorage(row?.category, "extra");
@@ -785,6 +795,7 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim();
     if ((externalId && seen.has(externalId)) || (rawSourceId && seen.has(rawSourceId))) {
       warnings.push(`Ledger save row ${index + 1}: skipped duplicate external_id/raw_source_id ${externalId || rawSourceId}.`);
+      duplicateCount += 1;
       return;
     }
     if (externalId) seen.add(externalId);
@@ -850,7 +861,16 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
       updatedAt: timestamp
     });
   });
-  return { rows: output, warnings };
+  return {
+    rows: output,
+    warnings,
+    addedCount: output.length,
+    duplicateCount,
+    skippedCount,
+    added_count: output.length,
+    duplicate_count: duplicateCount,
+    skipped_count: skippedCount
+  };
 }
 
 function normalizeLedgerAmountUsdForSave(row, context = {}) {
@@ -1056,6 +1076,41 @@ function shouldIncludeLedgerRowInManualServicePlan(row) {
   return !source || ["manual", "fact", "migration"].includes(source);
 }
 
+function buildStableScreenshotIncomeSourceId(entry = {}, source = "") {
+  const date = normalizeIncomingSheetDateValue(entry.date);
+  const channel = canonicalManualFinanceChannel(entry.channel || entry.toChannel || entry.to_channel || "");
+  const amountUsd = parseLooseNumber(entry.usdAmount ?? entry.amountUsd ?? entry.amount_usd);
+  const amount = amountUsd || parseLooseNumber(entry.localAmount ?? entry.amount);
+  const currency = String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase();
+  const counterparty = String(
+    entry.counterparty ||
+      entry.counterpartyName ||
+      entry.organization ||
+      entry.description ||
+      entry.transactionSubject ||
+      ""
+  ).trim();
+  const normalizedSource = normalizeManualLedgerSourceToken(source || entry.source) || "ocr";
+  return [
+    normalizedSource,
+    date || "unknown-date",
+    channel || "unknown-channel",
+    formatStableSourceIdPart(amount ? formatSheetNumber(Math.abs(amount)) : "0"),
+    currency || "XXX",
+    formatStableSourceIdPart(counterparty || "unknown-counterparty")
+  ].join(":");
+}
+
+function formatStableSourceIdPart(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "blank";
+}
+
 function buildLedgerRowsFromAccountingEntries(entries) {
   const timestamp = new Date().toISOString();
   const rows = [];
@@ -1080,7 +1135,12 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     const amount = Math.abs(parseLooseNumber(entry.localAmount));
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
-    const rawSourceId = String(entry.sourceTransactionId || entry.id || `expense-accounting:${date}:${channel}:${index}`).trim();
+    const explicitSourceId = String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim();
+    const rawSourceId = explicitSourceId || (
+      isScreenshotAccountingEntry(entry)
+        ? buildStableScreenshotIncomeSourceId({ ...entry, date, channel, localAmount: amount }, entry.source || "ocr")
+        : String(entry.id || `expense-accounting:${date}:${channel}:${index}`).trim()
+    );
     const ledgerSource = resolveLedgerSource(
       entry.source || (Number.isInteger(entry.sourceImageIndex) ? "photo" : ""),
       rawSourceId,
@@ -1207,6 +1267,13 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     });
   });
   return rows;
+}
+
+function isScreenshotAccountingEntry(entry = {}) {
+  const source = normalizeManualLedgerSourceToken(entry.source);
+  if (["ocr", "browser_ocr", "screenshot", "image", "photo"].includes(source)) return true;
+  if (source === "photo_parsing") return true;
+  return entry.direction === "income" && Number.isInteger(entry.sourceImageIndex);
 }
 
 function replaceManualRowsForDateRange(existingRows, replacementRows, startDate, endDate, dateKey) {

@@ -219,7 +219,7 @@ export function normalizeVisionResult(result, options = {}) {
     const screenshotDate = normalizeIsoDate(entry.date);
     const fallbackDate = uploadDates[Number.isInteger(entry.sourceImageIndex) ? entry.sourceImageIndex : index] || "";
     const date = screenshotDate || fallbackDate;
-    return {
+    const normalizedEntry = {
       date,
       dateSource: screenshotDate ? "screenshot" : (fallbackDate ? "upload_fallback" : ""),
       channel,
@@ -232,8 +232,18 @@ export function normalizeVisionResult(result, options = {}) {
       receivedType,
       suggestedCategory: categories.has(category) ? category : "business",
       confidence: clamp(Number(entry.confidence || 0), 0, 1),
+      source: "ocr",
       sourceImageIndex: Number.isInteger(entry.sourceImageIndex) ? entry.sourceImageIndex : index
     };
+    if (normalizedEntry.direction === "income") {
+      const stableId = buildStableScreenshotIncomeSourceId(normalizedEntry, "ocr");
+      normalizedEntry.externalId = stableId;
+      normalizedEntry.external_id = stableId;
+      normalizedEntry.rawSourceId = stableId;
+      normalizedEntry.raw_source_id = stableId;
+      normalizedEntry.sourceTransactionId = stableId;
+    }
+    return normalizedEntry;
   }).filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
   if (entries.some((entry) => entry.dateSource === "upload_fallback")) {
     warnings.push("Some operations used the screenshot upload date because the transaction date was not readable.");
@@ -244,6 +254,33 @@ export function normalizeVisionResult(result, options = {}) {
     spent: entries.filter((entry) => entry.direction !== "income"),
     warnings
   };
+}
+
+export function buildStableScreenshotIncomeSourceId(entry = {}, source = "ocr") {
+  const amountUsd = Number(entry.usdAmount ?? entry.amountUsd ?? entry.amount_usd);
+  const amount = Number.isFinite(amountUsd) && amountUsd
+    ? Math.abs(amountUsd)
+    : Math.abs(Number(entry.localAmount ?? entry.amount ?? 0));
+  const currency = String(entry.currency || "").trim().toUpperCase();
+  const counterparty = String(entry.counterparty || entry.organization || entry.description || "").trim();
+  return [
+    normalizeStableIdPart(source || "ocr"),
+    normalizeIsoDate(entry.date) || "unknown-date",
+    normalizeStableIdPart(entry.channel || "unknown-channel"),
+    normalizeStableIdPart(Number.isFinite(amount) && amount ? String(Number(amount.toFixed(4))) : "0"),
+    normalizeStableIdPart(currency || "XXX"),
+    normalizeStableIdPart(counterparty || "unknown-counterparty")
+  ].join(":");
+}
+
+function normalizeStableIdPart(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "blank";
 }
 
 function buildPrompt(options = {}) {
