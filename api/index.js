@@ -795,7 +795,7 @@ function applyRealIncomeToMovementTable(movementTable, realIncome) {
     if (feeIndex !== -1) row[feeIndex] = formatDisplayNumber(match.realFeeUsd);
     row[netReceivedIndex] = formatDisplayNumber(match.realNetUsd);
     row[realIncomeIndex] = formatDisplayNumber(match.realNetUsd);
-    row[balanceIndex] = deriveBalance(row[netReceivedIndex], row[accruedPlusIndex]);
+    row[balanceIndex] = deriveBalance(row[netReceivedIndex], row[accruedPlusIndex], row[clientPaidIndex]);
     const statusInfo = deriveStatusInfo({
       comment: row[4],
       action: row[6],
@@ -1147,7 +1147,7 @@ function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePay
   const uahRate = derivedContext.uahRate;
   const clientPaidUsd = deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, rubRate, uahRate });
   const amountSemantics = buildMovementAmountSemantics({ paymentMethod, clientPaidUsd });
-  const balance = deriveBalance(amountSemantics.netReceivedUsd, accruedPlus3);
+  const balance = deriveBalance(amountSemantics.netReceivedUsd, accruedPlus3, clientPaidUsd);
   const statusInfo = deriveStatusInfo({
     comment: row[5],
     action: row[7],
@@ -1498,11 +1498,10 @@ function deriveTotalUsd({ paymentMethod, receivedUsd, receivedRub, receivedUah, 
   return "";
 }
 
-function deriveBalance(totalUsd, accruedPlus3) {
-  const total = parseLooseNumber(totalUsd);
-  const accrued = parseLooseNumber(accruedPlus3);
-  if (total === null || accrued === null) return "";
-  return formatDisplayNumber(total - accrued);
+function deriveBalance(totalUsd, accruedPlus3, fallbackTotalUsd = "") {
+  const total = parseLooseNumber(totalUsd) ?? parseLooseNumber(fallbackTotalUsd) ?? 0;
+  const accrued = parseLooseNumber(accruedPlus3) ?? 0;
+  return formatDisplayNumber(accrued - total);
 }
 
 function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlus3, balance, needsVerification = false, verificationReason = "" }) {
@@ -1547,7 +1546,7 @@ function deriveStatusInfo({ comment, action, paymentMethod, totalUsd, accruedPlu
     return { status: "ARRIVED", reviewNote: commentParts.join(" | ") };
   }
 
-  if (balanceValue !== null && balanceValue > 0.01) {
+  if (balanceValue !== null && balanceValue < -0.01) {
     return {
       status: "OVERPAID",
       reviewNote: joinReviewParts([...commentParts, commentParts.length ? "overpaid" : "overpaid"]),
