@@ -410,7 +410,7 @@
   function buildPlanFactRow(metric, plan, fact) {
     const planNumber = roundAmount(parseAmount(plan));
     const factNumber = roundAmount(parseAmount(fact));
-    const delta = roundAmount(planNumber - factNumber);
+    const delta = roundAmount(factNumber - planNumber);
     return {
       metric,
       plan: planNumber,

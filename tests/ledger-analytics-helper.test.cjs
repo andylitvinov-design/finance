@@ -168,22 +168,50 @@ test("exchange rows do not inflate income expense or profit", () => {
   assert.equal(model.exchangeControlRows[0][3], -0.5);
 });
 
-test("Plan vs Fact delta and delta percent are calculated from summary", () => {
+test("Plan vs Fact delta is negative when fact is below plan", () => {
   const context = createContext();
   const model = context.EzohataLedgerAnalyticsHelper.buildFinancialModel([], {
     planFactSummary: {
-      incomeTotals: { plannedUsd: 1000, realUsd: 750 },
+      incomeTotals: { plannedUsd: 1000, realUsd: 800 }
+    }
+  });
+  const income = model.planVsFactRows.find((row) => row.metric === "Income");
+
+  assert.equal(income.delta, -200);
+  assert.equal(income.deltaPercent, -20);
+  assert.equal(income.status, "CHECK");
+});
+
+test("Plan vs Fact delta is positive when fact is above plan", () => {
+  const context = createContext();
+  const model = context.EzohataLedgerAnalyticsHelper.buildFinancialModel([], {
+    planFactSummary: {
+      incomeTotals: { plannedUsd: 1000, realUsd: 1200 }
+    }
+  });
+  const income = model.planVsFactRows.find((row) => row.metric === "Income");
+
+  assert.equal(income.delta, 200);
+  assert.equal(income.deltaPercent, 20);
+  assert.equal(income.status, "CHECK");
+});
+
+test("Plan vs Fact status still works with corrected sign", () => {
+  const context = createContext();
+  const model = context.EzohataLedgerAnalyticsHelper.buildFinancialModel([], {
+    planFactSummary: {
+      incomeTotals: { plannedUsd: 1000, realUsd: 1000.4 },
       expenseTotals: { plannedUsd: 200, realUsd: 250 }
     }
   });
   const income = model.planVsFactRows.find((row) => row.metric === "Income");
   const expense = model.planVsFactRows.find((row) => row.metric === "Expenses");
 
-  assert.equal(income.delta, 250);
-  assert.equal(income.deltaPercent, 25);
-  assert.equal(income.status, "CHECK");
-  assert.equal(expense.delta, -50);
-  assert.equal(expense.deltaPercent, -25);
+  assert.equal(income.delta, 0.4);
+  assert.equal(income.status, "OK");
+  assert.equal(expense.delta, 50);
+  assert.equal(expense.deltaPercent, 25);
+  assert.equal(expense.status, "CHECK");
 });
 
 test("strategic analytics UI is wired to normalized Ledger rows instead of stale analytics values", () => {
