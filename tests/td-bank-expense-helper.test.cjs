@@ -34,6 +34,83 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function makeTdActivityDocument() {
+  function cell(text, tagName = "td") {
+    return {
+      tagName: tagName.toUpperCase(),
+      textContent: text,
+      innerText: text,
+      children: [],
+      querySelectorAll(selector) {
+        if (selector === "th, td, [role='cell'], [role='columnheader']") return [];
+        return [];
+      },
+    };
+  }
+  function row(cells) {
+    return {
+      tagName: "TR",
+      textContent: cells.map((item) => item.textContent).join(" "),
+      innerText: cells.map((item) => item.textContent).join("\n"),
+      children: cells,
+      querySelectorAll(selector) {
+        if (selector === "th, td, [role='cell'], [role='columnheader']") return cells;
+        return [];
+      },
+    };
+  }
+  const headerRow = row([
+    cell("Date", "th"),
+    cell("Transaction Description", "th"),
+    cell("Withdrawals", "th"),
+    cell("Deposits", "th"),
+    cell("Balance", "th"),
+  ]);
+  const withdrawalRow = row([
+    cell("May 1, 2026"),
+    cell("SEND E-TFR ***bwX"),
+    cell("$170.00"),
+    cell(""),
+    cell("$9,434.17"),
+  ]);
+  const depositRow = row([
+    cell("Apr 30, 2026"),
+    cell("ACCT BAL REBATE"),
+    cell(""),
+    cell("$17.95"),
+    cell("$9,607.47"),
+  ]);
+  const rows = [headerRow, withdrawalRow, depositRow];
+  const table = {
+    tagName: "TABLE",
+    textContent: rows.map((item) => item.textContent).join(" "),
+    innerText: rows.map((item) => item.innerText).join("\n"),
+    querySelectorAll(selector) {
+      if (selector === "tr, [role='row']") return rows;
+      if (selector === "th, td, [role='cell'], [role='columnheader']") return rows.flatMap((item) => item.children);
+      return [];
+    },
+  };
+  return {
+    body: { textContent: "TD EasyWeb Activity" },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "table") return [table];
+      if (selector === "tr, [role='row']") return rows;
+      return [];
+    },
+  };
+}
+
+function runTdEasyWebImporter(document) {
+  const context = { document, window: {} };
+  vm.createContext(context);
+  vm.runInContext(importerJs, context);
+  return plain(context.window.TD_EASYWEB_IMPORTER.collect());
+}
+
 function buildTdBankRuntimeContext(options = {}) {
   const context = {
     state: {
@@ -364,4 +441,38 @@ test("browser OCR parser keeps amount rows with upload date fallback", () => {
 test("td easyweb importer exposes collect helper", () => {
   assert.match(importerJs, /window\.TD_EASYWEB_IMPORTER = \{ collect \}/);
   assert.match(importerJs, /provider: "tdbank"/);
+});
+
+test("td easyweb importer parses current Activity table columns", () => {
+  const payload = runTdEasyWebImporter(makeTdActivityDocument());
+
+  assert.equal(payload.debug.tdActivityTableFound, true);
+  assert.equal(payload.debug.rowsFound, 2);
+  assert.equal(payload.debug.parsedRows, 2);
+  assert.equal(payload.items.length, 2);
+  assert.deepEqual(payload.items.map((item) => ({
+    occurredAt: item.occurredAt,
+    name: item.name,
+    amount: item.amount,
+    direction: item.direction,
+    cashFlowDirection: item.cashFlowDirection,
+    runningBalance: item.runningBalance,
+  })), [
+    {
+      occurredAt: "2026-05-01",
+      name: "SEND E-TFR ***bwX",
+      amount: 170,
+      direction: "expense",
+      cashFlowDirection: "out",
+      runningBalance: 9434.17,
+    },
+    {
+      occurredAt: "2026-04-30",
+      name: "ACCT BAL REBATE",
+      amount: 17.95,
+      direction: "income",
+      cashFlowDirection: "in",
+      runningBalance: 9607.47,
+    },
+  ]);
 });
