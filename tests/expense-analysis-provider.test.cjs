@@ -50,11 +50,129 @@ function extractExpenseAnalysisIncomeCountHelpers() {
   ].map((name) => extractFunction(financeJs, name)).join("\n") + "\n";
 }
 
+function createMissingPaymentsContext() {
+  const channels = ["пейпал дол", "пейпал евр", "пейпал сad", "трансервайз дол", "трансервайз евро", "монобанк грн"];
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: channels,
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+    normalizeLookupText(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^0-9a-zа-я]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    roundExpenseAnalysisAmount(value) {
+      return Math.round((Number(value) || 0) * 10000) / 10000;
+    },
+    findHeaderIndexByAliases(header, aliases) {
+      const normalizedAliases = aliases.map((value) => context.normalizeCell(value));
+      return (header || []).findIndex((cell) => normalizedAliases.includes(context.normalizeCell(cell)));
+    },
+    hasAnyValue(row) {
+      return (row || []).some((cell) => String(cell || "").trim());
+    },
+    isTableTotalRow(row) {
+      return context.normalizeCell(row?.[0]) === "итого";
+    },
+    getCanonicalManualChannelKey(value) {
+      const raw = String(value || "").trim();
+      const normalized = context.normalizeLookupText(raw);
+      const alias = {
+        "paypal usd": "пейпал дол",
+        "paypal eur": "пейпал евр",
+        "paypal cad": "пейпал сad",
+        "wise usd": "трансервайз дол",
+        "wise eur": "трансервайз евро",
+        "manual wise eur": "трансервайз евро",
+        "mono uah": "монобанк грн"
+      }[normalized];
+      return alias || channels.find((channel) => context.normalizeCell(channel) === context.normalizeCell(raw)) || raw;
+    },
+    resolvePaymentChannel(value) {
+      const channel = context.getCanonicalManualChannelKey(value);
+      return channels.includes(channel) ? channel : "";
+    },
+    getClientPaymentLookupKeys(client) {
+      const normalized = context.normalizeLookupText(client);
+      return normalized ? [normalized] : [];
+    },
+    inferFallbackPaymentChannelFromClient() {
+      return "";
+    },
+    isAmbiguousPersonalCardPayment() {
+      return false;
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "readMissingPaymentCell")}\n` +
+    `${extractFunction(financeJs, "firstMissingPaymentNumber")}\n` +
+    `${extractFunction(financeJs, "normalizeMissingPaymentDate")}\n` +
+    `${extractFunction(financeJs, "isMissingPaymentDateInPeriod")}\n` +
+    `${extractFunction(financeJs, "isMissingPaymentIncomeOperation")}\n` +
+    `${extractFunction(financeJs, "getMissingPaymentDateDistance")}\n` +
+    `${extractFunction(financeJs, "hasMissingPaymentCounterpartyOverlap")}\n` +
+    `${extractFunction(financeJs, "compareMissingPaymentScore")}\n` +
+    `${extractFunction(financeJs, "scoreMissingPaymentMatch")}\n` +
+    `${extractFunction(financeJs, "collectMissingPaymentMovementFallbackRows")}\n` +
+    `${extractFunction(financeJs, "mapExpenseEntryToMissingPaymentActual")}\n` +
+    `${extractFunction(financeJs, "mapManualOperationToMissingPaymentActual")}\n` +
+    `${extractFunction(financeJs, "mapRealIncomeEntryToMissingPaymentActual")}\n` +
+    `${extractFunction(financeJs, "collectMissingPaymentActualRows")}\n` +
+    `${extractFunction(financeJs, "resolveMissingPaymentMovementChannel")}\n` +
+    `${extractFunction(financeJs, "buildMissingPaymentClientPaymentLookup")}\n` +
+    `${extractFunction(financeJs, "getMissingPaymentMovementHeaderInfo")}\n` +
+    `${extractFunction(financeJs, "collectMissingPaymentPlannedRows")}\n` +
+    `${extractFunction(financeJs, "buildMissingPaymentsAudit")}\n` +
+    "this.buildMissingPaymentsAudit = buildMissingPaymentsAudit;",
+    context
+  );
+  return context;
+}
+
+const MOVEMENT_HEADER = [
+  "NUMBER",
+  "DATE",
+  "CLIENT",
+  "SERVICE",
+  "PAYMENT METHOD",
+  "ACCRUED",
+  "ACCRUED +3%",
+  "ДОШЛО ДО НАС USD",
+  "ДОШЛО ФАКТ / PROVIDER NET",
+  "BALANCE"
+];
+
+function movementRow(orderId, channel, amount, client = `Client ${orderId}`) {
+  return [String(orderId), "2026-05-10", client, `Service ${orderId}`, channel, amount, amount, "", "", amount];
+}
+
 test("expense analysis UI keeps refresh action and scrollable tables", () => {
   assert.match(uiJs, /refreshExpenseFinancialAnalysis/);
   assert.match(uiJs, /refreshButton\.textContent = state\.expenseAccounting\.loading \? "Обновляю\.\.\." : "Обновить"/);
   assert.match(uiJs, /analysis-table-wrap/);
   assert.match(uiJs, /renderPlainTable\(rows\)/);
+  assert.match(uiJs, /renderMissingPaymentsBlock\(getMissingPaymentsAuditSummary\(\)\)/);
+  assert.ok(
+    uiJs.indexOf("renderExpenseAnalysisChannelBlock(channelReconciliation)") <
+      uiJs.indexOf("renderMissingPaymentsBlock(getMissingPaymentsAuditSummary())")
+  );
+  assert.ok(
+    uiJs.indexOf("renderMissingPaymentsBlock(getMissingPaymentsAuditSummary())") <
+      uiJs.indexOf("renderBalanceReconciliationBlock(getBalanceReconciliationSummary())")
+  );
   assert.doesNotMatch(uiJs, /renderResponsiveDataView\(rows, \{ mobileTableColumnCount: 2 \}\)/);
   assert.match(styleCss, /\.analysis-table-wrap table \{ min-width: 640px; \}/);
 });
@@ -773,6 +891,149 @@ test("buildExpenseAnalysisChannelSummary appends income counters by source group
   assert.deepEqual(wise.slice(-4), ["1", "2", "1", "1"]);
   assert.deepEqual(mono.slice(-4), ["0", "0", "1", "2"]);
   assert.deepEqual(total.slice(-4), ["2", "3", "3", "5"]);
+});
+
+test("buildMissingPaymentsAudit reports one missing Wise payment from 9 planned and 8 actual", () => {
+  const context = createMissingPaymentsContext();
+  const movementValues = [
+    MOVEMENT_HEADER,
+    ...Array.from({ length: 8 }, (_, index) => movementRow(100 + index, "wise eur", 100 + index, `Wise Client ${index}`)),
+    movementRow(199, "wise eur", 25.75, "Wise Missing")
+  ];
+  const realIncomeEntries = Array.from({ length: 8 }, (_, index) => ({
+    source: "wise",
+    date: "2026-05-10",
+    channel: "трансервайз евро",
+    realNetUsd: 100 + index,
+    counterparty: `Wise Client ${index}`
+  }));
+
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues,
+    realIncomeEntries,
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  const wise = audit.summaryRows.find((row) => row.channel === "трансервайз евро");
+  assert.equal(wise.plannedCount, 9);
+  assert.equal(wise.actualCount, 8);
+  assert.equal(wise.missingCount, 1);
+  assert.equal(audit.detailRows.length, 1);
+  assert.equal(audit.detailRows[0].orderId, "199");
+  assert.equal(audit.detailRows[0].accruedPlus, 25.75);
+});
+
+test("buildMissingPaymentsAudit treats PayPal 3 planned and 3 actual as fully matched", () => {
+  const context = createMissingPaymentsContext();
+  const movementValues = [
+    MOVEMENT_HEADER,
+    movementRow(201, "paypal usd", 50, "PayPal A"),
+    movementRow(202, "paypal usd", 75, "PayPal B"),
+    movementRow(203, "paypal usd", 125, "PayPal C")
+  ];
+  const realIncomeEntries = [50, 75, 125].map((amount, index) => ({
+    source: "paypal",
+    date: "2026-05-10",
+    channel: "пейпал дол",
+    realNetUsd: amount,
+    counterparty: `PayPal ${String.fromCharCode(65 + index)}`
+  }));
+
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues,
+    realIncomeEntries,
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  const paypal = audit.summaryRows.find((row) => row.channel === "пейпал дол");
+  assert.equal(paypal.plannedCount, 3);
+  assert.equal(paypal.actualCount, 3);
+  assert.equal(paypal.missingCount, 0);
+  assert.deepEqual(audit.detailRows, []);
+});
+
+test("buildMissingPaymentsAudit matches amount differences within one USD", () => {
+  const context = createMissingPaymentsContext();
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues: [MOVEMENT_HEADER, movementRow(301, "wise eur", 100, "Close Match")],
+    realIncomeEntries: [{
+      source: "wise",
+      date: "2026-05-10",
+      channel: "трансервайз евро",
+      realNetUsd: 99.25,
+      counterparty: "Close Match"
+    }],
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  assert.equal(audit.summaryRows.find((row) => row.channel === "трансервайз евро").missingCount, 0);
+});
+
+test("buildMissingPaymentsAudit does not match same amount from another channel", () => {
+  const context = createMissingPaymentsContext();
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues: [MOVEMENT_HEADER, movementRow(401, "wise eur", 88, "Wrong Channel")],
+    realIncomeEntries: [{
+      source: "paypal",
+      date: "2026-05-10",
+      channel: "пейпал дол",
+      realNetUsd: 88,
+      counterparty: "Wrong Channel"
+    }],
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  assert.equal(audit.summaryRows.find((row) => row.channel === "трансервайз евро").missingCount, 1);
+  assert.equal(audit.summaryRows.find((row) => row.channel === "пейпал дол").actualCount, 1);
+});
+
+test("buildMissingPaymentsAudit lets manual fact and screenshot income close planned payments", () => {
+  const context = createMissingPaymentsContext();
+  const movementValues = [
+    MOVEMENT_HEADER,
+    movementRow(501, "wise eur", 40, "Manual Client"),
+    movementRow(502, "wise eur", 41, "Fact Client"),
+    movementRow(503, "wise eur", 42, "Screenshot Client")
+  ];
+
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues,
+    manualOperations: [
+      { source: "manual", operation: "income", date: "2026-05-10", toChannel: "wise eur", amount_usd: "40", counterparty: "Manual Client" },
+      { source: "fact", operation: "servicein", date: "2026-05-10", to_channel: "wise eur", amount_usd: "41", counterparty: "Fact Client" }
+    ],
+    expenseEntries: [
+      { source: "screenshot/ocr", direction: "income", date: "2026-05-10", channel: "wise eur", usdAmount: "42", counterpartyName: "Screenshot Client" }
+    ],
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  const wise = audit.summaryRows.find((row) => row.channel === "трансервайз евро");
+  assert.equal(wise.plannedCount, 3);
+  assert.equal(wise.actualCount, 3);
+  assert.equal(wise.missingCount, 0);
+});
+
+test("buildMissingPaymentsAudit ignores expense rows as actual payments", () => {
+  const context = createMissingPaymentsContext();
+  const audit = plain(context.buildMissingPaymentsAudit({
+    movementValues: [MOVEMENT_HEADER, movementRow(601, "paypal usd", 77, "Expense Row")],
+    expenseEntries: [
+      { source: "paypal", direction: "expense", operation: "expense", date: "2026-05-10", channel: "paypal usd", usdAmount: "77", counterpartyName: "Expense Row" }
+    ],
+    startDate: "2026-05-01",
+    endDate: "2026-05-31"
+  }));
+
+  const paypal = audit.summaryRows.find((row) => row.channel === "пейпал дол");
+  assert.equal(paypal.actualCount, 0);
+  assert.equal(paypal.missingCount, 1);
+  assert.equal(audit.detailRows.length, 1);
 });
 
 test("buildBalanceReconciliationByChannel uses latest balance snapshots on or before period bounds", () => {

@@ -683,6 +683,7 @@ function renderExpenseFinancialAnalysis() {
   }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
+  block.appendChild(renderMissingPaymentsBlock(getMissingPaymentsAuditSummary()));
   block.appendChild(renderBalanceReconciliationBlock(getBalanceReconciliationSummary()));
   const paypalSummary = getActivePayPalSummary();
   if (hasProviderSummaryData(paypalSummary)) {
@@ -772,6 +773,88 @@ function renderExpenseAnalysisChannelBlock(summary) {
   return block;
 }
 
+function renderMissingPaymentsBlock(summary) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Пропущенные оплаты / Missing payments";
+  block.appendChild(title);
+
+  const summaryWrap = document.createElement("div");
+  summaryWrap.className = "table-wrap analysis-table-wrap";
+  summaryWrap.appendChild(renderMissingPaymentsSummaryTable(summary));
+  block.appendChild(summaryWrap);
+
+  const detailsWrap = document.createElement("div");
+  detailsWrap.className = "table-wrap analysis-table-wrap";
+  detailsWrap.style.marginTop = "12px";
+  detailsWrap.appendChild(renderMissingPaymentsDetailsTable(summary?.detailRows || []));
+  block.appendChild(detailsWrap);
+  return block;
+}
+
+function renderMissingPaymentsSummaryTable(summary) {
+  const values = [[
+    "channel",
+    "planned count",
+    "actual count",
+    "missing count",
+    "missing amount"
+  ]];
+  const rows = summary?.summaryRows?.length
+    ? summary.summaryRows
+    : [{ channel: "Итого", plannedCount: 0, actualCount: 0, missingCount: 0, missingAmount: 0 }];
+  rows.forEach((row) => {
+    values.push([
+      row.channel || "",
+      String(row.plannedCount || 0),
+      String(row.actualCount || 0),
+      String(row.missingCount || 0),
+      formatSheetNumber(row.missingAmount || 0)
+    ]);
+  });
+  return renderPlainTable(values);
+}
+
+function renderMissingPaymentsDetailsTable(rows) {
+  const values = [[
+    "channel",
+    "order id",
+    "date",
+    "client",
+    "service",
+    "accrued",
+    "accrued +3%",
+    "received usd",
+    "provider net",
+    "balance",
+    "reason"
+  ]];
+  if (!(rows || []).length) {
+    values.push(["", "", "", "", "No missing payments", "", "", "", "", "", ""]);
+    return renderPlainTable(values);
+  }
+  rows.forEach((row) => {
+    values.push([
+      row.channel || "",
+      row.orderId || "",
+      row.date || "",
+      row.client || "",
+      row.service || "",
+      formatSheetNumber(row.accrued || 0),
+      formatSheetNumber(row.accruedPlus || 0),
+      formatSheetNumber(row.receivedUsd || 0),
+      formatSheetNumber(row.providerNet || 0),
+      formatSheetNumber(row.balance || 0),
+      row.reason || ""
+    ]);
+  });
+  return renderPlainTable(values);
+}
+
 function renderBalanceReconciliationBlock(summary) {
   const block = document.createElement("div");
   block.className = "analytics-section";
@@ -825,6 +908,17 @@ function getExpenseAnalysisChannelSummary() {
     realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
+  });
+}
+
+function getMissingPaymentsAuditSummary() {
+  return buildMissingPaymentsAudit({
+    movementValues: state.data?.tabs?.movement?.values || [],
+    realIncomeEntries: state.data?.realIncome?.entries || [],
+    manualOperations: state.data?.manual?.operations || [],
+    expenseEntries: state.expenseAccounting.entries || [],
+    startDate: normalizeIncomingSheetDateValue(elements.startDate.value),
+    endDate: normalizeIncomingSheetDateValue(elements.endDate.value)
   });
 }
 
