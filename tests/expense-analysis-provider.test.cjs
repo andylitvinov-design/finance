@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
+const googleSheetsJs = fs.readFileSync(path.join(root, "google-sheets.js"), "utf8");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
 
@@ -287,6 +288,132 @@ test("expense analysis summary keeps provider real income even when Ledger rows 
   assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "999,0000");
   assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "978,5000");
   assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "30,0000");
+});
+
+test("aggregated manual service plan excludes provider income rows for wise channel", () => {
+  const context = {
+    MANUAL_NOW_CATEGORY: "now",
+    MANUAL_EXCHANGE_CATEGORY: "exchange",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол", "пейпал дол"],
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim().slice(0, 10);
+    },
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+    getManualFinanceChannels() {
+      return context.MANUAL_FINANCE_MONEY_CHANNELS.slice();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeLookupText")}\n` +
+    `${extractFunction(financeJs, "resolveManualFinanceChannelAlias")}\n` +
+    `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
+    `${extractFunction(financeJs, "buildEmptyExpenseAmounts")}\n` +
+    `${extractFunction(financeJs, "createManualFinanceExpenseRow")}\n` +
+    `${extractFunction(financeJs, "mapLedgerV2CategoryToManualExpenseCategory")}\n` +
+    `${extractFunction(financeJs, "normalizeLedgerServicePlanSource")}\n` +
+    `${extractFunction(financeJs, "shouldIncludeLedgerRowInManualServicePlan")}\n` +
+    `${extractFunction(financeJs, "getLedgerBalanceAmountForFinance")}\n` +
+    `${extractFunction(financeJs, "getLedgerV2ManualChannel")}\n` +
+    `${extractFunction(financeJs, "buildServerExpenseRowsFromLedgerV2")}\n` +
+    "this.buildServerExpenseRowsFromLedgerV2 = buildServerExpenseRowsFromLedgerV2;",
+    context
+  );
+
+  const rows = plain(context.buildServerExpenseRowsFromLedgerV2([
+    { date: "2026-05-01", operation: "income", category: "servicein", source: "wise", toChannel: "трансервайз дол", amountUsd: "978.5", amountNet: "1210.25", currency: "USD" },
+    { date: "2026-05-01", operation: "income", category: "servicein", source: "manual", toChannel: "трансервайз дол", amountUsd: "25", amountNet: "25", currency: "USD" },
+    { date: "2026-05-01", operation: "business_expense", category: "business", source: "mcp", fromChannel: "трансервайз дол", amountUsd: "10", amountNet: "10", currency: "USD" },
+  ], "2026-05-01", "2026-05-31"));
+
+  assert.deepEqual(rows, [
+    {
+      date: "2026-05-01",
+      category: "business",
+      amounts: {
+        "трансервайз дол": "10,0000",
+        "пейпал дол": "",
+      },
+    },
+    {
+      date: "2026-05-01",
+      category: "serviceIncome",
+      amounts: {
+        "трансервайз дол": "25,0000",
+        "пейпал дол": "",
+      },
+    },
+  ]);
+});
+
+test("repository ledger expense rows also exclude provider income from manual service plan", () => {
+  const context = {
+    MANUAL_NOW_CATEGORY: "now",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол", "пейпал дол"],
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim().slice(0, 10);
+    },
+    getManualFinanceChannels() {
+      return context.MANUAL_FINANCE_MONEY_CHANNELS.slice();
+    },
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeLookupText")}\n` +
+    `${extractFunction(financeJs, "normalizeManualLedgerCategoryForStorage")}\n` +
+    `${extractFunction(financeJs, "mapManualLedgerCategoryToLegacy")}\n` +
+    `${extractFunction(financeJs, "normalizeManualLedgerOperation")}\n` +
+    `${extractFunction(financeJs, "resolveManualFinanceChannelAlias")}\n` +
+    `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
+    `${extractFunction(financeJs, "buildEmptyExpenseAmounts")}\n` +
+    `${extractFunction(financeJs, "createManualFinanceExpenseRow")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualLedgerSource")}\n` +
+    `${extractFunction(googleSheetsJs, "shouldIncludeLedgerRowInManualServicePlan")}\n` +
+    `${extractFunction(googleSheetsJs, "buildExpenseRowsFromLedgerRows")}\n` +
+    "this.buildExpenseRowsFromLedgerRows = buildExpenseRowsFromLedgerRows;",
+    context
+  );
+
+  const rows = plain(context.buildExpenseRowsFromLedgerRows([
+    { date: "2026-05-01", operation: "income", category: "servicein", source: "wise", toChannel: "трансервайз дол", amount: "1210.25", currency: "USD" },
+    { date: "2026-05-01", operation: "income", category: "servicein", source: "manual", toChannel: "трансервайз дол", amount: "25", currency: "USD" },
+  ], "2026-05-01", "2026-05-31"));
+
+  assert.deepEqual(rows, [
+    {
+      date: "2026-05-01",
+      category: "serviceIncome",
+      amounts: {
+        "трансервайз дол": "25,0000",
+        "пейпал дол": "",
+      },
+    },
+  ]);
 });
 
 test("expense analysis falls back to existing summaries when Ledger is empty", () => {

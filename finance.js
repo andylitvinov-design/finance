@@ -2181,6 +2181,7 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (!date || date < startDate || date > endDate) return;
     const category = mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
     if (!category || category === MANUAL_NOW_CATEGORY) return;
+    if (category === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row, rawRow)) return;
     const amount = getLedgerBalanceAmountForFinance(row);
     if (!amount) return;
     const channel = getLedgerV2ManualChannel(row, amount);
@@ -2195,6 +2196,27 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
     return String(left.category).localeCompare(String(right.category));
   });
+}
+
+function shouldIncludeLedgerRowInManualServicePlan(row, rawRow = null) {
+  const source = normalizeLedgerServicePlanSource(
+    row?.source
+      || rawRow?.source
+      || row?.displaySource
+      || rawRow?.displaySource
+      || ""
+  );
+  return !source || ["manual", "fact", "migration"].includes(source);
+}
+
+function normalizeLedgerServicePlanSource(value) {
+  const token = normalizeLookupText(value);
+  if (!token) return "";
+  if (["manual", "fact", "migration"].includes(token)) return token;
+  if (["paypal", "paypal mcp", "yoomoney", "monobank", "privatbank", "tdbank", "provider", "import", "mcp import", "mcp"].includes(token)) return "mcp";
+  if (["ocr", "photo parsing", "screenshot", "browser ocr", "image", "photo"].includes(token)) return "photo";
+  if (token === "wise") return "wise";
+  return token;
 }
 
 function getLedgerBalanceAmountForFinance(row) {
