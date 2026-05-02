@@ -411,6 +411,53 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
   }
 });
 
+test("loadManualRepositoryFromGoogleSheets keeps ledger operations when amount_net is missing", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:O",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category", "subcategory", "direction", "comment", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                  ["2026-04-25", "income", "", "paypal usd", "369", "USD", "369", "serviceincome", "", "in", "income", "raw-1", "", "2026-04-25T09:00:00.000Z", "2026-04-25T09:00:00.000Z"],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+              { range: "'Переводы'!A1:G", values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]] },
+              { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.schema, "ledger-v1");
+    assert.equal(repository.operations.length, 1);
+    assert.equal(repository.ledgerV2Rows.length, 1);
+    assert.equal(repository.operations[0].toChannel, "пейпал дол");
+    assert.match((repository.warnings || []).join(" | "), /amount_net.*balance was not calculated/);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
 test("loadManualRepositoryFromGoogleSheets tolerates missing Ledger source column and keeps non-migration source blank", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;

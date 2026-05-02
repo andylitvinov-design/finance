@@ -801,7 +801,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
   }
 });
 
-test("GET getDashboardData blocks manual ledger overlay when amount_net is missing", async () => {
+test("GET getDashboardData keeps manual ledger overlay when amount_net is missing", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -923,8 +923,10 @@ test("GET getDashboardData blocks manual ledger overlay when amount_net is missi
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
     assert.match((response.body?.data?.manual?.warnings || []).join(" | "), /amount_net.*balance was not calculated/);
-    assert.equal(response.body?.data?.manual?.ledgerV2Rows, undefined);
-    assert.equal(response.body?.data?.manual?.operations, undefined);
+    assert.equal(response.body?.data?.manual?.schema, "ledger-v1");
+    assert.equal((response.body?.data?.manual?.ledgerV2Rows || []).length, 1);
+    assert.equal((response.body?.data?.manual?.operations || []).length, 1);
+    assert.equal(response.body?.data?.manual?.operations?.[0]?.toChannel, "пейпал дол");
   } finally {
     global.fetch = previousFetch;
     if (previous === undefined) {
