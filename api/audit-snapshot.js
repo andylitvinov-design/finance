@@ -3,7 +3,7 @@ import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sh
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const PUBLIC_SUMMARY_ONLY_WARNING =
   "includeRows is disabled in Phase 1 public summary-only mode; raw and sanitized rows are not returned.";
-const SOURCE_KEYS = ["manual", "fact", "paypal", "monobank", "privatbank", "td_bank", "unknown"];
+const SOURCE_KEYS = ["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "unknown"];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -430,8 +430,9 @@ function normalizeSource(row) {
   const raw = String(row?.source || row?.ledgerV2?.source || "").trim().toLowerCase();
   if (raw === "privat_bank") return "privatbank";
   if (raw === "tdbank") return "td_bank";
+  if (raw === "mcp" || raw === "photo" || raw === "provider" || raw === "import") return "unknown";
   if (SOURCE_KEYS.includes(raw)) return raw;
-  if (!raw || raw === "other" || raw === "google_sheets" || raw === "migration") return "unknown";
+  if (!raw || raw === "other" || raw === "google_sheets") return "unknown";
   return SOURCE_KEYS.includes(raw) ? raw : "unknown";
 }
 
