@@ -2200,16 +2200,17 @@ async function saveExpenseAccountingEntries() {
 async function saveExpenseAccountingEntriesDirect(entries) {
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
-  const existingLedgerParse = titles.has(getManualLedgerSheetName())
-    ? parseManualLedgerSheetValues(await getSheetValuesByTitle(getManualLedgerSheetName()))
-    : { rows: [], warnings: [] };
+  const existingLedgerValues = titles.has(getManualLedgerSheetName())
+    ? await getSheetValuesByTitle(getManualLedgerSheetName())
+    : buildManualLedgerSheetValues([]);
+  const existingLedgerParse = parseManualLedgerSheetValues(existingLedgerValues);
   const replacementRows = buildExpenseRowsFromAccountingEntries(entries);
   const ledgerRows = buildLedgerRowsFromAccountingEntries(entries);
   const ledgerSave = normalizeManualLedgerRowsForSave(ledgerRows, existingLedgerParse.rows);
   await ensureSheetExists(getManualLedgerSheetName(), getManualFinanceSpreadsheetId());
   await overwriteSheetValues(
     getManualLedgerSheetName(),
-    buildManualLedgerSheetValues([...(existingLedgerParse.rows || []), ...ledgerSave.rows]),
+    buildManualLedgerSheetValues([...(existingLedgerParse.rows || []), ...ledgerSave.rows], existingLedgerValues[0]),
     getManualFinanceSpreadsheetId()
   );
   return {

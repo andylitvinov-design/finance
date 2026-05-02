@@ -358,6 +358,8 @@ test("manual Fact save writes Ledger only and does not update legacy Расхо�
 test("expense accounting imports write Ledger only and do not update legacy Расходы", () => {
   const saveFunction = extractFunction(uiJs, "saveExpenseAccountingEntriesDirect");
   assert.match(saveFunction, /buildLedgerRowsFromAccountingEntries\(entries\)/);
+  assert.match(saveFunction, /existingLedgerValues/);
+  assert.match(saveFunction, /buildManualLedgerSheetValues\(\[\.\.\.\(existingLedgerParse\.rows \|\| \[\]\), \.\.\.ledgerSave\.rows\], existingLedgerValues\[0\]\)/);
   assert.doesNotMatch(saveFunction, /overwriteSheetValues\(getManualExpensesSheetName\(\)/);
   assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
