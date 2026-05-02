@@ -20,6 +20,7 @@ async function init() {
   elements.calculateButton.addEventListener("click", () => loadDashboardData());
   elements.connectGoogleButton.addEventListener("click", () => connectGoogle(true));
   elements.disconnectGoogleButton.addEventListener("click", disconnectGoogle);
+  window.addEventListener("focus", handleTdBankWindowFocus);
   await initializeGoogleAuth();
   if (state.googleAuth.readyError) {
     setManualFinanceStatus(state.googleAuth.readyError, true);

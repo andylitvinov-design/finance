@@ -259,6 +259,14 @@ function renderExpenseAccountingBlock() {
   privat24Input.type = "file";
   privat24Input.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
   privat24Input.disabled = state.expenseAccounting.loading || state.expenseAccounting.privat24ImportLoading;
+  const tdBankCsvInput = document.createElement("input");
+  tdBankCsvInput.type = "file";
+  tdBankCsvInput.accept = ".csv,text/csv";
+  tdBankCsvInput.disabled = state.expenseAccounting.loading || state.expenseAccounting.tdBankLoading;
+  tdBankCsvInput.addEventListener("change", async () => {
+    await importTdBankCsvStatementFile(tdBankCsvInput.files?.[0] || null);
+    tdBankCsvInput.value = "";
+  });
   const parseButton = document.createElement("button");
   parseButton.type = "button";
   parseButton.className = "primary";
@@ -323,11 +331,11 @@ function renderExpenseAccountingBlock() {
   const tdBankButton = document.createElement("button");
   tdBankButton.type = "button";
   tdBankButton.className = "secondary";
-  tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Подтянуть TD Bank";
+  tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
-  tdBankButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
+  tdBankButton.addEventListener("click", startOrContinueTdImport);
   actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
-  upload.append(input, privat24Input, actions);
+  upload.append(input, privat24Input, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderPrivat24ImportHelper());
@@ -991,55 +999,25 @@ function getActivePrivatBankSummary() {
 
 function getActiveTdBankSummary() {
   if (hasProviderSummaryData(state.expenseAccounting.tdBankSummary)) return state.expenseAccounting.tdBankSummary;
-  const tdBankEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "tdbank");
+  const tdBankEntries = state.expenseAccounting.entries.filter(isTdBankExpenseSource);
   return buildProviderExpenseSummary(tdBankEntries);
 }
 
 function renderTdBankExpenseHelper() {
-  const helper = document.createElement("details");
+  const helper = document.createElement("div");
   helper.className = "expense-helper";
-  const summary = document.createElement("summary");
-  summary.textContent = "TD Bank import helper";
-  const note = document.createElement("ol");
-  note.className = "tab-note";
-  [
-    "Скопировать bookmarklet",
-    "Открыть TD EasyWeb Activity",
-    "Запустить bookmarklet",
-    "Вернуться в Ledger",
-    "Импортировать TD из буфера"
-  ].forEach((step) => {
-    const item = document.createElement("li");
-    item.textContent = step;
-    note.appendChild(item);
-  });
-  const runner = document.createElement("textarea");
-  runner.readOnly = true;
-  runner.spellcheck = false;
-  runner.value = buildTdBankBookmarklet();
-  const actions = document.createElement("div");
-  actions.className = "expense-helper-actions";
-  const copyButton = document.createElement("button");
-  copyButton.type = "button";
-  copyButton.className = "ghost";
-  copyButton.textContent = "Скопировать bookmarklet";
-  copyButton.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(runner.value);
-      setExpenseAccountingStatus("TD Bank bookmarklet скопирован. Запустите его на странице TD EasyWeb activity.", false);
-    } catch (error) {
-      setExpenseAccountingStatus(error.message || "Не удалось скопировать TD Bank bookmarklet.", true);
-    }
-    renderTabs();
-  });
-  const importButton = document.createElement("button");
-  importButton.type = "button";
-  importButton.className = "ghost";
-  importButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Импортировать TD из буфера";
-  importButton.disabled = state.expenseAccounting.loading || state.expenseAccounting.paypalLoading || state.expenseAccounting.wiseLoading || state.expenseAccounting.yoomoneyLoading || state.expenseAccounting.tdBankLoading;
-  importButton.addEventListener("click", loadTdBankExpenseStatementFromClipboard);
-  actions.append(copyButton, importButton);
-  helper.append(summary, note, runner, actions);
+  const title = document.createElement("div");
+  title.className = "expense-helper-title";
+  title.textContent = "TD Bank import";
+  const note = document.createElement("div");
+  note.className = "config-note";
+  note.textContent = state.expenseAccounting.tdImportStep === "waiting"
+    ? "Вернитесь из TD после запуска bookmarklet: импорт начнётся автоматически. Если нет, нажмите «Начать TD импорт» ещё раз."
+    : "Нажмите «Начать TD импорт»: bookmarklet скопируется, TD откроется в новой вкладке. В TD откройте Activity, запустите bookmarklet и вернитесь сюда.";
+  const csvNote = document.createElement("div");
+  csvNote.className = "config-note";
+  csvNote.textContent = "Если буфер обмена не сработал, загрузите TD CSV export ниже.";
+  helper.append(title, note, csvNote);
   return helper;
 }
 
@@ -1784,6 +1762,29 @@ async function readPrivat24StatementFile(file) {
   return file.text();
 }
 
+async function importTdBankCsvStatementFile(file) {
+  if (!file) return;
+  state.expenseAccounting.tdBankLoading = true;
+  setExpenseAccountingStatus("Импортирую TD CSV...", false);
+  renderTabs();
+  try {
+    const csvText = await file.text();
+    const entries = parseTdBankCsvEntries(csvText);
+    applyTdBankExpenseEntries(entries, {
+      message: entries.length
+        ? `TD CSV импортирован: ${entries.length} строк. Проверьте категории перед внесением.`
+        : "TD CSV прочитан, но операции за выбранный период не найдены."
+    });
+    state.expenseAccounting.tdImportStep = "ready";
+    state.expenseAccounting.tdImportClipboardRetry = false;
+  } catch {
+    setExpenseAccountingStatus("Не удалось прочитать TD CSV. Проверьте, что это export из TD Activity.", true);
+  } finally {
+    state.expenseAccounting.tdBankLoading = false;
+    renderTabs();
+  }
+}
+
 function readPrivat24XlsxFile(file) {
   if (typeof XLSX === "undefined" || !XLSX?.read || !XLSX?.utils) {
     throw new Error("XLSX библиотека не загрузилась. Сохраните выписку Privat24 как CSV или обновите страницу.");
@@ -1924,25 +1925,94 @@ async function loadTdBankExpenseStatementFromClipboard() {
     const raw = await readTdBankPayloadText();
     const payload = parseTdBankClipboardPayload(raw);
     const entries = normalizeTdBankClipboardEntries(payload);
-    state.expenseAccounting.entries = [
-      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "tdbank"),
-      ...entries
-    ];
-    state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
-    state.expenseAccounting.warnings = [];
-    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
-    setExpenseAccountingStatus(
-      entries.length
+    applyTdBankExpenseEntries(entries, {
+      message: entries.length
         ? `TD Bank импортирован: ${entries.length} строк. Проверьте категории перед внесением.`
-        : "TD Bank импортирован, но строки за выбранный период не найдены.",
-      false
-    );
+        : "TD Bank импортирован, но строки за выбранный период не найдены."
+    });
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось импортировать TD Bank из буфера.", true);
   } finally {
     state.expenseAccounting.tdBankLoading = false;
+    state.expenseAccounting.tdImportStep = "ready";
+    state.expenseAccounting.tdImportClipboardRetry = false;
     renderTabs();
   }
+}
+
+async function startOrContinueTdImport() {
+  if (state.expenseAccounting.tdImportStep === "waiting" || state.expenseAccounting.tdImportClipboardRetry) {
+    await loadTdBankExpenseStatementFromClipboard();
+    return;
+  }
+  state.expenseAccounting.tdBankLoading = true;
+  renderTabs();
+  try {
+    await navigator.clipboard.writeText(buildTdBankBookmarklet());
+    state.expenseAccounting.tdImportStep = "waiting";
+    state.expenseAccounting.tdImportClipboardRetry = false;
+    setExpenseAccountingStatus("TD bookmarklet скопирован. В TD откройте Activity, запустите bookmarklet и вернитесь сюда.", false);
+    window.open("https://easyweb.td.com/", "_blank", "noopener,noreferrer");
+  } catch {
+    state.expenseAccounting.tdImportStep = "ready";
+    state.expenseAccounting.tdImportClipboardRetry = false;
+    setExpenseAccountingStatus("Не удалось скопировать TD bookmarklet. Разрешите доступ к буферу обмена и нажмите кнопку снова.", true);
+  } finally {
+    state.expenseAccounting.tdBankLoading = false;
+    renderTabs();
+  }
+}
+
+function handleTdBankWindowFocus() {
+  void tryAutoImportTdBankFromClipboard();
+}
+
+async function tryAutoImportTdBankFromClipboard() {
+  if (state.expenseAccounting.tdImportStep !== "waiting" || state.expenseAccounting.tdBankLoading) return false;
+  state.expenseAccounting.tdBankLoading = true;
+  setExpenseAccountingStatus("Проверяю TD данные в буфере обмена...", false);
+  renderTabs();
+  try {
+    const raw = await readTdBankClipboardTextWithoutPrompt();
+    const payload = parseTdBankClipboardPayload(raw);
+    const entries = normalizeTdBankClipboardEntries(payload);
+    applyTdBankExpenseEntries(entries, {
+      message: entries.length
+        ? `TD Bank импортирован автоматически: ${entries.length} строк. Проверьте категории перед внесением.`
+        : "TD Bank данные прочитаны, но строки за выбранный период не найдены."
+    });
+    state.expenseAccounting.tdImportStep = "ready";
+    state.expenseAccounting.tdImportClipboardRetry = false;
+    return true;
+  } catch {
+    state.expenseAccounting.tdImportStep = "ready";
+    state.expenseAccounting.tdImportClipboardRetry = true;
+    setExpenseAccountingStatus("TD JSON не найден в буфере. Нажмите «Начать TD импорт» ещё раз или загрузите TD CSV.", false);
+    return false;
+  } finally {
+    state.expenseAccounting.tdBankLoading = false;
+    renderTabs();
+  }
+}
+
+async function readTdBankClipboardTextWithoutPrompt() {
+  if (!navigator.clipboard?.readText) throw new Error("Clipboard is unavailable.");
+  return navigator.clipboard.readText();
+}
+
+function applyTdBankExpenseEntries(entries, options = {}) {
+  state.expenseAccounting.entries = [
+    ...state.expenseAccounting.entries.filter((entry) => !isTdBankExpenseSource(entry)),
+    ...entries
+  ];
+  state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
+  state.expenseAccounting.warnings = [];
+  state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+  setExpenseAccountingStatus(options.message || `TD Bank импортирован: ${entries.length} строк.`, false);
+}
+
+function isTdBankExpenseSource(entry) {
+  return entry?.source === "tdbank" || entry?.source === "tdbank_csv";
 }
 
 function parseTdBankClipboardPayload(raw) {
@@ -1952,7 +2022,7 @@ function parseTdBankClipboardPayload(raw) {
   }
   const firstCharCode = text.charCodeAt(0);
   if (firstCharCode !== 123 && firstCharCode !== 91) {
-    throw new Error("В буфере обмена не TD Bank JSON. Сначала нажмите ‘Скопировать TD bookmarklet’, запустите его на странице TD EasyWeb Activity, затем вернитесь и нажмите ‘Импортировать TD из буфера’.");
+    throw new Error("В буфере обмена не TD Bank JSON. Нажмите «Начать TD импорт», запустите bookmarklet на странице TD EasyWeb Activity и вернитесь в Ledger.");
   }
 
   let payload = null;
@@ -2026,6 +2096,130 @@ function normalizeTdBankClipboardEntries(payload) {
       sourceTransactionId: String(entry.providerTransactionId || `${entry.accountId || "tdbank"}-${entry.occurredAt || index}`),
     }, index))
     .filter((entry) => entry.date && (!requestedStart || entry.date >= requestedStart) && (!requestedEnd || entry.date <= requestedEnd));
+}
+
+function parseTdBankCsvEntries(csvText) {
+  const rows = parseSimpleCsvRows(csvText);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeTdBankCsvHeader);
+    return headers.includes("date") && (headers.includes("amount") || headers.includes("debit") || headers.includes("credit"));
+  });
+  if (headerIndex === -1) throw new Error("TD CSV header was not found.");
+  const headers = rows[headerIndex].map(normalizeTdBankCsvHeader);
+  const requestedStart = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const requestedEnd = normalizeIncomingSheetDateValue(elements.endDate.value);
+  return rows.slice(headerIndex + 1)
+    .map((row, index) => normalizeTdBankCsvRow(row, headers, index))
+    .filter((entry) => entry && entry.date && entry.localAmount > 0)
+    .filter((entry) => (!requestedStart || entry.date >= requestedStart) && (!requestedEnd || entry.date <= requestedEnd));
+}
+
+function parseSimpleCsvRows(text) {
+  const delimiter = detectSimpleCsvDelimiter(text);
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const input = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+    if (char === "\"") {
+      if (quoted && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === delimiter) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if (!quoted && char === "\n") {
+      row.push(cell.trim());
+      if (row.some((value) => String(value || "").trim())) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell.trim());
+  if (row.some((value) => String(value || "").trim())) rows.push(row);
+  return rows;
+}
+
+function detectSimpleCsvDelimiter(text) {
+  const firstLine = String(text || "").split(/\r?\n/).find((line) => line.trim()) || "";
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semicolonCount = (firstLine.match(/;/g) || []).length;
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+function normalizeTdBankCsvRow(row, headers, index) {
+  const read = (key) => {
+    const columnIndex = headers.indexOf(key);
+    return columnIndex === -1 ? "" : row[columnIndex];
+  };
+  const date = normalizeTdBankCsvDate(read("date"));
+  const debit = parseTdBankCsvAmount(read("debit"));
+  const credit = parseTdBankCsvAmount(read("credit"));
+  const explicitAmount = parseTdBankCsvAmount(read("amount"));
+  const rawAmount = credit || debit || explicitAmount;
+  const amount = Math.abs(rawAmount);
+  if (!date || !amount) return null;
+  const direction = credit > 0 || explicitAmount > 0 ? "income" : "expense";
+  const description = [read("description"), read("name")].filter(Boolean).join(" | ").slice(0, 240);
+  const currency = String(read("currency") || "CAD").trim().toUpperCase();
+  return normalizeExpenseAccountingEntry({
+    date,
+    channel: "БАНК КАНАДА cad",
+    direction,
+    localAmount: amount,
+    currency,
+    usdAmount: null,
+    suggestedCategory: direction === "income" ? "serviceIncome" : "business",
+    organization: description || "TD Bank CSV",
+    counterparty: description || "TD Bank CSV",
+    confidence: 0.9,
+    source: "tdbank_csv",
+    sourceTransactionId: `tdbank_csv-${date}-${description || "row"}-${amount}-${index}`,
+  }, index);
+}
+
+function normalizeTdBankCsvHeader(value) {
+  const header = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (["date", "transaction date", "posting date"].includes(header)) return "date";
+  if (["description", "transaction description", "memo", "details"].includes(header)) return "description";
+  if (["name", "payee", "merchant"].includes(header)) return "name";
+  if (["debit", "withdrawal", "withdrawals", "paid out"].includes(header)) return "debit";
+  if (["credit", "deposit", "deposits", "paid in"].includes(header)) return "credit";
+  if (["amount", "transaction amount"].includes(header)) return "amount";
+  if (["currency", "cur"].includes(header)) return "currency";
+  if (["balance", "running balance"].includes(header)) return "balance";
+  return header;
+}
+
+function normalizeTdBankCsvDate(value) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeIncomingSheetDateValue(raw);
+  if (normalized) return normalized;
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) return `${slash[3]}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}`;
+  const dash = raw.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dash) return `${dash[3]}-${dash[1].padStart(2, "0")}-${dash[2].padStart(2, "0")}`;
+  return "";
+}
+
+function parseTdBankCsvAmount(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const negative = /^\(.+\)$/.test(raw) || /^-/.test(raw);
+  const amount = Math.abs(parseLooseNumber(raw));
+  return negative ? -amount : amount;
 }
 
 function compactTdBankDescription(entry) {
