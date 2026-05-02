@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "./analytics-normalizer.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import {
+  buildPayPalProviderWarning,
   fetchPayPalStatementEntries,
   fetchPayPalStatementEntriesFromMcp,
 } from "./paypal-transactions.js";
@@ -594,7 +595,7 @@ async function loadPayPalProviderEntries(startDate, endDate) {
         environment: process.env.PAYPAL_ENVIRONMENT || "live",
         fetchImpl: fetch,
       });
-      return { entries: result.entries || [], warnings: [] };
+      return { entries: result.entries || [], warnings: result.warnings || [] };
     }
     const result = await fetchPayPalStatementEntriesFromMcp({
       startDate,
@@ -608,7 +609,7 @@ async function loadPayPalProviderEntries(startDate, endDate) {
     });
     return { entries: result.entries || [], warnings: result.warnings || [] };
   } catch (error) {
-    return { entries: [], warnings: [`PayPal real income: ${String(error?.message || error)}`] };
+    return { entries: [], warnings: [buildPayPalProviderWarning(error, { environment: process.env.PAYPAL_ENVIRONMENT || "live" })] };
   }
 }
 
