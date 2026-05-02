@@ -1182,6 +1182,206 @@ test("GET getDashboardData adds real income payload and movement net-income colu
   }
 });
 
+test("GET getDashboardData excludes provider income without movement candidates but keeps ambiguous candidates in real income summary", async () => {
+  const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousWiseToken = process.env.WISE_API_TOKEN;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.WISE_API_TOKEN = "wise-token";
+
+  const makeSourceRow = ({
+    number,
+    date,
+    client,
+    service,
+    priceBase,
+    accruedPlus,
+    paymentMethod,
+    receivedUsd,
+  }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = date;
+    row[3] = client;
+    row[4] = service;
+    row[6] = String(priceBase);
+    row[9] = String(priceBase);
+    row[10] = String(accruedPlus);
+    row[24] = paymentMethod;
+    row[30] = String(receivedUsd);
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-04-01",
+                  endDate: "2026-04-30",
+                  timeZone: "Europe/Kiev",
+                },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.04.2026", "дата 2", "30.04.2026"],
+                      [""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
+                      ["ИТОГО", "", "", "", "", "0", "", "", "0", "0", "0", "0", "", "", "", "0", "", "", "0", "0"],
+                      [],
+                      ["показатели", "значение"],
+                      ["4) получено в долларах", "0,0000"],
+                    ],
+                  },
+                  orders: {
+                    sheetName: "список моих заказы",
+                    values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]],
+                  },
+                },
+              },
+            });
+          },
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        const rows = [
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          makeSourceRow({
+            number: "18095",
+            date: "2026-04-01",
+            client: "Вилл",
+            service: "Order A",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "Андрей карта",
+            receivedUsd: 103,
+          }),
+          makeSourceRow({
+            number: "18097",
+            date: "2026-04-03",
+            client: "Вилл",
+            service: "Order B",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "Андрей карта",
+            receivedUsd: 103,
+          }),
+          makeSourceRow({
+            number: "18112",
+            date: "2026-04-11",
+            client: "William Test",
+            service: "Wise payment",
+            priceBase: 850,
+            accruedPlus: 875.5,
+            paymentMethod: "трансервайз дол",
+            receivedUsd: 875.5,
+          }),
+        ];
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return rows.map((row) => row.join(",")).join("\n");
+          },
+        };
+      }
+
+      if (value.endsWith("/v2/profiles")) {
+        return {
+          ok: true,
+          async json() {
+            return [{ id: 123 }];
+          },
+        };
+      }
+
+      if (value.includes("/v4/profiles/123/balances")) {
+        return {
+          ok: true,
+          async json() {
+            return [{ id: "balance-1", currency: "USD" }];
+          },
+        };
+      }
+
+      if (value.includes("/v1/profiles/123/balance-statements/balance-1/statement.json")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              transactions: [
+                {
+                  type: "CREDIT",
+                  date: "2026-04-02T09:00:00.000Z",
+                  referenceNumber: "WISE-AMBIGUOUS",
+                  amount: { value: "103", currency: "USD" },
+                  amountUsd: "103",
+                  details: { description: "Ambiguous movement", type: "TRANSFER" },
+                },
+                {
+                  type: "CREDIT",
+                  date: "2026-04-11T09:00:00.000Z",
+                  referenceNumber: "WISE-MATCHED",
+                  amount: { value: "875.5", currency: "USD" },
+                  amountUsd: "875.5",
+                  details: { description: "Matched movement", type: "TRANSFER" },
+                },
+                {
+                  type: "CREDIT",
+                  date: "2026-04-30T09:00:00.000Z",
+                  referenceNumber: "WISE-UNMATCHED",
+                  amount: { value: "231.75", currency: "USD" },
+                  amountUsd: "231.75",
+                  details: { description: "No matching movement", type: "TRANSFER" },
+                },
+              ],
+            };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const request = {
+      method: "GET",
+      query: {
+        action: "getDashboardData",
+        startDate: "2026-04-01",
+        endDate: "2026-04-30",
+      },
+    };
+    const response = createResponseRecorder();
+
+    await handler(request, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
+    assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 1);
+    assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /WISE-AMBIGUOUS: ambiguous movement match/);
+    assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /WISE-UNMATCHED: no movement row match/);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
+    if (previousWiseToken === undefined) delete process.env.WISE_API_TOKEN;
+    else process.env.WISE_API_TOKEN = previousWiseToken;
+  }
+});
+
 test("GET getDashboardData marks PayPal rows as needs verification when provider net is unavailable", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;

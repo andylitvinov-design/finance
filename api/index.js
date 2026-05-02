@@ -565,13 +565,14 @@ async function buildRealIncomePayload(period, movementValues) {
     .forEach((entry) => warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: needs verification - provider fee/net missing`));
   const verifiedEntries = entries.filter((entry) => Number(entry.realNetUsd || 0) > 0);
 
-  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
+  const { rowMatches, relevantEntryIds, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
   warnings.push(...matchWarnings);
+  const relevantEntries = verifiedEntries.filter((entry) => relevantEntryIds.has(getRealIncomeEntryKey(entry)));
   return {
     entries,
     rowMatches,
-    summaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
-    summaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
+    summaryByChannel: summarizeRealIncomeByChannel(relevantEntries, movementValues),
+    summaryTotals: summarizeRealIncomeTotals(relevantEntries, movementValues),
     warnings: [...new Set(warnings.filter(Boolean))],
   };
 }
@@ -845,17 +846,16 @@ function clearNeedsVerificationReview(value) {
 function matchRealIncomeEntriesToMovement(entries, movementValues) {
   const warnings = [];
   const rowMatches = [];
+  const relevantEntryIds = new Set();
   const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
   const matchedByRow = new Map();
   for (const entry of entries) {
-    const candidates = rows
-      .map((row) => buildRealIncomeMatchCandidate(entry, row))
-      .filter(Boolean)
-      .sort((left, right) => compareMatchScore(left.score, right.score));
+    const candidates = getRealIncomeMatchCandidates(entry, rows);
     if (!candidates.length) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: no movement row match`);
       continue;
     }
+    relevantEntryIds.add(getRealIncomeEntryKey(entry));
     if (candidates.length > 1 && compareMatchScore(candidates[0].score, candidates[1].score) === 0) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: ambiguous movement match`);
       continue;
@@ -884,7 +884,18 @@ function matchRealIncomeEntriesToMovement(entries, movementValues) {
     });
   }
   rowMatches.sort((left, right) => left.rowNumber.localeCompare(right.rowNumber, "en", { numeric: true }));
-  return { rowMatches, warnings };
+  return { rowMatches, relevantEntryIds, warnings };
+}
+
+function getRealIncomeMatchCandidates(entry, rows) {
+  return (rows || [])
+    .map((row) => buildRealIncomeMatchCandidate(entry, row))
+    .filter(Boolean)
+    .sort((left, right) => compareMatchScore(left.score, right.score));
+}
+
+function getRealIncomeEntryKey(entry) {
+  return String(entry?.sourceTransactionId || entry?.id || "");
 }
 
 function buildRealIncomeMatchCandidate(entry, row) {
