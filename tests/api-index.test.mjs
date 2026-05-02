@@ -1288,6 +1288,16 @@ test("GET getDashboardData excludes provider income without movement candidates 
             paymentMethod: "трансервайз дол",
             receivedUsd: 875.5,
           }),
+          makeSourceRow({
+            number: "18139",
+            date: "2026-04-29",
+            client: "Вилл",
+            service: "Small April payment",
+            priceBase: 50,
+            accruedPlus: 51.5,
+            paymentMethod: "Андрей карта",
+            receivedUsd: 51.5,
+          }),
         ];
         return {
           ok: true,
