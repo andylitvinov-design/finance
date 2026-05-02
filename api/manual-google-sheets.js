@@ -504,6 +504,7 @@ function buildLegacyExpenseRowsFromOperations(operations) {
   const grouped = new Map();
   for (const operation of operations || []) {
     const category = mapOperationToLegacyCategory(operation);
+    if (category === "serviceIncome" && !shouldIncludeServiceIncomeInExpenseRows(operation)) continue;
     const channel = mapOperationToLegacyChannel(operation);
     const amount = mapOperationToLegacyAmount(operation, category);
     if (!category || !channel || amount === null) continue;
@@ -522,6 +523,12 @@ function buildLegacyExpenseRowsFromOperations(operations) {
       if (left.date !== right.date) return left.date.localeCompare(right.date);
       return left.category.localeCompare(right.category);
     });
+}
+
+function shouldIncludeServiceIncomeInExpenseRows(operation) {
+  const source = String(operation?.source || "").trim().toLowerCase();
+  if (!source) return true;
+  return ["manual", "fact", "migration"].includes(source);
 }
 
 function mapOperationToLegacyCategory(operation) {

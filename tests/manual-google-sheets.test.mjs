@@ -252,11 +252,12 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
                   ["2026-04-24 00:00:00", "exchange_in", "Яндекс руб", "Бинанс spot", "874", "USD", "874", "874", "", "874", "exchange", "", "in", "buy usd", "mcp", "ledger-2", "g1", "", ""],
                   ["2026-04-25 00:00:00", "exchange_out", "приват 24-грн", "binance save", "-4916", "UAH", "-112.0839", "4916", "", "4916", "exchange", "", "out", "buy crypto", "mcp", "ledger-3", "g2", "", ""],
                   ["2026-04-25 00:00:00", "exchange_out", "binance save", "", "-950", "USD", "-950", "950", "", "950", "exchange", "", "out", "send usd", "mcp", "ledger-4", "g2", "", ""],
-	                  ["2026-04-25 00:00:00", "income", "", "пейпал дол", "369", "USD", "369", "369", "", "369", "serviceIncome", "", "in", "income", "manual", "ledger-5", "", "", ""],
-	                  ["2026-04-26 00:00:00", "expense", "Яндекс руб", "", "1000", "RUB", "11.82", "1000", "", "1000", "food", "", "out", "meal", "photo", "ledger-6", "", "", ""],
-	                  ["2026-04-27 00:00:00", "business_expense", "Яндекс руб", "", "85956", "RUB", "942", "85956", "", "85956", "business", "", "out", "rub expense", "mcp", "ledger-7", "", "", ""],
-	                ],
-	              },
+                  ["2026-04-25 00:00:00", "income", "", "пейпал дол", "369", "USD", "369", "369", "", "369", "serviceIncome", "", "in", "income", "manual", "ledger-5", "", "", ""],
+                  ["2026-04-25 00:00:00", "income", "", "трансервайз дол", "1210.25", "USD", "1210.25", "1210.25", "", "", "serviceIncome", "", "in", "wise fact income", "wise", "ledger-wise-income", "", "", ""],
+                  ["2026-04-26 00:00:00", "expense", "Яндекс руб", "", "1000", "RUB", "11.82", "1000", "", "1000", "food", "", "out", "meal", "photo", "ledger-6", "", "", ""],
+                  ["2026-04-27 00:00:00", "business_expense", "Яндекс руб", "", "85956", "RUB", "942", "85956", "", "85956", "business", "", "out", "rub expense", "mcp", "ledger-7", "", "", ""],
+                ],
+              },
               {
                 range: "'Расходы'!A1:Z10",
                 values: [
@@ -276,16 +277,17 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
 
     assert.equal(repository.ok, true);
     assert.equal(repository.schema, "ledger-v2-compatible");
-	    assert.equal(repository.operations.length, 7);
-	    assert.equal(repository.ledgerV2Rows.length, 7);
+    assert.equal(repository.operations.length, 8);
+    assert.equal(repository.ledgerV2Rows.length, 8);
     assert.equal(repository.operations[0].source, "mcp");
     assert.equal(repository.operations[0].ledgerV2.operation, "exchange");
     assert.equal(repository.operations[0].ledgerV2.external_id, "ledger-1");
     assert.equal(repository.operations[4].source, "manual");
     assert.equal(repository.operations[4].ledgerV2.category, "service");
 	    assert.equal(repository.views.fallback_amount_rows, 0);
-	    assert.equal(repository.operations[5].source, "photo");
-	    assert.equal(repository.operations[6].amountUsd, "942");
+	    assert.equal(repository.operations[5].source, "wise");
+	    assert.equal(repository.operations[6].source, "photo");
+	    assert.equal(repository.operations[7].amountUsd, "942");
 	    assert.deepEqual(repository.expenseRows, [
 	      {
 	        date: "2026-04-24",
