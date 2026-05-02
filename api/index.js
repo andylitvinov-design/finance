@@ -851,16 +851,17 @@ function matchRealIncomeEntriesToMovement(entries, movementValues) {
   const matchedByRow = new Map();
   for (const entry of entries) {
     const candidates = getRealIncomeMatchCandidates(entry, rows);
-    if (!candidates.length) {
+    const relevantCandidates = candidates.filter(isRelevantRealIncomeCandidate);
+    if (!relevantCandidates.length) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: no movement row match`);
       continue;
     }
     relevantEntryIds.add(getRealIncomeEntryKey(entry));
-    if (candidates.length > 1 && compareMatchScore(candidates[0].score, candidates[1].score) === 0) {
+    if (relevantCandidates.length > 1 && compareMatchScore(relevantCandidates[0].score, relevantCandidates[1].score) === 0) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: ambiguous movement match`);
       continue;
     }
-    const best = candidates[0];
+    const best = relevantCandidates[0];
     const existing = matchedByRow.get(best.rowNumber);
     if (existing && compareMatchScore(best.score, existing.score) >= 0) continue;
     if (existing) {
@@ -896,6 +897,15 @@ function getRealIncomeMatchCandidates(entry, rows) {
 
 function getRealIncomeEntryKey(entry) {
   return String(entry?.sourceTransactionId || entry?.id || "");
+}
+
+function isRelevantRealIncomeCandidate(candidate) {
+  const plannedUsd = Math.abs(Number(candidate?.plannedReceivedUsd || 0));
+  const closestDiff = Math.min(
+    Math.abs(Number(candidate?.score?.netDiff || 0)),
+    Math.abs(Number(candidate?.score?.grossDiff || 0))
+  );
+  return closestDiff <= Math.max(5, plannedUsd * 0.05);
 }
 
 function buildRealIncomeMatchCandidate(entry, row) {
