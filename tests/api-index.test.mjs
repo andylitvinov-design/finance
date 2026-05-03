@@ -1182,7 +1182,7 @@ test("GET getDashboardData adds real income payload and movement net-income colu
   }
 });
 
-test("GET getDashboardData excludes provider income without movement candidates but keeps ambiguous candidates in real income summary", async () => {
+test("GET getDashboardData keeps unmatched Wise provider income in real income summary", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
   const previousWiseToken = process.env.WISE_API_TOKEN;
@@ -1236,10 +1236,10 @@ test("GET getDashboardData excludes provider income without movement candidates 
                       ["дата 1", "01.04.2026", "дата 2", "30.04.2026"],
                       [""],
                       ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
-                      ["ИТОГО", "", "", "", "", "0", "", "", "0", "0", "0", "0", "", "", "", "0", "", "", "0", "0"],
+                      ["ИТОГО", "", "", "", "", "950", "", "", "950", "978,5", "665", "684,95", "", "", "", "978,5", "", "", "978,5", "0"],
                       [],
                       ["показатели", "значение"],
-                      ["4) получено в долларах", "0,0000"],
+                      ["4) получено в долларах", "978,5000"],
                     ],
                   },
                   orders: {
@@ -1259,44 +1259,14 @@ test("GET getDashboardData excludes provider income without movement candidates 
           new Array(51).fill(""),
           new Array(51).fill(""),
           makeSourceRow({
-            number: "18095",
-            date: "2026-04-01",
-            client: "Вилл",
-            service: "Order A",
-            priceBase: 100,
-            accruedPlus: 103,
-            paymentMethod: "Андрей карта",
-            receivedUsd: 103,
-          }),
-          makeSourceRow({
-            number: "18097",
-            date: "2026-04-03",
-            client: "Вилл",
-            service: "Order B",
-            priceBase: 100,
-            accruedPlus: 103,
-            paymentMethod: "Андрей карта",
-            receivedUsd: 103,
-          }),
-          makeSourceRow({
-            number: "18112",
+            number: "18140",
             date: "2026-04-11",
-            client: "William Test",
-            service: "Wise payment",
-            priceBase: 850,
-            accruedPlus: 875.5,
+            client: "Wise Matched",
+            service: "Matched payment",
+            priceBase: 950,
+            accruedPlus: 978.5,
             paymentMethod: "трансервайз дол",
-            receivedUsd: 875.5,
-          }),
-          makeSourceRow({
-            number: "18139",
-            date: "2026-04-29",
-            client: "Вилл",
-            service: "Small April payment",
-            priceBase: 50,
-            accruedPlus: 51.5,
-            paymentMethod: "Андрей карта",
-            receivedUsd: 51.5,
+            receivedUsd: 978.5,
           }),
         ];
         return {
@@ -1334,26 +1304,18 @@ test("GET getDashboardData excludes provider income without movement candidates 
               transactions: [
                 {
                   type: "CREDIT",
-                  date: "2026-04-02T09:00:00.000Z",
-                  referenceNumber: "WISE-AMBIGUOUS",
-                  amount: { value: "103", currency: "USD" },
-                  amountUsd: "103",
-                  details: { description: "Ambiguous movement", type: "TRANSFER" },
-                },
-                {
-                  type: "CREDIT",
                   date: "2026-04-11T09:00:00.000Z",
                   referenceNumber: "WISE-MATCHED",
-                  amount: { value: "875.5", currency: "USD" },
-                  amountUsd: "875.5",
+                  amount: { value: "1210.25", currency: "USD" },
+                  amountUsd: "978.5",
                   details: { description: "Matched movement", type: "TRANSFER" },
                 },
                 {
                   type: "CREDIT",
-                  date: "2026-04-30T09:00:00.000Z",
+                  date: "2026-04-18T09:00:00.000Z",
                   referenceNumber: "WISE-UNMATCHED",
-                  amount: { value: "231.75", currency: "USD" },
-                  amountUsd: "231.75",
+                  amount: { value: "196.5", currency: "USD" },
+                  amountUsd: "196.5",
                   details: { description: "No matching movement", type: "TRANSFER" },
                 },
               ],
@@ -1379,10 +1341,16 @@ test("GET getDashboardData excludes provider income without movement candidates 
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
-    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 1);
-    assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /WISE-AMBIGUOUS: ambiguous movement match/);
+    assert.equal(response.body?.data?.realIncome?.matchedEntries?.length, 1);
+    assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.length, 1);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 1175);
+    assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 1175);
+    assert.equal(response.body?.data?.realIncome?.matchedEntries?.[0]?.realNetUsd, 978.5);
+    assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.[0]?.realNetUsd, 196.5);
+    assert.equal(response.body?.data?.realIncome?.unmatchedSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 196.5);
     assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /WISE-UNMATCHED: no movement row match/);
+    assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /unmatched provider income: трансервайз дол 196,5 USD net/i);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
