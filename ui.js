@@ -1024,7 +1024,7 @@ function isLedgerProviderIncomeSource(row) {
   if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
   if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider"].includes(source)) return true;
   const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim().toLowerCase();
-  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|provider|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp):/.test(rawSourceId);
 }
 
 function getLedgerExpenseChannel(row) {
