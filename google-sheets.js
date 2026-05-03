@@ -311,6 +311,9 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
   if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
   if (/^(yoomoney|yoo_money|yamoney|yandex)[:_-]/i.test(raw)) return "yoomoney";
+  for (const source of ["file_import", "csv_import", "xlsx_import", "pdf_import"]) {
+    if (raw.startsWith(`${source}:`) || raw.startsWith(`${source}-`) || raw.startsWith(`${source}_`)) return source;
+  }
   if (/^(ocr|browser_ocr|screenshot|image|photo)[:_-]/i.test(raw)) return raw.split(/[:_-]/)[0] === "browser" ? "browser_ocr" : raw.split(/[:_-]/)[0];
   return "";
 }
@@ -332,7 +335,7 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
   if (["transferwise"].includes(token)) return "wise";
@@ -348,7 +351,7 @@ function normalizeManualLedgerSource(value, fallback = "") {
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
   else if (["transferwise"].includes(token)) normalized = "wise";

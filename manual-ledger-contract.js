@@ -109,6 +109,10 @@
     "screenshot",
     "image",
     "photo",
+    "file_import",
+    "csv_import",
+    "xlsx_import",
+    "pdf_import",
     "other"
   ];
 
@@ -212,6 +216,10 @@
     browser_ocr: "browser_ocr",
     screenshot: "screenshot",
     image: "image",
+    file_import: "file_import",
+    csv_import: "csv_import",
+    xlsx_import: "xlsx_import",
+    pdf_import: "pdf_import",
     yoomoney: "yoomoney",
     yoo_money: "yoomoney",
     yamoney: "yoomoney",

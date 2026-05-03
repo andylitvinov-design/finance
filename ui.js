@@ -259,6 +259,15 @@ function renderExpenseAccountingBlock() {
   privat24Input.type = "file";
   privat24Input.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
   privat24Input.disabled = state.expenseAccounting.loading || state.expenseAccounting.privat24ImportLoading;
+  const statementInput = document.createElement("input");
+  statementInput.type = "file";
+  statementInput.accept = "image/*,.pdf,.csv,.xlsx,.xls,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+  statementInput.disabled = state.expenseAccounting.loading || state.expenseAccounting.statementImportLoading;
+  statementInput.style.display = "none";
+  statementInput.addEventListener("change", async () => {
+    await importExpenseStatementFile(statementInput.files?.[0] || null);
+    statementInput.value = "";
+  });
   const tdBankCsvInput = document.createElement("input");
   tdBankCsvInput.type = "file";
   tdBankCsvInput.accept = ".csv,text/csv";
@@ -280,6 +289,7 @@ function renderExpenseAccountingBlock() {
   const statementLoading = state.expenseAccounting.paypalLoading
     || state.expenseAccounting.wiseLoading
     || state.expenseAccounting.yoomoneyLoading
+    || state.expenseAccounting.statementImportLoading
     || state.expenseAccounting.monobankLoading
     || state.expenseAccounting.privatBankLoading
     || state.expenseAccounting.privat24ImportLoading
@@ -328,14 +338,20 @@ function renderExpenseAccountingBlock() {
   privat24ImportButton.addEventListener("click", async () => {
     await importPrivat24StatementFile(privat24Input.files?.[0] || null);
   });
+  const statementImportButton = document.createElement("button");
+  statementImportButton.type = "button";
+  statementImportButton.className = "secondary";
+  statementImportButton.textContent = state.expenseAccounting.statementImportLoading ? "Импортирую выписку..." : "Загрузить выписку";
+  statementImportButton.disabled = state.expenseAccounting.loading || statementLoading;
+  statementImportButton.addEventListener("click", () => statementInput.click());
   const tdBankButton = document.createElement("button");
   tdBankButton.type = "button";
   tdBankButton.className = "secondary";
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", startOrContinueTdImport);
-  actions.append(parseButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
-  upload.append(input, privat24Input, tdBankCsvInput, actions);
+  actions.append(parseButton, statementImportButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  upload.append(input, statementInput, privat24Input, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderPrivat24ImportHelper());
@@ -2021,6 +2037,334 @@ function readPrivat24XlsxFile(file) {
   });
 }
 
+async function importExpenseStatementFile(file) {
+  if (!file) {
+    setExpenseAccountingStatus("Выберите файл выписки.", true);
+    renderTabs();
+    return;
+  }
+  const fileType = detectExpenseStatementFileType(file);
+  if (fileType === "image") {
+    await parseExpenseScreenshotFiles([file]);
+    return;
+  }
+  state.expenseAccounting.statementImportLoading = true;
+  setExpenseAccountingStatus("Импортирую выписку...", false);
+  renderTabs();
+  try {
+    const result = await parseExpenseStatementFile(file);
+    const entries = (result.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries,
+      ...entries
+    ];
+    state.expenseAccounting.warnings = result.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    setExpenseAccountingStatus(
+      entries.length
+        ? `Выписка импортирована: ${entries.length} строк. Проверьте needs_review и каналы перед внесением.`
+        : (result.emptyMessage || "Файл прочитан, но операции не найдены."),
+      !entries.length && Boolean(result.error)
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось импортировать выписку.", true);
+  } finally {
+    state.expenseAccounting.statementImportLoading = false;
+    renderTabs();
+  }
+}
+
+function detectExpenseStatementFileType(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const type = String(file?.type || "").toLowerCase();
+  if (type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(name)) return "image";
+  if (type === "application/pdf" || /\.pdf$/i.test(name)) return "pdf";
+  if (/\.(xlsx|xls)$/i.test(name) || /spreadsheetml|ms-excel/.test(type)) return "xlsx";
+  if (/\.csv$/i.test(name) || /csv|text\/plain/.test(type)) return "csv";
+  return "text";
+}
+
+async function parseExpenseStatementFile(file) {
+  const fileType = detectExpenseStatementFileType(file);
+  const context = buildGenericStatementContext(file, fileType);
+  if (fileType === "csv") return parseGenericStatementCsv(await file.text(), context);
+  if (fileType === "xlsx") return parseGenericStatementXlsx(file, context);
+  if (fileType === "pdf") {
+    const text = await extractPdfStatementText(file);
+    if (!String(text || "").trim()) {
+      return {
+        entries: [],
+        warnings: ["PDF text extraction returned no operations."],
+        emptyMessage: "PDF прочитан, но текстовые операции не найдены. Для image-only PDF используйте фото/OCR или отдельный OCR PR.",
+        error: true
+      };
+    }
+    return parseGenericStatementText(text, context);
+  }
+  return parseGenericStatementText(await file.text(), context);
+}
+
+function buildGenericStatementContext(file, fileType) {
+  const fileName = String(file?.name || "statement").trim();
+  const normalizedName = normalizeStableStatementIdPart(fileName);
+  const source = fileType === "csv" ? "csv_import" : (fileType === "xlsx" ? "xlsx_import" : (fileType === "pdf" ? "pdf_import" : "file_import"));
+  const provider = /(^|[^a-z])td([^a-z]|$)|tdbank|td bank|easyweb/i.test(fileName) ? "td" : "";
+  return {
+    fileName,
+    normalizedFileName: normalizedName,
+    fileType,
+    source,
+    provider,
+    defaultChannel: provider === "td" ? "БАНК КАНАДА cad" : "",
+    defaultCurrency: provider === "td" ? "CAD" : ""
+  };
+}
+
+function parseGenericStatementCsv(text, context = {}) {
+  return parseGenericStatementRows(parseSimpleCsvRows(text), context);
+}
+
+async function parseGenericStatementXlsx(file, context = {}) {
+  const csvText = await readGenericXlsxFileAsCsv(file);
+  return parseGenericStatementCsv(csvText, { ...context, source: "xlsx_import", fileType: "xlsx" });
+}
+
+function parseGenericStatementText(text, context = {}) {
+  const raw = String(text || "").trim();
+  if (!raw) return { entries: [], warnings: ["Statement text was empty."] };
+  const delimiterRows = parseSimpleCsvRows(raw);
+  const rows = delimiterRows.length > 1 && findGenericStatementHeaderIndex(delimiterRows) !== -1
+    ? delimiterRows
+    : parseFixedWidthStatementRows(raw);
+  return parseGenericStatementRows(rows, context);
+}
+
+function parseGenericStatementRows(rows, context = {}) {
+  const headerIndex = findGenericStatementHeaderIndex(rows);
+  if (headerIndex === -1) {
+    return { entries: [], warnings: ["Statement header was not found."] };
+  }
+  const headers = rows[headerIndex].map(normalizeStatementHeader);
+  const headerMap = buildStatementHeaderMap(headers);
+  const entries = rows.slice(headerIndex + 1)
+    .map((row, index) => normalizeGenericStatementRow(row, headerMap, { ...context, rowIndex: index }))
+    .filter((entry) => entry && entry.date && entry.localAmount > 0);
+  return { entries, warnings: [] };
+}
+
+function findGenericStatementHeaderIndex(rows) {
+  return (rows || []).findIndex((row) => {
+    const headers = (row || []).map(normalizeStatementHeader);
+    return headers.includes("date") && (headers.includes("amount") || headers.includes("debit") || headers.includes("credit"));
+  });
+}
+
+function buildStatementHeaderMap(headers) {
+  return (headers || []).reduce((acc, header, index) => {
+    if (header && acc[header] === undefined) acc[header] = index;
+    return acc;
+  }, {});
+}
+
+function normalizeGenericStatementRow(row, headerMap, context = {}) {
+  const read = (key) => {
+    const columnIndex = headerMap?.[key];
+    return columnIndex === undefined ? "" : row[columnIndex];
+  };
+  const date = normalizeTdBankCsvDate(read("date"));
+  const description = [read("description"), read("name")].filter(Boolean).join(" | ").slice(0, 240);
+  const debit = parseTdBankCsvAmount(read("debit"));
+  const credit = parseTdBankCsvAmount(read("credit"));
+  const explicitAmount = parseTdBankCsvAmount(read("amount"));
+  let direction = "";
+  let amount = 0;
+  if (Math.abs(debit) > 0) {
+    direction = "expense";
+    amount = Math.abs(debit);
+  } else if (Math.abs(credit) > 0) {
+    direction = "income";
+    amount = Math.abs(credit);
+  } else if (explicitAmount) {
+    direction = explicitAmount < 0 ? "expense" : "income";
+    amount = Math.abs(explicitAmount);
+  }
+  if (!date || !amount) return null;
+  const currency = normalizeGenericStatementCurrency(read("currency"), description, context);
+  const channel = inferGenericStatementChannel({ context, currency, description });
+  const source = String(context.source || "file_import").trim();
+  const sourceTransactionId = buildGenericStatementSourceId({
+    source,
+    fileName: context.normalizedFileName,
+    rowIndex: context.rowIndex || 0,
+    date,
+    amount,
+    currency,
+    description
+  });
+  return {
+    date,
+    channel,
+    preserveBlankChannel: !channel,
+    direction,
+    localAmount: amount,
+    currency,
+    usdAmount: null,
+    suggestedCategory: inferGenericStatementCategory(direction, description),
+    organization: description || "Statement import",
+    counterparty: description || "Statement import",
+    description,
+    confidence: channel ? 0.82 : 0.65,
+    source,
+    sourceTransactionId,
+    externalId: sourceTransactionId,
+    external_id: sourceTransactionId,
+    reviewStatus: channel ? "" : "needs_review",
+    review_status: channel ? "" : "needs_review",
+    entryKind: channel ? "payment" : "needs_review"
+  };
+}
+
+function normalizeStatementHeader(value) {
+  const header = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-яіїєґ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (["date", "transaction date", "posting date", "дата"].includes(header)) return "date";
+  if (["description", "transaction description", "details", "memo", "описание", "назначение"].includes(header)) return "description";
+  if (["name", "payee", "merchant"].includes(header)) return "name";
+  if (["debit", "withdrawal", "withdrawals", "paid out", "expense", "расход", "списание"].includes(header)) return "debit";
+  if (["credit", "deposit", "deposits", "paid in", "income", "приход", "зачисление"].includes(header)) return "credit";
+  if (["amount", "transaction amount", "сумма"].includes(header)) return "amount";
+  if (["currency", "cur", "валюта"].includes(header)) return "currency";
+  if (["balance", "running balance", "остаток"].includes(header)) return "balance";
+  return header;
+}
+
+function normalizeGenericStatementCurrency(value, description = "", context = {}) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (/^(CAD|USD|EUR|UAH|RUB)$/.test(raw)) return raw;
+  if (/^C\$|CAD|КАНАД/.test(raw)) return "CAD";
+  if (/USD|US\$|\$|ДОЛ/.test(raw)) return "USD";
+  if (/EUR|€|ЕВР/.test(raw)) return "EUR";
+  if (/UAH|ГРН/.test(raw)) return "UAH";
+  if (/RUB|РУБ/.test(raw)) return "RUB";
+  const text = `${description || ""} ${context.defaultCurrency || ""}`;
+  if (/CAD|C\$|КАНАД/i.test(text)) return "CAD";
+  if (/USD|US\$|\$|ДОЛ/i.test(text)) return "USD";
+  if (/EUR|€|ЕВР/i.test(text)) return "EUR";
+  if (/UAH|ГРН/i.test(text)) return "UAH";
+  if (/RUB|РУБ/i.test(text)) return "RUB";
+  return "";
+}
+
+function inferGenericStatementChannel({ context = {}, currency = "", description = "" } = {}) {
+  if (context.provider === "td") return "БАНК КАНАДА cad";
+  const direct = canonicalManualFinanceChannel(context.selectedChannel || context.currentChannel || "");
+  if (direct && getManualFinanceChannels().includes(direct)) return direct;
+  const normalized = normalizeLookupText(description);
+  const mentioned = getManualFinanceChannels().find((channel) => normalized.includes(normalizeLookupText(channel)));
+  if (mentioned) return mentioned;
+  if (currency === "CAD" && /td bank|tdbank|easyweb/i.test(`${context.fileName || ""} ${description}`)) return "БАНК КАНАДА cad";
+  return "";
+}
+
+function inferGenericStatementCategory(direction, description = "") {
+  const normalized = normalizeLookupText(description);
+  if (/exchange|обмен|конвертац|conversion/.test(normalized)) return "exchange";
+  return direction === "income" ? "serviceIncome" : "business";
+}
+
+function buildGenericStatementSourceId({ source, fileName, rowIndex, date, amount, currency, description }) {
+  return [
+    source || "file_import",
+    fileName || "statement",
+    rowIndex,
+    date,
+    amount,
+    currency || "",
+    normalizeStableStatementIdPart(description || "row")
+  ].join(":");
+}
+
+function normalizeStableStatementIdPart(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-яіїєґ]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 90) || "blank";
+}
+
+function parseFixedWidthStatementRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/\t+|\s{2,}/).map((cell) => cell.trim()));
+}
+
+async function readGenericXlsxFileAsCsv(file) {
+  if (typeof XLSX === "undefined" || !XLSX?.read || !XLSX?.utils) {
+    throw new Error("XLSX библиотека не загрузилась. Сохраните выписку как CSV или обновите страницу.");
+  }
+  const buffer = typeof file?.arrayBuffer === "function"
+    ? await file.arrayBuffer()
+    : await readFileAsArrayBuffer(file);
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames?.[0];
+  const sheet = workbook.Sheets?.[sheetName];
+  if (!sheet) throw new Error("В XLSX выписке не найден первый лист.");
+  return XLSX.utils.sheet_to_csv(sheet, { FS: ",", blankrows: false });
+}
+
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Не удалось прочитать ${file?.name || "файл выписки"}.`));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function extractPdfStatementText(file) {
+  const pdfjs = await loadPdfJsIfNeeded();
+  if (!pdfjs?.getDocument) return "";
+  const data = typeof file?.arrayBuffer === "function" ? await file.arrayBuffer() : await readFileAsArrayBuffer(file);
+  const loadingTask = pdfjs.getDocument({ data });
+  const pdf = await loadingTask.promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push((content.items || []).map((item) => String(item.str || "")).join("\n"));
+  }
+  return pages.join("\n");
+}
+
+function loadPdfJsIfNeeded() {
+  if (typeof window !== "undefined" && window.pdfjsLib?.getDocument) {
+    return Promise.resolve(window.pdfjsLib);
+  }
+  if (typeof document === "undefined") return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
+    script.onload = () => {
+      const pdfjs = window.pdfjsLib;
+      if (pdfjs?.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      }
+      resolve(pdfjs || null);
+    };
+    script.onerror = () => reject(new Error("PDF parser не загрузился. Попробуйте CSV/XLSX или фото/OCR."));
+    document.head.appendChild(script);
+  });
+}
+
 async function loadBankExpenseStatement(config) {
   const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
   const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
@@ -2405,16 +2749,7 @@ function normalizeTdBankCsvRow(row, headers, index) {
 }
 
 function normalizeTdBankCsvHeader(value) {
-  const header = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
-  if (["date", "transaction date", "posting date"].includes(header)) return "date";
-  if (["description", "transaction description", "memo", "details"].includes(header)) return "description";
-  if (["name", "payee", "merchant"].includes(header)) return "name";
-  if (["debit", "withdrawal", "withdrawals", "paid out"].includes(header)) return "debit";
-  if (["credit", "deposit", "deposits", "paid in"].includes(header)) return "credit";
-  if (["amount", "transaction amount"].includes(header)) return "amount";
-  if (["currency", "cur"].includes(header)) return "currency";
-  if (["balance", "running balance"].includes(header)) return "balance";
-  return header;
+  return normalizeStatementHeader(value);
 }
 
 function normalizeTdBankCsvDate(value) {
@@ -2586,10 +2921,10 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     id: `expense-${Date.now()}-${index}`,
     date: normalizedDate || fallbackDate,
     dateSource: entry.dateSource === "screenshot" || normalizedDate ? "screenshot" : "upload_fallback",
-    channel: canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0],
+    channel: entry.preserveBlankChannel ? "" : (canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0]),
     direction,
     localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
-    currency: String(entry.currency || inferManualFinanceChannelCurrency(entry.channel)).trim().toUpperCase(),
+    currency: String(entry.currency || (entry.preserveBlankChannel ? "" : inferManualFinanceChannelCurrency(entry.channel))).trim().toUpperCase(),
     usdAmount: parseLooseNumber(entry.usdAmount),
     amountClientPaid: parseLooseNumber(entry.amountClientPaid ?? entry.amount_client_paid ?? entry.localAmount),
     amount_client_paid: parseLooseNumber(entry.amountClientPaid ?? entry.amount_client_paid ?? entry.localAmount),
@@ -2648,7 +2983,9 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     confidence: Number(entry.confidence || 0),
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),
-    sourceTransactionId: String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim()
+    sourceTransactionId: String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim(),
+    reviewStatus: String(entry.reviewStatus || entry.review_status || "").trim(),
+    review_status: String(entry.reviewStatus || entry.review_status || "").trim()
   };
   return applyPayPalCounterpartyOverride(normalized);
 }

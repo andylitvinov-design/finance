@@ -465,6 +465,48 @@ test("duplicate screenshot income is skipped and reported in save summary", () =
   assert.equal(saved.skipped_count, 0);
 });
 
+test("duplicate generic file income is skipped and import sources are preserved", () => {
+  const context = buildLedgerTestContext();
+  const entries = [
+    {
+      date: "2026-05-01",
+      channel: "пейпал дол",
+      localAmount: 100,
+      currency: "USD",
+      usdAmount: null,
+      category: "serviceIncome",
+      direction: "income",
+      source: "csv_import",
+      sourceTransactionId: "csv_import:statement:0:2026-05-01:100:USD:client",
+      externalId: "csv_import:statement:0:2026-05-01:100:USD:client",
+      description: "Client"
+    },
+    {
+      date: "2026-05-01",
+      channel: "пейпал дол",
+      localAmount: 100,
+      currency: "USD",
+      usdAmount: null,
+      category: "serviceIncome",
+      direction: "income",
+      source: "csv_import",
+      sourceTransactionId: "csv_import:statement:0:2026-05-01:100:USD:client",
+      externalId: "csv_import:statement:0:2026-05-01:100:USD:client",
+      description: "Client"
+    }
+  ];
+  const ledgerRows = plain(context.buildLedgerRowsFromAccountingEntries(entries));
+  assert.equal(ledgerRows[0].source, "csv_import");
+  assert.equal(ledgerRows[1].source, "csv_import");
+
+  const saved = plain(context.normalizeManualLedgerRowsForSave(ledgerRows, []));
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.rows[0].source, "csv_import");
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 1);
+  assert.equal(saved.skipped_count, 0);
+});
+
 test("normalizeManualLedgerRowsForSave reports added duplicate and skipped counts", () => {
   const context = buildLedgerTestContext();
   const saved = plain(context.normalizeManualLedgerRowsForSave([
