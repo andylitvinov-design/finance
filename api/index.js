@@ -302,8 +302,11 @@ async function maybeOverlayFreshSourceData(data) {
       ? {
           entries: realIncome?.entries || [],
           rowMatches: realIncome?.rowMatches || [],
+          matchedEntries: realIncome?.matchedEntries || [],
+          unmatchedEntries: realIncome?.unmatchedEntries || [],
           summaryByChannel: realIncome?.summaryByChannel || {},
           summaryTotals: realIncome?.summaryTotals || null,
+          unmatchedSummaryByChannel: realIncome?.unmatchedSummaryByChannel || {},
           warnings: [...new Set([...(realIncome?.warnings || []), ...movementWarnings])],
         }
       : null;
@@ -565,14 +568,20 @@ async function buildRealIncomePayload(period, movementValues) {
     .forEach((entry) => warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: needs verification - provider fee/net missing`));
   const verifiedEntries = entries.filter((entry) => Number(entry.realNetUsd || 0) > 0);
 
-  const { rowMatches, relevantEntryIds, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
+  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
+  const matchedEntryIds = new Set(rowMatches.map((match) => String(match.matchedEntryId || "").trim()).filter(Boolean));
+  const matchedEntries = verifiedEntries.filter((entry) => matchedEntryIds.has(getRealIncomeEntryKey(entry)));
+  const unmatchedEntries = verifiedEntries.filter((entry) => !matchedEntryIds.has(getRealIncomeEntryKey(entry)));
   warnings.push(...matchWarnings);
-  const relevantEntries = verifiedEntries.filter((entry) => relevantEntryIds.has(getRealIncomeEntryKey(entry)));
+  warnings.push(...buildUnmatchedRealIncomeWarnings(unmatchedEntries));
   return {
     entries,
     rowMatches,
-    summaryByChannel: summarizeRealIncomeByChannel(relevantEntries, movementValues),
-    summaryTotals: summarizeRealIncomeTotals(relevantEntries, movementValues),
+    matchedEntries,
+    unmatchedEntries,
+    summaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
+    summaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
+    unmatchedSummaryByChannel: summarizeRealIncomeByChannel(unmatchedEntries, movementValues),
     warnings: [...new Set(warnings.filter(Boolean))],
   };
 }
@@ -843,10 +852,17 @@ function clearNeedsVerificationReview(value) {
     .join(" | ");
 }
 
+function buildUnmatchedRealIncomeWarnings(entries) {
+  if (!Array.isArray(entries) || !entries.length) return [];
+  const summaryByChannel = summarizeRealIncomeByChannel(entries, []);
+  return Object.values(summaryByChannel)
+    .filter((row) => Number(row?.realNetUsd || 0) > 0)
+    .map((row) => `unmatched provider income: ${row.channel} ${formatDisplayNumber(row.realNetUsd)} USD net`);
+}
+
 function matchRealIncomeEntriesToMovement(entries, movementValues) {
   const warnings = [];
   const rowMatches = [];
-  const relevantEntryIds = new Set();
   const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
   const matchedByRow = new Map();
   for (const entry of entries) {
@@ -856,7 +872,6 @@ function matchRealIncomeEntriesToMovement(entries, movementValues) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: no movement row match`);
       continue;
     }
-    relevantEntryIds.add(getRealIncomeEntryKey(entry));
     if (relevantCandidates.length > 1 && compareMatchScore(relevantCandidates[0].score, relevantCandidates[1].score) === 0) {
       warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: ambiguous movement match`);
       continue;
@@ -871,6 +886,7 @@ function matchRealIncomeEntriesToMovement(entries, movementValues) {
     matchedByRow.set(best.rowNumber, best);
     rowMatches.push({
       rowNumber: best.rowNumber,
+      matchedEntryId: getRealIncomeEntryKey(entry),
       matchedProvider: entry.source,
       matchedTransactionId: entry.sourceTransactionId,
       channel: entry.channel,
@@ -885,7 +901,7 @@ function matchRealIncomeEntriesToMovement(entries, movementValues) {
     });
   }
   rowMatches.sort((left, right) => left.rowNumber.localeCompare(right.rowNumber, "en", { numeric: true }));
-  return { rowMatches, relevantEntryIds, warnings };
+  return { rowMatches, warnings };
 }
 
 function getRealIncomeMatchCandidates(entry, rows) {
