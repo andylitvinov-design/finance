@@ -238,6 +238,11 @@ function renderExpenseAccountingBlock() {
   status.textContent = state.expenseAccounting.status || "Выберите скриншоты расходов для разбора.";
   shell.appendChild(status);
 
+  const unsavedNotice = renderUnsavedExpenseAccountingNotice({
+    includeAction: state.expenseAccounting.activeSubtab === "analysis"
+  });
+  if (unsavedNotice) shell.appendChild(unsavedNotice);
+
   if (state.expenseAccounting.activeSubtab === "analysis") {
     shell.appendChild(renderExpenseFinancialAnalysis());
     return shell;
@@ -378,7 +383,7 @@ function renderPrivat24ImportHelper() {
 }
 
 function renderExpenseAccountingSaveButton() {
-  if (!state.expenseAccounting.entries.length) return null;
+  if (!hasUnsavedExpenseAccountingEntries()) return null;
   const button = document.createElement("button");
   button.type = "button";
   button.className = "primary";
@@ -386,6 +391,41 @@ function renderExpenseAccountingSaveButton() {
   button.disabled = state.expenseAccounting.loading;
   button.addEventListener("click", saveExpenseAccountingEntries);
   return button;
+}
+
+function hasUnsavedExpenseAccountingEntries() {
+  return Array.isArray(state.expenseAccounting.entries) && state.expenseAccounting.entries.length > 0;
+}
+
+function getUnsavedExpenseAccountingNoticeMessage() {
+  return "TD строки импортированы, но ещё не внесены в Ledger. Нажмите ‘внести значения’, чтобы они появились в анализе финансов.";
+}
+
+function renderUnsavedExpenseAccountingNotice(options = {}) {
+  if (!hasUnsavedExpenseAccountingEntries()) return null;
+  const notice = document.createElement("div");
+  notice.className = "finance-status expense-unsaved-notice";
+  notice.style.marginBottom = "12px";
+
+  const message = document.createElement("div");
+  message.textContent = getUnsavedExpenseAccountingNoticeMessage();
+  notice.appendChild(message);
+
+  if (options.includeAction) {
+    const actions = document.createElement("div");
+    actions.className = "finance-actions";
+    actions.style.marginTop = "12px";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "primary";
+    button.textContent = "Внести значения и обновить анализ";
+    button.disabled = state.expenseAccounting.loading;
+    button.addEventListener("click", saveExpenseAccountingEntries);
+    actions.appendChild(button);
+    notice.appendChild(actions);
+  }
+
+  return notice;
 }
 
 function renderMonobankConnectPanel() {
@@ -2485,7 +2525,7 @@ async function loadTdBankExpenseStatementFromClipboard() {
     const entries = normalizeTdBankClipboardEntries(payload);
     applyTdBankExpenseEntries(entries, {
       message: entries.length
-        ? `TD Bank импортирован: ${entries.length} строк. Проверьте категории перед внесением.`
+        ? getUnsavedExpenseAccountingNoticeMessage()
         : "TD Bank импортирован, но строки за выбранный период не найдены."
     });
   } catch (error) {
@@ -2566,6 +2606,9 @@ function applyTdBankExpenseEntries(entries, options = {}) {
   state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
   state.expenseAccounting.warnings = [];
   state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+  if (entries.length) {
+    state.expenseAccounting.activeSubtab = "operations";
+  }
   setExpenseAccountingStatus(options.message || `TD Bank импортирован: ${entries.length} строк.`, false);
 }
 
@@ -3010,7 +3053,7 @@ async function saveExpenseAccountingEntries() {
     const duplicateNote = Number(response.duplicate_count || 0) || Number(response.skipped_count || 0)
       ? ` Добавлено: ${response.added_count || 0}, дубли: ${response.duplicate_count || 0}, пропущено: ${response.skipped_count || 0}.`
       : "";
-    setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк.${duplicateNote} ${response.savedAt || ""}`.trim(), false);
+    await loadDashboardData();
     state.expenseAccounting.entries = [];
     state.expenseAccounting.paypalSummary = null;
     state.expenseAccounting.wiseSummary = null;
@@ -3018,7 +3061,7 @@ async function saveExpenseAccountingEntries() {
     state.expenseAccounting.monobankSummary = null;
     state.expenseAccounting.privatBankSummary = null;
     state.expenseAccounting.tdBankSummary = null;
-    await loadDashboardData();
+    setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк.${duplicateNote} ${response.savedAt || ""}`.trim(), false);
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось внести расходы.", true);
   } finally {

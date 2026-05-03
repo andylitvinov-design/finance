@@ -604,3 +604,78 @@ test("filterExpenseOperationsRows filters by period, channels, and source", () =
     { date: "2026-05-03", source: "", displaySource: "unknown", operation: "business_expense", fromChannel: "монобанк грн", toChannel: "" },
   ]);
 });
+
+test("saveExpenseAccountingEntries reloads ledger-backed analysis before clearing temporary entries", async () => {
+  const calls = [];
+  const context = {
+    state: {
+      expenseAccounting: {
+        entries: [
+          { date: "2026-05-01", channel: "БАНК КАНАДА cad", localAmount: 12.34 }
+        ],
+        loading: false,
+        paypalSummary: { provider: "paypal" },
+        wiseSummary: { provider: "wise" },
+        yoomoneySummary: { provider: "yoomoney" },
+        monobankSummary: { provider: "mono" },
+        privatBankSummary: { provider: "pb" },
+        tdBankSummary: { provider: "td" }
+      }
+    },
+    hasConfiguredManualFinanceEndpoint() {
+      return true;
+    },
+    hasManualFinanceEndpointConfig() {
+      return true;
+    },
+    ensureGoogleAccess: async () => {
+      calls.push("ensureGoogleAccess");
+    },
+    getManualFinanceUnavailableMessage() {
+      return "unavailable";
+    },
+    saveExpenseAccountingEntriesDirect: async (entries) => {
+      calls.push(`save:${entries.length}`);
+      assert.equal(context.state.expenseAccounting.entries.length, 1);
+      return { rowCount: 1, savedAt: "saved-now" };
+    },
+    loadDashboardData: async () => {
+      calls.push(`reload:entries=${context.state.expenseAccounting.entries.length}`);
+      assert.equal(context.state.expenseAccounting.entries.length, 1);
+    },
+    setExpenseAccountingStatus(message, isError) {
+      calls.push(`status:${isError ? "error" : "ok"}`);
+      context.status = { message, isError };
+    },
+    renderTabs() {
+      calls.push(`render:loading=${context.state.expenseAccounting.loading}`);
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `async ${extractFunction(uiJs, "saveExpenseAccountingEntries")}\nthis.saveExpenseAccountingEntries = saveExpenseAccountingEntries;`,
+    context
+  );
+
+  await context.saveExpenseAccountingEntries();
+
+  assert.deepEqual(calls.slice(0, 4), [
+    "render:loading=true",
+    "save:1",
+    "reload:entries=1",
+    "status:ok"
+  ]);
+  assert.deepEqual(context.status, {
+    message: "Значения внесены: 1 агрегированных строк. saved-now",
+    isError: false
+  });
+  assert.deepEqual(plain(context.state.expenseAccounting.entries), []);
+  assert.equal(context.state.expenseAccounting.paypalSummary, null);
+  assert.equal(context.state.expenseAccounting.wiseSummary, null);
+  assert.equal(context.state.expenseAccounting.yoomoneySummary, null);
+  assert.equal(context.state.expenseAccounting.monobankSummary, null);
+  assert.equal(context.state.expenseAccounting.privatBankSummary, null);
+  assert.equal(context.state.expenseAccounting.tdBankSummary, null);
+  assert.equal(context.state.expenseAccounting.loading, false);
+  assert.equal(calls.at(-1), "render:loading=false");
+});

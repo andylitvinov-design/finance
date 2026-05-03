@@ -190,6 +190,9 @@ test("expense UI exposes TD Bank helper wiring", () => {
   assert.match(uiJs, /loadTdBankExpenseStatementFromClipboard/);
   assert.match(uiJs, /parseTdBankClipboardPayload/);
   assert.match(uiJs, /readTdBankPayloadText/);
+  assert.match(uiJs, /state\.expenseAccounting\.activeSubtab = "operations"/);
+  assert.match(uiJs, /TD строки импортированы, но ещё не внесены в Ledger/);
+  assert.match(uiJs, /Внести значения и обновить анализ/);
   assert.match(uiJs, /window\.prompt\("Вставьте TD Bank JSON из буфера обмена"/);
   assert.match(uiJs, /td-easyweb-importer\.js/);
   assert.match(uiJs, /https:\/\/easyweb\.td\.com\//);
@@ -307,6 +310,118 @@ test("normalizeTdBankClipboardEntries maps clipboard payload into ledger entries
       sourceTransactionId: "txn-1",
     },
   ]);
+});
+
+test("TD import creates unsaved entries and switches to operations with warning", async () => {
+  const context = {
+    state: {
+      expenseAccounting: {
+        tdBankLoading: false,
+        entries: [{ source: "paypal", id: "keep" }],
+        tdBankSummary: null,
+        warnings: ["old"],
+        resultTab: "received",
+        activeSubtab: "list",
+        tdImportStep: "waiting",
+        tdImportClipboardRetry: false,
+      }
+    },
+    readTdBankPayloadText: async () => "payload",
+    parseTdBankClipboardPayload(raw) {
+      assert.equal(raw, "payload");
+      return { items: [{ id: 1 }] };
+    },
+    normalizeTdBankClipboardEntries() {
+      return [{ source: "tdbank", id: "td-1" }];
+    },
+    applyTdBankExpenseEntries(entries, options = {}) {
+      context.state.expenseAccounting.entries = [
+        ...context.state.expenseAccounting.entries.filter((entry) => entry.source !== "tdbank"),
+        ...entries
+      ];
+      context.state.expenseAccounting.tdBankSummary = { count: entries.length };
+      context.state.expenseAccounting.warnings = [];
+      context.state.expenseAccounting.resultTab = "spent";
+      context.state.expenseAccounting.activeSubtab = "operations";
+      context.status = { message: options.message, isError: false };
+    },
+    renderTabs() {
+      context.renderCount = (context.renderCount || 0) + 1;
+    },
+    setExpenseAccountingStatus(message, isError) {
+      context.status = { message, isError };
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getUnsavedExpenseAccountingNoticeMessage")}\n` +
+    `async ${extractFunction(uiJs, "loadTdBankExpenseStatementFromClipboard")}\n` +
+    "this.loadTdBankExpenseStatementFromClipboard = loadTdBankExpenseStatementFromClipboard;",
+    context
+  );
+
+  await context.loadTdBankExpenseStatementFromClipboard();
+
+  assert.deepEqual(plain(context.state.expenseAccounting.entries), [
+    { source: "paypal", id: "keep" },
+    { source: "tdbank", id: "td-1" }
+  ]);
+  assert.equal(context.state.expenseAccounting.activeSubtab, "operations");
+  assert.equal(context.state.expenseAccounting.resultTab, "spent");
+  assert.deepEqual(plain(context.state.expenseAccounting.warnings), []);
+  assert.deepEqual(context.status, {
+    message: "TD строки импортированы, но ещё не внесены в Ledger. Нажмите ‘внести значения’, чтобы они появились в анализе финансов.",
+    isError: false
+  });
+});
+
+test("analysis tab warns when unsaved TD entries exist", () => {
+  function createNode(tagName) {
+    return {
+      tagName,
+      children: [],
+      style: {},
+      className: "",
+      textContent: "",
+      disabled: false,
+      appendChild(child) {
+        this.children.push(child);
+        return child;
+      },
+      append(...items) {
+        this.children.push(...items);
+      },
+      addEventListener() {}
+    };
+  }
+
+  const context = {
+    state: {
+      expenseAccounting: {
+        loading: false,
+        entries: [{ source: "tdbank", id: "td-1" }]
+      }
+    },
+    document: {
+      createElement(tagName) {
+        return createNode(tagName);
+      }
+    },
+    saveExpenseAccountingEntries() {}
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "hasUnsavedExpenseAccountingEntries")}\n` +
+    `${extractFunction(uiJs, "getUnsavedExpenseAccountingNoticeMessage")}\n` +
+    `${extractFunction(uiJs, "renderUnsavedExpenseAccountingNotice")}\n` +
+    "this.renderUnsavedExpenseAccountingNotice = renderUnsavedExpenseAccountingNotice;",
+    context
+  );
+
+  const notice = context.renderUnsavedExpenseAccountingNotice({ includeAction: true });
+  assert.equal(notice.className, "finance-status expense-unsaved-notice");
+  assert.equal(notice.children[0].textContent, "TD строки импортированы, но ещё не внесены в Ledger. Нажмите ‘внести значения’, чтобы они появились в анализе финансов.");
+  assert.equal(notice.children[1].children[0].textContent, "Внести значения и обновить анализ");
 });
 
 test("tryAutoImportTdBankFromClipboard imports valid TD JSON on focus", async () => {
