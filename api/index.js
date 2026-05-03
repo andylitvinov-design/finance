@@ -353,9 +353,19 @@ async function maybeOverlayManualRepositoryData(data) {
     delete nextManual.compatibilityMode;
   }
 
+  const nextRealIncome = isLedgerRepository
+    ? mergeLedgerRealIncomeFallback({
+        realIncome: data.realIncome || null,
+        operations: manualRepository.operations || [],
+        movementValues: data.tabs?.movement?.values || [],
+        period: data.period || {}
+      })
+    : (data.realIncome || null);
+
   return {
     ...data,
     manual: nextManual,
+    ...(nextRealIncome ? { realIncome: nextRealIncome } : {})
   };
 }
 
@@ -763,14 +773,13 @@ function summarizeRealIncomeByChannel(entries, movementValues) {
   }));
 }
 
-function summarizeRealIncomeTotals(entries, movementValues) {
-  const summaryByChannel = summarizeRealIncomeByChannel(entries, movementValues);
-  const totals = Object.values(summaryByChannel).reduce((acc, row) => ({
-    plannedReceivedUsd: acc.plannedReceivedUsd + row.plannedReceivedUsd,
-    realGrossUsd: acc.realGrossUsd + row.realGrossUsd,
-    realFeeUsd: acc.realFeeUsd + row.realFeeUsd,
-    realNetUsd: acc.realNetUsd + row.realNetUsd,
-    differenceUsd: acc.differenceUsd + row.differenceUsd,
+function getRealIncomeSummaryTotalsFromSummary(summaryByChannel = {}) {
+  const totals = Object.values(summaryByChannel || {}).reduce((acc, row) => ({
+    plannedReceivedUsd: acc.plannedReceivedUsd + Number(row?.plannedReceivedUsd || 0),
+    realGrossUsd: acc.realGrossUsd + Number(row?.realGrossUsd || 0),
+    realFeeUsd: acc.realFeeUsd + Number(row?.realFeeUsd || 0),
+    realNetUsd: acc.realNetUsd + Number(row?.realNetUsd || 0),
+    differenceUsd: acc.differenceUsd + Number(row?.differenceUsd || 0),
   }), { plannedReceivedUsd: 0, realGrossUsd: 0, realFeeUsd: 0, realNetUsd: 0, differenceUsd: 0 });
   return {
     plannedReceivedUsd: roundNumber(totals.plannedReceivedUsd),
@@ -780,6 +789,183 @@ function summarizeRealIncomeTotals(entries, movementValues) {
     differenceUsd: roundNumber(totals.differenceUsd),
     differencePct: calculateDifferencePct(totals.differenceUsd, totals.realNetUsd),
   };
+}
+
+function summarizeRealIncomeTotals(entries, movementValues) {
+  return getRealIncomeSummaryTotalsFromSummary(summarizeRealIncomeByChannel(entries, movementValues));
+}
+
+function mergeLedgerRealIncomeFallback({
+  realIncome = null,
+  operations = [],
+  movementValues = [],
+  period = {}
+} = {}) {
+  const ledgerSummaryByChannel = buildLedgerRealIncomeSummaryByChannel(operations, movementValues, period);
+  const hasLedgerIncome = Object.values(ledgerSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
+  if (!hasLedgerIncome) return realIncome;
+
+  const providerSummaryByChannel = realIncome?.summaryByChannel || summarizeRealIncomeByChannel([], movementValues);
+  const mergedSummaryByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
+    const providerRow = providerSummaryByChannel?.[channel] || null;
+    if (Number(providerRow?.realNetUsd || 0) > 0) return [channel, providerRow];
+    return [channel, ledgerSummaryByChannel?.[channel] || providerRow || {
+      channel,
+      currency: inferChannelCurrency(channel),
+      plannedReceivedUsd: 0,
+      realGrossUsd: 0,
+      realFeeUsd: 0,
+      realNetUsd: 0,
+      differenceUsd: 0,
+      differencePct: 0,
+    }];
+  }));
+
+  return {
+    ...(realIncome || {}),
+    summaryByChannel: mergedSummaryByChannel,
+    summaryTotals: getRealIncomeSummaryTotalsFromSummary(mergedSummaryByChannel),
+  };
+}
+
+function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues = [], period = {}) {
+  const startDate = normalizeIsoDate(period?.startDate);
+  const endDate = normalizeIsoDate(period?.endDate);
+  const movementStats = summarizeMovementChannels(movementValues);
+  const totalsByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
+
+  for (const row of operations || []) {
+    const date = normalizeIsoDate(row?.date);
+    if (!date) continue;
+    if (startDate && date < startDate) continue;
+    if (endDate && date > endDate) continue;
+    if (!isLedgerProviderIncomeSource(row)) continue;
+
+    const operation = getNormalizedLedgerFactOperation(row);
+    if (!["income", "servicein", "ezoin"].includes(operation)) continue;
+
+    const channel = getLedgerIncomeChannel(row);
+    if (!channel || !Object.prototype.hasOwnProperty.call(totalsByChannel, channel)) continue;
+
+    const realNetUsd = getLedgerFactAmountUsd(row);
+    if (realNetUsd <= 0) continue;
+    totalsByChannel[channel] = roundNumber(totalsByChannel[channel] + realNetUsd);
+  }
+
+  return Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
+    const realNetUsd = roundNumber(totalsByChannel[channel] || 0);
+    const plannedReceivedUsd = roundNumber(movementStats.plannedReceivedUsdByChannel?.[channel] || 0);
+    const differenceUsd = roundNumber(plannedReceivedUsd - realNetUsd);
+    return [channel, {
+      channel,
+      currency: inferChannelCurrency(channel),
+      plannedReceivedUsd,
+      realGrossUsd: realNetUsd,
+      realFeeUsd: 0,
+      realNetUsd,
+      differenceUsd,
+      differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
+    }];
+  }));
+}
+
+function isLedgerProviderIncomeSource(row) {
+  const normalizedSource = String(
+    row?.source ||
+    row?.provider ||
+    row?.providerSource ||
+    row?.displaySource ||
+    row?.ledgerV2?.source ||
+    ""
+  ).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return [
+    "mcp",
+    "paypal",
+    "paypal_mcp",
+    "yoomoney",
+    "youmoney",
+    "yandex",
+    "wise",
+    "transferwise"
+  ].includes(normalizedSource);
+}
+
+function getNormalizedLedgerFactOperation(row) {
+  const operation = normalizeSummaryText(
+    row?.operation ||
+    row?.ledgerV2?.operation ||
+    ""
+  ).replace(/\s+/g, "_");
+  if (operation) return operation;
+  const category = normalizeSummaryText(
+    row?.category ||
+    row?.ledgerV2?.category ||
+    ""
+  ).replace(/\s+/g, "_");
+  if (["servicein", "ezoin"].includes(category)) return category;
+  return "";
+}
+
+function getLedgerIncomeChannel(row) {
+  const currency = String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase();
+  const candidates = [
+    row?.toChannel,
+    row?.to_channel,
+    row?.channel,
+    row?.providerChannel,
+    row?.provider_channel
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+
+  for (const candidate of candidates) {
+    const resolved = resolvePaymentChannel(candidate);
+    if (resolved) return resolved;
+    const normalized = normalizeLookupText(candidate);
+    if (["yoomoney", "youmoney", "yandex", "яндекс", "юмани", "юmoney", "юмоней"].includes(normalized)) {
+      return "Яндекс руб";
+    }
+    if (["paypal", "пейпал"].includes(normalized)) {
+      if (currency === "EUR") return "пейпал евр";
+      if (currency === "CAD") return "пейпал сad";
+      return "пейпал дол";
+    }
+    if (["wise", "transferwise", "трансервайз"].includes(normalized)) {
+      return currency === "EUR" ? "трансервайз евро" : "трансервайз дол";
+    }
+  }
+
+  const normalizedSource = String(
+    row?.source ||
+    row?.provider ||
+    row?.providerSource ||
+    ""
+  ).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["yoomoney", "youmoney", "yandex", "mcp"].includes(normalizedSource) && currency === "RUB") {
+    return "Яндекс руб";
+  }
+  if (["paypal", "paypal_mcp"].includes(normalizedSource)) {
+    if (currency === "EUR") return "пейпал евр";
+    if (currency === "CAD") return "пейпал сad";
+    if (currency === "USD") return "пейпал дол";
+  }
+  if (["wise", "transferwise"].includes(normalizedSource)) {
+    if (currency === "EUR") return "трансервайз евро";
+    if (currency === "USD") return "трансервайз дол";
+  }
+  return "";
+}
+
+function getLedgerFactAmountUsd(row) {
+  const explicitAmountUsd = parseLooseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? "");
+  if (explicitAmountUsd > 0) return roundNumber(explicitAmountUsd);
+  if (explicitAmountUsd < 0) return roundNumber(-explicitAmountUsd);
+
+  const currency = String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase();
+  if (currency !== "USD") return 0;
+
+  const netAmountUsd = parseLooseNumber(row?.amount_net ?? row?.amountNet ?? "");
+  if (netAmountUsd > 0) return roundNumber(netAmountUsd);
+  if (netAmountUsd < 0) return roundNumber(-netAmountUsd);
+  return 0;
 }
 
 function applyRealIncomeToMovementTable(movementTable, realIncome) {
