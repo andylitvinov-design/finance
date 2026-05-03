@@ -42,6 +42,7 @@ const state = {
     wiseBalanceSnapshotKeys: new Set(),
     yoomoneyLoading: false,
     yoomoneySummary: null,
+    statementImportLoading: false,
     monobankLoading: false,
     monobankSummary: null,
     monobankConnectOpen: false,
