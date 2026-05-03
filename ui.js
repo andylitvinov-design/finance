@@ -2148,20 +2148,19 @@ function buildGenericStatementContext(file, fileType) {
   const fileName = String(file?.name || "statement").trim();
   const normalizedName = normalizeStableStatementIdPart(fileName);
   const source = fileType === "csv" ? "csv_import" : (fileType === "xlsx" ? "xlsx_import" : (fileType === "pdf" ? "pdf_import" : "file_import"));
-  const provider = /(^|[^a-z])td([^a-z]|$)|tdbank|td bank|easyweb/i.test(fileName) ? "td" : "";
   return {
     fileName,
     normalizedFileName: normalizedName,
     fileType,
     source,
-    provider,
-    defaultChannel: provider === "td" ? "БАНК КАНАДА cad" : "",
-    defaultCurrency: provider === "td" ? "CAD" : ""
+    providerHint: "",
+    defaultChannel: "",
+    defaultCurrency: ""
   };
 }
 
 function parseGenericStatementCsv(text, context = {}) {
-  return parseGenericStatementRows(parseSimpleCsvRows(text), context);
+  return parseGenericStatementRows(parseSimpleCsvRows(text), { ...context, rawText: text });
 }
 
 async function parseGenericStatementXlsx(file, context = {}) {
@@ -2176,7 +2175,7 @@ function parseGenericStatementText(text, context = {}) {
   const rows = delimiterRows.length > 1 && findGenericStatementHeaderIndex(delimiterRows) !== -1
     ? delimiterRows
     : parseFixedWidthStatementRows(raw);
-  return parseGenericStatementRows(rows, context);
+  return parseGenericStatementRows(rows, { ...context, rawText: raw });
 }
 
 function parseGenericStatementRows(rows, context = {}) {
@@ -2186,10 +2185,26 @@ function parseGenericStatementRows(rows, context = {}) {
   }
   const headers = rows[headerIndex].map(normalizeStatementHeader);
   const headerMap = buildStatementHeaderMap(headers);
+  const dataRows = rows.slice(headerIndex + 1);
+  const providerDetection = detectGenericStatementProvider({
+    fileName: context.fileName,
+    headers,
+    rawHeaders: rows[headerIndex],
+    rows: dataRows.slice(0, 12),
+    text: context.rawText,
+    currencies: extractGenericStatementCurrencies(dataRows, headerMap)
+  });
+  const enrichedContext = {
+    ...context,
+    providerDetection,
+    providerHint: providerDetection.providerHint,
+    defaultChannel: providerDetection.defaultChannel || context.defaultChannel || "",
+    defaultCurrency: providerDetection.defaultCurrency || context.defaultCurrency || ""
+  };
   const entries = rows.slice(headerIndex + 1)
-    .map((row, index) => normalizeGenericStatementRow(row, headerMap, { ...context, rowIndex: index }))
+    .map((row, index) => normalizeGenericStatementRow(row, headerMap, { ...enrichedContext, rowIndex: index }))
     .filter((entry) => entry && entry.date && entry.localAmount > 0);
-  return { entries, warnings: [] };
+  return { entries, warnings: [], providerDetection };
 }
 
 function findGenericStatementHeaderIndex(rows) {
@@ -2231,6 +2246,8 @@ function normalizeGenericStatementRow(row, headerMap, context = {}) {
   if (!date || !amount) return null;
   const currency = normalizeGenericStatementCurrency(read("currency"), description, context);
   const channel = inferGenericStatementChannel({ context, currency, description });
+  const providerDetection = context.providerDetection || {};
+  const importReason = buildGenericStatementImportReason(providerDetection, channel);
   const source = String(context.source || "file_import").trim();
   const sourceTransactionId = buildGenericStatementSourceId({
     source,
@@ -2255,6 +2272,13 @@ function normalizeGenericStatementRow(row, headerMap, context = {}) {
     description,
     confidence: channel ? 0.82 : 0.65,
     source,
+    providerHint: providerDetection.providerHint || "",
+    provider_hint: providerDetection.providerHint || "",
+    importConfidence: Number(providerDetection.confidence || 0),
+    import_confidence: Number(providerDetection.confidence || 0),
+    importReason,
+    import_reason: importReason,
+    rawMetadata: importReason,
     sourceTransactionId,
     externalId: sourceTransactionId,
     external_id: sourceTransactionId,
@@ -2277,7 +2301,7 @@ function normalizeStatementHeader(value) {
   if (["name", "payee", "merchant"].includes(header)) return "name";
   if (["debit", "withdrawal", "withdrawals", "paid out", "expense", "расход", "списание"].includes(header)) return "debit";
   if (["credit", "deposit", "deposits", "paid in", "income", "приход", "зачисление"].includes(header)) return "credit";
-  if (["amount", "transaction amount", "сумма"].includes(header)) return "amount";
+  if (["amount", "transaction amount", "gross", "source amount", "target amount", "сумма"].includes(header)) return "amount";
   if (["currency", "cur", "валюта"].includes(header)) return "currency";
   if (["balance", "running balance", "остаток"].includes(header)) return "balance";
   return header;
@@ -2301,14 +2325,138 @@ function normalizeGenericStatementCurrency(value, description = "", context = {}
 }
 
 function inferGenericStatementChannel({ context = {}, currency = "", description = "" } = {}) {
-  if (context.provider === "td") return "БАНК КАНАДА cad";
+  const providerHint = String(context.providerHint || context.providerDetection?.providerHint || "").trim();
   const direct = canonicalManualFinanceChannel(context.selectedChannel || context.currentChannel || "");
   if (direct && getManualFinanceChannels().includes(direct)) return direct;
-  const normalized = normalizeLookupText(description);
-  const mentioned = getManualFinanceChannels().find((channel) => normalized.includes(normalizeLookupText(channel)));
-  if (mentioned) return mentioned;
-  if (currency === "CAD" && /td bank|tdbank|easyweb/i.test(`${context.fileName || ""} ${description}`)) return "БАНК КАНАДА cad";
+  if (providerHint === "tdbank" && (!currency || currency === "CAD")) return "БАНК КАНАДА cad";
+  if (providerHint === "paypal" && currency === "USD") return findConfiguredChannelByAliases(["пейпал дол", "paypal usd"]);
+  if (providerHint === "paypal" && currency === "EUR") return findConfiguredChannelByAliases(["пейпал евр", "paypal eur"]);
+  if (providerHint === "privatbank" && currency === "UAH") return findConfiguredChannelByAliases(["приват 24-грн", "privat 24 uah"]);
+  if (providerHint === "yoomoney" && currency === "RUB") return findConfiguredChannelByAliases(["Яндекс руб", "yoomoney rub", "yandex rub"]);
+  if (providerHint === "wise") return inferWiseGenericStatementChannel(currency);
   return "";
+}
+
+function detectGenericStatementProvider({ fileName = "", headers = [], rawHeaders = [], rows = [], text = "", currencies = [] } = {}) {
+  const haystack = normalizeProviderDetectionText([
+    fileName,
+    rawHeaders.join(" "),
+    headers.join(" "),
+    rows.map((row) => (row || []).join(" ")).join(" "),
+    text
+  ].join(" "));
+  const headerSet = new Set(headers || []);
+  const currencySet = new Set((currencies || []).map((currency) => String(currency || "").trim().toUpperCase()).filter(Boolean));
+  const candidates = [
+    buildProviderDetectionCandidate("tdbank", [
+      [/(\btd\b|td bank|tdbank|easyweb)/, 0.65, "filename/text"],
+      [/transaction description/, 0.2, "headers"],
+      [/withdrawals?/, 0.2, "headers"],
+      [/deposits?/, 0.2, "headers"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("wise", [
+      [/\bwise\b|transferwise/, 0.7, "filename/text"],
+      [/balance account|card transaction|source amount|target amount/, 0.25, "headers"],
+      [/\bfees?\b/, 0.1, "headers"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("paypal", [
+      [/paypal/, 0.75, "filename/text"],
+      [/transaction id|payer|payee/, 0.25, "headers"],
+      [/\bgross\b|\bfee\b|\bnet\b/, 0.25, "headers"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("privatbank", [
+      [/privat|privat24|приват/, 0.75, "filename/text"],
+      [/карта|рахунок/, 0.2, "headers"],
+      [/грн|uah/, 0.1, "currency"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("yoomoney", [
+      [/yoomoney|yoo money|яндекс|yandex|юмани|юmoney/, 0.75, "filename/text"],
+      [/кошелек|кошелек/, 0.2, "headers"],
+      [/\brub\b|руб/, 0.1, "currency"]
+    ], haystack, currencySet, headerSet)
+  ];
+  if (headerSet.has("date") && headerSet.has("description") && headerSet.has("debit") && headerSet.has("credit") && headerSet.has("balance")) {
+    const td = candidates.find((candidate) => candidate.providerHint === "tdbank");
+    td.confidence += 0.25;
+    td.reasons.push("debit+credit+balance headers");
+  }
+  const best = candidates.sort((left, right) => right.confidence - left.confidence)[0] || { providerHint: "", confidence: 0, reasons: [] };
+  if (!best.providerHint || best.confidence < 0.55) {
+    return { providerHint: "", confidence: 0, reason: "", defaultChannel: "", defaultCurrency: "" };
+  }
+  const firstCurrency = currencySet.size === 1 ? Array.from(currencySet)[0] : "";
+  const defaultCurrency = best.providerHint === "tdbank" ? "CAD" : firstCurrency;
+  return {
+    providerHint: best.providerHint,
+    confidence: Math.min(1, Math.round(best.confidence * 100) / 100),
+    reason: best.reasons.join("+"),
+    defaultChannel: inferGenericStatementChannel({ context: { providerHint: best.providerHint }, currency: defaultCurrency }),
+    defaultCurrency
+  };
+}
+
+function buildProviderDetectionCandidate(providerHint, rules, haystack, currencySet) {
+  const candidate = { providerHint, confidence: 0, reasons: [] };
+  rules.forEach(([pattern, weight, reason]) => {
+    if (pattern.test(haystack)) {
+      candidate.confidence += weight;
+      if (!candidate.reasons.includes(reason)) candidate.reasons.push(reason);
+    }
+  });
+  if (providerHint === "privatbank" && currencySet.has("UAH") && /privat|приват|карта|рахунок/.test(haystack)) {
+    candidate.confidence += 0.15;
+    candidate.reasons.push("currency");
+  }
+  if (providerHint === "yoomoney" && currencySet.has("RUB") && /yoomoney|yoo money|яндекс|yandex|кошелек|юмани|юmoney/.test(haystack)) {
+    candidate.confidence += 0.15;
+    candidate.reasons.push("currency");
+  }
+  return candidate;
+}
+
+function extractGenericStatementCurrencies(rows, headerMap) {
+  const currencyIndex = headerMap?.currency;
+  if (currencyIndex === undefined) return [];
+  return Array.from(new Set((rows || []).map((row) => normalizeGenericStatementCurrency(row?.[currencyIndex] || "")).filter(Boolean)));
+}
+
+function normalizeProviderDetectionText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-яіїєґ$€]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findConfiguredChannelByAliases(aliases = []) {
+  const channels = getManualFinanceChannels();
+  for (const alias of aliases) {
+    const direct = channels.find((channel) => normalizeLookupText(channel) === normalizeLookupText(alias));
+    if (direct) return direct;
+    const resolved = canonicalManualFinanceChannel(alias);
+    if (resolved && channels.includes(resolved)) return resolved;
+  }
+  return "";
+}
+
+function inferWiseGenericStatementChannel(currency) {
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (normalizedCurrency === "USD") return findConfiguredChannelByAliases(["wise usd", "transferwise usd", "трансервайз дол"]);
+  if (normalizedCurrency === "EUR") return findConfiguredChannelByAliases(["wise eur", "transferwise eur", "трансервайз евро"]);
+  if (normalizedCurrency === "CAD") return findConfiguredChannelByAliases(["wise cad", "transferwise cad"]);
+  if (normalizedCurrency === "UAH") return findConfiguredChannelByAliases(["wise uah", "transferwise uah"]);
+  if (normalizedCurrency === "RUB") return findConfiguredChannelByAliases(["wise rub", "transferwise rub"]);
+  return "";
+}
+
+function buildGenericStatementImportReason(providerDetection = {}, channel = "") {
+  const provider = String(providerDetection.providerHint || "").trim();
+  if (!provider) return "import: provider=unknown confidence=0 reason=none; needs channel review";
+  const confidence = Number(providerDetection.confidence || 0);
+  const reason = String(providerDetection.reason || "").trim() || "detected";
+  return `import: provider=${provider} confidence=${confidence} reason=${reason}${channel ? "" : "; needs channel review"}`;
 }
 
 function inferGenericStatementCategory(direction, description = "") {
@@ -3006,6 +3154,12 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     exchangeLeg: String(entry.exchangeLeg || "").trim(),
     displayFromTo: String(entry.displayFromTo || "").trim(),
     rawMetadata: String(entry.rawMetadata || "").trim(),
+    providerHint: String(entry.providerHint || entry.provider_hint || "").trim(),
+    provider_hint: String(entry.providerHint || entry.provider_hint || "").trim(),
+    importConfidence: Number(entry.importConfidence || entry.import_confidence || 0),
+    import_confidence: Number(entry.importConfidence || entry.import_confidence || 0),
+    importReason: String(entry.importReason || entry.import_reason || "").trim(),
+    import_reason: String(entry.importReason || entry.import_reason || "").trim(),
     manualCounterpartyOverride: Boolean(entry.manualCounterpartyOverride),
     manualCounterpartyComment: String(entry.manualCounterpartyComment || "").trim(),
     entryKind: String(entry.entryKind || "").trim(),
@@ -3034,7 +3188,14 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
 }
 
 async function saveExpenseAccountingEntries() {
-  const entries = state.expenseAccounting.entries.filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
+  const pendingEntries = state.expenseAccounting.entries.filter((entry) => entry.date && entry.localAmount > 0);
+  const reviewEntries = pendingEntries.filter((entry) => !String(entry.channel || "").trim());
+  if (reviewEntries.length) {
+    setExpenseAccountingStatus(`Есть строки без канала: ${reviewEntries.length}. Проверьте needs_review и выберите канал перед внесением.`, true);
+    renderTabs();
+    return;
+  }
+  const entries = pendingEntries.filter((entry) => entry.channel);
   if (!entries.length) {
     setExpenseAccountingStatus("Нет строк для внесения.", true);
     renderTabs();

@@ -51,6 +51,10 @@ export const MANUAL_LEDGER_SOURCES = [
   "screenshot",
   "image",
   "photo",
+  "file_import",
+  "csv_import",
+  "xlsx_import",
+  "pdf_import",
   "other"
 ];
 export const CANONICAL_LEDGER_CATEGORIES = ["servicein", "ezoin", "exchange", "partner", "business", "house", "food", "fun", "travel", "extra"];
@@ -216,6 +220,9 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
   if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
+  for (const source of ["file_import", "csv_import", "xlsx_import", "pdf_import"]) {
+    if (raw.startsWith(`${source}:`) || raw.startsWith(`${source}-`) || raw.startsWith(`${source}_`)) return source;
+  }
   return "";
 }
 
