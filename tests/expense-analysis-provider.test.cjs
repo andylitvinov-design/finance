@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
+const apiIndex = fs.readFileSync(path.join(root, "api", "index.js"), "utf8");
 const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
 const googleSheetsJs = fs.readFileSync(path.join(root, "google-sheets.js"), "utf8");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
@@ -36,6 +37,60 @@ function extractFunction(source, name) {
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function createApiLedgerRealIncomeContext() {
+  const context = {
+    REAL_INCOME_CHANNELS: [
+      "Яндекс руб",
+      "пейпал дол",
+      "пейпал евр",
+      "пейпал сad",
+      "приват 24-дол",
+      "приват 24-евро",
+      "приват 24-грн",
+      "монобанк грн",
+      "трансервайз дол",
+      "трансервайз евро",
+    ],
+    REAL_INCOME_CHANNEL_CURRENCY: {
+      "Яндекс руб": "RUB",
+      "пейпал дол": "USD",
+      "пейпал евр": "EUR",
+      "пейпал сad": "CAD",
+      "приват 24-дол": "USD",
+      "приват 24-евро": "EUR",
+      "приват 24-грн": "UAH",
+      "монобанк грн": "UAH",
+      "трансервайз дол": "USD",
+      "трансервайз евро": "EUR",
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(apiIndex, "normalizeSummaryText")}\n` +
+    `${extractFunction(apiIndex, "normalizeLookupText")}\n` +
+    `${extractFunction(apiIndex, "normalizeIsoDate")}\n` +
+    `${extractFunction(apiIndex, "parseLooseNumber")}\n` +
+    `${extractFunction(apiIndex, "roundNumber")}\n` +
+    `${extractFunction(apiIndex, "calculateDifferencePct")}\n` +
+    `${extractFunction(apiIndex, "sumBy")}\n` +
+    `${extractFunction(apiIndex, "inferChannelCurrency")}\n` +
+    `${extractFunction(apiIndex, "resolvePaymentChannel")}\n` +
+    `${extractFunction(apiIndex, "summarizeMovementChannels")}\n` +
+    `${extractFunction(apiIndex, "summarizeRealIncomeByChannel")}\n` +
+    `${extractFunction(apiIndex, "getRealIncomeSummaryTotalsFromSummary")}\n` +
+    `${extractFunction(apiIndex, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(apiIndex, "getNormalizedLedgerFactOperation")}\n` +
+    `${extractFunction(apiIndex, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(apiIndex, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(apiIndex, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(apiIndex, "mergeLedgerRealIncomeFallback")}\n` +
+    "this.buildLedgerRealIncomeSummaryByChannel = buildLedgerRealIncomeSummaryByChannel;\n" +
+    "this.mergeLedgerRealIncomeFallback = mergeLedgerRealIncomeFallback;\n",
+    context
+  );
+  return context;
 }
 
 function extractExpenseAnalysisIncomeCountHelpers() {
@@ -809,6 +864,111 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   ]);
 });
 
+test("mixed imported PayPal and YooMoney income keeps non-zero income and expense totals in channel summary", () => {
+  const apiContext = createApiLedgerRealIncomeContext();
+  const mergedRealIncome = plain(apiContext.mergeLedgerRealIncomeFallback({
+    realIncome: null,
+    operations: [
+      {
+        date: "2026-05-10",
+        operation: "income",
+        source: "paypal_mcp",
+        to_channel: "paypal",
+        amount_usd: "100",
+        amount_net: "96",
+        currency: "USD"
+      },
+      {
+        date: "2026-05-11",
+        operation: "income",
+        source: "mcp",
+        to_channel: "yoomoney",
+        amount_usd: "25",
+        amount_net: "2500",
+        currency: "RUB"
+      }
+    ],
+    movementValues: [],
+    period: { startDate: "2026-05-01", endDate: "2026-05-31" }
+  }));
+
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "пейпал дол"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: {
+        "Яндекс руб": 0,
+        "пейпал дол": 0
+      },
+      accruedPlusCountByChannel: {
+        "Яндекс руб": 0,
+        "пейпал дол": 0
+      }
+    }),
+    sumManualFinanceFieldUsdNumber(rows, key) {
+      return rows.reduce((sum, row) => sum + context.getManualFinanceFieldUsdNumber(row, key), 0);
+    },
+    getManualFinanceFieldUsdNumber(row, key) {
+      const value = row?.[key];
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      return Number(raw.replace(",", "."));
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+        "paypal": "пейпал дол",
+        "paypal usd": "пейпал дол",
+        "пейпал дол": "пейпал дол",
+      })[normalized] || String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [
+      { channel: "Яндекс руб", serviceIncome: "0", business: "0", flat: "0", food: "0", fun: "0", study: "0", travel: "0" },
+      { channel: "пейпал дол", serviceIncome: "0", business: "0", flat: "0", food: "0", fun: "0", study: "0", travel: "0" },
+    ],
+    movementValues: [],
+    realIncomeSummaryByChannel: mergedRealIncome.summaryByChannel,
+    providerExpenseByChannel: {
+      "Яндекс руб": 10,
+      "пейпал дол": 0,
+    },
+    ledgerRows: [],
+    usdRateLookup: {}
+  }));
+
+  assert.ok(summary.incomeTotals.realUsd > 0);
+  assert.ok(summary.expenseTotals.realUsd > 0);
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[4], "25,0000");
+  assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "100,0000");
+});
+
 test("buildExpenseAnalysisChannelSummary appends income counters by source group", () => {
   const context = {
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",
@@ -891,6 +1051,88 @@ test("buildExpenseAnalysisChannelSummary appends income counters by source group
   assert.deepEqual(wise.slice(-4), ["1", "2", "1", "1"]);
   assert.deepEqual(mono.slice(-4), ["0", "0", "1", "2"]);
   assert.deepEqual(total.slice(-4), ["2", "3", "3", "5"]);
+});
+
+test("buildLedgerRealIncomeSummaryByChannel maps MCP YooMoney income into Яндекс руб", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    {
+      date: "2026-05-10",
+      operation: "income",
+      source: "mcp",
+      to_channel: "yoomoney",
+      amount_usd: "25",
+      amount_net: "2500",
+      currency: "RUB"
+    }
+  ], [], { startDate: "2026-05-01", endDate: "2026-05-31" }));
+
+  assert.equal(summary["Яндекс руб"].realNetUsd, 25);
+});
+
+test("buildLedgerRealIncomeSummaryByChannel prefers amount_usd over USD amount_net for PayPal MCP income", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    {
+      date: "2026-05-12",
+      operation: "income",
+      source: "paypal_mcp",
+      to_channel: "paypal",
+      amount_usd: "100",
+      amount_net: "96",
+      currency: "USD"
+    }
+  ], [], { startDate: "2026-05-01", endDate: "2026-05-31" }));
+
+  assert.equal(summary["пейпал дол"].realNetUsd, 100);
+});
+
+test("mergeLedgerRealIncomeFallback keeps provider totals primary and fills empty channels from Ledger", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const merged = plain(context.mergeLedgerRealIncomeFallback({
+    realIncome: {
+      summaryByChannel: {
+        "пейпал дол": {
+          channel: "пейпал дол",
+          currency: "USD",
+          plannedReceivedUsd: 0,
+          realGrossUsd: 90,
+          realFeeUsd: 0,
+          realNetUsd: 90,
+          differenceUsd: -90,
+          differencePct: -100,
+        }
+      }
+    },
+    operations: [
+      {
+        date: "2026-05-10",
+        operation: "income",
+        source: "paypal_mcp",
+        to_channel: "paypal",
+        amount_usd: "100",
+        amount_net: "96",
+        currency: "USD"
+      },
+      {
+        date: "2026-05-11",
+        operation: "income",
+        source: "mcp",
+        to_channel: "yoomoney",
+        amount_usd: "25",
+        amount_net: "2500",
+        currency: "RUB"
+      }
+    ],
+    movementValues: [],
+    period: { startDate: "2026-05-01", endDate: "2026-05-31" }
+  }));
+
+  assert.equal(merged.summaryByChannel["пейпал дол"].realNetUsd, 90);
+  assert.equal(merged.summaryByChannel["Яндекс руб"].realNetUsd, 25);
 });
 
 test("buildMissingPaymentsAudit reports one missing Wise payment from 9 planned and 8 actual", () => {
