@@ -311,8 +311,9 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
       warnings,
       expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
       views: {
-        fallback_amount_rows: fallbackAmountRows,
+        fallback_amount_rows: 0,
         missing_amount_net_rows: fallbackAmountRows,
+        excluded_missing_amount_net_rows: fallbackAmountRows,
         exchange_missing_amount_usd_rows: countExchangeMissingAmountUsdRows(normalizedOperations),
         byDateChannel: buildOperationsPivotByDateChannel(normalizedOperations),
         byCategory: buildOperationsPivotByCategory(normalizedOperations),
@@ -335,6 +336,10 @@ function buildEmptyLedgerRepository() {
     operations: [],
     expenseRows: [],
     views: {
+      fallback_amount_rows: 0,
+      missing_amount_net_rows: 0,
+      excluded_missing_amount_net_rows: 0,
+      exchange_missing_amount_usd_rows: 0,
       byDateChannel: [],
       byCategory: [],
     },

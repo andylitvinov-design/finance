@@ -227,8 +227,9 @@ test("audit snapshot reports ledger v2 compatibility metadata", async () => {
 test("audit snapshot never falls back to amount when amount_net is missing", async () => {
   const response = await buildFixtureSnapshot();
 
-  assert.equal(response.balances.fallback_amount_rows, 1);
+  assert.equal(response.balances.fallback_amount_rows, 0);
   assert.equal(response.balances.missing_amount_net_rows, 1);
+  assert.equal(response.balances.excluded_missing_amount_net_rows, 1);
   assert.match(response.warnings.join("\n"), /amount_net.*balance was not calculated/i);
 });
 

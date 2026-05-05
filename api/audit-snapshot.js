@@ -107,6 +107,7 @@ export async function buildAuditSnapshot(options = {}) {
       uses_amount_net: true,
       fallback_amount_rows: balanceResult.fallback_amount_rows,
       missing_amount_net_rows: balanceResult.missing_amount_net_rows,
+      excluded_missing_amount_net_rows: balanceResult.excluded_missing_amount_net_rows,
     },
     paypal,
     exchange: omitInternalWarnings(exchange),
@@ -153,6 +154,7 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       uses_amount_net: true,
       fallback_amount_rows: 0,
       missing_amount_net_rows: 0,
+      excluded_missing_amount_net_rows: 0,
     },
     paypal: {
       rows: 0,
@@ -252,12 +254,14 @@ function buildBalances(operations) {
   const grouped = new Map();
   const warnings = [];
   const missingAmountNetRows = countMissingAmountNetRows(operations);
+  let excludedMissingAmountNetRows = 0;
   let totalUsd = 0;
   let hasTotalUsd = false;
 
   for (const row of operations) {
     const ledger = row?.ledgerV2 || {};
     if (!String(ledger.amount_net ?? row.amountNet ?? "").trim()) {
+      excludedMissingAmountNetRows += 1;
       continue;
     }
     const balanceAmount = parseNumber(ledger.balance_amount ?? row.balanceAmount);
@@ -290,8 +294,9 @@ function buildBalances(operations) {
         rows: row.rows,
       })),
     total_usd: hasTotalUsd ? round(totalUsd) : null,
-    fallback_amount_rows: missingAmountNetRows,
+    fallback_amount_rows: 0,
     missing_amount_net_rows: missingAmountNetRows,
+    excluded_missing_amount_net_rows: excludedMissingAmountNetRows,
     warnings,
   };
 }
