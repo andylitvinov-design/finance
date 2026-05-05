@@ -996,11 +996,19 @@ function getExpenseAnalysisChannelSummary() {
     state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
     state.data?.tabs?.movement?.values || []
   );
+  const ledgerRows = getExpenseAnalysisLedgerRows();
+  const ledgerRealIncomeSummary = ledgerRows.length
+    ? buildLedgerRealIncomeSummaryByChannel(ledgerRows, usdRateLookup)
+    : {};
+  const realIncomeSummaryByChannel = { ...(state.data?.realIncome?.summaryByChannel || {}) };
+  Object.entries(ledgerRealIncomeSummary).forEach(([channel, summary]) => {
+    if (roundProviderSummaryAmount(summary?.realNetUsd) > 0) realIncomeSummaryByChannel[channel] = summary;
+  });
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
-    ledgerRows: state.data?.manual?.operations || state.data?.manual?.ledgerV2Rows || [],
-    realIncomeSummaryByChannel: state.data?.realIncome?.summaryByChannel || {},
+    ledgerRows,
+    realIncomeSummaryByChannel,
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
   });
@@ -1076,6 +1084,9 @@ function getLedgerFactAmountUsd(row, usdRateLookup = { byChannel: {}, byCurrency
 function getExpenseAnalysisLedgerWarnings(rows = [], usdRateLookup = { byChannel: {}, byCurrency: {} }) {
   const warnings = [];
   (rows || []).forEach((row) => {
+    if (isExpenseAnalysisLedgerUnknownSource(row)) {
+      warnings.push(`unknown Ledger source: ${row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "row without source"}.`);
+    }
     const info = resolveLedgerFactAmountUsdInfo(row, usdRateLookup);
     if (info.warning?.message) warnings.push(info.warning.message);
   });
@@ -1103,9 +1114,9 @@ function getLedgerIncomeChannel(row) {
 function isLedgerProviderIncomeSource(row) {
   const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
   if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
-  if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider"].includes(source)) return true;
+  if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider", "file_import", "csv_import", "xlsx_import", "pdf_import"].includes(source)) return true;
   const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim().toLowerCase();
-  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
 }
 
 function getLedgerExpenseChannel(row) {
@@ -1129,6 +1140,14 @@ function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel
       { realNetUsd: roundProviderSummaryAmount(summary.realNetUsd) }
     ])
   );
+}
+
+function isExpenseAnalysisLedgerUnknownSource(row) {
+  const operation = getNormalizedLedgerFactOperation(row);
+  if (!["income", "servicein", "ezoin", "expense", "business_expense", "personal_expense", "exchange_out", "partner_transfer"].includes(operation)) return false;
+  const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
+  if (source !== "unknown") return false;
+  return getLedgerIncomeChannel(row) || getLedgerExpenseChannel(row);
 }
 
 function getProviderEntryExpenseAmountUsd(entry) {
@@ -3662,8 +3681,9 @@ function getAnalyticsSectionRenderRows(section, aggregateSections = []) {
 
 function getExpenseOperationsRows() {
   const serverRows = Array.isArray(state.data?.manual?.operations) ? state.data.manual.operations : [];
+  const serverLedgerV2Rows = Array.isArray(state.data?.manual?.ledgerV2Rows) ? state.data.manual.ledgerV2Rows : [];
   const directRows = Array.isArray(state.manualFinance?.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
-  const sourceRows = serverRows.length ? serverRows : directRows;
+  const sourceRows = serverRows.length ? serverRows : (serverLedgerV2Rows.length ? serverLedgerV2Rows : directRows);
   return sourceRows.map((row, index) => ({
     id: String(row.id || row.rawSourceId || row.raw_source_id || `${row.sheetRowNumber || row.date || "row"}-${index}`),
     date: normalizeIncomingSheetDateValue(row.date || ""),

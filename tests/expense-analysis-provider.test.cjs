@@ -369,6 +369,15 @@ function buildLedgerAnalysisTestContext(extra = {}) {
         "td bank cad": "БАНК КАНАДА cad",
       })[normalized] || String(value || "").trim();
     },
+    normalizeLookupText(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^0-9a-zа-я]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    },
     inferManualFinanceChannelCurrency(channel) {
       if (channel === "монобанк грн") return "UAH";
       if (channel === "БАНК КАНАДА cad") return "CAD";
@@ -404,6 +413,7 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
     `${extractFunction(uiJs, "resolveLedgerFactAmountUsdInfo")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "isExpenseAnalysisLedgerUnknownSource")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerWarnings")}\n` +
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
@@ -586,6 +596,153 @@ test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exi
   assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "999,0000");
   assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "978,5000");
   assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "30,0000");
+});
+
+test("expense analysis summary derives provider real income and expense from ledgerV2Rows when operations are empty", () => {
+  const context = buildLedgerAnalysisTestContext({
+    state: {
+      aggregatedManualRange: null,
+      manualTransfers: { data: null },
+      manualFinance: { data: null },
+      expenseAccounting: { entries: [], paypalSummary: null },
+      data: {
+        manual: {
+          operations: [],
+          ledgerV2Rows: [
+            {
+              date: "2026-05-01",
+              operation: "income",
+              source: "wise",
+              to_channel: "wise usd",
+              currency: "USD",
+              amount_usd: "125.5",
+              amount_net: "125.5",
+              raw_source_id: "wise:income-1",
+              external_id: "wise:income-1",
+            },
+            {
+              date: "2026-05-02",
+              operation: "business_expense",
+              source: "csv_import",
+              from_channel: "monobank",
+              currency: "USD",
+              amount_usd: "44.25",
+              amount_net: "44.25",
+              raw_source_id: "csv_import:expense-1",
+              external_id: "csv_import:expense-1",
+            },
+          ],
+        },
+        realIncome: { summaryByChannel: {} },
+        tabs: { movement: { values: [] } },
+      },
+    },
+    getCurrentAnalyticsManualRows() {
+      return [];
+    },
+    buildManualFinanceUsdRateLookup() {
+      return {};
+    },
+    calculateMovementChannelStats() {
+      return { accruedPlusByChannel: {}, accruedPlusCountByChannel: {} };
+    },
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinancePlannedExpenseUsdNumber() {
+      return 0;
+    },
+    getManualLedgerDisplaySource(source) {
+      return String(source || "").trim() || "unknown";
+    },
+    getActivePayPalSummary() {
+      return null;
+    },
+    getActiveWiseSummary() {
+      return null;
+    },
+    getActiveYooMoneySummary() {
+      return null;
+    },
+    getActiveMonobankSummary() {
+      return null;
+    },
+    getActivePrivatBankSummary() {
+      return null;
+    },
+    hasProviderSummaryData() {
+      return false;
+    },
+  });
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "buildLedgerIncomeCountSummaryByChannel")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeOperation")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeSource")}\n` +
+    `${extractFunction(financeJs, "isExpenseAnalysisAutoIncomeSource")}\n` +
+    `${extractFunction(financeJs, "isExpenseAnalysisManualIncomeSource")}\n` +
+    `${extractFunction(financeJs, "isExpenseAnalysisScreenshotIncomeSource")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    `${extractFunction(uiJs, "getExpenseOperationsRows")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
+    `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
+    `${extractFunction(uiJs, "resolveLedgerFactAmountUsdInfo")}\n` +
+    `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
+    `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
+    `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
+    "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.getExpenseAnalysisChannelSummary());
+  assert.equal(summary.incomeTotals.realUsd, 125.5);
+  assert.equal(summary.expenseTotals.realUsd, 44.25);
+  assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "125,5000");
+  assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "44,2500");
+});
+
+test("expense analysis keeps zero amount_usd explicit and warns on unknown ledger source", () => {
+  const context = buildLedgerAnalysisTestContext({
+    getManualFinanceUsdPerLocalRate() {
+      return 0;
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  assert.equal(context.getLedgerFactAmountUsd({
+    date: "2026-05-03",
+    operation: "business_expense",
+    source: "td_bank",
+    fromChannel: "БАНК КАНАДА cad",
+    currency: "CAD",
+    amountUsd: "0",
+    amountNet: "17.95",
+  }, { byCurrency: { CAD: 0.74 }, byChannel: {} }), 13.283);
+
+  const warnings = context.getExpenseAnalysisLedgerWarnings([
+    {
+      date: "2026-05-03",
+      operation: "income",
+      source: "unknown",
+      toChannel: "wise usd",
+      currency: "USD",
+      amountUsd: "88",
+      amountNet: "88",
+      rawSourceId: "unknown:income-1",
+    },
+  ]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /unknown Ledger source/i);
 });
 
 test("aggregated manual service plan excludes provider, wise, paypal, and mcp income rows", () => {
