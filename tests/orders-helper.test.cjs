@@ -47,8 +47,8 @@ test("parseManualOrdersTextBlocks splits numbered items inside one date-name blo
   assert.deepEqual(rows[3], [
     "",
     "литвинова наталья",
-    "разовый стресс приближение собтсвенной смерти",
-    "20",
+    "разовый стресс приближение собтсвенной смерти 20 ед",
+    "",
   ]);
 });
 
@@ -76,4 +76,69 @@ test("mapLegacyOrdersValues collapses old wide sheet into 4 simple columns", () 
 
   assert.deepEqual(mapped.headers, SIMPLE_HEADERS);
   assert.deepEqual(mapped.rows[0], ["21.04.2026", "Андрей", "Расчистка | оплата 2 частями", "206"]);
+});
+
+test("parseManualOrdersTextBlocks applies one header date and name to all numbered items", () => {
+  const rows = parseManualOrdersTextBlocks(
+    [
+      "04.03.2026 литвинов анд",
+      "1) реакция на ипостась - человек который несет некую власть надо мной / в ее присутствии - негатив 3,5 ед я ежусь 25",
+      "2) реакция на повышенный эмоциональный фон когда человек со мной говорит, толчки 2 ед",
+      "3) эмоциональный разговор с женщинами на повышенных тонах, женская истерика, толчки 3 ед",
+      "4) комплекс - реакция когда меня проверяют, факт - букет испуг пренебрежение 2.5 25",
+      "5) меня контролирует (на ресепшине, с кем я прихожу) - срабатывает психический блок 1.5 50",
+    ].join("\n"),
+    "2026-05-05"
+  );
+
+  assert.deepEqual(rows, [
+    ["04.03.2026", "литвинов анд", "реакция на ипостась - человек который несет некую власть надо мной / в ее присутствии - негатив 3,5 ед я ежусь", "25"],
+    ["04.03.2026", "литвинов анд", "реакция на повышенный эмоциональный фон когда человек со мной говорит, толчки 2 ед", ""],
+    ["04.03.2026", "литвинов анд", "эмоциональный разговор с женщинами на повышенных тонах, женская истерика, толчки 3 ед", ""],
+    ["04.03.2026", "литвинов анд", "комплекс - реакция когда меня проверяют, факт - букет испуг пренебрежение 2.5", "25"],
+    ["04.03.2026", "литвинов анд", "меня контролирует (на ресепшине, с кем я прихожу) - срабатывает психический блок 1.5", "50"],
+  ]);
+});
+
+test("parseManualOrdersTextBlocks keeps numbered order words out of name without a header", () => {
+  const rows = parseManualOrdersTextBlocks("1) реакция на повышенный эмоциональный фон 25", "2026-05-05");
+
+  assert.deepEqual(rows, [["", "", "реакция на повышенный эмоциональный фон", "25"]]);
+});
+
+test("parseManualOrdersTextBlocks ignores decorative emoji divider lines", () => {
+  const rows = parseManualOrdersTextBlocks(
+    [
+      "04.03.2026 литвинов анд",
+      "[❤️] [❤️]",
+      "1) заказ после декора 25",
+    ].join("\n"),
+    "2026-05-05"
+  );
+
+  assert.deepEqual(rows, [["04.03.2026", "литвинов анд", "заказ после декора", "25"]]);
+});
+
+test("parseManualOrdersTextBlocks parses russian month headers with fallback year", () => {
+  const rows = parseManualOrdersTextBlocks(
+    [
+      "4 мая Литвин",
+      "1) заказ с русским месяцем 25",
+    ].join("\n"),
+    "2026-05-05"
+  );
+
+  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "25"]]);
+});
+
+test("parseManualOrdersTextBlocks parses russian month headers with explicit year", () => {
+  const rows = parseManualOrdersTextBlocks(
+    [
+      "4 мая 2026 Литвин",
+      "1) заказ с русским месяцем 50",
+    ].join("\n"),
+    "2026-01-01"
+  );
+
+  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "50"]]);
 });
