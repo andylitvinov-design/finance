@@ -463,16 +463,21 @@ function parseIsoDate(value) {
   return new Date(year, month - 1, day);
 }
 
-function parseDisplayDate(value) {
+function parseDisplayDate(value, fallbackYear) {
   const raw = String(value || "").trim();
   if (!raw) return null;
   if (/^\d{5}$/.test(raw)) return excelSerialToDate(Number(raw));
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return parseIsoDate(raw);
   const isoTimestampMatch = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/);
   if (isoTimestampMatch) return parseIsoDate(isoTimestampMatch[1]);
-  const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (!match) return null;
-  return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+  const fullDateMatch = raw.match(/^(\d{2})[./](\d{2})[./](\d{4})$/);
+  if (fullDateMatch) return new Date(Number(fullDateMatch[3]), Number(fullDateMatch[2]) - 1, Number(fullDateMatch[1]));
+  const shortDateMatch = raw.match(/^(\d{2})[./](\d{2})$/);
+  const year = Number(fallbackYear);
+  if (shortDateMatch && Number.isFinite(year)) {
+    return new Date(year, Number(shortDateMatch[2]) - 1, Number(shortDateMatch[1]));
+  }
+  return null;
 }
 
 function parseDisplayDateToIso(value) {

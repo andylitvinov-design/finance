@@ -6,6 +6,8 @@ const vm = require("node:vm");
 
 const mainJs = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 const sheetsJs = fs.readFileSync(path.join(__dirname, "..", "google-sheets.js"), "utf8");
+const ordersJs = fs.readFileSync(path.join(__dirname, "..", "orders.js"), "utf8");
+const financeJs = fs.readFileSync(path.join(__dirname, "..", "finance.js"), "utf8");
 
 function extractFunction(source, name) {
   const pattern = new RegExp(`^function ${name}\\(`, "m");
@@ -33,6 +35,28 @@ const context = {
   normalizeManualExpenseCategory(value) {
     return String(value || "").trim();
   },
+  elements: {
+    startDate: { value: "2026-04-01" },
+    endDate: { value: "2026-04-30" },
+  },
+  state: {
+    manualOrders: {
+      data: null,
+    },
+    data: {
+      tabs: {
+        orders: {
+          values: [],
+        },
+      },
+    },
+  },
+  isManualFinanceFormula() {
+    return false;
+  },
+  isTableTotalRow() {
+    return false;
+  },
   assertIncomingExpenseHeaders() {},
 };
 
@@ -42,8 +66,20 @@ vm.runInContext(
     extractFunction(mainJs, "parseIsoDate"),
     extractFunction(mainJs, "parseDisplayDate"),
     extractFunction(mainJs, "parseDisplayDateToIso"),
+    extractFunction(mainJs, "findDateColumnIndex"),
+    extractFunction(mainJs, "normalizeCell"),
+    extractFunction(mainJs, "hasAnyValue"),
+    extractFunction(mainJs, "padRowToWidth"),
+    extractFunction(mainJs, "parseLooseNumber"),
+    extractFunction(mainJs, "roundTo2"),
+    extractFunction(financeJs, "findHeaderIndexByAliases"),
+    extractFunction(ordersJs, "getVisibleManualOrdersRows"),
+    extractFunction(ordersJs, "buildOrdersSummaryFromClient"),
     extractFunction(sheetsJs, "normalizeIncomingSheetDateValue"),
     extractFunction(sheetsJs, "parseIncomingExpenseSheetValues"),
+    "this.parseDisplayDate = parseDisplayDate;",
+    "this.getVisibleManualOrdersRows = getVisibleManualOrdersRows;",
+    "this.buildOrdersSummaryFromClient = buildOrdersSummaryFromClient;",
     "this.normalizeIncomingSheetDateValue = normalizeIncomingSheetDateValue;",
     "this.parseIncomingExpenseSheetValues = parseIncomingExpenseSheetValues;",
   ].join("\n"),
@@ -54,9 +90,43 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function dateIso(value) {
+  if (!value) return "";
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
 test("normalizeIncomingSheetDateValue keeps ISO timestamps inside the selected day", () => {
   assert.equal(context.normalizeIncomingSheetDateValue("2026-04-24 00:00:00"), "2026-04-24");
   assert.equal(context.normalizeIncomingSheetDateValue("2026-04-25T13:45:59"), "2026-04-25");
+});
+
+test("parseDisplayDate supports slash dates and yearless period dates without changing existing formats", () => {
+  assert.equal(dateIso(context.parseDisplayDate("2026-04-30")), "2026-04-30");
+  assert.equal(dateIso(context.parseDisplayDate("2026-04-30 00:00:00")), "2026-04-30");
+  assert.equal(dateIso(context.parseDisplayDate("30.04.2026")), "2026-04-30");
+  assert.equal(dateIso(context.parseDisplayDate("30/04/2026")), "2026-04-30");
+  assert.equal(dateIso(context.parseDisplayDate("30/04", 2026)), "2026-04-30");
+  assert.equal(dateIso(context.parseDisplayDate("30.04", 2026)), "2026-04-30");
+  assert.equal(context.parseDisplayDate("30/04"), null);
+});
+
+test("getVisibleManualOrdersRows includes William short-date order in April plan orders", () => {
+  const headers = ["DATE", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%"];
+  const williamRow = ["30/04", "William", "трансервайз дол", "200", "206"];
+  context.state.manualOrders.data = {
+    headers,
+    rows: [
+      williamRow,
+      ["01/05", "May client", "трансервайз дол", "100", "103"],
+    ],
+  };
+
+  const visible = plain(context.getVisibleManualOrdersRows("2026-04-01", "2026-04-30"));
+  assert.deepEqual(visible.rows, [williamRow]);
+
+  const summary = plain(context.buildOrdersSummaryFromClient([visible.headers, ...visible.rows]));
+  assert.equal(summary.orderRows, 1);
+  assert.equal(summary.totalAccruedPlus3Pct, 206);
 });
 
 test("parseIncomingExpenseSheetValues keeps timestamped exchange rows for legacy expense grids", () => {

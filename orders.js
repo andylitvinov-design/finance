@@ -275,9 +275,10 @@ function getVisibleManualOrdersRows(startDate = elements.startDate.value, endDat
   const dateIndex = findDateColumnIndex(data.headers);
   const start = parseIsoDate(startDate || "1970-01-01");
   const end = parseIsoDate(endDate || startDate || "2999-12-31");
+  const periodYear = start.getFullYear();
   const rows = data.rows.filter((row) => {
     if (!hasAnyValue(row)) return false;
-    const cellDate = dateIndex === -1 ? null : parseDisplayDate(row[dateIndex]);
+    const cellDate = dateIndex === -1 ? null : parseDisplayDate(row[dateIndex], periodYear);
     if (!cellDate) return false;
     return cellDate >= start && cellDate <= end;
   });
