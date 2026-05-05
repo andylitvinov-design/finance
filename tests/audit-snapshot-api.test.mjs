@@ -234,6 +234,7 @@ test("audit snapshot never falls back to amount when amount_net is missing", asy
 test("audit snapshot warns when exchange amount_usd is missing", async () => {
   const response = await buildFixtureSnapshot();
 
+  assert.ok(response.summary.ledger_rows > 0);
   assert.equal(response.exchange.rows, 2);
   assert.equal(response.exchange.missing_amount_usd_rows, 1);
   assert.equal(response.exchange.compatibility_mode, false);

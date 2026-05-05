@@ -279,7 +279,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.equal(repository.schema, "ledger-v2-compatible");
     assert.equal(repository.operations.length, 8);
     assert.equal(repository.ledgerV2Rows.length, 8);
-    assert.equal(repository.operations[0].source, "other");
+    assert.equal(repository.operations[0].source, "yoomoney");
     assert.equal(repository.operations[0].ledgerV2.operation, "exchange");
     assert.equal(repository.operations[0].ledgerV2.external_id, "ledger-1");
     assert.equal(repository.operations[4].source, "manual");
@@ -676,6 +676,57 @@ test("loadManualRepositoryFromGoogleSheets derives missing amount_usd for exchan
     assert.deepEqual(repository.views.byCategory, [
       { category: "exchange", amount: -4200, amountUsd: 0, count: 2 },
     ]);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when exchange amount_usd is missing", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:P",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "source"],
+                  ["2026-05-01", "income", "", "yoomoney", "2500", "RUB", "25", "2500", "income", "mcp"],
+                  ["2026-05-02", "business_expense", "yoomoney", "", "1000", "RUB", "10", "1000", "business", "mcp"],
+                  ["2026-05-03", "exchange_out", "Яндекс руб", "Бинанс spot", "0", "RUB", "", "3000", "exchange", "manual"],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+              { range: "'Переводы'!A1:G", values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]] },
+              { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.schema, "ledger-v2-compatible");
+    assert.equal(repository.operations.length, 3);
+    assert.equal(repository.operations[0].amountUsd, "25");
+    assert.equal(repository.operations[0].source, "yoomoney");
+    assert.equal(repository.operations[1].amountUsd, "10");
+    assert.equal(repository.operations[2].amountUsd, "");
+    assert.match(repository.warnings.join("\n"), /1 exchange row.*amount_usd/i);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
