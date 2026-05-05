@@ -1,4 +1,8 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import {
+  countMissingAmountNetRows,
+  isExchangeMissingAmountUsdRow,
+} from "../server/ledger-audit-helpers.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const PUBLIC_SUMMARY_ONLY_WARNING =
@@ -102,6 +106,8 @@ export async function buildAuditSnapshot(options = {}) {
       total_usd: balanceResult.total_usd,
       uses_amount_net: true,
       fallback_amount_rows: balanceResult.fallback_amount_rows,
+      missing_amount_net_rows: balanceResult.missing_amount_net_rows,
+      excluded_missing_amount_net_rows: balanceResult.excluded_missing_amount_net_rows,
     },
     paypal,
     exchange: omitInternalWarnings(exchange),
@@ -147,6 +153,8 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       total_usd: null,
       uses_amount_net: true,
       fallback_amount_rows: 0,
+      missing_amount_net_rows: 0,
+      excluded_missing_amount_net_rows: 0,
     },
     paypal: {
       rows: 0,
@@ -245,14 +253,15 @@ function buildSummary(operations, repository) {
 function buildBalances(operations) {
   const grouped = new Map();
   const warnings = [];
-  let missingAmountNetRows = 0;
+  const missingAmountNetRows = countMissingAmountNetRows(operations);
+  let excludedMissingAmountNetRows = 0;
   let totalUsd = 0;
   let hasTotalUsd = false;
 
   for (const row of operations) {
     const ledger = row?.ledgerV2 || {};
     if (!String(ledger.amount_net ?? row.amountNet ?? "").trim()) {
-      missingAmountNetRows += 1;
+      excludedMissingAmountNetRows += 1;
       continue;
     }
     const balanceAmount = parseNumber(ledger.balance_amount ?? row.balanceAmount);
@@ -287,6 +296,7 @@ function buildBalances(operations) {
     total_usd: hasTotalUsd ? round(totalUsd) : null,
     fallback_amount_rows: 0,
     missing_amount_net_rows: missingAmountNetRows,
+    excluded_missing_amount_net_rows: excludedMissingAmountNetRows,
     warnings,
   };
 }
@@ -357,10 +367,11 @@ function buildExchangeSummary(operations) {
 
   for (const row of exchangeRows) {
     const amountUsd = parseNumber(row?.ledgerV2?.amount_usd ?? row.amountUsd);
-    if (amountUsd === null) {
+    if (isExchangeMissingAmountUsdRow(row)) {
       missingAmountUsdRows += 1;
       continue;
     }
+    if (amountUsd === null) continue;
     if (amountUsd < 0) {
       totalOut += amountUsd;
       hasOut = true;
