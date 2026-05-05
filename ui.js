@@ -2184,7 +2184,9 @@ function parseGenericStatementRows(rows, context = {}) {
     return { entries: [], warnings: ["Statement header was not found."] };
   }
   const headers = rows[headerIndex].map(normalizeStatementHeader);
+  const rawHeaderKeys = rows[headerIndex].map(normalizeGenericStatementRawHeader);
   const headerMap = buildStatementHeaderMap(headers);
+  const rawHeaderMap = buildStatementHeaderMap(rawHeaderKeys);
   const dataRows = rows.slice(headerIndex + 1);
   const providerDetection = detectGenericStatementProvider({
     fileName: context.fileName,
@@ -2196,6 +2198,7 @@ function parseGenericStatementRows(rows, context = {}) {
   });
   const enrichedContext = {
     ...context,
+    rawHeaderMap,
     providerDetection,
     providerHint: providerDetection.providerHint,
     defaultChannel: providerDetection.defaultChannel || context.defaultChannel || "",
@@ -2210,7 +2213,10 @@ function parseGenericStatementRows(rows, context = {}) {
 function findGenericStatementHeaderIndex(rows) {
   return (rows || []).findIndex((row) => {
     const headers = (row || []).map(normalizeStatementHeader);
-    return headers.includes("date") && (headers.includes("amount") || headers.includes("debit") || headers.includes("credit"));
+    const rawHeaders = (row || []).map(normalizeGenericStatementRawHeader);
+    const hasGenericAmount = headers.includes("amount") || headers.includes("debit") || headers.includes("credit");
+    const hasProviderSpecificAmount = rawHeaders.some((header) => ["net", "gross", "source_amount", "target_amount"].includes(header));
+    return headers.includes("date") && (hasGenericAmount || hasProviderSpecificAmount);
   });
 }
 
@@ -2226,11 +2232,24 @@ function normalizeGenericStatementRow(row, headerMap, context = {}) {
     const columnIndex = headerMap?.[key];
     return columnIndex === undefined ? "" : row[columnIndex];
   };
+  const readRaw = (key) => {
+    const columnIndex = context.rawHeaderMap?.[key];
+    return columnIndex === undefined ? "" : row[columnIndex];
+  };
   const date = normalizeTdBankCsvDate(read("date"));
   const description = [read("description"), read("name")].filter(Boolean).join(" | ").slice(0, 240);
   const debit = parseTdBankCsvAmount(read("debit"));
   const credit = parseTdBankCsvAmount(read("credit"));
   const explicitAmount = parseTdBankCsvAmount(read("amount"));
+  const providerDetection = context.providerDetection || {};
+  const providerHint = String(providerDetection.providerHint || context.providerHint || "").trim();
+  const paypalGross = providerHint === "paypal" ? parseTdBankCsvAmount(readRaw("gross")) : 0;
+  const paypalFee = providerHint === "paypal" ? parseTdBankCsvAmount(readRaw("fee")) : 0;
+  const paypalNet = providerHint === "paypal" ? parseTdBankCsvAmount(readRaw("net")) : 0;
+  const wiseSourceAmount = providerHint === "wise" ? parseTdBankCsvAmount(readRaw("source_amount")) : 0;
+  const wiseTargetAmount = providerHint === "wise" ? parseTdBankCsvAmount(readRaw("target_amount")) : 0;
+  let forceNeedsReview = false;
+  let providerWarning = "";
   let direction = "";
   let amount = 0;
   if (Math.abs(debit) > 0) {
@@ -2242,12 +2261,29 @@ function normalizeGenericStatementRow(row, headerMap, context = {}) {
   } else if (explicitAmount) {
     direction = explicitAmount < 0 ? "expense" : "income";
     amount = Math.abs(explicitAmount);
+  } else if (providerHint === "paypal" && paypalNet) {
+    direction = paypalNet < 0 ? "expense" : "income";
+    amount = Math.abs(paypalNet);
+    providerWarning = buildPayPalGrossFeeMetadata(paypalGross, paypalFee, "PayPal net used as amount.");
+  } else if (providerHint === "paypal" && paypalGross) {
+    direction = paypalGross < 0 ? "expense" : "income";
+    amount = Math.abs(paypalGross);
+    forceNeedsReview = true;
+    providerWarning = buildPayPalGrossFeeMetadata(paypalGross, paypalFee, "PayPal net missing; gross used for review only.");
+  } else if (providerHint === "wise" && (wiseSourceAmount || wiseTargetAmount)) {
+    const reviewAmount = wiseSourceAmount || wiseTargetAmount;
+    direction = reviewAmount < 0 ? "expense" : "income";
+    amount = Math.abs(reviewAmount);
+    forceNeedsReview = true;
+    providerWarning = "Wise source/target amount requires provider-specific review.";
   }
   if (!date || !amount) return null;
   const currency = normalizeGenericStatementCurrency(read("currency"), description, context);
-  const channel = inferGenericStatementChannel({ context, currency, description });
-  const providerDetection = context.providerDetection || {};
-  const importReason = buildGenericStatementImportReason(providerDetection, channel);
+  const inferredChannel = inferGenericStatementChannel({ context, currency, description });
+  const channel = forceNeedsReview ? "" : inferredChannel;
+  const importReason = [buildGenericStatementImportReason(providerDetection, channel), providerWarning]
+    .filter(Boolean)
+    .join("; ");
   const source = String(context.source || "file_import").trim();
   const sourceTransactionId = buildGenericStatementSourceId({
     source,
@@ -2301,10 +2337,33 @@ function normalizeStatementHeader(value) {
   if (["name", "payee", "merchant"].includes(header)) return "name";
   if (["debit", "withdrawal", "withdrawals", "paid out", "expense", "расход", "списание"].includes(header)) return "debit";
   if (["credit", "deposit", "deposits", "paid in", "income", "приход", "зачисление"].includes(header)) return "credit";
-  if (["amount", "transaction amount", "gross", "source amount", "target amount", "сумма"].includes(header)) return "amount";
+  if (["amount", "transaction amount", "сумма"].includes(header)) return "amount";
   if (["currency", "cur", "валюта"].includes(header)) return "currency";
   if (["balance", "running balance", "остаток"].includes(header)) return "balance";
   return header;
+}
+
+function normalizeGenericStatementRawHeader(value) {
+  const header = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-яіїєґ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (header === "gross") return "gross";
+  if (header === "fee" || header === "fees") return "fee";
+  if (header === "net") return "net";
+  if (header === "source amount") return "source_amount";
+  if (header === "target amount") return "target_amount";
+  return normalizeStatementHeader(header);
+}
+
+function buildPayPalGrossFeeMetadata(gross, fee, message) {
+  const parts = [message];
+  if (gross) parts.push(`gross=${gross}`);
+  if (fee) parts.push(`fee=${fee}`);
+  return parts.join(" ");
 }
 
 function normalizeGenericStatementCurrency(value, description = "", context = {}) {

@@ -155,6 +155,10 @@ test("generic CSV detects TD Bank, maps debit and credit rows, and ignores balan
 
 test("generic PayPal CSV detects provider and maps USD and EUR channels conservatively", () => {
   const context = buildGenericImportContext();
+  assert.equal(context.normalizeStatementHeader("Gross"), "gross");
+  assert.equal(context.normalizeStatementHeader("Source Amount"), "source amount");
+  assert.equal(context.normalizeStatementHeader("Target Amount"), "target amount");
+  assert.equal(context.normalizeStatementHeader("Transaction Amount"), "amount");
   const result = plain(context.parseGenericStatementCsv([
     "Date,Name,Gross,Fee,Net,Currency",
     "04/11/2026,US Client,120.00,-4.00,116.00,USD",
@@ -168,7 +172,29 @@ test("generic PayPal CSV detects provider and maps USD and EUR channels conserva
   assert.equal(result.providerDetection.providerHint, "paypal");
   assert.deepEqual(result.entries.map((entry) => entry.channel), ["пейпал дол", "пейпал евр"]);
   assert.deepEqual(result.entries.map((entry) => entry.providerHint), ["paypal", "paypal"]);
-  assert.deepEqual(result.entries.map((entry) => entry.localAmount), [120, 90]);
+  assert.deepEqual(result.entries.map((entry) => entry.localAmount), [116, 87]);
+  assert.match(result.entries[0].rawMetadata, /PayPal net used as amount/);
+  assert.match(result.entries[0].rawMetadata, /gross=120/);
+  assert.match(result.entries[0].rawMetadata, /fee=-4/);
+});
+
+test("generic PayPal CSV does not treat Gross as a saveable amount when Net is missing", () => {
+  const context = buildGenericImportContext();
+  const result = plain(context.parseGenericStatementCsv([
+    "Date,Name,Gross,Fee,Net,Currency",
+    "04/11/2026,US Client,120.00,-4.00,,USD"
+  ].join("\n"), {
+    source: "csv_import",
+    fileName: "paypal-activity.csv",
+    normalizedFileName: "paypal-activity"
+  }));
+
+  assert.equal(result.providerDetection.providerHint, "paypal");
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].localAmount, 120);
+  assert.equal(result.entries[0].channel, "");
+  assert.equal(result.entries[0].review_status, "needs_review");
+  assert.match(result.entries[0].rawMetadata, /PayPal net missing; gross used for review only/);
 });
 
 test("generic Privat and YooMoney statements map only provider-specific currency channels", () => {
@@ -211,6 +237,7 @@ test("generic Wise statement stays needs_review when no exact Wise channel exist
   assert.equal(result.entries[0].providerHint, "wise");
   assert.equal(result.entries[0].channel, "");
   assert.equal(result.entries[0].review_status, "needs_review");
+  assert.match(result.entries[0].rawMetadata, /Wise source\/target amount requires provider-specific review/);
 });
 
 test("unknown USD statement does not infer PayPal or Wise from currency alone", () => {
