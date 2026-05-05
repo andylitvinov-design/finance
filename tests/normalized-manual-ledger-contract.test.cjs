@@ -177,6 +177,8 @@ test("legacy wide migration helper is dry-run and emits ledger preview", () => {
   assert.equal(summary.dryRun, true);
   assert.equal(summary.createdRows, 3);
   assert.deepEqual(summary.unknownCategories, []);
+  assert.deepEqual(summary.duplicateRawSourceIds, []);
+  assert.deepEqual(summary.duplicateTransferGroupIds, ["migration:exchange:2026-04-24:1"]);
   assert.equal(summary.sample[0].operation, "exchange_out");
   assert.equal(summary.sample[1].operation, "exchange_in");
   assert.equal(summary.sample[2].category, "house");

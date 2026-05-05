@@ -96,6 +96,9 @@ for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
   });
 }
 
+const duplicateRawSourceIds = collectDuplicateKeys(ledgerRows.map((row) => row.raw_source_id));
+const duplicateTransferGroupIds = collectDuplicateKeys(ledgerRows.map((row) => row.transfer_group_id).filter(Boolean));
+
 console.log(JSON.stringify({
   dryRun: true,
   input: path.resolve(inputPath),
@@ -103,6 +106,8 @@ console.log(JSON.stringify({
   skippedRows: skipped.length,
   unknownCategories: [...unknownCategories],
   unknownChannels: [...unknownChannels],
+  duplicateRawSourceIds,
+  duplicateTransferGroupIds,
   sample: ledgerRows.slice(0, 10)
 }, null, 2));
 
@@ -156,4 +161,16 @@ function inferCurrency(channel) {
   if (/руб|rub|yandex|яндекс/.test(value)) return "RUB";
   if (/местная|local/.test(value)) return "LOCAL";
   return "USD";
+}
+
+function collectDuplicateKeys(values) {
+  const seen = new Set();
+  const duplicates = new Set();
+  (values || []).forEach((value) => {
+    const key = String(value || "").trim();
+    if (!key) return;
+    if (seen.has(key)) duplicates.add(key);
+    else seen.add(key);
+  });
+  return [...duplicates].sort();
 }
