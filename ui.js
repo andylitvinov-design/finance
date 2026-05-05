@@ -778,6 +778,7 @@ function renderExpenseFinancialAnalysis() {
   }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
+  block.appendChild(renderLedgerDashboardBlock(getLedgerDashboardAnalysisModel(channelReconciliation)));
   block.appendChild(renderMissingPaymentsBlock(getMissingPaymentsAuditSummary()));
   block.appendChild(renderBalanceReconciliationBlock(getBalanceReconciliationSummary()));
   const paypalSummary = getActivePayPalSummary();
@@ -866,6 +867,153 @@ function renderExpenseAnalysisChannelBlock(summary) {
   wrap.appendChild(renderPlainTable(summary.rows));
   block.appendChild(wrap);
   return block;
+}
+
+function getLedgerDashboardAnalysisModel(channelSummary) {
+  const helper = globalThis.EzohataLedgerDashboardHelper;
+  if (!helper?.buildLedgerDashboardModel) return null;
+  const manualViews = state.data?.manual?.views || {};
+  const fallbackAmountRows = manualViews.fallback_amount_rows || state.data?.manual?.fallback_amount_rows || 0;
+  return helper.buildLedgerDashboardModel(getExpenseAnalysisLedgerRows(), {
+    channelSummary,
+    fallbackAmountRows,
+  });
+}
+
+function renderLedgerDashboardBlock(model) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Ledger dashboards";
+  block.appendChild(title);
+  if (!model) {
+    const note = document.createElement("div");
+    note.className = "config-note";
+    note.textContent = "Ledger dashboard helper is unavailable.";
+    block.appendChild(note);
+    return block;
+  }
+  block.appendChild(renderLedgerDashboardTable("Provider Health", [
+    ["provider", "rows", "income", "expenses", "fees", "net", "last import", "warnings"],
+    ...(model.providerHealthRows || []).map((row) => [
+      row.provider,
+      row.rows,
+      formatSheetNumber(row.income),
+      formatSheetNumber(row.expenses),
+      formatSheetNumber(row.fees),
+      formatSheetNumber(row.net),
+      row.lastImport,
+      row.warnings,
+    ]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("Expense Categories", [
+    ["category", "amount USD", "percent of expenses"],
+    ...(model.expenseCategoryRows || []).map((row) => [
+      row.category,
+      formatSheetNumber(row.amountUsd),
+      `${formatSheetNumber(row.percentOfExpenses)}%`,
+    ]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("P&L", [
+    ["metric", "amount USD"],
+    ...(model.profitAndLossRows || []).map((row) => [row.metric, formatSheetNumber(row.amountUsd)]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("Balances by Channel", [
+    ["channel", "inflow", "outflow", "transfer", "exchange", "end balance"],
+    ...(model.balancesByChannelRows || []).map((row) => [
+      row.channel,
+      formatSheetNumber(row.inflow),
+      formatSheetNumber(row.outflow),
+      formatSheetNumber(row.transfer),
+      formatSheetNumber(row.exchange),
+      formatSheetNumber(row.endBalance),
+    ]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("Plan vs Fact", [
+    ["metric", "plan", "fact", "delta", "delta %", "status"],
+    ...(model.planVsFactRows || []).map((row) => [
+      row.metric,
+      formatSheetNumber(row.plan),
+      formatSheetNumber(row.fact),
+      formatSheetNumber(row.delta),
+      `${formatSheetNumber(row.deltaPercent)}%`,
+      row.status,
+    ]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("Exchange Control", [
+    ["exchange out", "exchange in", "difference", "missing pairs / warning"],
+    ...(model.exchangeControlRows || []).map((row) => [
+      formatSheetNumber(row.exchangeOut),
+      formatSheetNumber(row.exchangeIn),
+      formatSheetNumber(row.difference),
+      row.warning || String(row.missingPairs || 0),
+    ]),
+  ]));
+  block.appendChild(renderLedgerDashboardTable("Warnings", [
+    ["warning", "count", "status"],
+    ...(model.warningsRows || []).map((row) => [row.warning, row.count, row.status]),
+  ]));
+  block.appendChild(renderLedgerDrilldownBlock(model.drilldownRows || []));
+  return block;
+}
+
+function renderLedgerDashboardTable(titleText, rows) {
+  const section = document.createElement("div");
+  section.className = "ledger-dashboard-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "8px";
+  title.style.fontWeight = "700";
+  title.textContent = titleText;
+  section.appendChild(title);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderPlainTable(rows.length > 1 ? rows : [...rows, ["", "", ""]]));
+  section.appendChild(wrap);
+  return section;
+}
+
+function renderLedgerDrilldownBlock(rows) {
+  const details = document.createElement("details");
+  details.className = "ledger-dashboard-section";
+  const summary = document.createElement("summary");
+  summary.textContent = `Ledger drilldown (${rows.length})`;
+  details.appendChild(summary);
+  const tableRows = [[
+    "date",
+    "operation",
+    "source",
+    "from channel",
+    "to channel",
+    "amount_usd",
+    "amount_net",
+    "fee",
+    "category",
+    "external id",
+  ]];
+  (rows || []).forEach((row) => {
+    tableRows.push([
+      row.date,
+      row.operation,
+      row.source,
+      row.fromChannel,
+      row.toChannel,
+      row.amountUsd === "" ? "" : formatSheetNumber(row.amountUsd),
+      row.amountNet,
+      row.amountFee,
+      row.category,
+      row.externalId,
+    ]);
+  });
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.style.marginTop = "10px";
+  wrap.appendChild(renderPlainTable(tableRows));
+  details.appendChild(wrap);
+  return details;
 }
 
 function renderMissingPaymentsBlock(summary) {
