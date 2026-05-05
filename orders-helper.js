@@ -22,6 +22,11 @@
     const raw = String(value || "").trim();
     if (!raw) return "";
     if (/^\d{2}\.\d{2}\.\d{4}$/.test(raw)) return raw;
+    const fullMatch = raw.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})$/);
+    if (fullMatch) {
+      const year = fullMatch[3].length === 2 ? `20${fullMatch[3]}` : fullMatch[3];
+      return `${String(fullMatch[1]).padStart(2, "0")}.${String(fullMatch[2]).padStart(2, "0")}.${year}`;
+    }
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
       const [year, month, day] = raw.split("-");
       return `${day}.${month}.${year}`;
@@ -61,21 +66,62 @@
   function extractTrailingCost(text) {
     const raw = String(text || "").trim();
     if (!raw) return { text: "", cost: "" };
-    const matches = [...raw.matchAll(/(\d+(?:[.,]\d+)?)\s*(?!.*\d)/g)];
-    const last = matches[matches.length - 1];
-    if (!last) return { text: raw, cost: "" };
-    const cost = formatNumber(last[1]);
-    const cleaned = raw.slice(0, last.index).replace(/[–—:\s/-]+$/, "").trim();
+    const match = raw.match(/(?:^|[\s(])(\d+(?:[.,]\d+)?)$/);
+    if (!match) return { text: raw, cost: "" };
+    const cost = formatNumber(match[1]);
+    const cleaned = raw.slice(0, raw.length - match[1].length).replace(/[–—:\s/(-]+$/, "").trim();
     return { text: cleaned || raw, cost };
   }
 
   function splitHeaderLine(line, fallbackYearSource) {
-    const match = String(line || "").trim().match(/^(\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)\s+(.+)$/);
-    if (!match) return null;
+    const raw = String(line || "").trim();
+    const numericMatch = raw.match(/^(\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)\s+(.+)$/);
+    if (numericMatch) {
+      return {
+        date: normalizeDate(numericMatch[1], fallbackYearSource),
+        name: numericMatch[2].trim(),
+      };
+    }
+    const monthMatch = raw.match(/^(\d{1,2})\s+(января|январь|февраля|февраль|марта|март|апреля|апрель|мая|май|июня|июнь|июля|июль|августа|август|сентября|сентябрь|октября|октябрь|ноября|ноябрь|декабря|декабрь)\s+(?:(\d{4})\s+)?(.+)$/i);
+    if (!monthMatch) return null;
+    const month = getRussianMonthNumber(monthMatch[2]);
+    if (!month) return null;
+    const year = monthMatch[3] || inferYear(fallbackYearSource);
     return {
-      date: normalizeDate(match[1], fallbackYearSource),
-      name: match[2].trim(),
+      date: `${String(monthMatch[1]).padStart(2, "0")}.${month}.${year}`,
+      name: monthMatch[4].trim(),
     };
+  }
+
+  function getRussianMonthNumber(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    const months = {
+      "января": "01",
+      "январь": "01",
+      "февраля": "02",
+      "февраль": "02",
+      "марта": "03",
+      "март": "03",
+      "апреля": "04",
+      "апрель": "04",
+      "мая": "05",
+      "май": "05",
+      "июня": "06",
+      "июнь": "06",
+      "июля": "07",
+      "июль": "07",
+      "августа": "08",
+      "август": "08",
+      "сентября": "09",
+      "сентябрь": "09",
+      "октября": "10",
+      "октябрь": "10",
+      "ноября": "11",
+      "ноябрь": "11",
+      "декабря": "12",
+      "декабрь": "12",
+    };
+    return months[normalized] || "";
   }
 
   function splitNameAndDescription(line) {
@@ -97,6 +143,15 @@
 
   function stripLeadingNumbering(value) {
     return String(value || "").replace(/^\d+\)\s*/, "").trim();
+  }
+
+  function isNumberedLine(value) {
+    return /^\d+\)\s*/.test(String(value || "").trim());
+  }
+
+  function isDecorativeLine(value) {
+    const raw = String(value || "").trim();
+    return Boolean(raw) && !/[\p{L}\p{N}]/u.test(raw);
   }
 
   function splitNumberedItems(lines) {
@@ -133,6 +188,7 @@
     const lines = String(block || "")
       .split(/\r?\n/)
       .map((line) => line.trim())
+      .filter((line) => !isDecorativeLine(line))
       .filter(Boolean);
     if (!lines.length) return [];
 
@@ -146,7 +202,12 @@
       });
     }
 
+    const hasNumberedItems = lines.some(isNumberedLine);
     return splitNumberedItems(lines).map((item) => {
+      if (hasNumberedItems) {
+        const parsed = extractTrailingCost(item);
+        return buildRow("", "", parsed.text, parsed.cost);
+      }
       const nameSplit = splitNameAndDescription(item);
       const parsed = extractTrailingCost(nameSplit.description);
       return buildRow("", nameSplit.name, parsed.text, parsed.cost);

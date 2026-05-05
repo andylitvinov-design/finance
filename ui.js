@@ -4020,11 +4020,13 @@ function renderManualOrdersBlock() {
   }
 
   const tableWrap = document.createElement("div");
-  tableWrap.className = "table-wrap";
+  tableWrap.className = "table-wrap manual-orders-table-wrap";
   const table = document.createElement("table");
+  table.className = "manual-orders-table";
   const tbody = document.createElement("tbody");
   const headerRow = document.createElement("tr");
-  state.manualOrders.data.headers.forEach((cell) => {
+  const headers = state.manualOrders.data.headers;
+  headers.forEach((cell) => {
     const th = document.createElement("th");
     th.textContent = cell || "";
     headerRow.appendChild(th);
@@ -4038,11 +4040,7 @@ function renderManualOrdersBlock() {
     const tr = document.createElement("tr");
     row.forEach((cell, cellIndex) => {
       const td = document.createElement("td");
-      const input = document.createElement("input");
-      input.className = "finance-input";
-      input.value = cell || "";
-      input.addEventListener("input", (event) => updateManualOrderValue(rowIndex, cellIndex, event.target.value));
-      td.appendChild(input);
+      td.appendChild(renderManualOrderField(rowIndex, cellIndex, cell, headers[cellIndex]));
       tr.appendChild(td);
     });
     const actionTd = document.createElement("td");
@@ -4059,6 +4057,7 @@ function renderManualOrdersBlock() {
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   shell.appendChild(tableWrap);
+  shell.appendChild(renderManualOrdersMobileCards(headers, state.manualOrders.data.rows));
 
   const footerActions = document.createElement("div");
   footerActions.className = "finance-actions";
@@ -4071,6 +4070,42 @@ function renderManualOrdersBlock() {
   shell.appendChild(footerActions);
 
   return shell;
+}
+
+function renderManualOrderField(rowIndex, cellIndex, cell, header) {
+  const isOrder = normalizeCell(header) === normalizeCell("ЗАКАЗ");
+  const field = document.createElement(isOrder ? "textarea" : "input");
+  field.className = `finance-input${isOrder ? " manual-order-textarea" : ""}`;
+  if (!isOrder) field.type = "text";
+  field.value = cell || "";
+  field.addEventListener("input", (event) => updateManualOrderValue(rowIndex, cellIndex, event.target.value));
+  return field;
+}
+
+function renderManualOrdersMobileCards(headers, rows) {
+  const container = document.createElement("div");
+  container.className = "manual-orders-mobile-cards";
+  (rows || []).forEach((row, rowIndex) => {
+    const card = document.createElement("article");
+    card.className = "manual-order-mobile-card";
+    (headers || []).forEach((header, cellIndex) => {
+      const item = document.createElement("label");
+      item.className = `manual-order-mobile-field${normalizeCell(header) === normalizeCell("ЗАКАЗ") ? " order-field" : ""}`;
+      const label = document.createElement("span");
+      label.className = "mobile-card-label";
+      label.textContent = header || `Колонка ${cellIndex + 1}`;
+      item.append(label, renderManualOrderField(rowIndex, cellIndex, row?.[cellIndex] || "", header));
+      card.appendChild(item);
+    });
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost";
+    removeButton.textContent = "Удалить";
+    removeButton.addEventListener("click", () => removeManualOrderRow(rowIndex));
+    card.appendChild(removeButton);
+    container.appendChild(card);
+  });
+  return container;
 }
 
 function renderManualFinanceRateTable(rateLookup) {
