@@ -1831,6 +1831,25 @@ async function parseExpenseScreenshotsWithBrowserOcr(images) {
   return { entries, warnings };
 }
 
+function getShortPayPalResponseExcerpt(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+async function readPayPalExpenseStatementPayload(response) {
+  const text = await response.text().catch(() => "");
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const excerpt = getShortPayPalResponseExcerpt(raw) || "non-JSON response";
+    throw new Error(`PayPal вернул не-JSON ответ (${response.status || "unknown"}): ${excerpt}`);
+  }
+}
+
 async function loadPayPalExpenseStatement() {
   const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
   const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
@@ -1848,7 +1867,7 @@ async function loadPayPalExpenseStatement() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ startDate, endDate })
     });
-    const payload = await response.json().catch(() => null);
+    const payload = await readPayPalExpenseStatementPayload(response);
     if (!response.ok || !payload?.ok) {
       throw new Error(payload?.error || `PayPal вернул ошибку (${response.status}).`);
     }

@@ -5,6 +5,7 @@ import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
 
 const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;
+const PAYPAL_ERROR_EXCERPT_LENGTH = 300;
 export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
@@ -190,9 +191,9 @@ async function getPayPalMcpAccessToken(options = {}) {
       client_id: clientId
     }).toString()
   });
-  const payload = await upstream.json().catch(() => null);
+  const payload = await readJsonOrTextResponse(upstream, "PayPal MCP token refresh failed");
   if (!upstream.ok || !payload?.access_token) {
-    throw new Error(payload?.error_description || payload?.error || `PayPal MCP token refresh failed (${upstream.status}).`);
+    throw new Error(formatPayPalUpstreamError("PayPal MCP token refresh failed", upstream.status, payload));
   }
   return payload.access_token;
 }
@@ -215,7 +216,7 @@ async function callPayPalMcpTool(options = {}) {
       .map((item) => item.text || "")
       .join("\n")
       .trim();
-    return text ? JSON.parse(text) : result;
+    return text ? parseJsonText(text, `PayPal MCP tool ${options.toolName || "unknown"}`) : result;
   } finally {
     client.close();
   }
@@ -287,7 +288,7 @@ async function postPayPalMcpMessage(fetchImpl, endpoint, accessToken, payload) {
   });
   if (!upstream.ok && upstream.status !== 202) {
     const text = await upstream.text().catch(() => "");
-    throw new Error(text || `PayPal MCP message failed (${upstream.status}).`);
+    throw new Error(formatPayPalTextError("PayPal MCP message failed", upstream.status, text));
   }
 }
 
@@ -317,7 +318,7 @@ function parsePayPalMcpEndpoint(event) {
 function parsePayPalMcpJsonEvent(event) {
   const data = String(event || "").match(/^data:\s*(.+)$/m)?.[1]?.trim();
   if (!data) return null;
-  return JSON.parse(data);
+  return parseJsonText(data, "PayPal MCP event");
 }
 
 export function summarizePayPalStatementEntries(entries = []) {
@@ -390,6 +391,75 @@ function uniquePayPalWarnings(warnings = []) {
   return Array.from(new Set((warnings || []).map((warning) => String(warning || "").trim()).filter(Boolean)));
 }
 
+export function parseJsonText(text, context = "PayPal response") {
+  const raw = String(text || "").trim();
+  if (!raw) throw new Error(`${context} returned empty response.`);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`${context} returned non-JSON: ${getPayPalBodyExcerpt(raw)}`);
+  }
+}
+
+export async function readJsonOrTextResponse(response, context = "PayPal response") {
+  const status = Number(response?.status || 0);
+  if (typeof response?.text === "function") {
+    const text = await response.text().catch(() => "");
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    try {
+      return parseJsonText(raw, context);
+    } catch {
+      throw new Error(formatPayPalTextError(context, status, raw));
+    }
+  }
+  if (typeof response?.json === "function") {
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(formatPayPalTextError(context, status, ""));
+    }
+  }
+  return null;
+}
+
+function formatPayPalUpstreamError(context, status, payload) {
+  const detail = getPayPalPayloadError(payload) || `HTTP ${status || "unknown"}`;
+  return `${context} (${status || "unknown"}): ${getPayPalBodyExcerpt(detail)}`;
+}
+
+function formatPayPalTextError(context, status, text) {
+  const excerpt = getPayPalBodyExcerpt(text) || "non-JSON response";
+  return `${context} (${status || "unknown"}): ${excerpt}`;
+}
+
+function getPayPalPayloadError(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  return String(
+    payload.error_description ||
+      payload.message ||
+      payload.name ||
+      payload.error ||
+      payload.details?.[0]?.description ||
+      ""
+  ).trim();
+}
+
+function getPayPalBodyExcerpt(value) {
+  return redactPayPalSecretText(String(value || ""))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PAYPAL_ERROR_EXCERPT_LENGTH);
+}
+
+function redactPayPalSecretText(value) {
+  return String(value || "")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/Basic\s+[A-Za-z0-9._~+\/-]+=*/gi, "Basic [redacted]")
+    .replace(/((?:access_token|refresh_token|client_secret)\s*[=:]\s*)[^\s&,'"]+/gi, "$1[redacted]")
+    .replace(/(["'](?:access_token|refresh_token|client_secret)["']\s*:\s*["'])[^"']+/gi, "$1[redacted]");
+}
+
 function addPayPalSummaryAmount(lookup, currency, direction, amount) {
   if (!lookup.has(currency)) lookup.set(currency, { income: 0, expense: 0, exchange: 0, net: 0 });
   const totals = lookup.get(currency);
@@ -439,10 +509,10 @@ export async function getPayPalAccessToken(options = {}) {
     },
     body: "grant_type=client_credentials"
   });
-  const payload = await upstream.json().catch(() => null);
+  const payload = await readJsonOrTextResponse(upstream, "PayPal OAuth failed");
   if (!upstream.ok || !payload?.access_token) {
     throw createPayPalApiError(
-      payload?.error_description || payload?.error || `PayPal token request failed (${upstream.status}).`,
+      formatPayPalUpstreamError("PayPal OAuth failed", upstream.status, payload),
       { status: upstream.status, payload, phase: "oauth" }
     );
   }
@@ -470,10 +540,10 @@ export async function fetchPayPalTransactionDetails(options = {}) {
         "Content-Type": "application/json"
       }
     });
-    const payload = await upstream.json().catch(() => null);
+    const payload = await readJsonOrTextResponse(upstream, "PayPal transaction request failed");
     if (!upstream.ok) {
       throw createPayPalApiError(
-        payload?.message || payload?.name || `PayPal transaction request failed (${upstream.status}).`,
+        formatPayPalUpstreamError("PayPal transaction request failed", upstream.status, payload),
         { status: upstream.status, payload, phase: "transaction_search" }
       );
     }
@@ -507,10 +577,10 @@ export async function fetchPayPalTransactionDetailsById(options = {}) {
       "Content-Type": "application/json"
     }
   });
-  const payload = await upstream.json().catch(() => null);
+  const payload = await readJsonOrTextResponse(upstream, "PayPal transaction detail lookup failed");
   if (!upstream.ok) {
     throw createPayPalApiError(
-      payload?.message || payload?.name || `PayPal transaction detail lookup failed (${upstream.status}).`,
+      formatPayPalUpstreamError("PayPal transaction detail lookup failed", upstream.status, payload),
       { status: upstream.status, payload, phase: "transaction_detail_lookup" }
     );
   }
