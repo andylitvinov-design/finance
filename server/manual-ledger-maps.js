@@ -227,6 +227,7 @@ function inferManualLedgerSourceFromChannels(...values) {
   if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
   if (/(privat|приват)/.test(normalized)) return "privatbank";
   if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
+  if (/(yoomoney|youmoney|yandex|яндекс|юмани|юmoney|юмоней)/.test(normalized)) return "yoomoney";
   return "";
 }
 

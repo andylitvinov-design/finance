@@ -886,6 +886,16 @@ test("mixed imported PayPal and YooMoney income keeps non-zero income and expens
         amount_usd: "25",
         amount_net: "2500",
         currency: "RUB"
+      },
+      {
+        date: "2026-05-12",
+        operation: "exchange_out",
+        source: "manual",
+        from_channel: "Яндекс руб",
+        to_channel: "Бинанс spot",
+        amount_usd: "",
+        amount_net: "3000",
+        currency: "RUB"
       }
     ],
     movementValues: [],

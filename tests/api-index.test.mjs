@@ -951,6 +951,122 @@ test("GET getDashboardData keeps manual ledger overlay when amount_net is missin
   }
 });
 
+test("GET getDashboardData keeps ledger income fallback when exchange amount_usd is missing", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  const previousFetch = global.fetch;
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-overlay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("oauth2.googleapis.com/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { access_token: "test-access-token" };
+          }
+        };
+      }
+      if (value.includes("sheets.googleapis.com") && value.includes("values:batchGet")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              valueRanges: [
+                {
+                  range: "'Ledger'!A:P",
+                  values: [
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "source"],
+                    ["2026-05-01", "income", "", "yoomoney", "2500", "RUB", "25", "2500", "income", "mcp"],
+                    ["2026-05-02", "exchange_out", "Яндекс руб", "Бинанс spot", "0", "RUB", "", "3000", "exchange", "manual"],
+                  ]
+                },
+                { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+                { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+                { range: "'Переводы'!A1:G", values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]] },
+                { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] }
+              ]
+            };
+          }
+        };
+      }
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-05-01",
+                  endDate: "2026-05-31",
+                  timeZone: "Europe/Kyiv"
+                },
+                manual: {
+                  balances: [],
+                  transfers: [],
+                  notes: "",
+                  checkDate: "2026-05-31",
+                  status: "saved",
+                  compatibilityMode: "incoming-repository"
+                },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [["NUMBER", "DATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"]]
+                  },
+                  analytics: {
+                    sheetName: "аналитика",
+                    values: [
+                      ["Plan"],
+                      ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+                      ["Яндекс руб", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+                    ]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return { ok: true, status: 200, async text() { return ""; } };
+      }
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({
+      method: "GET",
+      query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-31" }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.data?.manual?.operations?.length, 2);
+    assert.match((response.body?.data?.manual?.warnings || []).join("\n"), /1 exchange row.*amount_usd/i);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["Яндекс руб"]?.realNetUsd, 25);
+    assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 25);
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    if (previousServiceEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousServiceEmail;
+    if (previousPrivateKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousPrivateKey;
+  }
+});
+
 test("GET getDashboardData adds real income payload and movement net-income column", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;

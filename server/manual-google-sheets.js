@@ -298,10 +298,6 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   if (normalizedOperations) {
     const ledgerV2Rows = normalizedOperations.map((row) => row.ledgerV2).filter(Boolean);
     const warnings = buildLedgerV2RepositoryWarnings(normalizedOperations, values);
-    const blockingWarnings = warnings.filter((warning) => /amount_usd.*required/i.test(warning));
-    if (blockingWarnings.length) {
-      throw new Error(blockingWarnings.join(" "));
-    }
     return {
       schema: hasLedgerV2Header(values) ? "ledger-v2-compatible" : "ledger-v1",
       operations: normalizedOperations,
@@ -487,7 +483,7 @@ function buildLedgerV2RepositoryWarnings(operations, values) {
     return (operation === "exchange_in" || operation === "exchange_out") && !String(row?.amountUsd || "").trim();
   }).length;
   if (exchangeMissingUsd) {
-    warnings.push(`Ledger v2 error: amount_usd is required for ${exchangeMissingUsd} exchange row(s).`);
+    warnings.push(`Ledger v2 warning: ${exchangeMissingUsd} exchange row(s) have empty amount_usd; USD exchange totals skipped for those rows.`);
   }
   return warnings;
 }
@@ -655,17 +651,20 @@ function deriveOperationUsdAmount(operation, rateLookup = { byChannel: {}, byCur
   if (rawExplicitUsd) return normalizeExchangeUsdSign(parseNumberString(rawExplicitUsd), operation);
   const amount = parseNumberString(operation?.amount);
   if (!Number.isFinite(amount)) return 0;
+  const operationName = normalizeOperation(operation?.operation, operation?.category);
   const channel = mapOperationToLegacyChannel(operation) || canonicalManualFinanceChannel(operation?.fromChannel || operation?.toChannel || "");
   const currency = String(operation?.currency || inferChannelCurrency(channel)).trim().toUpperCase();
   if (currency === "USD") {
     const net = parseNumberString(operation?.amountNet ?? operation?.amount_net ?? "");
     return normalizeExchangeUsdSign(Number.isFinite(net) && net ? net : amount, operation);
   }
-  const rate = parseNumberString(operation?.rate) ||
+  const explicitOrTransferRate = parseNumberString(operation?.rate) ||
     parseNumberString(rateLookup.byChannel?.[channel]) ||
-    parseNumberString(rateLookup.byCurrency?.[currency]) ||
-    FALLBACK_USD_RATES[currency] ||
-    FALLBACK_USD_RATES.LOCAL;
+    parseNumberString(rateLookup.byCurrency?.[currency]);
+  if (operationName === "exchange_in" || operationName === "exchange_out") {
+    return explicitOrTransferRate ? normalizeExchangeUsdSign(amount * explicitOrTransferRate, operation) : 0;
+  }
+  const rate = explicitOrTransferRate || FALLBACK_USD_RATES[currency] || FALLBACK_USD_RATES.LOCAL;
   return rate ? normalizeExchangeUsdSign(amount * rate, operation) : 0;
 }
 
