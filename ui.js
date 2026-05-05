@@ -242,6 +242,8 @@ function renderExpenseAccountingBlock() {
     includeAction: state.expenseAccounting.activeSubtab === "analysis"
   });
   if (unsavedNotice) shell.appendChild(unsavedNotice);
+  const warnings = renderExpenseAccountingWarnings();
+  if (warnings) shell.appendChild(warnings);
 
   if (state.expenseAccounting.activeSubtab === "analysis") {
     shell.appendChild(renderExpenseFinancialAnalysis());
@@ -426,6 +428,29 @@ function renderUnsavedExpenseAccountingNotice(options = {}) {
   }
 
   return notice;
+}
+
+function getExpenseAccountingWarnings() {
+  return Array.from(new Set(
+    (Array.isArray(state.expenseAccounting.warnings) ? state.expenseAccounting.warnings : [])
+      .map((warning) => String(warning || "").trim())
+      .filter(Boolean)
+  ));
+}
+
+function renderExpenseAccountingWarnings() {
+  const warnings = getExpenseAccountingWarnings();
+  if (!warnings.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "finance-status error";
+  wrap.style.marginBottom = "12px";
+  warnings.forEach((warning, index) => {
+    const line = document.createElement("div");
+    line.textContent = warning;
+    if (index > 0) line.style.marginTop = "6px";
+    wrap.appendChild(line);
+  });
+  return wrap;
 }
 
 function renderMonobankConnectPanel() {
@@ -737,6 +762,20 @@ function renderExpenseFinancialAnalysis() {
     }
     return block;
   }
+  const ledgerAnalysisWarnings = getExpenseAnalysisLedgerWarnings(
+    getExpenseAnalysisLedgerRows(),
+    buildManualFinanceUsdRateLookup(
+      state.aggregatedManualRange?.transferRows || state.manualTransfers.data?.transferRows || state.manualFinance.data?.transferRows || [],
+      state.data?.tabs?.movement?.values || []
+    )
+  );
+  if (ledgerAnalysisWarnings.length) {
+    const warning = document.createElement("div");
+    warning.className = "finance-status error";
+    warning.style.marginBottom = "12px";
+    warning.textContent = ledgerAnalysisWarnings.join(" ");
+    block.appendChild(warning);
+  }
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
   block.appendChild(renderMissingPaymentsBlock(getMissingPaymentsAuditSummary()));
@@ -991,14 +1030,56 @@ function getExpenseAnalysisLedgerRows() {
   return getExpenseOperationsRows();
 }
 
-function getLedgerFactAmountUsd(row) {
+function getLedgerFactRateLookupChannel(row) {
+  const operation = getNormalizedLedgerFactOperation(row);
+  const candidates = ["income", "servicein", "ezoin", "exchange_in"].includes(operation)
+    ? [row?.toChannel, row?.to_channel, row?.fromChannel, row?.from_channel]
+    : [row?.fromChannel, row?.from_channel, row?.toChannel, row?.to_channel];
+  return canonicalManualFinanceChannel(candidates.find((value) => String(value || "").trim()) || "");
+}
+
+function resolveLedgerFactAmountUsdInfo(row, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
   const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
-  if (amountUsdRaw) return Math.abs(parseLooseNumber(amountUsdRaw));
+  const explicitAmountUsd = Math.abs(parseLooseNumber(amountUsdRaw));
+  if (explicitAmountUsd > 0) return { amountUsd: explicitAmountUsd, warning: null };
   const currency = String(row?.currency || "").trim().toUpperCase();
-  if (currency !== "USD") return 0;
   const netRaw = String(row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "").trim();
-  if (netRaw) return Math.abs(parseLooseNumber(netRaw));
-  return Math.abs(parseLooseNumber(row?.amount));
+  const localAmount = Math.abs(parseLooseNumber(netRaw || row?.amount));
+  if (!localAmount) return { amountUsd: 0, warning: null };
+  if (currency === "USD") return { amountUsd: localAmount, warning: null };
+  const channel = getLedgerFactRateLookupChannel(row);
+  const rate = parseLooseNumber(usdRateLookup?.byChannel?.[channel]) ||
+    parseLooseNumber(usdRateLookup?.byCurrency?.[currency]) ||
+    getManualFinanceUsdPerLocalRate({ channel }, usdRateLookup);
+  if (rate > 0) return { amountUsd: roundProviderSummaryAmount(localAmount * rate), warning: null };
+  const normalizedSource = String(row?.source || row?.displaySource || "").trim().toLowerCase();
+  return {
+    amountUsd: 0,
+    warning: {
+      code: "missing_usd_rate",
+      source: normalizedSource,
+      currency,
+      date: normalizeIncomingSheetDateValue(row?.date || ""),
+      channel,
+      amount: localAmount,
+      message: /^td/.test(normalizedSource)
+        ? `TD ${currency} rows missing USD rate: ${normalizeIncomingSheetDateValue(row?.date || "") || "без даты"} | ${formatSheetNumber(localAmount)} ${currency} | ${channel || "канал не определён"}.`
+        : `${currency} rows missing USD rate: ${normalizeIncomingSheetDateValue(row?.date || "") || "без даты"} | ${formatSheetNumber(localAmount)} ${currency} | ${channel || "канал не определён"}.`
+    }
+  };
+}
+
+function getLedgerFactAmountUsd(row, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
+  return resolveLedgerFactAmountUsdInfo(row, usdRateLookup).amountUsd;
+}
+
+function getExpenseAnalysisLedgerWarnings(rows = [], usdRateLookup = { byChannel: {}, byCurrency: {} }) {
+  const warnings = [];
+  (rows || []).forEach((row) => {
+    const info = resolveLedgerFactAmountUsdInfo(row, usdRateLookup);
+    if (info.warning?.message) warnings.push(info.warning.message);
+  });
+  return Array.from(new Set(warnings));
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -1034,13 +1115,13 @@ function getLedgerExpenseChannel(row) {
   return isExpenseAnalysisKnownChannel(channel) ? channel : "";
 }
 
-function buildLedgerRealIncomeSummaryByChannel(rows) {
+function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, { realNetUsd: 0 }]));
   (rows || []).forEach((row) => {
     if (!isLedgerProviderIncomeSource(row)) return;
     const channel = getLedgerIncomeChannel(row);
     if (!channel) return;
-    totals[channel].realNetUsd += getLedgerFactAmountUsd(row);
+    totals[channel].realNetUsd += getLedgerFactAmountUsd(row, usdRateLookup);
   });
   return Object.fromEntries(
     Object.entries(totals).map(([channel, summary]) => [
@@ -1060,12 +1141,12 @@ function getProviderEntryExpenseAmountUsd(entry) {
   return Math.abs(parseLooseNumber(entry?.localAmount ?? entry?.amount));
 }
 
-function buildLedgerProviderExpenseByChannel(rows) {
+function buildLedgerProviderExpenseByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (rows || []).forEach((row) => {
     const channel = getLedgerExpenseChannel(row);
     if (!channel) return;
-    totals[channel] += getLedgerFactAmountUsd(row);
+    totals[channel] += getLedgerFactAmountUsd(row, usdRateLookup);
   });
   return Object.fromEntries(
     Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
@@ -1074,7 +1155,7 @@ function buildLedgerProviderExpenseByChannel(rows) {
 
 function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
   const ledgerRows = getExpenseAnalysisLedgerRows();
-  if (ledgerRows.length) return buildLedgerProviderExpenseByChannel(ledgerRows);
+  if (ledgerRows.length) return buildLedgerProviderExpenseByChannel(ledgerRows, rateLookup);
 
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (state.expenseAccounting.entries || []).forEach((entry) => {
@@ -2811,12 +2892,78 @@ function applyTdBankExpenseEntries(entries, options = {}) {
     ...entries
   ];
   state.expenseAccounting.tdBankSummary = buildProviderExpenseSummary(entries);
-  state.expenseAccounting.warnings = [];
+  state.expenseAccounting.warnings = detectExpenseAccountingLedgerConflicts(
+    entries,
+    state.data?.manual?.operations || state.manualFinance?.data?.ledgerRows || []
+  ).map((item) => item.message);
   state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
   if (entries.length) {
     state.expenseAccounting.activeSubtab = "operations";
   }
   setExpenseAccountingStatus(options.message || `TD Bank импортирован: ${entries.length} строк.`, false);
+}
+
+function getExpenseAccountingEntryConflictChannel(entry) {
+  return canonicalManualFinanceChannel(entry?.channel || entry?.toChannel || entry?.fromChannel || "");
+}
+
+function getLedgerConflictChannel(row) {
+  const operation = getNormalizedLedgerFactOperation(row);
+  if (["income", "servicein", "ezoin", "exchange_in"].includes(operation)) {
+    return canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "");
+  }
+  return canonicalManualFinanceChannel(row?.fromChannel || row?.from_channel || row?.toChannel || row?.to_channel || "");
+}
+
+function getIsoDateDistanceDays(left, right) {
+  const leftDate = normalizeIncomingSheetDateValue(left);
+  const rightDate = normalizeIncomingSheetDateValue(right);
+  if (!leftDate || !rightDate) return Number.POSITIVE_INFINITY;
+  const leftTime = Date.parse(`${leftDate}T00:00:00Z`);
+  const rightTime = Date.parse(`${rightDate}T00:00:00Z`);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return Number.POSITIVE_INFINITY;
+  return Math.round(Math.abs(leftTime - rightTime) / 86400000);
+}
+
+function detectExpenseAccountingLedgerConflicts(entries = [], ledgerRows = []) {
+  const conflicts = [];
+  const seen = new Set();
+  (entries || []).forEach((entry) => {
+    if (!isTdBankExpenseSource(entry)) return;
+    const entryDate = normalizeIncomingSheetDateValue(entry.date);
+    const entryChannel = getExpenseAccountingEntryConflictChannel(entry);
+    const entryCurrency = String(entry.currency || inferManualFinanceChannelCurrency(entryChannel)).trim().toUpperCase();
+    const entryAmount = Math.abs(parseLooseNumber(entry.localAmount));
+    if (!entryDate || !entryChannel || !entryCurrency || !entryAmount) return;
+    (ledgerRows || []).forEach((row) => {
+      const ledgerChannel = getLedgerConflictChannel(row);
+      const ledgerCurrency = String(row?.currency || inferManualFinanceChannelCurrency(ledgerChannel)).trim().toUpperCase();
+      const ledgerAmount = Math.abs(parseLooseNumber(row?.amountNet || row?.amount_net || row?.amount));
+      if (!ledgerChannel || !ledgerCurrency || !ledgerAmount) return;
+      if (ledgerChannel !== entryChannel || ledgerCurrency !== entryCurrency || Math.abs(ledgerAmount - entryAmount) > 0.0001) return;
+      const ledgerDate = normalizeIncomingSheetDateValue(row?.date || "");
+      const ledgerSource = String(row?.source || "").trim().toLowerCase();
+      const isExactDate = ledgerDate === entryDate;
+      const isNearManual = !isExactDate && ledgerSource === "manual" && getIsoDateDistanceDays(ledgerDate, entryDate) <= 10;
+      if (!isExactDate && !isNearManual) return;
+      const key = [entryDate, entryAmount, entryCurrency, entryChannel, ledgerDate, ledgerSource].join("|");
+      if (seen.has(key)) return;
+      seen.add(key);
+      conflicts.push({
+        type: isExactDate ? "exact_duplicate" : "near_manual_duplicate",
+        entryDate,
+        ledgerDate,
+        amount: entryAmount,
+        currency: entryCurrency,
+        channel: entryChannel,
+        ledgerSource,
+        message: isNearManual || ledgerSource === "manual"
+          ? `Похоже, эта TD операция уже внесена вручную: ${ledgerDate || entryDate} | ${formatSheetNumber(entryAmount)} ${entryCurrency} | ${entryChannel}.`
+          : `Похоже, эта TD операция уже есть в Ledger: ${ledgerDate || entryDate} | ${formatSheetNumber(entryAmount)} ${entryCurrency} | ${entryChannel}.`
+      });
+    });
+  });
+  return conflicts;
 }
 
 function isTdBankExpenseSource(entry) {
@@ -2908,18 +3055,48 @@ function normalizeTdBankClipboardEntries(payload) {
 
 function parseTdBankCsvEntries(csvText) {
   const rows = parseSimpleCsvRows(csvText);
+  const csvConfig = resolveTdBankCsvHeaders(rows);
+  const requestedStart = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const requestedEnd = normalizeIncomingSheetDateValue(elements.endDate.value);
+  return rows.slice(csvConfig.startIndex)
+    .map((row, index) => normalizeTdBankCsvRow(row, csvConfig.headers, index))
+    .filter((entry) => entry && entry.date && entry.localAmount > 0)
+    .filter((entry) => (!requestedStart || entry.date >= requestedStart) && (!requestedEnd || entry.date <= requestedEnd));
+}
+
+function resolveTdBankCsvHeaders(rows) {
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeTdBankCsvHeader);
     return headers.includes("date") && (headers.includes("amount") || headers.includes("debit") || headers.includes("credit"));
   });
-  if (headerIndex === -1) throw new Error("TD CSV header was not found.");
-  const headers = rows[headerIndex].map(normalizeTdBankCsvHeader);
-  const requestedStart = normalizeIncomingSheetDateValue(elements.startDate.value);
-  const requestedEnd = normalizeIncomingSheetDateValue(elements.endDate.value);
-  return rows.slice(headerIndex + 1)
-    .map((row, index) => normalizeTdBankCsvRow(row, headers, index))
-    .filter((entry) => entry && entry.date && entry.localAmount > 0)
-    .filter((entry) => (!requestedStart || entry.date >= requestedStart) && (!requestedEnd || entry.date <= requestedEnd));
+  if (headerIndex !== -1) {
+    return {
+      headers: rows[headerIndex].map(normalizeTdBankCsvHeader),
+      startIndex: headerIndex + 1
+    };
+  }
+  if (looksLikeTdBankCsvActivityRow(rows[0])) {
+    return {
+      headers: ["date", "description", "debit", "credit", "balance"],
+      startIndex: 0
+    };
+  }
+  throw new Error("TD CSV header was not found.");
+}
+
+function looksLikeTdBankCsvActivityRow(row) {
+  if (!Array.isArray(row) || row.length < 4) return false;
+  const date = normalizeTdBankCsvDate(row[0]);
+  const description = String(row[1] || "").trim();
+  const debit = parseTdBankCsvAmount(row[2]);
+  const credit = parseTdBankCsvAmount(row[3]);
+  const balanceRaw = String(row[4] ?? "").trim();
+  return Boolean(
+    date &&
+    description &&
+    (Math.abs(debit) > 0 || Math.abs(credit) > 0) &&
+    (parseTdBankCsvAmount(balanceRaw) !== 0 || /[\d]/.test(balanceRaw))
+  );
 }
 
 function parseSimpleCsvRows(text) {
@@ -2976,6 +3153,7 @@ function normalizeTdBankCsvRow(row, headers, index) {
   const debit = parseTdBankCsvAmount(read("debit"));
   const credit = parseTdBankCsvAmount(read("credit"));
   const explicitAmount = parseTdBankCsvAmount(read("amount"));
+  const balanceRaw = String(read("balance") || "").trim();
   const rawAmount = credit || debit || explicitAmount;
   const amount = Math.abs(rawAmount);
   if (!date || !amount) return null;
@@ -2992,6 +3170,7 @@ function normalizeTdBankCsvRow(row, headers, index) {
     suggestedCategory: direction === "income" ? "serviceIncome" : "business",
     organization: description || "TD Bank CSV",
     counterparty: description || "TD Bank CSV",
+    rawMetadata: balanceRaw ? `balance ${balanceRaw} ${currency}`.trim() : "",
     confidence: 0.9,
     source: "tdbank_csv",
     sourceTransactionId: `tdbank_csv-${date}-${description || "row"}-${amount}-${index}`,
@@ -3263,6 +3442,10 @@ async function saveExpenseAccountingEntries() {
   state.expenseAccounting.loading = true;
   renderTabs();
   try {
+    state.expenseAccounting.warnings = detectExpenseAccountingLedgerConflicts(
+      entries,
+      state.data?.manual?.operations || state.manualFinance?.data?.ledgerRows || []
+    ).map((item) => item.message);
     if (!hasConfiguredManualFinanceEndpoint() && hasManualFinanceEndpointConfig()) {
       await ensureGoogleAccess(true);
     }
@@ -3460,7 +3643,7 @@ function getAnalyticsSectionRenderRows(section, aggregateSections = []) {
 
 function getExpenseOperationsRows() {
   const serverRows = Array.isArray(state.data?.manual?.operations) ? state.data.manual.operations : [];
-  const directRows = Array.isArray(state.manualFinance.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
+  const directRows = Array.isArray(state.manualFinance?.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
   const sourceRows = serverRows.length ? serverRows : directRows;
   return sourceRows.map((row, index) => ({
     id: String(row.id || row.rawSourceId || row.raw_source_id || `${row.sheetRowNumber || row.date || "row"}-${index}`),
@@ -3527,6 +3710,20 @@ function renderExpenseOperationsBlock() {
   block.appendChild(meta);
 
   block.appendChild(renderExpenseOperationsFilters(rows));
+
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.className = "secondary";
+  exportButton.textContent = "Скачать CSV";
+  exportButton.disabled = !filteredRows.length;
+  exportButton.addEventListener("click", () => downloadExpenseOperationsCsv(filteredRows, {
+    startDate: elements.startDate.value,
+    endDate: elements.endDate.value
+  }));
+  actions.appendChild(exportButton);
+  block.appendChild(actions);
 
   if (!rows.length) {
     const empty = document.createElement("div");
@@ -3598,6 +3795,73 @@ function renderExpenseOperationsBlock() {
   wrap.appendChild(table);
   block.appendChild(wrap);
   return block;
+}
+
+function getExpenseOperationsExportRows(rows = []) {
+  const headers = [
+    "date",
+    "operation",
+    "source",
+    "from_channel",
+    "to_channel",
+    "amount",
+    "currency",
+    "amount_usd",
+    "gross",
+    "fee",
+    "net",
+    "category",
+    "comment",
+    "raw_source_id",
+    "external_id"
+  ];
+  return [
+    headers,
+    ...(rows || []).map((row) => [
+      row.date || "",
+      row.operation || "",
+      row.displaySource || row.source || "",
+      row.fromChannel || "",
+      row.toChannel || "",
+      row.amount || "",
+      row.currency || "",
+      row.amountUsd || "",
+      row.amountGross || "",
+      row.amountFee || "",
+      row.amountNet || "",
+      row.category || "",
+      row.comment || "",
+      row.rawSourceId || "",
+      row.externalId || ""
+    ])
+  ];
+}
+
+function buildExpenseOperationsExportFileName(filters = {}) {
+  const startDate = normalizeIncomingSheetDateValue(filters.startDate || "") || "start";
+  const endDate = normalizeIncomingSheetDateValue(filters.endDate || "") || "end";
+  return `ledger-operations-${startDate}-to-${endDate}.csv`;
+}
+
+function escapeExpenseOperationsCsvCell(value) {
+  const raw = String(value ?? "");
+  if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, "\"\"")}"`;
+  return raw;
+}
+
+function downloadExpenseOperationsCsv(rows = [], filters = {}) {
+  const exportRows = getExpenseOperationsExportRows(rows);
+  if (exportRows.length <= 1) return;
+  const csv = exportRows.map((row) => row.map(escapeExpenseOperationsCsvCell).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = buildExpenseOperationsExportFileName(filters);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderExpenseOperationsFilters(rows) {
