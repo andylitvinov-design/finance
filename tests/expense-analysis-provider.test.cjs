@@ -50,6 +50,7 @@ function createApiLedgerRealIncomeContext() {
       "приват 24-евро",
       "приват 24-грн",
       "монобанк грн",
+      "БАНК КАНАДА cad",
       "трансервайз дол",
       "трансервайз евро",
     ],
@@ -62,9 +63,11 @@ function createApiLedgerRealIncomeContext() {
       "приват 24-евро": "EUR",
       "приват 24-грн": "UAH",
       "монобанк грн": "UAH",
+      "БАНК КАНАДА cad": "CAD",
       "трансервайз дол": "USD",
       "трансервайз евро": "EUR",
     },
+    REAL_INCOME_FALLBACK_USD_RATES: { RUB: 1 / 84.5563, UAH: 1 / 43.86, EUR: 1.16, CAD: 0.74 },
   };
   vm.createContext(context);
   vm.runInContext(
@@ -73,6 +76,11 @@ function createApiLedgerRealIncomeContext() {
     `${extractFunction(apiIndex, "normalizeIsoDate")}\n` +
     `${extractFunction(apiIndex, "parseLooseNumber")}\n` +
     `${extractFunction(apiIndex, "roundNumber")}\n` +
+    `${extractFunction(apiIndex, "hasAnyValue")}\n` +
+    `${extractFunction(apiIndex, "parseDisplayDate")}\n` +
+    `${extractFunction(apiIndex, "addMovementRate")}\n` +
+    `${extractFunction(apiIndex, "buildMovementUsdRateLookup")}\n` +
+    `${extractFunction(apiIndex, "convertLocalAmountToUsd")}\n` +
     `${extractFunction(apiIndex, "calculateDifferencePct")}\n` +
     `${extractFunction(apiIndex, "sumBy")}\n` +
     `${extractFunction(apiIndex, "inferChannelCurrency")}\n` +
@@ -329,8 +337,9 @@ test("PayPal manual counterparty override maps stable provider ids to readable l
 
 function buildLedgerAnalysisTestContext(extra = {}) {
   return {
-    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "трансервайз дол", "монобанк грн"],
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол", "трансервайз дол", "монобанк грн", "БАНК КАНАДА cad"],
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_FALLBACK_USD_RATES: { UAH: 1 / 43.86, RUB: 1 / 84.5563, CAD: 0.74, LOCAL: 1 / 18 },
     parseLooseNumber(value) {
       const raw = String(value ?? "").trim();
       if (!raw) return 0;
@@ -356,7 +365,34 @@ function buildLedgerAnalysisTestContext(extra = {}) {
         "monobank": "монобанк грн",
         "mono": "монобанк грн",
         "монобанк грн": "монобанк грн",
+        "банк канада cad": "БАНК КАНАДА cad",
+        "td bank cad": "БАНК КАНАДА cad",
       })[normalized] || String(value || "").trim();
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (channel === "монобанк грн") return "UAH";
+      if (channel === "БАНК КАНАДА cad") return "CAD";
+      return "USD";
+    },
+    getManualFinanceUsdPerLocalRate(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
+      const channel = String(row?.channel || "").trim();
+      const currency = channel === "БАНК КАНАДА cad" ? "CAD" : (channel === "монобанк грн" ? "UAH" : "USD");
+      const parseRate = (value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return 0;
+        const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+        const numeric = Number(normalized);
+        return Number.isFinite(numeric) ? numeric : 0;
+      };
+      const fallbackRates = { UAH: 1 / 43.86, RUB: 1 / 84.5563, CAD: 0.74, LOCAL: 1 / 18 };
+      if (currency === "USD") return 1;
+      return parseRate(rateLookup.byChannel?.[channel]) ||
+        parseRate(rateLookup.byCurrency?.[currency]) ||
+        fallbackRates[currency] ||
+        0;
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim().slice(0, 10);
     },
     ...extra,
   };
@@ -365,7 +401,10 @@ function buildLedgerAnalysisTestContext(extra = {}) {
 function loadLedgerAnalysisHelpers(context) {
   vm.createContext(context);
   vm.runInContext(
+    `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
+    `${extractFunction(uiJs, "resolveLedgerFactAmountUsdInfo")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisLedgerWarnings")}\n` +
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
@@ -373,6 +412,8 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    "this.getLedgerFactAmountUsd = getLedgerFactAmountUsd;\n" +
+    "this.getExpenseAnalysisLedgerWarnings = getExpenseAnalysisLedgerWarnings;\n" +
     "this.buildLedgerRealIncomeSummaryByChannel = buildLedgerRealIncomeSummaryByChannel;\n" +
     "this.buildLedgerProviderExpenseByChannel = buildLedgerProviderExpenseByChannel;",
     context
@@ -398,12 +439,79 @@ test("ledger expense analysis uses amount_usd before amount_net and does not tre
     "пейпал дол": { realNetUsd: 0 },
     "трансервайз дол": { realNetUsd: 250 },
     "монобанк грн": { realNetUsd: 0 },
+    "БАНК КАНАДА cad": { realNetUsd: 0 },
   });
   assert.deepEqual(plain(context.buildLedgerProviderExpenseByChannel(rows)), {
     "пейпал дол": 12,
     "трансервайз дол": 0,
     "монобанк грн": 993,
+    "БАНК КАНАДА cad": 0,
   });
+});
+
+test("TD CAD expense Ledger rows fall back to USD rate in analysis", () => {
+  const context = buildLedgerAnalysisTestContext();
+  loadLedgerAnalysisHelpers(context);
+
+  const summary = plain(context.buildLedgerProviderExpenseByChannel([
+    {
+      date: "2026-04-30",
+      operation: "business_expense",
+      source: "td_bank",
+      fromChannel: "БАНК КАНАДА cad",
+      amount: "17.95",
+      currency: "CAD",
+      amountUsd: "0",
+      amountNet: "17.95",
+    }
+  ], { byCurrency: { CAD: 0.74 }, byChannel: {} }));
+
+  assert.equal(summary["БАНК КАНАДА cad"], 13.283);
+});
+
+test("TD CAD income Ledger rows fall back to USD rate in analysis", () => {
+  const context = buildLedgerAnalysisTestContext();
+  loadLedgerAnalysisHelpers(context);
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    {
+      date: "2026-04-06",
+      operation: "income",
+      source: "td_bank",
+      toChannel: "БАНК КАНАДА cad",
+      amount: "150",
+      currency: "CAD",
+      amountUsd: "0",
+      amountNet: "150",
+    }
+  ], { byCurrency: { CAD: 0.74 }, byChannel: {} }));
+
+  assert.equal(summary["БАНК КАНАДА cad"].realNetUsd, 111);
+});
+
+test("missing CAD USD rate produces explicit analysis warning instead of silent zero", () => {
+  const context = buildLedgerAnalysisTestContext({
+    getManualFinanceUsdPerLocalRate() {
+      return 0;
+    }
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  const warnings = plain(context.getExpenseAnalysisLedgerWarnings([
+    {
+      date: "2026-04-30",
+      operation: "business_expense",
+      source: "td_bank",
+      fromChannel: "БАНК КАНАДА cad",
+      amount: "17.95",
+      currency: "CAD",
+      amountUsd: "0",
+      amountNet: "17.95",
+    }
+  ], { byCurrency: {}, byChannel: {} }));
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /TD CAD rows missing USD rate/);
 });
 
 test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exist", () => {
@@ -455,6 +563,8 @@ test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exi
     extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
+    `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
+    `${extractFunction(uiJs, "resolveLedgerFactAmountUsdInfo")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
@@ -691,6 +801,8 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
+    `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
+    `${extractFunction(uiJs, "resolveLedgerFactAmountUsdInfo")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
     `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
@@ -711,6 +823,7 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     "пейпал дол": 15,
     "трансервайз дол": 7,
     "монобанк грн": 0,
+    "БАНК КАНАДА cad": 0,
   });
   const summary = plain(context.getExpenseAnalysisChannelSummary());
   assert.equal(summary.incomeTotals.realUsd, 123);
@@ -1097,6 +1210,24 @@ test("buildLedgerRealIncomeSummaryByChannel prefers amount_usd over USD amount_n
   ], [], { startDate: "2026-05-01", endDate: "2026-05-31" }));
 
   assert.equal(summary["пейпал дол"].realNetUsd, 100);
+});
+
+test("buildLedgerRealIncomeSummaryByChannel converts TD CAD income with fallback USD rate", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    {
+      date: "2026-05-12",
+      operation: "income",
+      source: "td_bank",
+      to_channel: "БАНК КАНАДА cad",
+      amount_usd: "0",
+      amount_net: "150",
+      currency: "CAD"
+    }
+  ], [], { startDate: "2026-05-01", endDate: "2026-05-31" }));
+
+  assert.equal(summary["БАНК КАНАДА cad"].realNetUsd, 111);
 });
 
 test("mergeLedgerRealIncomeFallback keeps provider totals primary and fills empty channels from Ledger", () => {

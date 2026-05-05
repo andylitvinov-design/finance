@@ -605,6 +605,108 @@ test("filterExpenseOperationsRows filters by period, channels, and source", () =
   ]);
 });
 
+test("detectExpenseAccountingLedgerConflicts warns about near manual TD duplicate without deleting entry", () => {
+  const context = {
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim().slice(0, 10);
+    },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim();
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      return channel === "БАНК КАНАДА cad" ? "CAD" : "USD";
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
+    `${extractFunction(uiJs, "isTdBankExpenseSource")}\n` +
+    `${extractFunction(uiJs, "getExpenseAccountingEntryConflictChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerConflictChannel")}\n` +
+    `${extractFunction(uiJs, "getIsoDateDistanceDays")}\n` +
+    `${extractFunction(uiJs, "detectExpenseAccountingLedgerConflicts")}\n` +
+    "this.detectExpenseAccountingLedgerConflicts = detectExpenseAccountingLedgerConflicts;",
+    context
+  );
+
+  const conflicts = plain(context.detectExpenseAccountingLedgerConflicts([
+    {
+      date: "2026-04-16",
+      channel: "БАНК КАНАДА cad",
+      localAmount: 1000,
+      currency: "CAD",
+      source: "tdbank_csv"
+    }
+  ], [
+    {
+      date: "2026-04-25",
+      operation: "personal_expense",
+      source: "manual",
+      fromChannel: "БАНК КАНАДА cad",
+      amount: "1000",
+      currency: "CAD"
+    }
+  ]));
+
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].type, "near_manual_duplicate");
+  assert.match(conflicts[0].message, /Похоже, эта TD операция уже внесена вручную/);
+});
+
+test("expense operations export includes TD rows and visible columns", () => {
+  const context = {
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim().slice(0, 10);
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getExpenseOperationsExportRows")}\n` +
+    `${extractFunction(uiJs, "buildExpenseOperationsExportFileName")}\n` +
+    "this.getExpenseOperationsExportRows = getExpenseOperationsExportRows;\n" +
+    "this.buildExpenseOperationsExportFileName = buildExpenseOperationsExportFileName;",
+    context
+  );
+
+  const exportRows = plain(context.getExpenseOperationsExportRows([
+    {
+      date: "2026-04-30",
+      operation: "business_expense",
+      displaySource: "td_bank",
+      fromChannel: "БАНК КАНАДА cad",
+      toChannel: "",
+      amount: "17.95",
+      currency: "CAD",
+      amountUsd: "13.283",
+      amountGross: "17.95",
+      amountFee: "",
+      amountNet: "17.95",
+      category: "business",
+      comment: "MONTHLY ACCOUNT FEE",
+      rawSourceId: "tdbank_csv-2026-04-30-MONTHLY ACCOUNT FEE-17.95-25",
+      externalId: "tdbank_csv-2026-04-30-MONTHLY ACCOUNT FEE-17.95-25"
+    }
+  ]));
+
+  assert.deepEqual(exportRows[0], [
+    "date", "operation", "source", "from_channel", "to_channel", "amount", "currency", "amount_usd", "gross", "fee", "net", "category", "comment", "raw_source_id", "external_id"
+  ]);
+  assert.deepEqual(exportRows[1], [
+    "2026-04-30", "business_expense", "td_bank", "БАНК КАНАДА cad", "", "17.95", "CAD", "13.283", "17.95", "", "17.95", "business", "MONTHLY ACCOUNT FEE", "tdbank_csv-2026-04-30-MONTHLY ACCOUNT FEE-17.95-25", "tdbank_csv-2026-04-30-MONTHLY ACCOUNT FEE-17.95-25"
+  ]);
+  assert.equal(context.buildExpenseOperationsExportFileName({ startDate: "2026-04-01", endDate: "2026-04-30" }), "ledger-operations-2026-04-01-to-2026-04-30.csv");
+});
+
 test("saveExpenseAccountingEntries reloads ledger-backed analysis before clearing temporary entries", async () => {
   const calls = [];
   const context = {
@@ -620,7 +722,9 @@ test("saveExpenseAccountingEntries reloads ledger-backed analysis before clearin
         monobankSummary: { provider: "mono" },
         privatBankSummary: { provider: "pb" },
         tdBankSummary: { provider: "td" }
-      }
+      },
+      data: { manual: { operations: [] } },
+      manualFinance: { data: { ledgerRows: [] } }
     },
     hasConfiguredManualFinanceEndpoint() {
       return true;
@@ -633,6 +737,9 @@ test("saveExpenseAccountingEntries reloads ledger-backed analysis before clearin
     },
     getManualFinanceUnavailableMessage() {
       return "unavailable";
+    },
+    detectExpenseAccountingLedgerConflicts() {
+      return [];
     },
     saveExpenseAccountingEntriesDirect: async (entries) => {
       calls.push(`save:${entries.length}`);

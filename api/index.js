@@ -33,6 +33,7 @@ const REAL_INCOME_CHANNELS = [
   "приват 24-евро",
   "приват 24-грн",
   "монобанк грн",
+  "БАНК КАНАДА cad",
   "трансервайз дол",
   "трансервайз евро",
 ];
@@ -45,6 +46,7 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "приват 24-евро": "EUR",
   "приват 24-грн": "UAH",
   "монобанк грн": "UAH",
+  "БАНК КАНАДА cad": "CAD",
   "трансервайз дол": "USD",
   "трансервайз евро": "EUR",
 };
@@ -841,6 +843,7 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
   const startDate = normalizeIsoDate(period?.startDate);
   const endDate = normalizeIsoDate(period?.endDate);
   const movementStats = summarizeMovementChannels(movementValues);
+  const usdRateLookup = buildMovementUsdRateLookup(movementValues, endDate || startDate || "");
   const totalsByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
 
   for (const row of operations || []) {
@@ -856,7 +859,7 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
     const channel = getLedgerIncomeChannel(row);
     if (!channel || !Object.prototype.hasOwnProperty.call(totalsByChannel, channel)) continue;
 
-    const realNetUsd = getLedgerFactAmountUsd(row);
+    const realNetUsd = getLedgerFactAmountUsd(row, usdRateLookup);
     if (realNetUsd <= 0) continue;
     totalsByChannel[channel] = roundNumber(totalsByChannel[channel] + realNetUsd);
   }
@@ -887,16 +890,27 @@ function isLedgerProviderIncomeSource(row) {
     row?.ledgerV2?.source ||
     ""
   ).trim().toLowerCase().replace(/[\s-]+/g, "_");
-  return [
+  if ([
     "mcp",
     "paypal",
     "paypal_mcp",
+    "tdbank",
+    "td_bank",
     "yoomoney",
     "youmoney",
     "yandex",
     "wise",
     "transferwise"
-  ].includes(normalizedSource);
+  ].includes(normalizedSource)) return true;
+  const rawSourceId = String(
+    row?.rawSourceId ||
+    row?.raw_source_id ||
+    row?.externalId ||
+    row?.external_id ||
+    row?.ledgerV2?.raw_source_id ||
+    ""
+  ).trim().toLowerCase();
+  return /^(paypal|wise|yoomoney|youmoney|yandex|tdbank|td_bank|mcp):/.test(rawSourceId);
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -963,18 +977,21 @@ function getLedgerIncomeChannel(row) {
   return "";
 }
 
-function getLedgerFactAmountUsd(row) {
+function getLedgerFactAmountUsd(row, usdRateLookup = {}) {
   const explicitAmountUsd = parseLooseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? "");
   if (explicitAmountUsd > 0) return roundNumber(explicitAmountUsd);
   if (explicitAmountUsd < 0) return roundNumber(-explicitAmountUsd);
 
   const currency = String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase();
-  if (currency !== "USD") return 0;
-
   const netAmountUsd = parseLooseNumber(row?.amount_net ?? row?.amountNet ?? "");
-  if (netAmountUsd > 0) return roundNumber(netAmountUsd);
-  if (netAmountUsd < 0) return roundNumber(-netAmountUsd);
-  return 0;
+  const grossAmount = parseLooseNumber(row?.amount ?? row?.ledgerV2?.amount ?? "");
+  const localAmount = Math.abs(netAmountUsd || grossAmount);
+  if (!localAmount) return 0;
+  if (currency === "USD") return roundNumber(localAmount);
+
+  const channel = getLedgerIncomeChannel(row) ||
+    resolvePaymentChannel(row?.fromChannel || row?.from_channel || row?.toChannel || row?.to_channel || "");
+  return convertLocalAmountToUsd(localAmount, currency, usdRateLookup, channel);
 }
 
 function applyRealIncomeToMovementTable(movementTable, realIncome) {
@@ -1243,7 +1260,7 @@ function inferChannelCurrency(channel) {
 }
 
 function buildMovementUsdRateLookup(movementValues = [], endDate = "") {
-  if (!Array.isArray(movementValues) || !movementValues.length) return {};
+  if (!Array.isArray(movementValues) || !movementValues.length) return { ...REAL_INCOME_FALLBACK_USD_RATES };
   const cutoff = endDate ? new Date(`${endDate}T00:00:00Z`) : null;
   const latest = {};
   for (const row of movementValues.slice(3)) {

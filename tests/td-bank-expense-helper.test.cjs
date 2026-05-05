@@ -6,6 +6,37 @@ const vm = require("node:vm");
 
 const uiJs = fs.readFileSync(path.join(__dirname, "..", "ui.js"), "utf8");
 const importerJs = fs.readFileSync(path.join(__dirname, "..", "td-easyweb-importer.js"), "utf8");
+const tdAccountActivityFixture = [
+  "\"2026-04-06\",\"E-TRANSFER ***PzG\",,\"150\",\"10924.33\"",
+  "\"2026-04-07\",\"CITY LIFE PHARM\",\"18.45\",,\"10905.88\"",
+  "\"2026-04-08\",\"E-TRANSFER ***KpQ\",,\"450\",\"11355.88\"",
+  "\"2026-04-08\",\"FOODS FOR LIFE\",\"49.88\",,\"11306\"",
+  "\"2026-04-08\",\"HUA SHENG SUPER   _F\",\"27.25\",,\"11278.75\"",
+  "\"2026-04-08\",\"BULK BARN #700    _F\",\"9.87\",,\"11268.88\"",
+  "\"2026-04-08\",\"DOLLARAMA # 666   _F\",\"2.26\",,\"11266.62\"",
+  "\"2026-04-09\",\"COLLEGE STREET    _F\",\"115\",,\"11151.62\"",
+  "\"2026-04-13\",\"APPLE.COM/BILL    _V\",\"40.66\",,\"11110.96\"",
+  "\"2026-04-13\",\"SEND E-TFR ***eMs\",\"150\",,\"10960.96\"",
+  "\"2026-04-16\",\"TD ATM W/D    004164\",\"1000\",,\"9960.96\"",
+  "\"2026-04-20\",\"SDM 1393\",\"158.99\",,\"9801.97\"",
+  "\"2026-04-20\",\"LU190 TFR-TO C/C\",\"344\",,\"9457.97\"",
+  "\"2026-04-20\",\"E-TRANSFER ***sMX\",,\"300\",\"9757.97\"",
+  "\"2026-04-21\",\"E-TRANSFER ***vpd\",,\"100\",\"9857.97\"",
+  "\"2026-04-22\",\"APPLE.COM/BILL    _V\",\"1.46\",,\"9856.51\"",
+  "\"2026-04-22\",\"CITY OF TORONTO   _F\",\"235\",,\"9621.51\"",
+  "\"2026-04-23\",\"PRES/RLLS8LMPHF   _T\",\"3.3\",,\"9618.21\"",
+  "\"2026-04-24\",\"APPLE.COM/BILL    _V\",\"40.66\",,\"9577.55\"",
+  "\"2026-04-27\",\"FREEDOM MOBILE    _V\",\"39.55\",,\"9538\"",
+  "\"2026-04-27\",\"APPLE.COM/BILL    _V\",,\"20.33\",\"9558.33\"",
+  "\"2026-04-28\",\"APPLE.COM/BILL    _V\",,\"20.33\",\"9578.66\"",
+  "\"2026-04-28\",\"APPLE.COM/BILL    _V\",,\"20.33\",\"9598.99\"",
+  "\"2026-04-29\",\"APPLE.COM/BILL    _V\",,\"20.33\",\"9619.32\"",
+  "\"2026-04-30\",\"APPLE.COM/BILL    _V\",\"11.85\",,\"9607.47\"",
+  "\"2026-04-30\",\"MONTHLY ACCOUNT FEE\",\"17.95\",,\"9589.52\"",
+  "\"2026-04-30\",\"ACCT BAL REBATE\",,\"17.95\",\"9607.47\"",
+  "\"2026-05-01\",\"PRES/RN58V2SPQ9   _T\",\"3.3\",,\"9604.17\"",
+  "\"2026-05-01\",\"SEND E-TFR ***bwX\",\"170\",,\"9434.17\"",
+].join("\n");
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -123,6 +154,8 @@ function buildTdBankRuntimeContext(options = {}) {
         resultTab: "spent",
         tdBankSummary: null,
       },
+      data: { manual: { operations: [] } },
+      manualFinance: { data: { ledgerRows: [] } },
     },
     elements: {
       startDate: { value: "2026-04-01" },
@@ -147,10 +180,19 @@ function buildTdBankRuntimeContext(options = {}) {
     normalizeExpenseAccountingEntry(entry) {
       return entry;
     },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim();
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      return channel === "БАНК КАНАДА cad" ? "CAD" : "USD";
+    },
     parseLooseNumber(value) {
       const normalized = String(value ?? "").trim().replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
       const parsed = Number(normalized);
       return Number.isFinite(parsed) ? parsed : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
     },
     buildProviderExpenseSummary(entries) {
       return { months: [], totalsByCurrency: {}, entryCount: entries.length };
@@ -475,6 +517,7 @@ test("parseTdBankCsvEntries maps TD CSV rows into ledger entries", () => {
       suggestedCategory: "business",
       organization: "Coffee",
       counterparty: "Coffee",
+      rawMetadata: "balance 2400.00 CAD",
       confidence: 0.9,
       source: "tdbank_csv",
       sourceTransactionId: "tdbank_csv-2026-04-11-Coffee-12.34-0",
@@ -489,11 +532,47 @@ test("parseTdBankCsvEntries maps TD CSV rows into ledger entries", () => {
       suggestedCategory: "serviceIncome",
       organization: "Client deposit",
       counterparty: "Client deposit",
+      rawMetadata: "balance 2500.00 CAD",
       confidence: 0.9,
       source: "tdbank_csv",
       sourceTransactionId: "tdbank_csv-2026-04-12-Client deposit-100-1",
     },
   ]);
+});
+
+test("parseTdBankCsvEntries accepts TD CSV without headers and keeps balance out of amount", () => {
+  const context = buildTdBankRuntimeContext({ tdImportStep: "ready" });
+  const rows = plain(context.parseTdBankCsvEntries([
+    "\"2026-04-06\",\"E-TRANSFER ***PzG\",,\"150\",\"10924.33\"",
+    "\"2026-04-07\",\"CITY LIFE PHARM\",\"18.45\",,\"10905.88\"",
+  ].join("\n")));
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].direction, "income");
+  assert.equal(rows[0].localAmount, 150);
+  assert.equal(rows[0].currency, "CAD");
+  assert.equal(rows[1].direction, "expense");
+  assert.equal(rows[1].localAmount, 18.45);
+  assert.equal(rows[1].currency, "CAD");
+  assert.match(rows[0].rawMetadata, /balance 10924\.33 CAD/);
+  assert.equal(rows[1].sourceTransactionId, "tdbank_csv-2026-04-07-CITY LIFE PHARM-18.45-1");
+});
+
+test("TD account activity fixture keeps expected debit and credit totals with one 1000 CAD ATM withdrawal", () => {
+  const context = buildTdBankRuntimeContext({ tdImportStep: "ready" });
+  context.elements.endDate.value = "2026-05-31";
+  const rows = plain(context.parseTdBankCsvEntries(tdAccountActivityFixture));
+  const totals = rows.reduce((summary, row) => {
+    if (row.direction === "income") summary.deposits += row.localAmount;
+    if (row.direction === "expense") summary.withdrawals += row.localAmount;
+    if (row.localAmount === 1000 && /TD ATM W\/D/i.test(row.organization || "")) summary.atmRows += 1;
+    return summary;
+  }, { withdrawals: 0, deposits: 0, atmRows: 0 });
+
+  assert.equal(rows.length, 29);
+  assert.equal(Number(totals.withdrawals.toFixed(2)), 2439.43);
+  assert.equal(Number(totals.deposits.toFixed(2)), 1099.27);
+  assert.equal(totals.atmRows, 1);
 });
 
 test("browser OCR parser keeps amount rows with upload date fallback", () => {
