@@ -9,6 +9,11 @@ import {
   normalizeManualLedgerOperation,
   resolveManualLedgerSource,
 } from "./manual-ledger-maps.js";
+import {
+  countExchangeMissingAmountUsdRows,
+  countMissingAmountNetRows,
+  isExchangeMissingAmountUsdRow,
+} from "./ledger-audit-helpers.js";
 
 export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -298,6 +303,7 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
   if (normalizedOperations) {
     const ledgerV2Rows = normalizedOperations.map((row) => row.ledgerV2).filter(Boolean);
     const warnings = buildLedgerV2RepositoryWarnings(normalizedOperations, values);
+    const fallbackAmountRows = countMissingAmountNetRows(normalizedOperations);
     return {
       schema: hasLedgerV2Header(values) ? "ledger-v2-compatible" : "ledger-v1",
       operations: normalizedOperations,
@@ -305,7 +311,9 @@ function parseExpenseRepository(values, rateLookup = { byChannel: {}, byCurrency
       warnings,
       expenseRows: buildLegacyExpenseRowsFromOperations(normalizedOperations),
       views: {
-        fallback_amount_rows: 0,
+        fallback_amount_rows: fallbackAmountRows,
+        missing_amount_net_rows: fallbackAmountRows,
+        exchange_missing_amount_usd_rows: countExchangeMissingAmountUsdRows(normalizedOperations),
         byDateChannel: buildOperationsPivotByDateChannel(normalizedOperations),
         byCategory: buildOperationsPivotByCategory(normalizedOperations),
       },
@@ -472,16 +480,11 @@ function buildLedgerV2RepositoryWarnings(operations, values) {
   if (!ledgerV2Header) {
     warnings.push("Ledger v2 physical columns need verification: current Sheet is Ledger v1; v2 rows are not used for balance until amount_net exists.");
   }
-  const fallbackCount = (operations || []).filter((row) => {
-    return !String(row?.amountNet ?? row?.amount_net ?? "").trim();
-  }).length;
+  const fallbackCount = countMissingAmountNetRows(operations);
   if (fallbackCount) {
     warnings.push(`Ledger v2 error: ${fallbackCount} row(s) have empty amount_net; balance was not calculated.`);
   }
-  const exchangeMissingUsd = (operations || []).filter((row) => {
-    const operation = normalizeOperation(row?.operation, row?.category);
-    return (operation === "exchange_in" || operation === "exchange_out") && !String(row?.amountUsd || "").trim();
-  }).length;
+  const exchangeMissingUsd = (operations || []).filter(isExchangeMissingAmountUsdRow).length;
   if (exchangeMissingUsd) {
     warnings.push(`Ledger v2 warning: ${exchangeMissingUsd} exchange row(s) have empty amount_usd; USD exchange totals skipped for those rows.`);
   }

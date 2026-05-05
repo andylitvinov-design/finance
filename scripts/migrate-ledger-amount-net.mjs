@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { createSign } from "node:crypto";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEET_NAME = "Ledger";
@@ -14,56 +16,55 @@ const FALLBACK_USD_RATES = {
   CAD: 0.74,
   LOCAL: 1 / 18,
 };
-const args = new Set(process.argv.slice(2));
-const apply = args.has("--apply");
-
-const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
-const privateKey = String(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").trim().replace(/\\n/g, "\n");
-
-if (!clientEmail || !privateKey) {
-  console.log(JSON.stringify({
-    ok: false,
-    dryRun: !apply,
-    status: "needs verification",
-    message: "Google service account credentials are not configured.",
-    rowCount: 0,
-    missingAmountNetRows: null,
-    exchangeMissingAmountUsdRows: null,
-    balanceDelta: null
-  }, null, 2));
-  process.exit(0);
+if (isCliEntrypoint()) {
+  await main();
 }
 
-const accessToken = await requestAccessToken();
-const values = await readLedgerValues(accessToken);
-const result = buildMigratedLedger(values);
+async function main() {
+  const args = new Set(process.argv.slice(2));
+  const apply = args.has("--apply");
+  const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
+  const privateKey = String(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "").trim().replace(/\\n/g, "\n");
 
-if (apply && result.errors.length) {
-  console.error(JSON.stringify({ ok: false, dryRun: false, errors: result.errors }, null, 2));
-  process.exit(1);
+  if (!clientEmail || !privateKey) {
+    console.log(JSON.stringify({
+      ok: false,
+      dryRun: !apply,
+      status: "needs verification",
+      message: "Google service account credentials are not configured.",
+      rowCount: 0,
+      missingAmountNetRows: null,
+      safeBackfilledRows: null,
+      incompleteProviderRows: null,
+      paypalMissingFeeNetRows: null,
+      exchangeMissingAmountUsdRows: null,
+      affectedRowsByGroup: [],
+      balanceDelta: null
+    }, null, 2));
+    return;
+  }
+
+  const accessToken = await requestAccessToken(privateKey, clientEmail);
+  const values = await readLedgerValues(accessToken);
+  const result = buildMigratedLedger(values);
+
+  if (apply && result.errors.length) {
+    console.error(JSON.stringify({ ok: false, dryRun: false, errors: result.errors }, null, 2));
+    process.exit(1);
+  }
+
+  if (apply && result.hasChanges) {
+    await writeLedgerValues(accessToken, result.values);
+  }
+
+  console.log(JSON.stringify(toReport(result, { apply }), null, 2));
 }
 
-if (apply && result.hasChanges) {
-  await writeLedgerValues(accessToken, result.values);
+function isCliEntrypoint() {
+  return process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
 
-console.log(JSON.stringify({
-  ok: result.errors.length === 0,
-  dryRun: !apply,
-  applied: apply,
-  rowCount: result.rowCount,
-  hasChanges: result.hasChanges,
-  missingAmountNetRows: result.missingAmountNetRows,
-  incompletePayPalRows: result.incompletePayPalRows,
-  exchangeMissingAmountUsdRows: result.exchangeMissingAmountUsdRows,
-  derivedExchangeAmountUsdRows: result.derivedExchangeAmountUsdRows,
-  sourceBackfilledRows: result.sourceBackfilledRows,
-  unknownSourceRows: result.unknownSourceRows,
-  balanceDelta: round(result.balanceDelta),
-  errors: result.errors
-}, null, 2));
-
-async function requestAccessToken() {
+async function requestAccessToken(privateKey, clientEmail) {
   const issuedAt = Math.floor(Date.now() / 1000);
   const assertion = signJwt(
     { alg: "RS256", typ: "JWT" },
@@ -124,10 +125,26 @@ async function writeLedgerValues(accessToken, values) {
   if (!response.ok) throw new Error(payload?.error?.message || `Sheets write failed with HTTP ${response.status}`);
 }
 
-function buildMigratedLedger(values) {
+export function buildMigratedLedger(values) {
   const headerIndex = (values || []).findIndex((row) => (row || []).some((cell) => normalize(cell) === "date"));
   if (headerIndex === -1) {
-    return { values, rowCount: 0, hasChanges: false, missingAmountNetRows: 0, exchangeMissingAmountUsdRows: 0, derivedExchangeAmountUsdRows: 0, balanceDelta: 0, errors: ["Ledger header row was not found."] };
+    return {
+      values,
+      rowCount: 0,
+      hasChanges: false,
+      missingAmountNetRows: 0,
+      safeBackfilledRows: 0,
+      incompleteProviderRows: 0,
+      incompletePayPalRows: 0,
+      paypalMissingFeeNetRows: 0,
+      exchangeMissingAmountUsdRows: 0,
+      derivedExchangeAmountUsdRows: 0,
+      sourceBackfilledRows: 0,
+      unknownSourceRows: 0,
+      affectedRowsByGroup: [],
+      balanceDelta: 0,
+      errors: ["Ledger header row was not found."]
+    };
   }
   const header = values[headerIndex].slice();
   let hasChanges = false;
@@ -155,12 +172,16 @@ function buildMigratedLedger(values) {
   const nextValues = values.map((row, index) => index === headerIndex ? header.slice() : row.slice());
   let rowCount = 0;
   let missingAmountNetRows = 0;
+  let safeBackfilledRows = 0;
+  let incompleteProviderRows = 0;
   let incompletePayPalRows = 0;
+  let paypalMissingFeeNetRows = 0;
   let exchangeMissingAmountUsdRows = 0;
   let derivedExchangeAmountUsdRows = 0;
   let sourceBackfilledRows = 0;
   let unknownSourceRows = 0;
   let balanceDelta = 0;
+  const affectedGroups = new Map();
   const errors = [];
 
   for (let index = headerIndex + 1; index < nextValues.length; index += 1) {
@@ -171,6 +192,7 @@ function buildMigratedLedger(values) {
     const amountGross = parseNumber(row[indexes.amountGross]) ?? Math.abs(amount || 0);
     const amountFee = parseNumber(row[indexes.amountFee]);
     const existingNet = parseNumber(row[indexes.amountNet]);
+    const operation = normalize(row[indexes.operation]);
     const source = inferLedgerSource({
       currentSource: row[indexes.source],
       rawSourceId: row[indexes.rawSourceId],
@@ -184,13 +206,18 @@ function buildMigratedLedger(values) {
       sourceBackfilledRows += 1;
       hasChanges = true;
     }
+    const channel = getRowChannel(row, indexes);
     const isPayPalSource = source === "paypal";
+    const isProviderSource = isLedgerProviderSource(source);
     const nextNet = existingNet === null
-      ? deriveSafeAmountNet({ amount, amountGross, amountFee, isPayPalSource })
+      ? deriveSafeAmountNet({ amount, amountGross, amountFee, isProviderSource })
       : existingNet;
     if (existingNet === null) {
       missingAmountNetRows += 1;
-      if (isPayPalSource && amountFee === null) incompletePayPalRows += 1;
+      addAffectedGroup(affectedGroups, { source, operation, channel });
+      if (nextNet === null && isProviderSource) incompleteProviderRows += 1;
+      if (isPayPalSource && nextNet === null) incompletePayPalRows += 1;
+      if (isPayPalSource && amountFee === null) paypalMissingFeeNetRows += 1;
     }
     const nextGross = row[indexes.amountGross] || formatNumber(Math.abs(amount || 0));
     if (row[indexes.amountGross] !== nextGross) {
@@ -201,11 +228,11 @@ function buildMigratedLedger(values) {
       const formattedNet = formatNumber(nextNet);
       if (row[indexes.amountNet] !== formattedNet) {
         row[indexes.amountNet] = formattedNet;
+        if (existingNet === null) safeBackfilledRows += 1;
         hasChanges = true;
       }
       balanceDelta += signedAmount(nextNet, row[indexes.operation]) - signedAmount(amount || 0, row[indexes.operation]);
     }
-    const operation = normalize(row[indexes.operation]);
     if (operation === "exchange_in" || operation === "exchange_out" || operation === "exchange") {
       const existingAmountUsd = parseNumber(row[indexes.amountUsd]);
       if (existingAmountUsd === null) {
@@ -227,13 +254,39 @@ function buildMigratedLedger(values) {
     rowCount,
     hasChanges,
     missingAmountNetRows,
+    safeBackfilledRows,
+    incompleteProviderRows,
     incompletePayPalRows,
+    paypalMissingFeeNetRows,
     exchangeMissingAmountUsdRows,
     derivedExchangeAmountUsdRows,
     sourceBackfilledRows,
     unknownSourceRows,
+    affectedRowsByGroup: serializeAffectedGroups(affectedGroups),
     balanceDelta,
     errors
+  };
+}
+
+export function toReport(result, { apply = false } = {}) {
+  return {
+    ok: result.errors.length === 0,
+    dryRun: !apply,
+    applied: apply,
+    rowCount: result.rowCount,
+    hasChanges: result.hasChanges,
+    missingAmountNetRows: result.missingAmountNetRows,
+    safeBackfilledRows: result.safeBackfilledRows,
+    incompleteProviderRows: result.incompleteProviderRows,
+    incompletePayPalRows: result.incompletePayPalRows,
+    paypalMissingFeeNetRows: result.paypalMissingFeeNetRows,
+    exchangeMissingAmountUsdRows: result.exchangeMissingAmountUsdRows,
+    derivedExchangeAmountUsdRows: result.derivedExchangeAmountUsdRows,
+    sourceBackfilledRows: result.sourceBackfilledRows,
+    unknownSourceRows: result.unknownSourceRows,
+    affectedRowsByGroup: result.affectedRowsByGroup,
+    balanceDelta: round(result.balanceDelta),
+    errors: result.errors
   };
 }
 
@@ -285,13 +338,39 @@ function inferSourceFromChannels(...values) {
   return "";
 }
 
-function deriveSafeAmountNet({ amount, amountGross, amountFee, isPayPalSource = false } = {}) {
+function deriveSafeAmountNet({ amount, amountGross, amountFee, isProviderSource = false } = {}) {
   if (Number.isFinite(amountFee)) {
     return Math.max(0, Math.abs(amountGross || amount || 0) - Math.abs(amountFee));
   }
-  if (isPayPalSource) return null;
+  if (isProviderSource) return null;
   const base = Math.abs(amountGross || amount || 0);
   return Number.isFinite(base) && base > 0 ? base : null;
+}
+
+function isLedgerProviderSource(source = "") {
+  return ["paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "youmoney", "provider"].includes(normalizeSourceToken(source));
+}
+
+function getRowChannel(row, indexes) {
+  const operation = normalize(row[indexes.operation]);
+  if (operation === "income" || operation === "exchange_in") return String(row[indexes.toChannel] || "").trim();
+  return String(row[indexes.fromChannel] || row[indexes.toChannel] || "").trim();
+}
+
+function addAffectedGroup(affectedGroups, { source, operation, channel }) {
+  const key = `${source || "unknown"}\t${operation || "unknown"}\t${channel || "unknown"}`;
+  const current = affectedGroups.get(key) || { source: source || "unknown", operation: operation || "unknown", channel: channel || "unknown", rows: 0 };
+  current.rows += 1;
+  affectedGroups.set(key, current);
+}
+
+function serializeAffectedGroups(affectedGroups) {
+  return Array.from(affectedGroups.values())
+    .sort((left, right) =>
+      left.source.localeCompare(right.source) ||
+      left.operation.localeCompare(right.operation) ||
+      left.channel.localeCompare(right.channel)
+    );
 }
 
 function normalize(value) {
