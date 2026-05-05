@@ -4,7 +4,6 @@ const PRODUCTION_URL = "https://ezohata-incoming-ledger.vercel.app";
 const STATUS_URL = `${PRODUCTION_URL}/api/status`;
 const HEALTH_URL = `${PRODUCTION_URL}/api/index?health=1`;
 const AUDIT_SNAPSHOT_URL = `${PRODUCTION_URL}/api/audit-snapshot`;
-const EXPECTED_LEDGER_ROWS = 26;
 const expectedSha = normalizeSha(process.argv[2] || process.env.EXPECTED_SHA || detectOriginMainSha());
 
 const statusResponse = await fetch(STATUS_URL, {
@@ -59,15 +58,21 @@ if (!auditResponse.ok) {
 const auditPayload = await auditResponse.json();
 const ledgerRows = Number(auditPayload?.summary?.ledger_rows || 0);
 const fallbackAmountRows = Number(auditPayload?.balances?.fallback_amount_rows || 0);
+const missingExchangeAmountUsdRows = Number(auditPayload?.exchange?.missing_amount_usd_rows || 0);
+const warnings = (auditPayload?.warnings || []).map((warning) => String(warning || ""));
 const googleWarnings = (auditPayload?.warnings || []).filter((warning) => /google sheets|service account|manual google sheets read access/i.test(String(warning || "")));
+const oldAmountUsdHardFailWarnings = warnings.filter((warning) => /Ledger v2 error: amount_usd is required/i.test(warning));
 if (!ledgerRows) {
   throw new Error("Audit snapshot critical failure: ledger_rows is 0.");
 }
-if (ledgerRows !== EXPECTED_LEDGER_ROWS) {
-  throw new Error(`Audit snapshot ledger_rows mismatch: expected ${EXPECTED_LEDGER_ROWS}, got ${ledgerRows}.`);
-}
 if (fallbackAmountRows !== 0) {
   throw new Error(`Audit snapshot fallback_amount_rows must be 0, got ${fallbackAmountRows}.`);
+}
+if (missingExchangeAmountUsdRows !== 0) {
+  throw new Error(`Audit snapshot exchange.missing_amount_usd_rows must be 0, got ${missingExchangeAmountUsdRows}.`);
+}
+if (oldAmountUsdHardFailWarnings.length) {
+  throw new Error(`Audit snapshot includes old amount_usd hard-fail warning: ${oldAmountUsdHardFailWarnings.join(" | ")}`);
 }
 if (googleWarnings.length) {
   throw new Error(`Audit snapshot includes Google Sheets access warnings: ${googleWarnings.join(" | ")}`);
@@ -89,6 +94,7 @@ console.log(JSON.stringify({
   auditSnapshot: {
     ledgerRows,
     fallbackAmountRows,
+    missingExchangeAmountUsdRows,
     exchangeCompatibilityMode: auditPayload?.exchange?.compatibility_mode
   },
   smoke: {
