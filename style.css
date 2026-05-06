@@ -452,4 +452,40 @@ tr:nth-child(even) td { background: #fffcf7; }
     z-index: 2;
     background: #fffaf2;
   }
+  .manual-transfer-table-wrap,
+  .manual-commission-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .manual-transfer-table-wrap table { min-width: 900px; }
+  .manual-commission-table-wrap table { min-width: 620px; }
+  .manual-transfer-table-wrap th,
+  .manual-transfer-table-wrap td,
+  .manual-commission-table-wrap th,
+  .manual-commission-table-wrap td {
+    min-width: 112px;
+  }
+  .manual-transfer-table-wrap th:last-child,
+  .manual-transfer-table-wrap td:last-child,
+  .manual-commission-table-wrap th:last-child,
+  .manual-commission-table-wrap td:last-child {
+    min-width: 86px;
+  }
+  .manual-transfer-table-wrap .finance-input,
+  .manual-commission-table-wrap .finance-input {
+    min-width: 0;
+  }
+  .manual-transfer-table-wrap .ghost,
+  .manual-commission-table-wrap .ghost {
+    width: auto;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+  .manual-transfer-table-wrap table tr > :first-child,
+  .manual-commission-table-wrap table tr > :first-child {
+    position: static;
+    left: auto;
+    z-index: auto;
+  }
 }
