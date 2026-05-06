@@ -8,7 +8,7 @@ Legacy tabs are retained for compatibility and historical review:
 
 - `Расходы`: historical wide daily summary, `date | category | channel...`; not a runtime source
 - `Переводы`: compatibility transfer/rate rows
-- `Остатки`: compatibility balance rows
+- `Остатки`: compatibility end-of-day provider/manual balance snapshots by `date | channel | currency`
 - `Комиссии`: compatibility commission rows
 - UI `fact`: legacy editor that now also writes normalized ledger rows
 

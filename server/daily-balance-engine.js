@@ -38,14 +38,18 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = []) {
     });
   }
 
+  const status_counts = buildStatusCounts(rows);
+
   return {
     rows,
+    actionable_rows: buildActionableRows(rows),
     summary: {
       rows: rows.length,
-      mismatch_rows: rows.filter((row) => row.status === STATUS.MISMATCH).length,
-      missing_opening_balance_rows: rows.filter((row) => row.status === STATUS.MISSING_OPENING).length,
-      missing_provider_balance_rows: rows.filter((row) => row.status === STATUS.MISSING_PROVIDER).length,
+      mismatch_rows: status_counts[STATUS.MISMATCH],
+      missing_opening_balance_rows: status_counts[STATUS.MISSING_OPENING],
+      missing_provider_balance_rows: status_counts[STATUS.MISSING_PROVIDER],
       excluded_missing_amount_net_rows: movements.excluded_missing_amount_net_rows,
+      status_counts,
     },
   };
 }
@@ -106,6 +110,9 @@ function buildBalanceIndex(balanceRows) {
   const byDateKey = new Map();
   const incompleteDateKeys = new Set();
 
+  // "Остатки" rows are end-of-day provider/manual balance snapshots by date + channel + currency.
+  // A prior snapshot is used as the next day's opening balance; a same-day snapshot is compared
+  // against the computed closing balance as provider_reported_balance.
   for (const row of balanceRows || []) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
@@ -151,6 +158,40 @@ function resolveStatus({ needsVerification, opening, providerReported, differenc
   if (difference !== null && Math.abs(difference) > 0.0001) return STATUS.MISMATCH;
   if (providerReported === null) return STATUS.MISSING_PROVIDER;
   return STATUS.OK;
+}
+
+function buildStatusCounts(rows) {
+  const counts = {
+    [STATUS.OK]: 0,
+    [STATUS.MISMATCH]: 0,
+    [STATUS.MISSING_OPENING]: 0,
+    [STATUS.MISSING_PROVIDER]: 0,
+    [STATUS.NEEDS_VERIFICATION]: 0,
+  };
+  for (const row of rows || []) {
+    if (counts[row.status] !== undefined) counts[row.status] += 1;
+  }
+  return counts;
+}
+
+function buildActionableRows(rows) {
+  const priority = {
+    [STATUS.MISMATCH]: 0,
+    [STATUS.NEEDS_VERIFICATION]: 1,
+    [STATUS.MISSING_OPENING]: 2,
+    [STATUS.MISSING_PROVIDER]: 3,
+  };
+  return (rows || [])
+    .filter((row) => row.status && row.status !== STATUS.OK)
+    .sort((left, right) => {
+      const leftPriority = priority[left.status] ?? 99;
+      const rightPriority = priority[right.status] ?? 99;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      if (left.date !== right.date) return left.date.localeCompare(right.date);
+      if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+      return left.currency.localeCompare(right.currency);
+    })
+    .slice(0, 10);
 }
 
 function getMovementChannel(row, amount) {
