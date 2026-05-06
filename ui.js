@@ -4358,7 +4358,7 @@ function renderManualTransfersBlock() {
   }
 
   const transferWrap = document.createElement("div");
-  transferWrap.className = "table-wrap";
+  transferWrap.className = "table-wrap manual-transfer-table-wrap";
   const transferTable = document.createElement("table");
   const transferBody = document.createElement("tbody");
   const transferHeader = document.createElement("tr");
@@ -4407,7 +4407,7 @@ function renderManualTransfersBlock() {
     summary.textContent = `Пустые строки (${emptyTransferRows.length})`;
     emptyRowsDetails.appendChild(summary);
     const emptyWrap = document.createElement("div");
-    emptyWrap.className = "table-wrap";
+    emptyWrap.className = "table-wrap manual-transfer-table-wrap manual-transfer-empty-wrap";
     const emptyTable = document.createElement("table");
     const emptyBody = document.createElement("tbody");
     const emptyHeader = transferHeader.cloneNode(true);
@@ -4430,7 +4430,7 @@ function renderManualTransfersBlock() {
 
   state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || []);
   const commissionWrap = document.createElement("div");
-  commissionWrap.className = "table-wrap";
+  commissionWrap.className = "table-wrap manual-commission-table-wrap";
   const commissionTable = document.createElement("table");
   const commissionBody = document.createElement("tbody");
   const commissionHeader = document.createElement("tr");
