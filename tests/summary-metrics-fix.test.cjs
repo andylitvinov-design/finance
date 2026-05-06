@@ -5,79 +5,59 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
-const patchJs = fs.readFileSync(path.join(root, "summary-metrics-fix.js"), "utf8");
+const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+
+function extractFunction(source, name) {
+  const pattern = new RegExp(`^function ${name}\\(`, "m");
+  const match = pattern.exec(source);
+  if (!match) throw new Error(`${name} was not found`);
+  const next = source.slice(match.index + 1).search(/^function [A-Za-z0-9_]+\(/m);
+  return next === -1
+    ? source.slice(match.index).trim()
+    : source.slice(match.index, match.index + 1 + next).trim();
+}
 
 function makeNode(text = "") {
   return { textContent: text };
 }
 
-function createContext({ rows = [], startDate = "2026-04-29", endDate = "2026-05-05" } = {}) {
+test("summary metrics render directly in the top card flow", () => {
+  assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
+  assert.doesNotMatch(indexHtml, /summary-metrics-fix\.js/);
+
   const elements = {
-    startDate: { value: startDate },
-    endDate: { value: endDate },
-    metricPeriod: makeNode("360,5000"),
-    metricOrders: makeNode("5,7118"),
-    metricBalances: makeNode("354,7882"),
-    metricTransfers: makeNode("-200,8499"),
-    metricMyServices: makeNode("Мои услуги: 0"),
-    metricProfit: makeNode("Прибыль: -1115,6407"),
-    metricMyCosts: makeNode("Мои затраты: 1367,9907"),
+    metricPeriod: makeNode(),
+    metricOrders: makeNode(),
+    metricBalances: makeNode(),
+    metricTransfers: makeNode(),
+    metricMyServices: makeNode(),
+    metricProfit: makeNode(),
+    metricMyCosts: makeNode(),
   };
   const context = {
-    window: null,
-    globalThis: null,
     elements,
-    state: {
-      data: {
-        manual: {
-          ledgerV2Rows: rows,
-        },
-      },
-      manualFinance: {
-        data: null,
-      },
-    },
-    renderMetrics() {},
+    buildTopMetricsSummary: () => ({
+      totalOrders: 360.5,
+      balance: 5.7118,
+      totalPaid: 354.7882,
+      total: -200.8499,
+      myServices: 200,
+      myCosts: 150,
+      profit: 50,
+    }),
+    formatSheetNumber: (value, precision = 4) => Number(value).toFixed(precision).replace(".", ","),
   };
-  context.window = context;
-  context.globalThis = context;
   vm.createContext(context);
-  vm.runInContext(patchJs, context);
-  return context;
-}
+  vm.runInContext(
+    `${extractFunction(uiJs, "renderMetrics")}\nthis.renderMetrics = renderMetrics;`,
+    context
+  );
 
-test("summary metrics patch is loaded after ui.js and before main.js", () => {
-  assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
-  assert.ok(indexHtml.indexOf("./ui.js") < indexHtml.indexOf("./summary-metrics-fix.js"));
-  assert.ok(indexHtml.indexOf("./summary-metrics-fix.js") < indexHtml.indexOf("./main.js"));
-});
+  context.renderMetrics();
 
-test("underpayment to me is displayed as negative without mutating source rows", () => {
-  const context = createContext();
-  context.EzohataSummaryMetricsPatch.applySummaryMetricCorrections();
-
-  assert.equal(context.elements.metricOrders.textContent, "-5,7118");
-  assert.equal(context.elements.metricTransfers.textContent, "-5,7118");
-});
-
-test("summary cost/profit fallback uses selected period only", () => {
-  const context = createContext({
-    rows: [
-      { date: "2026-04-30", operation: "business_expense", amountUsd: "100", source: "td_bank" },
-      { date: "2026-05-03", operation: "personal_expense", amount_usd: "50", source: "manual" },
-      { date: "2026-04-20", operation: "business_expense", amountUsd: "1367.9907", source: "td_bank" },
-      { date: "2026-05-02", operation: "income", amountUsd: "200", source: "manual" },
-      { date: "2026-05-02", operation: "income", amountUsd: "500", source: "wise" },
-    ],
-  });
-
-  const totals = context.EzohataSummaryMetricsPatch.buildSummaryMetricFallbackTotals();
-  assert.equal(totals.myCosts, 150);
-  assert.equal(totals.myServices, 200);
-
-  context.EzohataSummaryMetricsPatch.applySummaryMetricCorrections();
-  assert.equal(context.elements.metricMyCosts.textContent, "Мои затраты: 150");
-  assert.equal(context.elements.metricMyServices.textContent, "Мои услуги: 200");
-  assert.equal(context.elements.metricProfit.textContent, "Прибыль: 50");
+  assert.equal(elements.metricOrders.textContent, "-5,7118");
+  assert.equal(elements.metricTransfers.textContent, "-5,7118");
+  assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
+  assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
 });

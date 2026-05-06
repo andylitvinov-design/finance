@@ -4896,10 +4896,11 @@ function renderPayoutTransfersBlock() {
 
 function renderMetrics() {
   const metrics = buildTopMetricsSummary();
+  const displayedBalance = -metrics.balance;
   elements.metricPeriod.textContent = formatSheetNumber(metrics.totalOrders, 4);
-  elements.metricOrders.textContent = formatSheetNumber(metrics.balance, 4);
+  elements.metricOrders.textContent = formatSheetNumber(displayedBalance, 4);
   elements.metricBalances.textContent = formatSheetNumber(metrics.totalPaid, 4);
-  elements.metricTransfers.textContent = formatSheetNumber(metrics.total, 4);
+  elements.metricTransfers.textContent = formatSheetNumber(displayedBalance, 4);
   if (elements.metricMyServices) {
     elements.metricMyServices.textContent = "Мои услуги: " + formatSheetNumber(metrics.myServices, 4);
   }
