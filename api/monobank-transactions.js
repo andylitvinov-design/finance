@@ -54,10 +54,7 @@ export default async function handler(request, response) {
     });
     return response.status(200).json({ ok: true, mode: requestToken ? "manual" : "env", ...result });
   } catch (error) {
-    return response.status(400).json({
-      ok: false,
-      error: sanitizeMonobankErrorMessage(String(error?.message || error), requestToken)
-    });
+    return response.status(400).json(buildMonobankErrorPayload(error, requestToken));
   }
 }
 
@@ -414,6 +411,26 @@ function resolveMonobankApiToken(requestToken, envToken) {
 function normalizeMonobankAction(value) {
   const action = String(value || "import").trim().toLowerCase();
   return action === "validate" ? "validate" : "import";
+}
+
+function buildMonobankErrorPayload(error, token) {
+  const message = String(error?.message || error || "").trim();
+  if (isMissingMonobankTokenError(message)) {
+    return {
+      ok: false,
+      code: "MONOBANK_TOKEN_MISSING",
+      error: "Monobank token is not configured.",
+      action: "configure_env_or_manual_token"
+    };
+  }
+  return {
+    ok: false,
+    error: sanitizeMonobankErrorMessage(message || "Monobank request failed.", token)
+  };
+}
+
+function isMissingMonobankTokenError(message) {
+  return /monobank token is required|monobank credentials are not configured|set MONOBANK_API_TOKEN/i.test(String(message || ""));
 }
 
 function sanitizeMonobankErrorMessage(message, token) {
