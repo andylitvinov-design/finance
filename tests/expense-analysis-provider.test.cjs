@@ -459,7 +459,7 @@ test("ledger expense analysis uses amount_usd before amount_net and does not tre
   });
 });
 
-test("ledger real income summary is scoped to the selected expense analysis period", () => {
+test("ledger real income summary excludes out-of-range Wise and YooMoney rows for selected period", () => {
   const context = buildLedgerAnalysisTestContext({
     MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "трансервайз дол"],
     canonicalManualFinanceChannel(value) {
@@ -491,6 +491,7 @@ test("ledger real income summary is scoped to the selected expense analysis peri
     { date: "2026-04-03", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "103", amountNet: "103", currency: "USD" },
     { date: "2026-04-02", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "103", amountNet: "103", currency: "USD" },
     { date: "2026-04-28", operation: "income", source: "yoomoney", toChannel: "Яндекс руб", amountUsd: "1635.7938", amountNet: "", currency: "RUB" },
+    { date: "2026-05-06", operation: "income", source: "yoomoney", toChannel: "Яндекс руб", amountUsd: "25", amountNet: "", currency: "RUB" },
     { date: "2026-04-30", operation: "business_expense", source: "wise", fromChannel: "трансервайз дол", amountUsd: "999", amountNet: "999", currency: "USD" },
     { date: "2026-05-01", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "-5", amountNet: "-5", currency: "USD" },
   ];
@@ -570,13 +571,15 @@ test("missing CAD USD rate produces explicit analysis warning instead of silent 
   assert.match(warnings[0], /TD CAD rows missing USD rate/);
 });
 
-test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exist", () => {
+test("expense analysis summary keeps API Wise real income 978.5 when Ledger fallback differs", () => {
   const ledgerRows = [
     { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "100", amountNet: "96", currency: "USD" },
-    { operation: "servicein", source: "fact", toChannel: "wise usd", amountUsd: "200", amountNet: "0", currency: "USD" },
+    { operation: "servicein", source: "wise", toChannel: "wise usd", amountUsd: "200", amountNet: "0", currency: "USD" },
     { operation: "business_expense", source: "mcp", fromChannel: "monobank", amountUsd: "30", amountNet: "85956", currency: "RUB" },
   ];
+  const warnings = [];
   const context = buildLedgerAnalysisTestContext({
+    console: { warn: (...args) => warnings.push(args) },
     state: {
       aggregatedManualRange: null,
       manualTransfers: { data: null },
@@ -631,6 +634,8 @@ test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exi
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
+    `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
     "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
     context
@@ -642,6 +647,10 @@ test("expense analysis summary keeps Wise real income 978.5 when Ledger rows exi
   assert.equal(summary.rows.find((row) => row[0] === "пейпал дол")[4], "999,0000");
   assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "978,5000");
   assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "30,0000");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][1].channel, "трансервайз дол");
+  assert.equal(warnings[0][1].apiRealNetUsd, 978.5);
+  assert.equal(warnings[0][1].ledgerRealNetUsd, 200);
 });
 
 test("expense analysis summary derives provider real income and expense from ledgerV2Rows when operations are empty", () => {
@@ -745,6 +754,8 @@ test("expense analysis summary derives provider real income and expense from led
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
+    `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
     "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
     context
@@ -755,6 +766,35 @@ test("expense analysis summary derives provider real income and expense from led
   assert.equal(summary.expenseTotals.realUsd, 44.25);
   assert.equal(summary.rows.find((row) => row[0] === "трансервайз дол")[4], "125,5000");
   assert.equal(summary.rows.find((row) => row[0] === "монобанк грн")[7], "44,2500");
+});
+
+test("expense analysis Ledger fallback fills only empty API real income values", () => {
+  const context = buildLedgerAnalysisTestContext();
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "roundProviderSummaryAmount")}\n` +
+    `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
+    `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
+    "this.mergeExpenseAnalysisRealIncomeSummaryByChannel = mergeExpenseAnalysisRealIncomeSummaryByChannel;",
+    context
+  );
+
+  const merged = plain(context.mergeExpenseAnalysisRealIncomeSummaryByChannel(
+    {
+      "пейпал дол": { realNetUsd: "" },
+      "трансервайз дол": { realNetUsd: 0 },
+    },
+    {
+      "пейпал дол": { realNetUsd: 100 },
+      "трансервайз дол": { realNetUsd: 200 },
+      "монобанк грн": { realNetUsd: 50 },
+    },
+    { startDate: "2026-05-01", endDate: "2026-05-31" }
+  ));
+
+  assert.equal(merged["пейпал дол"].realNetUsd, 100);
+  assert.equal(merged["трансервайз дол"].realNetUsd, 0);
+  assert.equal(merged["монобанк грн"].realNetUsd, 50);
 });
 
 test("expense analysis keeps zero amount_usd explicit and warns on unknown ledger source", () => {
@@ -1016,6 +1056,8 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
+    `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
     "this.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;\n" +
     "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
