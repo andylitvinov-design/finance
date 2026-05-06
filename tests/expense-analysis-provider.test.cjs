@@ -459,6 +459,52 @@ test("ledger expense analysis uses amount_usd before amount_net and does not tre
   });
 });
 
+test("ledger real income summary is scoped to the selected expense analysis period", () => {
+  const context = buildLedgerAnalysisTestContext({
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "трансервайз дол"],
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+        "wise": "трансервайз дол",
+        "wise usd": "трансервайз дол",
+        "transferwise": "трансервайз дол",
+        "трансервайз дол": "трансервайз дол",
+      })[normalized] || String(value || "").trim();
+    },
+    getManualFinanceUsdPerLocalRate(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
+      const channel = String(row?.channel || "").trim();
+      if (channel === "Яндекс руб") return 1 / 84.5563;
+      return buildLedgerAnalysisTestContext().getManualFinanceUsdPerLocalRate(row, rateLookup);
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  const rows = [
+    { date: "2026-04-30", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "231,75", amountNet: "231.75", currency: "USD" },
+    { date: "2026-04-29", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "51,5", amountNet: "51.5", currency: "USD" },
+    { date: "2026-04-27", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "309", amountNet: "309", currency: "USD" },
+    { date: "2026-04-24", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "103", amountNet: "103", currency: "USD" },
+    { date: "2026-04-21", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "257,5", amountNet: "257.5", currency: "USD" },
+    { date: "2026-04-13", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "51,5", amountNet: "51.5", currency: "USD" },
+    { date: "2026-04-03", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "103", amountNet: "103", currency: "USD" },
+    { date: "2026-04-02", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "103", amountNet: "103", currency: "USD" },
+    { date: "2026-04-28", operation: "income", source: "yoomoney", toChannel: "Яндекс руб", amountUsd: "1635.7938", amountNet: "", currency: "RUB" },
+    { date: "2026-04-30", operation: "business_expense", source: "wise", fromChannel: "трансервайз дол", amountUsd: "999", amountNet: "999", currency: "USD" },
+    { date: "2026-05-01", operation: "income", source: "wise", toChannel: "трансервайз дол", amountUsd: "-5", amountNet: "-5", currency: "USD" },
+  ];
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel(
+    rows,
+    { byCurrency: { RUB: 1 / 84.5563 }, byChannel: {} },
+    { startDate: "2026-04-29", endDate: "2026-05-05" }
+  ));
+
+  assert.equal(summary["Яндекс руб"].realNetUsd, 0);
+  assert.equal(summary["трансервайз дол"].realNetUsd, 283.25);
+});
+
 test("TD CAD expense Ledger rows fall back to USD rate in analysis", () => {
   const context = buildLedgerAnalysisTestContext();
   loadLedgerAnalysisHelpers(context);
