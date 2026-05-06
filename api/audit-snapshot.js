@@ -114,6 +114,7 @@ export async function buildAuditSnapshot(options = {}) {
     daily_balances: {
       uses_amount_net: true,
       rows: dailyBalanceResult.rows,
+      actionable_rows: dailyBalanceResult.actionable_rows,
       summary: dailyBalanceResult.summary,
     },
     paypal,
@@ -166,12 +167,20 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
     daily_balances: {
       uses_amount_net: true,
       rows: [],
+      actionable_rows: [],
       summary: {
         rows: 0,
         mismatch_rows: 0,
         missing_opening_balance_rows: 0,
         missing_provider_balance_rows: 0,
         excluded_missing_amount_net_rows: 0,
+        status_counts: {
+          ok: 0,
+          mismatch: 0,
+          missing_opening_balance: 0,
+          missing_provider_balance: 0,
+          needs_verification: 0,
+        },
       },
     },
     paypal: {

@@ -67,6 +67,25 @@ Response shape:
     "uses_amount_net": true,
     "fallback_amount_rows": 0
   },
+  "daily_balances": {
+    "uses_amount_net": true,
+    "rows": [],
+    "actionable_rows": [],
+    "summary": {
+      "rows": 0,
+      "mismatch_rows": 0,
+      "missing_opening_balance_rows": 0,
+      "missing_provider_balance_rows": 0,
+      "excluded_missing_amount_net_rows": 0,
+      "status_counts": {
+        "ok": 0,
+        "mismatch": 0,
+        "missing_opening_balance": 0,
+        "missing_provider_balance": 0,
+        "needs_verification": 0
+      }
+    }
+  },
   "paypal": {
     "rows": 0,
     "gross_total_usd": null,
@@ -134,6 +153,12 @@ Phase 1 deliberately returns aggregates only. Sanitized rows are deferred until 
 - Totals are only as current as the server-side Google Sheets read path.
 - If Google service-account access is unavailable, all live data checks are reported as `needs verification`.
 - Physical Google Sheet migration is intentionally false; Ledger v2 compatibility is normalized in code.
+
+## Daily Balances
+
+`daily_balances` is additive and does not change `balances.by_channel`. It uses only Ledger `amount_net` / `balance_amount`; rows without `amount_net` are excluded and counted.
+
+`Остатки` rows are treated as end-of-day provider/manual balance snapshots by date + channel + currency. A prior snapshot becomes the opening balance for later ledger movement; a same-day snapshot is compared with computed closing balance as `provider_reported_balance`.
 
 ## needs verification
 

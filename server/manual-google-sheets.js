@@ -694,6 +694,7 @@ function parseBalanceRows(values) {
   const rateIndex = findHeaderIndex(header, ["курс", "rate"]);
   const usdIndex = findHeaderIndex(header, ["сумма_usd", "usd amount", "usdAmount"]);
   const commentIndex = findHeaderIndex(header, ["комментарий", "comment"]);
+  // "Остатки" stores end-of-day provider/manual balance snapshots by date + channel + currency.
   return rows
     .map((row) => {
       const channel = String(row[channelIndex] || "").trim();
