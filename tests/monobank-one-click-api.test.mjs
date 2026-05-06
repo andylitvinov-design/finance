@@ -22,6 +22,14 @@ function createResponseRecorder() {
   };
 }
 
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
 function createMonobankFetchMock(expectedToken) {
   const calls = [];
   return {
@@ -87,7 +95,7 @@ test("handler one-click import uses MONOBANK_API_TOKEN when request has no manua
     assert.equal(mock.calls[0].token, "env-token");
   } finally {
     global.fetch = previousFetch;
-    process.env.MONOBANK_API_TOKEN = previousToken;
+    restoreEnv("MONOBANK_API_TOKEN", previousToken);
   }
 });
 
@@ -119,7 +127,7 @@ test("handler returns structured MONOBANK_TOKEN_MISSING when one-click import ha
     });
   } finally {
     global.fetch = previousFetch;
-    process.env.MONOBANK_API_TOKEN = previousToken;
+    restoreEnv("MONOBANK_API_TOKEN", previousToken);
   }
 });
 
@@ -149,6 +157,6 @@ test("handler manual token still works for fallback flow", async () => {
     assert.equal(mock.calls[0].token, "manual-token");
   } finally {
     global.fetch = previousFetch;
-    process.env.MONOBANK_API_TOKEN = previousToken;
+    restoreEnv("MONOBANK_API_TOKEN", previousToken);
   }
 });
