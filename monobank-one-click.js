@@ -7,10 +7,18 @@
   const originalRenderTabs = window.renderTabs;
   const originalLoadMonobankExpenseStatement = window.loadMonobankExpenseStatement;
 
+  function getExpenseAccountingState() {
+    try {
+      return typeof state !== "undefined" ? state.expenseAccounting : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   if (typeof originalLoadMonobankExpenseStatement !== "function") return;
 
   async function startMonobankOneClickImport() {
-    const accounting = window.state?.expenseAccounting;
+    const accounting = getExpenseAccountingState();
     if (!accounting) return originalLoadMonobankExpenseStatement();
 
     const manualToken = String(accounting.monobankToken || "").trim();
@@ -33,9 +41,10 @@
 
   function replaceMonobankButton(button) {
     if (!button || button.dataset.monobankOneClick === "1") return;
+    const accounting = getExpenseAccountingState();
     const clone = button.cloneNode(true);
     clone.dataset.monobankOneClick = "1";
-    clone.textContent = window.state?.expenseAccounting?.monobankLoading
+    clone.textContent = accounting?.monobankLoading
       ? "Загружаю Monobank..."
       : "Подтянуть Monobank";
     clone.addEventListener("click", startMonobankOneClickImport);
@@ -44,7 +53,8 @@
 
   function simplifyMonobankConnectButton(button) {
     if (!button) return;
-    if (window.state?.expenseAccounting?.monobankConnectOpen) {
+    const accounting = getExpenseAccountingState();
+    if (accounting?.monobankConnectOpen) {
       button.textContent = "Скрыть ручной token";
       return;
     }
