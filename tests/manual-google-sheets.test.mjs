@@ -204,7 +204,13 @@ test("loadManualRepositoryFromGoogleSheets ignores legacy Расходы as an o
                   ["2026-04-30", "exchange", "", "", "-4916"],
                 ],
               },
-              { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
+              {
+                range: "'Остатки'!A1:G",
+                values: [
+                  ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                  ["2026-04-23", "трансервайз дол", "1000", "USD", "1", "1000", "opening"],
+                ],
+              },
               { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
               { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
             ],
@@ -265,7 +271,13 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
                   ["2026-04-24", "business", "999999"],
                 ],
               },
-              { range: "'Остатки'!A1:D1", values: [["дата", "канал", "сумма"]] },
+              {
+                range: "'Остатки'!A1:G",
+                values: [
+                  ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                  ["2026-04-23", "трансервайз дол", "1000", "USD", "1", "1000", "opening"],
+                ],
+              },
               { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
               { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
             ],
@@ -287,9 +299,23 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
 	    assert.equal(repository.views.fallback_amount_rows, 0);
 	    assert.equal(repository.views.missing_amount_net_rows, 1);
 	    assert.equal(repository.views.excluded_missing_amount_net_rows, 1);
-	    assert.equal(repository.operations[5].source, "wise");
-	    assert.equal(repository.operations[6].source, "photo");
-	    assert.equal(repository.operations[7].amountUsd, "942");
+    assert.equal(repository.operations[5].source, "wise");
+    assert.equal(repository.operations[6].source, "photo");
+    assert.equal(repository.operations[7].amountUsd, "942");
+    assert.deepEqual(repository.balances, [
+      {
+        date: "2026-04-23",
+        channel: "трансервайз дол",
+        accountName: "трансервайз дол",
+        amount: "1000",
+        balanceAmount: "1000",
+        currency: "USD",
+        rate: "1",
+        usdAmount: "1000",
+        comment: "opening",
+        source: "manual-google-sheets",
+      },
+    ]);
 	    assert.deepEqual(repository.expenseRows, [
 	      {
 	        date: "2026-04-24",
