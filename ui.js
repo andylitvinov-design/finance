@@ -1006,10 +1006,11 @@ function getExpenseAnalysisChannelSummary() {
   const ledgerRealIncomeSummary = ledgerRows.length
     ? buildLedgerRealIncomeSummaryByChannel(ledgerRows, usdRateLookup, selectedPeriod)
     : {};
-  const realIncomeSummaryByChannel = { ...(state.data?.realIncome?.summaryByChannel || {}) };
-  Object.entries(ledgerRealIncomeSummary).forEach(([channel, summary]) => {
-    if (roundProviderSummaryAmount(summary?.realNetUsd) > 0) realIncomeSummaryByChannel[channel] = summary;
-  });
+  const realIncomeSummaryByChannel = mergeExpenseAnalysisRealIncomeSummaryByChannel(
+    state.data?.realIncome?.summaryByChannel || {},
+    ledgerRealIncomeSummary,
+    selectedPeriod
+  );
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
@@ -1018,6 +1019,35 @@ function getExpenseAnalysisChannelSummary() {
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
     usdRateLookup
   });
+}
+
+function hasExpenseAnalysisRealIncomeValue(summary) {
+  const value = summary?.realNetUsd;
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+function mergeExpenseAnalysisRealIncomeSummaryByChannel(apiSummaryByChannel = {}, ledgerSummaryByChannel = {}, period = {}) {
+  const merged = { ...(apiSummaryByChannel || {}) };
+  Object.entries(ledgerSummaryByChannel || {}).forEach(([channel, ledgerSummary]) => {
+    const ledgerAmount = roundProviderSummaryAmount(ledgerSummary?.realNetUsd);
+    if (ledgerAmount <= 0) return;
+    const apiSummary = merged[channel];
+    if (!hasExpenseAnalysisRealIncomeValue(apiSummary)) {
+      merged[channel] = ledgerSummary;
+      return;
+    }
+    const apiAmount = roundProviderSummaryAmount(apiSummary?.realNetUsd);
+    if (apiAmount !== ledgerAmount && typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[expense-analysis] API real income summary differs from Ledger fallback", {
+        channel,
+        apiRealNetUsd: apiAmount,
+        ledgerRealNetUsd: ledgerAmount,
+        startDate: period?.startDate || "",
+        endDate: period?.endDate || ""
+      });
+    }
+  });
+  return merged;
 }
 
 function getMissingPaymentsAuditSummary() {
