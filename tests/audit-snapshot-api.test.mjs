@@ -176,6 +176,13 @@ function repositoryFixture() {
       }),
     ],
     transfers: [{ transferDate: "2026-05-02", channel: "cash usd", amount: "10" }],
+    balances: [
+      { date: "2026-05-01", channel: "пейпал дол", amount: "1000", currency: "USD" },
+      { date: "2026-05-02", channel: "пейпал дол", amount: "1311.06", currency: "USD" },
+      { date: "2026-05-01", channel: "Яндекс руб", amount: "1000", currency: "RUB" },
+      { date: "2026-05-01", channel: "Бинанс spot", amount: "500", currency: "USD" },
+      { date: "2026-05-01", channel: "monobank грн", amount: "300", currency: "UAH" },
+    ],
     commissionRows: [],
     views: { byDateChannel: [], byCategory: [] },
     warnings: [],
@@ -199,6 +206,7 @@ test("audit snapshot returns ok JSON with required top-level fields", async () =
   assert.ok(response.schema);
   assert.ok(response.summary);
   assert.ok(response.balances);
+  assert.ok(response.daily_balances);
   assert.ok(response.paypal);
   assert.ok(response.exchange);
   assert.ok(response.sources);
@@ -230,7 +238,33 @@ test("audit snapshot never falls back to amount when amount_net is missing", asy
   assert.equal(response.balances.fallback_amount_rows, 0);
   assert.equal(response.balances.missing_amount_net_rows, 1);
   assert.equal(response.balances.excluded_missing_amount_net_rows, 1);
+  assert.equal(response.daily_balances.uses_amount_net, true);
+  assert.equal(response.daily_balances.summary.excluded_missing_amount_net_rows, 1);
   assert.match(response.warnings.join("\n"), /amount_net.*balance was not calculated/i);
+});
+
+test("audit snapshot exposes additive daily currency balances without changing by_channel", async () => {
+  const response = await buildFixtureSnapshot();
+
+  assert.equal(response.daily_balances.uses_amount_net, true);
+  assert.equal(response.daily_balances.summary.rows, response.daily_balances.rows.length);
+  assert.deepEqual(Object.keys(response.balances), [
+    "by_channel",
+    "total_usd",
+    "uses_amount_net",
+    "fallback_amount_rows",
+    "missing_amount_net_rows",
+    "excluded_missing_amount_net_rows",
+  ]);
+  assert.ok(response.balances.by_channel.some((row) => row.channel === "пейпал дол" && row.balance_amount === 311.06));
+  assert.ok(response.daily_balances.rows.some((row) =>
+    row.date === "2026-05-02" &&
+    row.channel === "пейпал дол" &&
+    row.currency === "USD" &&
+    row.opening_balance === 1000 &&
+    row.closing_balance === 1311.06 &&
+    row.status === "ok"
+  ));
 });
 
 test("audit snapshot warns when exchange amount_usd is missing", async () => {

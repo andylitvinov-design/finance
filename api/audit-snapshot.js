@@ -1,4 +1,5 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import {
   countMissingAmountNetRows,
   isExchangeMissingAmountUsdRow,
@@ -56,6 +57,7 @@ export async function buildAuditSnapshot(options = {}) {
   const schema = buildSchema(repository);
   const summary = buildSummary(operations, repository);
   const balanceResult = buildBalances(operations);
+  const dailyBalanceResult = buildDailyCurrencyBalances(operations, repository.balances || []);
   const paypal = buildPayPalSummary(operations);
   const exchange = buildExchangeSummary(operations);
   const sources = buildSourcesSummary(operations);
@@ -109,6 +111,11 @@ export async function buildAuditSnapshot(options = {}) {
       missing_amount_net_rows: balanceResult.missing_amount_net_rows,
       excluded_missing_amount_net_rows: balanceResult.excluded_missing_amount_net_rows,
     },
+    daily_balances: {
+      uses_amount_net: true,
+      rows: dailyBalanceResult.rows,
+      summary: dailyBalanceResult.summary,
+    },
     paypal,
     exchange: omitInternalWarnings(exchange),
     sources,
@@ -155,6 +162,17 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       fallback_amount_rows: 0,
       missing_amount_net_rows: 0,
       excluded_missing_amount_net_rows: 0,
+    },
+    daily_balances: {
+      uses_amount_net: true,
+      rows: [],
+      summary: {
+        rows: 0,
+        mismatch_rows: 0,
+        missing_opening_balance_rows: 0,
+        missing_provider_balance_rows: 0,
+        excluded_missing_amount_net_rows: 0,
+      },
     },
     paypal: {
       rows: 0,
