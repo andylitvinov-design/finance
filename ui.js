@@ -997,8 +997,14 @@ function getExpenseAnalysisChannelSummary() {
     state.data?.tabs?.movement?.values || []
   );
   const ledgerRows = getExpenseAnalysisLedgerRows();
+  const selectedPeriod = typeof elements !== "undefined" && elements
+    ? {
+        startDate: normalizeIncomingSheetDateValue(elements.startDate?.value || ""),
+        endDate: normalizeIncomingSheetDateValue(elements.endDate?.value || "")
+      }
+    : {};
   const ledgerRealIncomeSummary = ledgerRows.length
-    ? buildLedgerRealIncomeSummaryByChannel(ledgerRows, usdRateLookup)
+    ? buildLedgerRealIncomeSummaryByChannel(ledgerRows, usdRateLookup, selectedPeriod)
     : {};
   const realIncomeSummaryByChannel = { ...(state.data?.realIncome?.summaryByChannel || {}) };
   Object.entries(ledgerRealIncomeSummary).forEach(([channel, summary]) => {
@@ -1126,12 +1132,24 @@ function getLedgerExpenseChannel(row) {
   return isExpenseAnalysisKnownChannel(channel) ? channel : "";
 }
 
-function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
+function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }, period = {}) {
+  const startDate = normalizeIncomingSheetDateValue(period?.startDate || "");
+  const endDate = normalizeIncomingSheetDateValue(period?.endDate || "");
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, { realNetUsd: 0 }]));
   (rows || []).forEach((row) => {
+    const date = normalizeIncomingSheetDateValue(row?.date || "");
+    if ((startDate || endDate) && !date) return;
+    if (startDate && date < startDate) return;
+    if (endDate && date > endDate) return;
     if (!isLedgerProviderIncomeSource(row)) return;
     const channel = getLedgerIncomeChannel(row);
     if (!channel) return;
+    const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
+    const netRaw = String(row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? "").trim();
+    const amountRaw = String(row?.amount ?? "").trim();
+    if (amountUsdRaw && parseLooseNumber(amountUsdRaw) < 0) return;
+    if (!amountUsdRaw && netRaw && parseLooseNumber(netRaw) < 0) return;
+    if (!amountUsdRaw && !netRaw && amountRaw && parseLooseNumber(amountRaw) < 0) return;
     totals[channel].realNetUsd += getLedgerFactAmountUsd(row, usdRateLookup);
   });
   return Object.fromEntries(
