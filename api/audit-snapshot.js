@@ -58,7 +58,12 @@ export async function buildAuditSnapshot(options = {}) {
   const schema = buildSchema(repository);
   const summary = buildSummary(operations, repository);
   const balanceResult = buildBalances(operations);
-  const dailyBalanceResult = buildDailyCurrencyBalances(operations, repository.balances || []);
+  const periodDailyBalanceResult = buildDailyCurrencyBalances(operations, repository.balances || []);
+  const dailyBalanceResult = filterDailyBalanceResult(
+    buildDailyCurrencyBalances(repository.operations || [], repository.balances || []),
+    periodFilter,
+    periodDailyBalanceResult.summary.excluded_missing_amount_net_rows
+  );
   const balanceCoverage = buildBalanceCoverage(dailyBalanceResult);
   const paypal = buildPayPalSummary(operations);
   const exchange = buildExchangeSummary(operations);
@@ -258,6 +263,63 @@ function filterOperations(operations, periodFilter) {
     if (periodFilter.to && date > periodFilter.to) return false;
     return true;
   });
+}
+
+function filterDailyBalanceResult(result, periodFilter, excludedMissingAmountNetRows = 0) {
+  const rows = (result?.rows || []).filter((row) => {
+    const date = normalizeDate(row?.date);
+    if (!date) return false;
+    if (periodFilter.from && date < periodFilter.from) return false;
+    if (periodFilter.to && date > periodFilter.to) return false;
+    return true;
+  });
+  const status_counts = buildDailyBalanceStatusCounts(rows);
+  return {
+    rows,
+    actionable_rows: buildDailyBalanceActionableRows(rows),
+    summary: {
+      rows: rows.length,
+      mismatch_rows: status_counts.mismatch,
+      missing_opening_balance_rows: status_counts.missing_opening_balance,
+      missing_provider_balance_rows: status_counts.missing_provider_balance,
+      excluded_missing_amount_net_rows: Number(excludedMissingAmountNetRows || 0),
+      status_counts,
+    },
+  };
+}
+
+function buildDailyBalanceStatusCounts(rows) {
+  const counts = {
+    ok: 0,
+    mismatch: 0,
+    missing_opening_balance: 0,
+    missing_provider_balance: 0,
+    needs_verification: 0,
+  };
+  for (const row of rows || []) {
+    if (counts[row.status] !== undefined) counts[row.status] += 1;
+  }
+  return counts;
+}
+
+function buildDailyBalanceActionableRows(rows) {
+  const priority = {
+    mismatch: 0,
+    needs_verification: 1,
+    missing_opening_balance: 2,
+    missing_provider_balance: 3,
+  };
+  return (rows || [])
+    .filter((row) => row.status && row.status !== "ok")
+    .sort((left, right) => {
+      const leftPriority = priority[left.status] ?? 99;
+      const rightPriority = priority[right.status] ?? 99;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      if (left.date !== right.date) return left.date.localeCompare(right.date);
+      if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+      return left.currency.localeCompare(right.currency);
+    })
+    .slice(0, 10);
 }
 
 function buildSchema(repository) {

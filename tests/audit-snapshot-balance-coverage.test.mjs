@@ -224,3 +224,73 @@ test("audit snapshot reconciles end-of-April balance change against April 30 clo
   assert.equal(account.status, "ok");
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "ok");
 });
+
+test("audit snapshot uses prior ledger movement after the opening snapshot for single-day coverage", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-04-30", to: "2026-04-30" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-04-27",
+          operation: "expense",
+          fromChannel: "БАНК КАНАДА cad",
+          toChannel: "",
+          amount: "39.55",
+          amountUsd: "-29.27",
+          amountNet: "39.55",
+          currency: "CAD",
+          ledgerV2: {
+            date: "2026-04-27",
+            operation: "expense",
+            from_channel: "БАНК КАНАДА cad",
+            to_channel: "",
+            amount: "39.55",
+            amount_usd: "-29.27",
+            amount_net: "39.55",
+            currency: "CAD",
+            balance_amount: -39.55,
+          },
+        }),
+        operation({
+          date: "2026-04-30",
+          operation: "expense",
+          fromChannel: "БАНК КАНАДА cad",
+          toChannel: "",
+          amount: "29.8",
+          amountUsd: "-22.05",
+          amountNet: "29.8",
+          currency: "CAD",
+          ledgerV2: {
+            date: "2026-04-30",
+            operation: "expense",
+            from_channel: "БАНК КАНАДА cad",
+            to_channel: "",
+            amount: "29.8",
+            amount_usd: "-22.05",
+            amount_net: "29.8",
+            currency: "CAD",
+            balance_amount: -29.8,
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-04-25", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10078" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.daily_balances.rows.length, 1);
+  const account = snapshot.balance_coverage.accounts[0];
+  assert.equal(account.date, "2026-04-30");
+  assert.equal(account.opening_balance, 10038.45);
+  assert.equal(account.outflow, 29.8);
+  assert.equal(account.computed_closing_balance, 10008.65);
+  assert.equal(account.status, "missing_provider_balance");
+  assert.deepEqual(snapshot.balances.by_channel.map((row) => row.balance_amount), [-29.8]);
+});
