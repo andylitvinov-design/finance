@@ -1,5 +1,6 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
+import { buildBalanceCoverage } from "../server/balance-coverage-engine.js";
 import {
   countMissingAmountNetRows,
   isExchangeMissingAmountUsdRow,
@@ -58,6 +59,7 @@ export async function buildAuditSnapshot(options = {}) {
   const summary = buildSummary(operations, repository);
   const balanceResult = buildBalances(operations);
   const dailyBalanceResult = buildDailyCurrencyBalances(operations, repository.balances || []);
+  const balanceCoverage = buildBalanceCoverage(dailyBalanceResult);
   const paypal = buildPayPalSummary(operations);
   const exchange = buildExchangeSummary(operations);
   const sources = buildSourcesSummary(operations);
@@ -81,6 +83,15 @@ export async function buildAuditSnapshot(options = {}) {
       message: balanceResult.missing_amount_net_rows
         ? "Some balance rows are excluded because amount_net is missing."
         : "Balance uses amount_net-compatible normalized ledger values.",
+    },
+    {
+      name: "balance_coverage",
+      status: balanceCoverage.summary.mismatch || balanceCoverage.summary.missing_opening_balance || balanceCoverage.summary.missing_provider_balance || balanceCoverage.summary.needs_verification
+        ? "needs verification"
+        : "ok",
+      message: balanceCoverage.summary.accounts_with_movement
+        ? `Balance coverage: ${balanceCoverage.summary.fully_reconciled_accounts}/${balanceCoverage.summary.accounts_with_movement} account-currency rows reconciled.`
+        : "No account-currency movement rows found for the selected period.",
     },
     {
       name: "paypal_permissions",
@@ -117,6 +128,7 @@ export async function buildAuditSnapshot(options = {}) {
       actionable_rows: dailyBalanceResult.actionable_rows,
       summary: dailyBalanceResult.summary,
     },
+    balance_coverage: balanceCoverage,
     paypal,
     exchange: omitInternalWarnings(exchange),
     sources,
@@ -183,6 +195,10 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
         },
       },
     },
+    balance_coverage: buildBalanceCoverage({
+      rows: [],
+      summary: { excluded_missing_amount_net_rows: 0 },
+    }),
     paypal: {
       rows: 0,
       gross_total_usd: null,
