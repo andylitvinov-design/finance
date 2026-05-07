@@ -294,3 +294,152 @@ test("audit snapshot uses prior ledger movement after the opening snapshot for s
   assert.equal(account.status, "missing_provider_balance");
   assert.deepEqual(snapshot.balances.by_channel.map((row) => row.balance_amount), [-29.8]);
 });
+
+test("audit snapshot suggests amount_net fix for simple Monobank rows without changing balances shape", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-06", to: "2026-05-06" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-06",
+          toChannel: "монобанк грн",
+          amount: "253",
+          amountUsd: "5.77",
+          amountNet: "",
+          currency: "UAH",
+          source: "monobank",
+          rawSourceId: "EXu_R1-KOv6NC6HsBw",
+          ledgerV2: {
+            date: "2026-05-06",
+            to_channel: "монобанк грн",
+            amount: "253",
+            amount_usd: "5.77",
+            amount_net: "",
+            currency: "UAH",
+            balance_amount: null,
+            source: "monobank",
+            raw_source_id: "EXu_R1-KOv6NC6HsBw",
+          },
+        }),
+      ],
+      balances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balances.by_channel, []);
+  assert.equal(snapshot.balances.missing_amount_net_rows, 1);
+  assert.equal(snapshot.balance_fixes.missing_amount_net_rows.length, 1);
+  assert.deepEqual(snapshot.balance_fixes.missing_amount_net_rows[0], {
+    date: "2026-05-06",
+    operation: "income",
+    from_channel: "",
+    to_channel: "монобанк грн",
+    channel: "монобанк грн",
+    currency: "UAH",
+    amount: 253,
+    raw_source_id: "EXu_R1-KOv6NC6HsBw",
+    recommended_amount_net: 253,
+    reason: "amount_net is empty, so the row is excluded from balance reconciliation.",
+    action: "Set amount_net to 253",
+  });
+});
+
+test("audit snapshot does not recommend PayPal net autofill when fee or net is missing", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-06", to: "2026-05-06" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-06",
+          toChannel: "paypal usd",
+          amount: "100",
+          amountGross: "100",
+          amountFee: "",
+          amountNet: "",
+          currency: "USD",
+          source: "paypal",
+          rawSourceId: "PAYPAL-MISSING-FEE",
+          ledgerV2: {
+            date: "2026-05-06",
+            to_channel: "paypal usd",
+            amount: "100",
+            amount_gross: "100",
+            amount_fee: "",
+            amount_net: "",
+            currency: "USD",
+            source: "paypal",
+            raw_source_id: "PAYPAL-MISSING-FEE",
+          },
+        }),
+      ],
+      balances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const fix = snapshot.balance_fixes.missing_amount_net_rows[0];
+  assert.equal(fix.raw_source_id, "PAYPAL-MISSING-FEE");
+  assert.equal(fix.recommended_amount_net, null);
+  assert.equal(fix.action, "verify PayPal fee/net; do not auto-fill");
+});
+
+test("audit snapshot returns copyable missing Остатки rows from balance coverage", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-04-30", to: "2026-04-30" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-04-30",
+          toChannel: "монобанк грн",
+          amount: "1000",
+          amountNet: "1000",
+          currency: "UAH",
+          source: "monobank",
+          ledgerV2: {
+            date: "2026-04-30",
+            to_channel: "монобанк грн",
+            amount: "1000",
+            amount_net: "1000",
+            currency: "UAH",
+            balance_amount: 1000,
+            source: "monobank",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-04-29", channel: "монобанк грн", currency: "UAH", amount: "16363" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_fixes.missing_ostatki_rows, [
+    {
+      date: "2026-04-30",
+      channel: "монобанк грн",
+      currency: "UAH",
+      computed_closing_balance: 17363,
+      action: "Add factual closing balance to Остатки",
+    },
+  ]);
+  assert.equal(
+    snapshot.balance_fixes.copyable_ostatki_rows,
+    "date\tchannel\tcurrency\tamount\n2026-04-30\tмонобанк грн\tUAH\t17363"
+  );
+});

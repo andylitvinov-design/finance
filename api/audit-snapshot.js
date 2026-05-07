@@ -68,6 +68,7 @@ export async function buildAuditSnapshot(options = {}) {
   const paypal = buildPayPalSummary(operations);
   const exchange = buildExchangeSummary(operations);
   const sources = buildSourcesSummary(operations);
+  const balanceFixes = buildBalanceFixes(operations, balanceCoverage);
 
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...balanceResult.warnings);
@@ -134,6 +135,7 @@ export async function buildAuditSnapshot(options = {}) {
       summary: dailyBalanceResult.summary,
     },
     balance_coverage: balanceCoverage,
+    balance_fixes: balanceFixes,
     paypal,
     exchange: omitInternalWarnings(exchange),
     sources,
@@ -204,6 +206,11 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       rows: [],
       summary: { excluded_missing_amount_net_rows: 0 },
     }),
+    balance_fixes: {
+      missing_amount_net_rows: [],
+      missing_ostatki_rows: [],
+      copyable_ostatki_rows: "",
+    },
     paypal: {
       rows: 0,
       gross_total_usd: null,
@@ -406,6 +413,96 @@ function buildBalances(operations) {
   };
 }
 
+function buildBalanceFixes(operations, balanceCoverage) {
+  const missingAmountNetRows = (operations || [])
+    .filter((row) => !String(row?.ledgerV2?.amount_net ?? row?.amountNet ?? row?.amount_net ?? "").trim())
+    .map(buildMissingAmountNetFixRow)
+    .filter(Boolean);
+  const missingOstatkiRows = buildMissingOstatkiFixRows(balanceCoverage);
+  return {
+    missing_amount_net_rows: missingAmountNetRows,
+    missing_ostatki_rows: missingOstatkiRows,
+    copyable_ostatki_rows: buildCopyableOstatkiRows(missingOstatkiRows),
+  };
+}
+
+function buildMissingAmountNetFixRow(row) {
+  const ledger = row?.ledgerV2 || {};
+  const amount = parseNumber(ledger.amount ?? row.amount);
+  const source = normalizeSource(row);
+  const paypal = isPayPalRow(row);
+  const recommendedAmountNet = !paypal && amount !== null && isSimpleAmountNetSource(source) ? round(Math.abs(amount)) : null;
+  const action = paypal
+    ? "verify PayPal fee/net; do not auto-fill"
+    : recommendedAmountNet !== null
+      ? `Set amount_net to ${formatFixNumber(recommendedAmountNet)}`
+      : "Review amount_net manually before balance reconciliation";
+  return {
+    date: normalizeDate(ledger.date || row.date),
+    operation: getV2Operation(row),
+    from_channel: String(ledger.from_channel || row.fromChannel || "").trim(),
+    to_channel: String(ledger.to_channel || row.toChannel || "").trim(),
+    channel: getFixChannel(row),
+    currency: String(ledger.currency || row.currency || "").trim().toUpperCase(),
+    amount,
+    raw_source_id: String(
+      ledger.raw_source_id ||
+        row.rawSourceId ||
+        row.raw_source_id ||
+        ledger.external_id ||
+        row.externalId ||
+        row.external_id ||
+        ""
+    ).trim(),
+    recommended_amount_net: recommendedAmountNet,
+    reason: "amount_net is empty, so the row is excluded from balance reconciliation.",
+    action,
+  };
+}
+
+function isSimpleAmountNetSource(source) {
+  return ["monobank", "privatbank", "td_bank", "wise", "manual", "fact"].includes(source);
+}
+
+function getFixChannel(row) {
+  const ledger = row?.ledgerV2 || {};
+  const operation = getV2Operation(row);
+  if (operation === "expense") return String(ledger.from_channel || row.fromChannel || "").trim();
+  if (operation === "income") return String(ledger.to_channel || row.toChannel || "").trim();
+  return String(ledger.to_channel || row.toChannel || ledger.from_channel || row.fromChannel || "").trim();
+}
+
+function buildMissingOstatkiFixRows(balanceCoverage) {
+  return (balanceCoverage?.accounts || [])
+    .filter((row) => row?.status === "missing_provider_balance")
+    .map((row) => ({
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      computed_closing_balance: row.computed_closing_balance,
+      action: "Add factual closing balance to Остатки",
+    }))
+    .sort((left, right) => {
+      if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
+      if (left.channel !== right.channel) return String(left.channel || "").localeCompare(String(right.channel || ""));
+      return String(left.currency || "").localeCompare(String(right.currency || ""));
+    });
+}
+
+function buildCopyableOstatkiRows(rows) {
+  const copyableRows = (rows || []).filter((row) => row.computed_closing_balance !== null && row.computed_closing_balance !== undefined);
+  if (!copyableRows.length) return "";
+  return [
+    "date\tchannel\tcurrency\tamount",
+    ...copyableRows.map((row) => [
+      row.date || "",
+      row.channel || "",
+      row.currency || "",
+      formatFixNumber(row.computed_closing_balance),
+    ].join("\t")),
+  ].join("\n");
+}
+
 function buildPayPalSummary(operations) {
   const paypalRows = (operations || []).filter(isPayPalRow);
   let gross = 0;
@@ -586,6 +683,11 @@ function parseNumber(value) {
 
 function round(value) {
   return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function formatFixNumber(value) {
+  const rounded = round(value);
+  return Number.isFinite(rounded) ? String(rounded) : "";
 }
 
 function unique(values) {

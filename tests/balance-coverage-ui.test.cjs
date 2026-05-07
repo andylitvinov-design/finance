@@ -3,6 +3,65 @@ const assert = require("node:assert/strict");
 
 const ui = require("../balance-coverage-ui.js");
 
+class TestElement {
+  constructor(tagName) {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.parentElement = null;
+    this.className = "";
+    this.dataset = {};
+    this.attributes = {};
+    this.eventListeners = {};
+    this._textContent = "";
+    this._innerHTML = "";
+    this.type = "";
+    this.disabled = false;
+  }
+
+  appendChild(child) {
+    child.parentElement = this;
+    this.children.push(child);
+    return child;
+  }
+
+  append(...children) {
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  set textContent(value) {
+    this._textContent = String(value ?? "");
+  }
+
+  get textContent() {
+    return this._textContent + this.children.map((child) => child.textContent).join("");
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value ?? "");
+    this._textContent = this._innerHTML.replace(/<[^>]*>/g, "");
+  }
+
+  get innerHTML() {
+    return this._innerHTML;
+  }
+
+  setAttribute(name, value) {
+    this.attributes[name] = value;
+  }
+
+  addEventListener(type, listener) {
+    this.eventListeners[type] = listener;
+  }
+}
+
+function createTestDocument() {
+  return {
+    createElement(tagName) {
+      return new TestElement(tagName);
+    },
+  };
+}
+
 test("balance coverage UI maps statuses to user-facing labels and actions", () => {
   assert.equal(ui.getStatusLabel("ok"), "OK");
   assert.equal(ui.getStatusLabel("mismatch"), "Расхождение");
@@ -83,4 +142,59 @@ test("balance coverage UI keeps same channel with multiple currencies separate",
     ]
   );
   assert.equal(rows.length, 3);
+});
+
+test("balance coverage UI renders actionable fixes and copy button", () => {
+  const block = ui.renderBalanceCoverageBlock(createTestDocument(), {
+    balance_coverage: {
+      summary: {},
+      accounts: [],
+      actionable_accounts: [],
+    },
+    balance_fixes: {
+      missing_amount_net_rows: [
+        {
+          date: "2026-05-06",
+          channel: "монобанк грн",
+          currency: "UAH",
+          amount: 253,
+          raw_source_id: "EXu_R1-KOv6NC6HsBw",
+          recommended_amount_net: 253,
+          action: "Set amount_net to 253",
+        },
+      ],
+      missing_ostatki_rows: [
+        {
+          date: "2026-04-30",
+          channel: "монобанк грн",
+          currency: "UAH",
+          computed_closing_balance: 17363,
+          action: "Add factual closing balance to Остатки",
+        },
+      ],
+      copyable_ostatki_rows: "date\tchannel\tcurrency\tamount\n2026-04-30\tмонобанк грн\tUAH\t17363",
+    },
+  });
+
+  assert.match(block.textContent, /Что нужно исправить/);
+  assert.match(block.textContent, /Скопировать строки для Остатки/);
+  assert.match(block.textContent, /EXu_R1-KOv6NC6HsBw/);
+  assert.match(block.textContent, /17363/);
+});
+
+test("balance coverage UI shows empty success message when there are no required fixes", () => {
+  const block = ui.renderBalanceCoverageBlock(createTestDocument(), {
+    balance_coverage: {
+      summary: {},
+      accounts: [],
+      actionable_accounts: [],
+    },
+    balance_fixes: {
+      missing_amount_net_rows: [],
+      missing_ostatki_rows: [],
+      copyable_ostatki_rows: "",
+    },
+  });
+
+  assert.match(block.textContent, /Нет обязательных исправлений для сверки остатков\./);
 });

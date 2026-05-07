@@ -85,6 +85,7 @@
     }
 
     section.appendChild(renderCoverageSummary(doc, coverage.summary || {}));
+    section.appendChild(renderBalanceFixesBlock(doc, snapshot?.balance_fixes || {}));
 
     const rows = buildBalanceCoverageTableValues(snapshot);
     if (rows.length <= 1) {
@@ -106,6 +107,91 @@
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap balance-coverage-table-wrap";
     wrap.appendChild(renderPlainCoverageTable(doc, rows));
+    section.appendChild(wrap);
+    return section;
+  }
+
+  function renderBalanceFixesBlock(doc, fixes) {
+    const block = doc.createElement("div");
+    block.className = "balance-fixes-block";
+
+    const title = doc.createElement("h4");
+    title.textContent = "Что нужно исправить";
+    block.appendChild(title);
+
+    const amountNetRows = fixes?.missing_amount_net_rows || [];
+    const ostatkiRows = fixes?.missing_ostatki_rows || [];
+    if (!amountNetRows.length && !ostatkiRows.length) {
+      const empty = doc.createElement("div");
+      empty.className = "finance-status";
+      empty.textContent = "Нет обязательных исправлений для сверки остатков.";
+      block.appendChild(empty);
+      return block;
+    }
+
+    if (amountNetRows.length) {
+      block.appendChild(renderFixSubsection(
+        doc,
+        "Ledger amount_net fixes",
+        [
+          "Дата",
+          "Счёт",
+          "Валюта",
+          "Сумма",
+          "raw_source_id",
+          "amount_net",
+          "Что сделать",
+        ],
+        amountNetRows.map((row) => [
+          row.date || "—",
+          row.channel || "—",
+          row.currency || "—",
+          formatCoverageNumber(row.amount),
+          row.raw_source_id || "—",
+          formatCoverageNumber(row.recommended_amount_net),
+          row.action || "—",
+        ])
+      ));
+    }
+
+    if (ostatkiRows.length) {
+      const copyButton = doc.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "secondary";
+      copyButton.textContent = "Скопировать строки для Остатки";
+      copyButton.disabled = !String(fixes?.copyable_ostatki_rows || "").trim();
+      copyButton.addEventListener("click", async () => {
+        const text = String(fixes?.copyable_ostatki_rows || "");
+        if (!text || !root?.navigator?.clipboard?.writeText) return;
+        await root.navigator.clipboard.writeText(text);
+      });
+      block.appendChild(copyButton);
+      block.appendChild(renderFixSubsection(
+        doc,
+        "Missing Остатки rows",
+        ["Дата", "Счёт", "Валюта", "Сумма для Остатки"],
+        ostatkiRows.map((row) => [
+          row.date || "—",
+          row.channel || "—",
+          row.currency || "—",
+          formatCoverageNumber(row.computed_closing_balance),
+        ])
+      ));
+    }
+
+    return block;
+  }
+
+  function renderFixSubsection(doc, titleText, header, rows) {
+    const section = doc.createElement("div");
+    section.className = "balance-fixes-subsection";
+    const title = doc.createElement("div");
+    title.className = "tab-note";
+    title.textContent = titleText;
+    section.appendChild(title);
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap balance-fixes-table-wrap";
+    wrap.appendChild(renderPlainCoverageTable(doc, [header, ...rows]));
     section.appendChild(wrap);
     return section;
   }
