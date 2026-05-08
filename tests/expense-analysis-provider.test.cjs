@@ -1464,6 +1464,116 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   ]);
 });
 
+test("expense analysis order base can use the same selected-period total as top metrics", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["пейпал дол"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: { "пейпал дол": 824 },
+      accruedPlusCountByChannel: { "пейпал дол": 3 },
+    }),
+    buildLedgerIncomeCountSummaryByChannel: () => ({ autoByChannel: {}, manualByChannel: {}, screenshotByChannel: {} }),
+    sumManualFinanceFieldUsdNumber() {
+      return 10;
+    },
+    getManualFinancePlannedExpenseUsdNumber() {
+      return 100;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [{ channel: "пейпал дол", serviceIncome: "10", business: "100" }],
+    movementValues: [],
+    realIncomeSummaryByChannel: {},
+    providerExpenseByChannel: {},
+    usdRateLookup: {},
+    ownerOrderBaseUsd: 937.3,
+    ownerOrderShare30Pct: 281.19,
+  }));
+
+  assert.equal(summary.localOrdersPlanUsd, 824);
+  assert.equal(summary.unassignedOrdersPlanUsd, 113.3);
+  assert.equal(summary.incomeTotals.ordersPlanUsd, 937.3);
+  assert.equal(summary.incomeTotals.plannedUsd, 947.3);
+  assert.equal(summary.ownerOrderShare30Pct, 281.19);
+  assert.deepEqual(summary.rows.find((row) => row[0] === "заказы без канала"), [
+    "заказы без канала",
+    "113,3000",
+    "0,0000",
+    "113,3000",
+    "0,0000",
+    "113,3000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "0",
+    "0",
+    "0",
+    "0",
+  ]);
+  assert.equal(summary.rows.at(-1)[1], "937,3000");
+});
+
+test("expense analysis channel summary receives top metrics order base for owner profit", () => {
+  const calls = [];
+  const context = {
+    elements: { startDate: { value: "2026-05-01" }, endDate: { value: "2026-05-08" } },
+    state: {
+      aggregatedManualRange: null,
+      manualTransfers: { data: null },
+      manualFinance: { data: null },
+      data: { realIncome: { summaryByChannel: {} }, tabs: { movement: { values: [] } } },
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim();
+    },
+    getCurrentAnalyticsManualRows: () => [],
+    buildManualFinanceUsdRateLookup: () => ({}),
+    getExpenseAnalysisLedgerRows: () => [],
+    mergeExpenseAnalysisRealIncomeSummaryByChannel: (summary) => summary,
+    getExpenseAnalysisProviderExpenseByChannel: () => ({}),
+    calculateTransferBalance: () => ({ transferIn: 0, transferOut: 0, transferBalance: 0 }),
+    buildTopMetricsSummary: () => ({ totalOrders: 937.3, ownerOrderShare30Pct: 281.19 }),
+    buildExpenseAnalysisChannelSummary(args) {
+      calls.push(args);
+      return {};
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
+    "this.getExpenseAnalysisChannelSummary = getExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  context.getExpenseAnalysisChannelSummary();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].ownerOrderBaseUsd, 937.3);
+  assert.equal(calls[0].ownerOrderShare30Pct, 281.19);
+});
+
 test("mixed imported PayPal and YooMoney income keeps non-zero income and expense totals in channel summary", () => {
   const apiContext = createApiLedgerRealIncomeContext();
   const mergedRealIncome = plain(apiContext.mergeLedgerRealIncomeFallback({
