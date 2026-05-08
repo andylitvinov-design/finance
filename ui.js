@@ -1012,6 +1012,7 @@ function getExpenseAnalysisChannelSummary() {
     ledgerRealIncomeSummary,
     selectedPeriod
   );
+  const topMetrics = typeof buildTopMetricsSummary === "function" ? buildTopMetricsSummary() : {};
   return buildExpenseAnalysisChannelSummary({
     manualRows,
     movementValues: state.data?.tabs?.movement?.values || [],
@@ -1021,7 +1022,9 @@ function getExpenseAnalysisChannelSummary() {
     usdRateLookup,
     transferBalance: typeof calculateTransferBalance === "function"
       ? calculateTransferBalance(ledgerRows, selectedPeriod)
-      : { transferIn: 0, transferOut: 0, transferBalance: 0 }
+      : { transferIn: 0, transferOut: 0, transferBalance: 0 },
+    ownerOrderBaseUsd: topMetrics.totalOrders,
+    ownerOrderShare30Pct: topMetrics.ownerOrderShare30Pct
   });
 }
 

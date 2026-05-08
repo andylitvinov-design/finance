@@ -979,7 +979,9 @@ function buildExpenseAnalysisChannelSummary({
   realIncomeSummaryByChannel = {},
   providerExpenseByChannel = {},
   usdRateLookup = { byChannel: {}, byCurrency: {} },
-  transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 }
+  transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 },
+  ownerOrderBaseUsd = "",
+  ownerOrderShare30Pct = ""
 } = {}) {
   const rows = [[
     "канал",
@@ -1053,6 +1055,41 @@ function buildExpenseAnalysisChannelSummary({
     incomeCountTotals.screenshot += screenshotIncomeCount;
   });
 
+  const localOrdersPlanUsd = roundExpenseAnalysisAmount(incomeTotals.ordersPlanUsd);
+  const parsedOwnerOrderBaseUsd = parseLooseNumber(ownerOrderBaseUsd);
+  const hasOwnerOrderBase = String(ownerOrderBaseUsd ?? "").trim() !== "" && Number.isFinite(parsedOwnerOrderBaseUsd);
+  const unifiedOrdersPlanUsd = hasOwnerOrderBase
+    ? roundExpenseAnalysisAmount(parsedOwnerOrderBaseUsd)
+    : localOrdersPlanUsd;
+  const unassignedOrdersPlanUsd = roundExpenseAnalysisAmount(unifiedOrdersPlanUsd - localOrdersPlanUsd);
+  if (unassignedOrdersPlanUsd > 0.0001) {
+    rows.push([
+      "заказы без канала",
+      formatSheetNumber(unassignedOrdersPlanUsd),
+      formatSheetNumber(0),
+      formatSheetNumber(unassignedOrdersPlanUsd),
+      formatSheetNumber(0),
+      formatSheetNumber(unassignedOrdersPlanUsd),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
+      "0",
+      "0",
+      "0",
+      "0"
+    ]);
+  }
+  if (hasOwnerOrderBase) {
+    incomeTotals.ordersPlanUsd = unifiedOrdersPlanUsd;
+    incomeTotals.plannedUsd = roundExpenseAnalysisAmount(unifiedOrdersPlanUsd + incomeTotals.servicePlanUsd);
+    incomeTotals.differenceUsd = roundExpenseAnalysisAmount(incomeTotals.plannedUsd - incomeTotals.realUsd);
+  }
+  const parsedOwnerOrderShare30Pct = parseLooseNumber(ownerOrderShare30Pct);
+  const hasOwnerOrderShare = String(ownerOrderShare30Pct ?? "").trim() !== "" && Number.isFinite(parsedOwnerOrderShare30Pct);
+  const nextOwnerOrderShare30Pct = hasOwnerOrderShare
+    ? roundExpenseAnalysisAmount(parsedOwnerOrderShare30Pct)
+    : roundExpenseAnalysisAmount(incomeTotals.ordersPlanUsd * 0.3);
+
   rows.push([
     MANUAL_FINANCE_TOTAL_LABEL,
     formatSheetNumber(incomeTotals.ordersPlanUsd),
@@ -1094,7 +1131,9 @@ function buildExpenseAnalysisChannelSummary({
       transferOut: roundExpenseAnalysisAmount(transferBalance.transferOut),
       transferBalance: roundExpenseAnalysisAmount(transferBalance.transferBalance)
     },
-    ownerOrderShare30Pct: roundExpenseAnalysisAmount(incomeTotals.plannedUsd * 0.3)
+    ownerOrderShare30Pct: nextOwnerOrderShare30Pct,
+    localOrdersPlanUsd,
+    unassignedOrdersPlanUsd
   };
 }
 
