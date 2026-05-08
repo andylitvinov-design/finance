@@ -899,6 +899,7 @@ function isLedgerProviderIncomeSource(row) {
     "yoomoney",
     "youmoney",
     "yandex",
+    "monobank",
     "wise",
     "transferwise"
   ].includes(normalizedSource)) return true;
@@ -910,7 +911,7 @@ function isLedgerProviderIncomeSource(row) {
     row?.ledgerV2?.raw_source_id ||
     ""
   ).trim().toLowerCase();
-  return /^(paypal|wise|yoomoney|youmoney|yandex|tdbank|td_bank|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|mcp):/.test(rawSourceId);
 }
 
 function getNormalizedLedgerFactOperation(row) {
