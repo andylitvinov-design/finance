@@ -3759,6 +3759,7 @@ function getExpenseOperationsRows() {
   const serverLedgerV2Rows = Array.isArray(state.data?.manual?.ledgerV2Rows) ? state.data.manual.ledgerV2Rows : [];
   const directRows = Array.isArray(state.manualFinance?.data?.ledgerRows) ? state.manualFinance.data.ledgerRows : [];
   const sourceRows = serverRows.length ? serverRows : (serverLedgerV2Rows.length ? serverLedgerV2Rows : directRows);
+  const serverManualOverlay = Boolean(serverRows.length || serverLedgerV2Rows.length);
   return sourceRows.map((row, index) => ({
     id: String(row.id || row.rawSourceId || row.raw_source_id || `${row.sheetRowNumber || row.date || "row"}-${index}`),
     date: normalizeIncomingSheetDateValue(row.date || ""),
@@ -3780,8 +3781,17 @@ function getExpenseOperationsRows() {
     rawSourceId: String(row.rawSourceId || row.raw_source_id || "").trim(),
     externalId: String(row.externalId || row.external_id || row.ledgerV2?.external_id || row.rawSourceId || row.raw_source_id || "").trim(),
     transferGroupId: String(row.transferGroupId || row.transfer_group_id || "").trim(),
-    sheetRowNumber: Number(row.sheetRowNumber || 0)
+    sheetRowNumber: Number(row.sheetRowNumber || 0),
+    serverManualOverlay: serverManualOverlay
   }));
+}
+
+function isServerManualOverlayOperationRow(row) {
+  return Boolean(row?.serverManualOverlay);
+}
+
+function canEditExpenseOperationRow(row) {
+  return Boolean(row?.sheetRowNumber && (hasConfiguredManualFinanceEndpoint() || isServerManualOverlayOperationRow(row)));
 }
 
 function filterExpenseOperationsRows(rows, filters) {
@@ -3887,13 +3897,13 @@ function renderExpenseOperationsBlock() {
     editButton.type = "button";
     editButton.className = "ghost";
     editButton.textContent = "Редактировать";
-    editButton.disabled = !hasConfiguredManualFinanceEndpoint() || !row.sheetRowNumber;
+    editButton.disabled = !canEditExpenseOperationRow(row);
     editButton.addEventListener("click", () => beginExpenseOperationEdit(row));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "ghost";
     deleteButton.textContent = "Удалить";
-    deleteButton.disabled = !hasConfiguredManualFinanceEndpoint() || !row.sheetRowNumber;
+    deleteButton.disabled = !canEditExpenseOperationRow(row);
     deleteButton.addEventListener("click", async () => {
       await deleteExpenseOperationRow(row);
     });
@@ -4141,7 +4151,9 @@ async function saveExpenseOperationEdit(row) {
   state.expenseAccounting.loading = true;
   renderTabs();
   try {
-    const response = await updateManualLedgerRowDirect(state.expenseAccounting.operationDraft);
+    const response = isServerManualOverlayOperationRow(row)
+      ? await postLedgerOperation("update", state.expenseAccounting.operationDraft)
+      : await updateManualLedgerRowDirect(state.expenseAccounting.operationDraft);
     state.expenseAccounting.editingSheetRowNumber = 0;
     state.expenseAccounting.operationDraft = null;
     await loadDashboardData();
@@ -4163,7 +4175,9 @@ async function deleteExpenseOperationRow(row) {
   state.expenseAccounting.loading = true;
   renderTabs();
   try {
-    const response = await deleteManualLedgerRowDirect(row.sheetRowNumber);
+    const response = isServerManualOverlayOperationRow(row)
+      ? await postLedgerOperation("delete", { sheetRowNumber: row.sheetRowNumber })
+      : await deleteManualLedgerRowDirect(row.sheetRowNumber);
     if (state.expenseAccounting.editingSheetRowNumber === row.sheetRowNumber) {
       state.expenseAccounting.editingSheetRowNumber = 0;
       state.expenseAccounting.operationDraft = null;
@@ -4176,6 +4190,19 @@ async function deleteExpenseOperationRow(row) {
     state.expenseAccounting.loading = false;
     renderTabs();
   }
+}
+
+async function postLedgerOperation(action, payload = {}) {
+  const response = await fetch("./api/ledger-operation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, action }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result?.ok === false) {
+    throw new Error(result?.error || `Ledger operation failed with HTTP ${response.status}`);
+  }
+  return result;
 }
 
 function setExpenseAccountingStatus(message, isError = false) {

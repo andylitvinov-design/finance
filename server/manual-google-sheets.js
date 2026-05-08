@@ -22,6 +22,8 @@ const SHEETS_API_BASE = "https://sheets.googleapis.com/v4";
 
 const EXPENSE_SHEET_NAME = "Расходы";
 const LEDGER_SHEET_NAME = "Ledger";
+export const MANUAL_LEDGER_SHEET_NAME = LEDGER_SHEET_NAME;
+export const SHEETS_API_BASE_URL = SHEETS_API_BASE;
 const BALANCE_SHEET_NAME = "Остатки";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
@@ -189,13 +191,22 @@ function hasPemEnvelope(privateKey) {
     && privateKey.endsWith("-----END PRIVATE KEY-----");
 }
 
-async function requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl }) {
+export async function getManualGoogleSheetsAccessToken({ scope = SHEETS_SCOPE, fetchImpl = fetch } = {}) {
+  const clientEmail = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").trim();
+  const privateKey = normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
+  if (!clientEmail || !privateKey) {
+    throw new Error("Google service account credentials are not configured.");
+  }
+  return requestServiceAccountAccessToken({ clientEmail, privateKey, scope, fetchImpl });
+}
+
+async function requestServiceAccountAccessToken({ clientEmail, privateKey, scope = SHEETS_SCOPE, fetchImpl }) {
   const issuedAt = Math.floor(Date.now() / 1000);
   const assertion = signJwt(
     { alg: "RS256", typ: "JWT" },
     {
       iss: clientEmail,
-      scope: SHEETS_SCOPE,
+      scope,
       aud: OAUTH_TOKEN_URL,
       exp: issuedAt + 3600,
       iat: issuedAt,
@@ -408,7 +419,7 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
     updatedAt: findHeaderIndex(header, ["updated_at", "updated at"]),
   };
   return rows
-    .map((row) => {
+    .map((row, rowIndex) => {
       const category = normalizeOperationCategory(row[indexes.category]);
       let operation = normalizeOperation(row[indexes.operation], category);
       const rawOperation = normalizeLookupText(row[indexes.operation]);
@@ -416,6 +427,7 @@ function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCu
         operation = parseNumberString(row[indexes.amount]) > 0 ? "exchange_in" : "exchange_out";
       }
       const operationRow = {
+        sheetRowNumber: rowIndex + 2,
         date: normalizeDate(row[indexes.date]),
         operation,
         fromChannel: canonicalManualFinanceChannel(row[indexes.fromChannel]),
