@@ -32,6 +32,51 @@
     return Array.isArray(values) ? values : [];
   }
 
+  function normalizeDateKey(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    const displayMatch = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+    if (displayMatch) {
+      return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
+    }
+    return raw;
+  }
+
+  function getSelectedPeriod() {
+    const startDate = root.elements?.startDate?.value || root.document?.querySelector?.("#startDate")?.value || "";
+    const endDate = root.elements?.endDate?.value || root.document?.querySelector?.("#endDate")?.value || "";
+    return {
+      startDate: normalizeDateKey(startDate),
+      endDate: normalizeDateKey(endDate),
+    };
+  }
+
+  function isDateInSelectedPeriod(value) {
+    const date = normalizeDateKey(value);
+    const { startDate, endDate } = getSelectedPeriod();
+    if (!date || (!startDate && !endDate)) return true;
+    if (startDate && date < startDate) return false;
+    if (endDate && date > endDate) return false;
+    return true;
+  }
+
+  function buildTransferTableFromObjects(rows) {
+    return [
+      ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+      ...getRows(rows).map((row) => [
+        row?.transferDate || row?.date || "",
+        row?.who || row?.fromAccount || "",
+        row?.amount || "",
+        row?.currency || row?.localCurrency || "",
+        row?.channel || row?.destination || row?.toAccount || "",
+        row?.rate || "",
+        row?.usdAmount || row?.amountUsd || row?.amount_usd || "",
+      ]),
+    ];
+  }
+
   function calculateUsdTotalFromPayoutTable(values) {
     const rows = getRows(values);
     if (!rows.length) return 0;
@@ -61,8 +106,11 @@
     const rateIndex = findHeaderIndexByAliases(header, ["курс", "КУРС ПЕРЕВОДА"]);
     if (usdIndex === -1 && (amountIndex === -1 || rateIndex === -1)) return 0;
 
+    const dateIndex = findHeaderIndexByAliases(header, ["дата перевода", "DATE", "date"]);
+
     return rows.slice(1).reduce((sum, row) => {
       if (!row || isTotalRow(row)) return sum;
+      if (dateIndex !== -1 && !isDateInSelectedPeriod(row[dateIndex])) return sum;
       if (destinationIndex !== -1 && !String(row[destinationIndex] || "").trim()) return sum;
       const usd = usdIndex !== -1 ? parseLooseNumber(row[usdIndex]) : 0;
       if (usd) return sum + Math.abs(usd);
@@ -78,7 +126,21 @@
   }
 
   root.calculateCurrentPayoutTransferUsdTotal = function calculateCurrentPayoutTransferUsdTotal() {
-    return calculatePayoutTransferUsdTotal(root.state?.data?.tabs?.savings?.values || []);
+    const candidateTables = [
+      buildTransferTableFromObjects(root.state?.manualTransfers?.data?.transferRows || []),
+      buildTransferTableFromObjects(root.state?.aggregatedManualRange?.transferRows || []),
+      root.state?.data?.tabs?.payouts?.closedFactTransfers?.length
+        ? [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"], ...root.state.data.tabs.payouts.closedFactTransfers]
+        : [],
+      buildTransferTableFromObjects(root.state?.manualFinance?.data?.transferRows || []),
+      buildTransferTableFromObjects(root.state?.data?.manual?.transfers || []),
+      root.state?.data?.tabs?.savings?.values || [],
+    ];
+    for (const table of candidateTables) {
+      const total = calculatePayoutTransferUsdTotal(table);
+      if (total) return total;
+    }
+    return 0;
   };
 
   root.buildTopMetricsSummary = function buildTopMetricsSummaryWithPayoutTransfers() {
