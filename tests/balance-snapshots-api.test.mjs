@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildBalanceSnapshotsSnapshot,
   buildBalanceSnapshotsSummary,
-} from "../api/balance-snapshots.js";
+} from "../server/balance-snapshots.js";
 
 test("balance snapshots summary returns dates and account-currency coverage without leaking amounts", () => {
   const summary = buildBalanceSnapshotsSummary([
