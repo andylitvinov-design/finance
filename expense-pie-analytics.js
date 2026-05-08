@@ -244,14 +244,14 @@
   }
 
   function installExpensePieAnalytics() {
-    const currentRenderExpenseAnalysis = typeof renderExpenseAnalysis === "function"
-      ? renderExpenseAnalysis
-      : root.renderExpenseAnalysis;
-    if (typeof currentRenderExpenseAnalysis !== "function") return false;
-    if (currentRenderExpenseAnalysis.__expensePieAnalyticsInstalled) return true;
-    const originalRenderExpenseAnalysis = currentRenderExpenseAnalysis;
-    const patchedRenderExpenseAnalysis = function renderExpenseAnalysisWithPie() {
-      const block = originalRenderExpenseAnalysis.apply(this, arguments);
+    const currentRenderExpenseFinancialAnalysis = typeof renderExpenseFinancialAnalysis === "function"
+      ? renderExpenseFinancialAnalysis
+      : root.renderExpenseFinancialAnalysis;
+    if (typeof currentRenderExpenseFinancialAnalysis !== "function") return false;
+    if (currentRenderExpenseFinancialAnalysis.__expensePieAnalyticsInstalled) return true;
+    const originalRenderExpenseFinancialAnalysis = currentRenderExpenseFinancialAnalysis;
+    const patchedRenderExpenseFinancialAnalysis = function renderExpenseFinancialAnalysisWithPie() {
+      const block = originalRenderExpenseFinancialAnalysis.apply(this, arguments);
       const pie = renderExpensePieAnalytics();
       const summaryGrid = block.querySelector(".expense-summary-grid");
       if (summaryGrid?.parentNode) {
@@ -261,11 +261,11 @@
       }
       return block;
     };
-    patchedRenderExpenseAnalysis.__expensePieAnalyticsInstalled = true;
-    if (typeof renderExpenseAnalysis === "function") {
-      renderExpenseAnalysis = patchedRenderExpenseAnalysis;
+    patchedRenderExpenseFinancialAnalysis.__expensePieAnalyticsInstalled = true;
+    if (typeof renderExpenseFinancialAnalysis === "function") {
+      renderExpenseFinancialAnalysis = patchedRenderExpenseFinancialAnalysis;
     }
-    root.renderExpenseAnalysis = patchedRenderExpenseAnalysis;
+    root.renderExpenseFinancialAnalysis = patchedRenderExpenseFinancialAnalysis;
     return true;
   }
 
