@@ -1,5 +1,5 @@
 // Additive guard for Учёт расходов → анализ финансов.
-// Keeps Ledger/provider expense fallback and income counters scoped to the currently selected date range.
+// Keeps Ledger/provider real-income, expense fallbacks, and income counters scoped to the selected date range.
 (function applyExpenseAnalysisPeriodFix() {
   if (typeof window === "undefined") return;
 
@@ -54,39 +54,37 @@
     return true;
   }
 
-  function scopeRowsToSelectedPeriod(rows, options = {}) {
-    const period = getSelectedPeriod(options || {});
+  function scopeRowsToPeriod(rows, period) {
     return Array.isArray(rows) && (period.startDate || period.endDate)
       ? rows.filter((row) => isRowInPeriod(row, period))
       : rows;
   }
 
-  function patchLedgerProviderExpenseByChannel() {
-    const original = window.buildLedgerProviderExpenseByChannel;
-    if (typeof original !== "function" || original.__expenseAnalysisPeriodGuard) return;
+  function wrapPeriodScopedSummary(name, guardFlag, optionsArgOffset = 1) {
+    const original = window[name];
+    if (typeof original !== "function" || original[guardFlag]) return;
 
-    function patchedBuildLedgerProviderExpenseByChannel(rows, rateLookup, options = {}, ...rest) {
-      return original.call(this, scopeRowsToSelectedPeriod(rows, options), rateLookup, options, ...rest);
+    function periodScopedSummary(rows, ...args) {
+      const periodOptions = args[optionsArgOffset] || {};
+      const period = getSelectedPeriod(periodOptions);
+      const scopedRows = scopeRowsToPeriod(rows, period);
+      return original.call(this, scopedRows, ...args);
     }
 
-    patchedBuildLedgerProviderExpenseByChannel.__expenseAnalysisPeriodGuard = true;
-    patchedBuildLedgerProviderExpenseByChannel.__original = original;
-    window.buildLedgerProviderExpenseByChannel = patchedBuildLedgerProviderExpenseByChannel;
+    periodScopedSummary[guardFlag] = true;
+    periodScopedSummary.__original = original;
+    window[name] = periodScopedSummary;
   }
 
-  function patchLedgerIncomeCountSummaryByChannel() {
-    const original = window.buildLedgerIncomeCountSummaryByChannel;
-    if (typeof original !== "function" || original.__expenseAnalysisPeriodGuard) return;
+  wrapPeriodScopedSummary("buildLedgerProviderExpenseByChannel", "__expenseAnalysisPeriodGuard", 1);
+  wrapPeriodScopedSummary("buildLedgerRealIncomeSummaryByChannel", "__expenseAnalysisRealIncomePeriodGuard", 1);
+  wrapPeriodScopedSummary("buildLedgerIncomeCountSummaryByChannel", "__expenseAnalysisIncomeCountPeriodGuard", 0);
 
-    function patchedBuildLedgerIncomeCountSummaryByChannel(rows, options = {}, ...rest) {
-      return original.call(this, scopeRowsToSelectedPeriod(rows, options), options, ...rest);
-    }
-
-    patchedBuildLedgerIncomeCountSummaryByChannel.__expenseAnalysisPeriodGuard = true;
-    patchedBuildLedgerIncomeCountSummaryByChannel.__original = original;
-    window.buildLedgerIncomeCountSummaryByChannel = patchedBuildLedgerIncomeCountSummaryByChannel;
-  }
-
-  patchLedgerProviderExpenseByChannel();
-  patchLedgerIncomeCountSummaryByChannel();
+  window.EzohataExpenseAnalysisPeriodFix = {
+    normalizeDateValue,
+    getRowDate,
+    getSelectedPeriod,
+    isRowInPeriod,
+    scopeRowsToPeriod,
+  };
 })();

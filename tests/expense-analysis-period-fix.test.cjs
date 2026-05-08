@@ -41,10 +41,44 @@ test("expense analysis period guard filters out-of-range provider expense rows",
   assert.deepEqual(seenRows.map((row) => row.id), ["inside"]);
 });
 
-test("expense analysis period guard prefers explicit options over DOM dates", () => {
+test("expense analysis period guard filters out-of-range real income rows", () => {
+  const seenRows = [];
+  const context = {
+    window: {
+      buildLedgerRealIncomeSummaryByChannel(rows) {
+        seenRows.push(...rows);
+        return Object.fromEntries(rows.map((row) => [row.id, row.amountUsd]));
+      },
+      buildLedgerProviderExpenseByChannel(rows) {
+        return rows;
+      },
+    },
+    document: {
+      getElementById(id) {
+        return { value: id === "startDate" ? "2026-05-01" : "2026-05-05" };
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+
+  const result = context.window.buildLedgerRealIncomeSummaryByChannel([
+    { id: "wise-before", date: "2026-04-30", amountUsd: 206, source: "wise", toChannel: "трансервайз дол" },
+    { id: "wise-inside", date: "2026-05-03", amountUsd: 113.87, source: "wise", toChannel: "трансервайз дол" },
+    { id: "wise-after", date: "2026-05-06", amountUsd: 25, source: "wise", toChannel: "трансервайз дол" },
+  ], {}, {});
+
+  assert.deepEqual(Object.keys(result), ["wise-inside"]);
+  assert.deepEqual(seenRows.map((row) => row.id), ["wise-inside"]);
+});
+
+test("expense analysis period guard prefers explicit options over DOM dates for income and expense", () => {
   const context = {
     window: {
       buildLedgerProviderExpenseByChannel(rows) {
+        return rows.map((row) => row.id);
+      },
+      buildLedgerRealIncomeSummaryByChannel(rows) {
         return rows.map((row) => row.id);
       },
     },
@@ -57,10 +91,38 @@ test("expense analysis period guard prefers explicit options over DOM dates", ()
   vm.createContext(context);
   vm.runInContext(script, context);
 
-  const result = context.window.buildLedgerProviderExpenseByChannel([
+  const rows = [
     { id: "dom-period", date: "2026-05-01" },
     { id: "explicit-period", date: "2026-04-30" },
-  ], {}, { startDate: "2026-04-29", endDate: "2026-04-30" });
+  ];
+  const options = { startDate: "2026-04-29", endDate: "2026-04-30" };
 
-  assert.deepEqual(result, ["explicit-period"]);
+  assert.deepEqual(context.window.buildLedgerProviderExpenseByChannel(rows, {}, options), ["explicit-period"]);
+  assert.deepEqual(context.window.buildLedgerRealIncomeSummaryByChannel(rows, {}, options), ["explicit-period"]);
+});
+
+test("expense analysis period guard exposes helper and supports alternate date fields", () => {
+  const context = {
+    window: {
+      buildLedgerProviderExpenseByChannel(rows) {
+        return rows.map((row) => row.id);
+      },
+      buildLedgerRealIncomeSummaryByChannel(rows) {
+        return rows.map((row) => row.id);
+      },
+    },
+    document: {
+      getElementById(id) {
+        return { value: id === "startDate" ? "2026-05-01" : "2026-05-05" };
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+
+  assert.deepEqual(context.window.buildLedgerProviderExpenseByChannel([
+    { id: "snake", operation_date: "2026-05-02" },
+    { id: "posted", posted_date: "2026-05-06" },
+  ], {}, {}), ["snake"]);
+  assert.equal(typeof context.window.EzohataExpenseAnalysisPeriodFix.scopeRowsToPeriod, "function");
 });
