@@ -21,6 +21,34 @@ global.getManualFinanceFieldUsdNumber = (row, key, rateLookup) => {
 
 const analytics = require("../expense-pie-analytics.js");
 
+function createTestElement(tagName) {
+  return {
+    tagName,
+    children: [],
+    className: "",
+    textContent: "",
+    style: { setProperty(key, value) { this[key] = value; } },
+    appendChild(child) {
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    },
+    insertBefore(child, nextChild) {
+      child.parentNode = this;
+      const index = this.children.indexOf(nextChild);
+      if (index === -1) this.children.push(child);
+      else this.children.splice(index, 0, child);
+      return child;
+    },
+    setAttribute() {},
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector !== ".expense-summary-grid") return null;
+      return this.children.find((child) => child.className === "expense-summary-grid") || null;
+    }
+  };
+}
+
 test("builds direction segments from manual rows using USD conversion helpers", () => {
   const result = analytics.buildExpensePieSegments({
     mode: "direction",
@@ -55,5 +83,26 @@ test("builds channel segments and supports house/travel aliases", () => {
   assert.deepEqual(
     result.segments.map((segment) => [segment.label, segment.value]),
     [["Mono USD", 50], ["Wise USD", 15]]
+  );
+});
+
+test("installs into the active expense financial analysis renderer", () => {
+  global.document = { createElement: createTestElement };
+  global.getCurrentAnalyticsManualRows = () => [
+    { channel: "PayPal USD", business: 25, flat: 0, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 }
+  ];
+  global.renderExpenseFinancialAnalysis = () => {
+    const block = createTestElement("div");
+    const cards = createTestElement("div");
+    cards.className = "expense-summary-grid";
+    block.appendChild(cards);
+    return block;
+  };
+
+  assert.equal(analytics.installExpensePieAnalytics(), true);
+  const block = global.renderExpenseFinancialAnalysis();
+  assert.deepEqual(
+    block.children.map((child) => child.className),
+    ["expense-summary-grid", "analytics-section expense-pie-section"]
   );
 });
