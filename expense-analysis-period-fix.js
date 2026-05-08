@@ -1,9 +1,7 @@
 // Additive guard for Учёт расходов → анализ финансов.
-// Keeps Ledger/provider expense fallback scoped to the currently selected date range.
+// Keeps Ledger/provider real-income and expense fallbacks scoped to the currently selected date range.
 (function applyExpenseAnalysisPeriodFix() {
   if (typeof window === "undefined") return;
-  const original = window.buildLedgerProviderExpenseByChannel;
-  if (typeof original !== "function" || original.__expenseAnalysisPeriodGuard) return;
 
   function normalizeDateValue(value) {
     const raw = String(value ?? "").trim();
@@ -24,8 +22,11 @@
     return normalizeDateValue(
       row.date ||
       row.operationDate ||
+      row.operation_date ||
       row.transactionDate ||
+      row.transaction_date ||
       row.postedDate ||
+      row.posted_date ||
       row.createdAt ||
       row.created_at ||
       row.updatedAt ||
@@ -53,15 +54,35 @@
     return true;
   }
 
-  function patchedBuildLedgerProviderExpenseByChannel(rows, rateLookup, options = {}, ...rest) {
-    const period = getSelectedPeriod(options || {});
-    const scopedRows = Array.isArray(rows) && (period.startDate || period.endDate)
+  function scopeRowsToPeriod(rows, period) {
+    return Array.isArray(rows) && (period.startDate || period.endDate)
       ? rows.filter((row) => isRowInPeriod(row, period))
       : rows;
-    return original.call(this, scopedRows, rateLookup, options, ...rest);
   }
 
-  patchedBuildLedgerProviderExpenseByChannel.__expenseAnalysisPeriodGuard = true;
-  patchedBuildLedgerProviderExpenseByChannel.__original = original;
-  window.buildLedgerProviderExpenseByChannel = patchedBuildLedgerProviderExpenseByChannel;
+  function wrapPeriodScopedSummary(name, guardFlag) {
+    const original = window[name];
+    if (typeof original !== "function" || original[guardFlag]) return;
+
+    function periodScopedSummary(rows, rateLookup, options = {}, ...rest) {
+      const period = getSelectedPeriod(options || {});
+      const scopedRows = scopeRowsToPeriod(rows, period);
+      return original.call(this, scopedRows, rateLookup, options, ...rest);
+    }
+
+    periodScopedSummary[guardFlag] = true;
+    periodScopedSummary.__original = original;
+    window[name] = periodScopedSummary;
+  }
+
+  wrapPeriodScopedSummary("buildLedgerProviderExpenseByChannel", "__expenseAnalysisPeriodGuard");
+  wrapPeriodScopedSummary("buildLedgerRealIncomeSummaryByChannel", "__expenseAnalysisRealIncomePeriodGuard");
+
+  window.EzohataExpenseAnalysisPeriodFix = {
+    normalizeDateValue,
+    getRowDate,
+    getSelectedPeriod,
+    isRowInPeriod,
+    scopeRowsToPeriod,
+  };
 })();
