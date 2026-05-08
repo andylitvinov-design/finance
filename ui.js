@@ -1016,7 +1016,7 @@ function getExpenseAnalysisChannelSummary() {
     movementValues: state.data?.tabs?.movement?.values || [],
     ledgerRows,
     realIncomeSummaryByChannel,
-    providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup),
+    providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup, selectedPeriod),
     usdRateLookup
   });
 }
@@ -1162,6 +1162,32 @@ function getLedgerExpenseChannel(row) {
   return isExpenseAnalysisKnownChannel(channel) ? channel : "";
 }
 
+function getLedgerProviderExpenseRowDate(row) {
+  return normalizeIncomingSheetDateValue(
+    row?.date ||
+    row?.operationDate ||
+    row?.operation_date ||
+    row?.transactionDate ||
+    row?.transaction_date ||
+    row?.postedDate ||
+    row?.posted_date ||
+    row?.createdAt ||
+    row?.created_at ||
+    ""
+  );
+}
+
+function isLedgerProviderExpenseRowInPeriod(row, period = {}) {
+  const startDate = normalizeIncomingSheetDateValue(period?.startDate || period?.from || "");
+  const endDate = normalizeIncomingSheetDateValue(period?.endDate || period?.to || "");
+  if (!startDate && !endDate) return true;
+  const date = getLedgerProviderExpenseRowDate(row);
+  if (!date) return false;
+  if (startDate && date < startDate) return false;
+  if (endDate && date > endDate) return false;
+  return true;
+}
+
 function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }, period = {}) {
   const startDate = normalizeIncomingSheetDateValue(period?.startDate || "");
   const endDate = normalizeIncomingSheetDateValue(period?.endDate || "");
@@ -1208,9 +1234,10 @@ function getProviderEntryExpenseAmountUsd(entry) {
   return Math.abs(parseLooseNumber(entry?.localAmount ?? entry?.amount));
 }
 
-function buildLedgerProviderExpenseByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }) {
+function buildLedgerProviderExpenseByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (rows || []).forEach((row) => {
+    if (!isLedgerProviderExpenseRowInPeriod(row, options)) return;
     const channel = getLedgerExpenseChannel(row);
     if (!channel) return;
     totals[channel] += getLedgerFactAmountUsd(row, usdRateLookup);
@@ -1220,9 +1247,9 @@ function buildLedgerProviderExpenseByChannel(rows, usdRateLookup = { byChannel: 
   );
 }
 
-function getExpenseAnalysisProviderExpenseByChannel(rateLookup) {
+function getExpenseAnalysisProviderExpenseByChannel(rateLookup, selectedPeriod = {}) {
   const ledgerRows = getExpenseAnalysisLedgerRows();
-  if (ledgerRows.length) return buildLedgerProviderExpenseByChannel(ledgerRows, rateLookup);
+  if (ledgerRows.length) return buildLedgerProviderExpenseByChannel(ledgerRows, rateLookup, selectedPeriod);
 
   const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   (state.expenseAccounting.entries || []).forEach((entry) => {
