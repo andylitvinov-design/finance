@@ -3908,6 +3908,7 @@ function buildTopMetricsSummary() {
   const upgradeTotals = buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct,
     totalPaid,
+    realIncomeTotal: getRealIncomeUsdForProfit(totalReceivedUsd),
     myServicesTotal: factTotals.myServices,
     myCostsTotal: factTotals.myCosts
   });
@@ -3923,9 +3924,24 @@ function buildTopMetricsSummary() {
   };
 }
 
-function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0, myServicesTotal = 0, myCostsTotal = 0 } = {}) {
+function getProviderRealIncomeUsdForProfit() {
+  const summaryByChannel = state?.data?.realIncome?.summaryByChannel || {};
+  return Object.values(summaryByChannel).reduce(
+    (sum, row) => sum + parseLooseNumber(row?.realNetUsd ?? row?.netUsd ?? row?.usd),
+    0
+  );
+}
+
+function getRealIncomeUsdForProfit(fallbackReceivedUsd = 0) {
+  const providerRealIncome = getProviderRealIncomeUsdForProfit();
+  if (providerRealIncome) return providerRealIncome;
+  return parseLooseNumber(fallbackReceivedUsd);
+}
+
+function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0, realIncomeTotal = 0, myServicesTotal = 0, myCostsTotal = 0 } = {}) {
   const accrued = parseLooseNumber(totalOrdersSeventyPct);
   const paid = parseLooseNumber(totalPaid);
+  const realIncome = parseLooseNumber(realIncomeTotal);
   const services = parseLooseNumber(myServicesTotal);
   const costs = parseLooseNumber(myCostsTotal);
   const rawTotal = accrued + paid + services;
@@ -3933,7 +3949,9 @@ function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0,
     totalOrdersSeventyPct: accrued,
     rawTotal,
     total: -rawTotal,
-    profit: services + accrued - costs
+    realIncomeTotal: realIncome,
+    incomeForProfit: realIncome + services,
+    profit: realIncome + services - costs
   };
 }
 

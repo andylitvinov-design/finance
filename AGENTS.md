@@ -3,7 +3,8 @@
 ## Status
 
 - This is the only active EzoHata incoming-ledger implementation.
-- The production source of truth is this repository root on a branch based on `origin/main`.
+- The production source of truth is `https://github.com/andylitvinov-design/finance.git`, this repository root, on a branch based on `origin/main`.
+- `https://github.com/andylitvinov-design/ezohata-incoming-ledger.git` is not the production source of truth unless an explicit migration is being performed and verified end-to-end.
 - Do not use the legacy `reconcile-v2/` folder as a new source of production commits.
 - Production URL: `https://ezohata-incoming-ledger.vercel.app/`
 

@@ -57,6 +57,7 @@ test("top metrics balance uses explicit balance columns for movement and orders"
     roundTo2,
     calculateCurrentOverallPayoutUsdTotal: () => 0,
     getCurrentFactMetricTotals: () => ({ myServices: 0, myCosts: 0 }),
+    getRealIncomeUsdForProfit: () => 0,
     buildAnalyticsUpgradeTotals: () => ({ total: 0, profit: 0 }),
     state: {
       data: {
