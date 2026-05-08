@@ -65,14 +65,65 @@ test("top analytics upgrade formula inverts accrued, paid, and services", () => 
   assert.deepEqual(plain(context.buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct: "70",
     totalPaid: "-25",
+    realIncomeTotal: "40",
     myServicesTotal: "15",
     myCostsTotal: "12"
   })), {
     totalOrdersSeventyPct: 70,
     rawTotal: 60,
     total: -60,
-    profit: 73
+    realIncomeTotal: 40,
+    incomeForProfit: 55,
+    profit: 43
   });
+});
+
+test("top metrics profit uses real received income, not planned accrual", () => {
+  const context = {
+    parseLooseNumber,
+    getMovementTotalsFromTable: () => ({
+      accruedTotal: 1000,
+      seventyTotal: 700,
+      receivedUsdTotal: 500,
+      balanceTotal: -205.9943
+    }),
+    getMovementSummaryMetric: () => 0,
+    buildOrdersSummaryFromClient: () => ({
+      totalAccruedPlus3Pct: 0,
+      totalReceivedUsd: 0,
+      totalBalanceUsd: 0
+    }),
+    calculateCurrentOverallPayoutUsdTotal: () => 0,
+    getCurrentFactMetricTotals: () => ({ myServices: 50, myCosts: 120 }),
+    state: {
+      data: {
+        realIncome: {
+          summaryByChannel: {
+            wise: { realNetUsd: 500 }
+          }
+        },
+        tabs: {
+          movement: { values: [], summaryRows: [] },
+          orders: { values: [] }
+        }
+      }
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "getProviderRealIncomeUsdForProfit")}\n` +
+    `${extractFunction(financeJs, "getRealIncomeUsdForProfit")}\n` +
+    `${extractFunction(financeJs, "buildAnalyticsUpgradeTotals")}\n` +
+    `${extractFunction(financeJs, "buildTopMetricsSummary")}\n` +
+    "this.buildTopMetricsSummary = buildTopMetricsSummary;",
+    context
+  );
+
+  const metrics = context.buildTopMetricsSummary();
+
+  assert.equal(metrics.profit, 430);
+  assert.equal(metrics.total, -750);
+  assert.equal(metrics.balance, -205.9943);
 });
 
 test("period USD summary contains required rows and uses the inverted total", () => {
