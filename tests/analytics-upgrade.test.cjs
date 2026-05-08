@@ -61,28 +61,30 @@ function roundTo4(value) {
   return Math.round((Number(value) || 0) * 10000) / 10000;
 }
 
-test("top analytics upgrade formula inverts accrued, paid, and services", () => {
+test("top analytics upgrade formula keeps payout total but uses owner share for profit", () => {
   const context = { parseLooseNumber };
   vm.createContext(context);
   vm.runInContext(`${extractFunction(financeJs, "buildAnalyticsUpgradeTotals")}\nthis.buildAnalyticsUpgradeTotals = buildAnalyticsUpgradeTotals;`, context);
 
   assert.deepEqual(plain(context.buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct: "70",
+    ownerOrderShare30Pct: "30",
     totalPaid: "-25",
     realIncomeTotal: "40",
     myServicesTotal: "15",
     myCostsTotal: "12"
   })), {
     totalOrdersSeventyPct: 70,
+    ownerOrderShare30Pct: 30,
     rawTotal: 60,
     total: -60,
     realIncomeTotal: 40,
-    incomeForProfit: 55,
-    profit: 43
+    incomeForProfit: 45,
+    profit: 33
   });
 });
 
-test("top metrics profit uses provider real income, not planned accrual", () => {
+test("top metrics profit uses selected-period owner order share, not provider real income", () => {
   const context = {
     parseLooseNumber,
     getMovementTotalsFromTable: () => ({
@@ -129,7 +131,8 @@ test("top metrics profit uses provider real income, not planned accrual", () => 
   assert.equal(metrics.totalOrders, 1000);
   assert.equal(metrics.balance, -205.9943);
   assert.equal(metrics.total, -700);
-  assert.equal(roundTo4(metrics.profit), -2073.3709);
+  assert.equal(roundTo4(metrics.ownerOrderShare30Pct), 300);
+  assert.equal(roundTo4(metrics.profit), -2093.2409);
 });
 
 test("period USD summary contains required rows and uses the inverted total", () => {
