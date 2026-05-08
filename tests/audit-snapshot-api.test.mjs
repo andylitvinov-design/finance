@@ -283,6 +283,50 @@ test("audit snapshot warns when exchange amount_usd is missing", async () => {
   assert.match(exchangeWarnings[0], /^Ledger v2 warning: 1 exchange row\(s\)/);
 });
 
+test("audit snapshot accepts normalized exchange amount_usd when raw sheet cell is blank", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          operation: "exchange_out",
+          fromChannel: "пейпал евр",
+          toChannel: "",
+          amount: "1.82",
+          currency: "EUR",
+          amountUsd: "",
+          amountNet: "1.82",
+          category: "exchange",
+          source: "paypal",
+          ledgerV2: {
+            operation: "exchange",
+            from_channel: "пейпал евр",
+            to_channel: "",
+            amount: "1.82",
+            currency: "EUR",
+            amount_usd: "-2.1112",
+            amount_net: "1.82",
+            balance_amount: -1.82,
+            category: "exchange",
+            source: "paypal",
+          },
+        }),
+      ],
+      transfers: [],
+      balances: [],
+      commissionRows: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.exchange.rows, 1);
+  assert.equal(response.exchange.missing_amount_usd_rows, 0);
+  assert.equal(response.exchange.total_out_usd, -2.1112);
+  assert.equal(response.warnings.some((warning) => /exchange row\(s\).*amount_usd/i.test(warning)), false);
+});
+
 test("audit snapshot summarizes PayPal gross fee and net from normalized rows", async () => {
   const response = await buildFixtureSnapshot();
 

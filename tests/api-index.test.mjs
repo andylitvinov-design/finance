@@ -951,7 +951,7 @@ test("GET getDashboardData keeps manual ledger overlay when amount_net is missin
   }
 });
 
-test("GET getDashboardData keeps ledger income fallback when exchange amount_usd is missing", async () => {
+test("GET getDashboardData keeps ledger income fallback when raw exchange amount_usd is derived", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -1053,7 +1053,7 @@ test("GET getDashboardData keeps ledger income fallback when exchange amount_usd
     assert.equal(response.statusCode, 200);
     assert.equal(response.body?.ok, true);
     assert.equal(response.body?.data?.manual?.operations?.length, 2);
-    assert.match((response.body?.data?.manual?.warnings || []).join("\n"), /1 exchange row.*amount_usd/i);
+    assert.doesNotMatch((response.body?.data?.manual?.warnings || []).join("\n"), /exchange row.*amount_usd/i);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["Яндекс руб"]?.realNetUsd, 25);
     assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 25);
   } finally {

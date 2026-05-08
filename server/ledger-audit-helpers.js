@@ -17,6 +17,7 @@ export function isExchangeOperation(row = {}) {
 
 export function isExchangeMissingAmountUsdRow(row = {}) {
   if (!isExchangeOperation(row)) return false;
+  if (hasNonZeroLedgerAmountUsd(row?.ledgerV2?.amount_usd)) return false;
   if (Object.prototype.hasOwnProperty.call(row, "amountUsd")) {
     return String(row.amountUsd ?? "").trim() === "";
   }
@@ -24,6 +25,14 @@ export function isExchangeMissingAmountUsdRow(row = {}) {
     return String(row.amount_usd ?? "").trim() === "";
   }
   return String(row?.ledgerV2?.amount_usd ?? "").trim() === "";
+}
+
+function hasNonZeroLedgerAmountUsd(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  const numeric = Number(raw.replace(/\s+/g, "").replace(",", "."));
+  if (!Number.isFinite(numeric)) return true;
+  return numeric !== 0;
 }
 
 export function countExchangeMissingAmountUsdRows(operations = []) {
