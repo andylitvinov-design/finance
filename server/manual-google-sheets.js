@@ -108,13 +108,15 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       accessToken,
       fetchImpl,
     });
-    const transfers = parseTransferRows(valuesBySheet[TRANSFER_SHEET_NAME] || []);
+    const transferValues = valuesBySheet[TRANSFER_SHEET_NAME] || [];
+    const transfers = parseTransferRows(transferValues);
+    const transferWarnings = buildTransferRowsWarnings(transferValues, transfers);
     const rateLookup = buildOperationUsdRateLookup(transfers);
     const ledgerValues = valuesBySheet[LEDGER_SHEET_NAME] || [];
     const ledgerRepository = ledgerValues.length ? parseExpenseRepository(ledgerValues, rateLookup) : buildEmptyLedgerRepository();
     const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || [], rateLookup);
     const legacyHasRows = legacyRepository.schema === "legacy-expense-grid" && legacyRepository.expenseRows.length > 0;
-    const warnings = [];
+    const warnings = [...transferWarnings];
     if (!ledgerRepository.operations.length && legacyHasRows) {
       warnings.push("legacy Расходы ignored: Ledger is the only operations source.");
     }
@@ -738,6 +740,13 @@ function parseTransferRows(values) {
     .filter((row) => row.transferDate && row.channel && row.amount);
 }
 
+function buildTransferRowsWarnings(values, transfers) {
+  const { rows } = splitHeaderRows(values);
+  const hasUnparsedTransferData = rows.some((row) => (row || []).some((cell) => String(cell || "").trim()));
+  if (!hasUnparsedTransferData || transfers.length) return [];
+  return ["Manual transfers warning: Переводы sheet has data rows but no parsed transfer rows."];
+}
+
 function parseCommissionRows(values) {
   const { header, rows } = splitHeaderRows(values);
   const dateIndex = findHeaderIndex(header, ["дата", "date"]);
@@ -776,13 +785,64 @@ function normalizeDate(value) {
   const raw = String(value || "").trim();
   const isoDatePrefix = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/);
   if (isoDatePrefix) return isoDatePrefix[1];
-  const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  const display = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (display) return `${display[3]}-${display[2].padStart(2, "0")}-${display[1].padStart(2, "0")}`;
+  const russianDisplay = normalizeRussianDisplayDate(raw);
+  if (russianDisplay) return russianDisplay;
   if (/^\d{5}$/.test(raw)) {
     const date = new Date((Number(raw) - 25569) * 86400 * 1000);
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
   }
   return "";
+}
+
+function normalizeRussianDisplayDate(raw) {
+  const normalized = normalizeLookupText(raw);
+  const match = normalized.match(/^(\d{1,2})\s+([а-я]+)(?:\s+(\d{4}))?$/);
+  if (!match) return "";
+  const monthByName = {
+    января: "01",
+    январь: "01",
+    янв: "01",
+    февраля: "02",
+    февраль: "02",
+    фев: "02",
+    марта: "03",
+    март: "03",
+    мар: "03",
+    апреля: "04",
+    апрель: "04",
+    апр: "04",
+    мая: "05",
+    май: "05",
+    июня: "06",
+    июнь: "06",
+    июн: "06",
+    июля: "07",
+    июль: "07",
+    июл: "07",
+    августа: "08",
+    август: "08",
+    авг: "08",
+    сентября: "09",
+    сентябрь: "09",
+    сен: "09",
+    сент: "09",
+    октября: "10",
+    октябрь: "10",
+    окт: "10",
+    ноября: "11",
+    ноябрь: "11",
+    ноя: "11",
+    декабря: "12",
+    декабрь: "12",
+    дек: "12",
+  };
+  const month = monthByName[match[2]];
+  if (!month) return "";
+  const day = match[1].padStart(2, "0");
+  const year = match[3] || String(new Date().getUTCFullYear());
+  return `${year}-${month}-${day}`;
 }
 
 function parseNumberString(value) {
