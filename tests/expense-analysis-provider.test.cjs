@@ -421,6 +421,8 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     "this.getLedgerFactAmountUsd = getLedgerFactAmountUsd;\n" +
     "this.getExpenseAnalysisLedgerWarnings = getExpenseAnalysisLedgerWarnings;\n" +
@@ -504,6 +506,73 @@ test("ledger real income summary excludes out-of-range Wise and YooMoney rows fo
 
   assert.equal(summary["Яндекс руб"].realNetUsd, 0);
   assert.equal(summary["трансервайз дол"].realNetUsd, 283.25);
+});
+
+test("ledger provider expense summary excludes out-of-range YooMoney rows for selected period", () => {
+  const context = buildLedgerAnalysisTestContext({
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+      })[normalized] || String(value || "").trim();
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  const summary = plain(context.buildLedgerProviderExpenseByChannel([
+    { date: "2026-04-30", operation: "expense", source: "yoomoney", fromChannel: "yoomoney", amountUsd: "2247.3385", currency: "RUB" },
+    { date: "2026-05-03", operation: "expense", source: "yoomoney", fromChannel: "yoomoney", amountUsd: "884.2807", currency: "RUB" },
+  ], {}, { startDate: "2026-05-01", endDate: "2026-05-05" }));
+
+  assert.equal(summary["Яндекс руб"], 884.2807);
+});
+
+test("ledger provider expense summary includes YooMoney rows inside selected period", () => {
+  const context = buildLedgerAnalysisTestContext({
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+      })[normalized] || String(value || "").trim();
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  const summary = plain(context.buildLedgerProviderExpenseByChannel([
+    { date: "2026-05-01", operation: "business_expense", source: "yoomoney", from_channel: "Яндекс руб", amount_usd: "100", currency: "RUB" },
+    { date: "2026-05-05", operation: "exchange_out", source: "yoomoney", from_channel: "Яндекс руб", amount_usd: "25.5", currency: "RUB" },
+  ], {}, { startDate: "2026-05-01", endDate: "2026-05-05" }));
+
+  assert.equal(summary["Яндекс руб"], 125.5);
+});
+
+test("ledger provider expense summary prefers explicit period options over DOM dates", () => {
+  const context = buildLedgerAnalysisTestContext({
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+      })[normalized] || String(value || "").trim();
+    },
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-05-31" },
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+
+  const summary = plain(context.buildLedgerProviderExpenseByChannel([
+    { date: "2026-04-30", operation: "expense", source: "yoomoney", fromChannel: "yoomoney", amountUsd: "12", currency: "RUB" },
+    { date: "2026-05-03", operation: "expense", source: "yoomoney", fromChannel: "yoomoney", amountUsd: "99", currency: "RUB" },
+  ], {}, { startDate: "2026-04-29", endDate: "2026-04-30" }));
+
+  assert.equal(summary["Яндекс руб"], 12);
 });
 
 test("TD CAD expense Ledger rows fall back to USD rate in analysis", () => {
@@ -631,6 +700,8 @@ test("expense analysis summary keeps API Wise real income 978.5 when Ledger fall
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
@@ -751,6 +822,8 @@ test("expense analysis summary derives provider real income and expense from led
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
@@ -1053,6 +1126,8 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +

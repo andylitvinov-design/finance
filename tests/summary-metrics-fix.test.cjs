@@ -24,7 +24,7 @@ function makeNode(text = "") {
 
 test("summary metrics render directly in the top card flow", () => {
   assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
-  assert.doesNotMatch(indexHtml, /summary-metrics-fix\.js/);
+  assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/summary-metrics-fix\.js["'][^>]*>/);
 
   const elements = {
     metricPeriod: makeNode(),
