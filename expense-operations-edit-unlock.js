@@ -2,8 +2,7 @@
 // Root cause: some provider/import rows (YooMoney) are rendered from the Ledger
 // but their operation action buttons can remain disabled by the UI guard even
 // when the row is a physical Ledger row and the edit/delete handlers are bound.
-// This patch only unlocks actions for visible YooMoney rows after UI rendering;
-// it does not change amount/gross/net/fee/balance semantics.
+// This patch only unlocks actions for visible YooMoney rows after UI rendering.
 
 (function expenseOperationsEditUnlock() {
   const TARGET_SOURCES = new Set(["yoomoney"]);
