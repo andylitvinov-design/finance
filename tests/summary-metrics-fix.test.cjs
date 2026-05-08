@@ -57,7 +57,7 @@ test("summary metrics render directly in the top card flow", () => {
   context.renderMetrics();
 
   assert.equal(elements.metricOrders.textContent, "-5,7118");
-  assert.equal(elements.metricTransfers.textContent, "-5,7118");
+  assert.equal(elements.metricTransfers.textContent, "-200,8499");
   assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
 });
