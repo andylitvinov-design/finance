@@ -712,7 +712,7 @@ test("loadManualRepositoryFromGoogleSheets derives missing amount_usd for exchan
   }
 });
 
-test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when exchange amount_usd is missing", async () => {
+test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when raw exchange amount_usd is derived", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
@@ -754,7 +754,8 @@ test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when exchange
     assert.equal(repository.operations[0].source, "yoomoney");
     assert.equal(repository.operations[1].amountUsd, "10");
     assert.equal(repository.operations[2].amountUsd, "");
-    assert.match(repository.warnings.join("\n"), /1 exchange row.*amount_usd/i);
+    assert.equal(repository.operations[2].ledgerV2.amount_usd, "-35.47932");
+    assert.doesNotMatch(repository.warnings.join("\n"), /exchange row.*amount_usd/i);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
