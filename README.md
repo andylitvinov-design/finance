@@ -11,6 +11,7 @@ Production URL: [https://ezohata-incoming-ledger.vercel.app](https://ezohata-inc
 
 Не использовать `reconcile-v2/` как отдельный source root. Эта ветка миграции закрыта; production-коммиты, PR и деплои идут только из `finance`.
 This repository is the single source of truth for ezohata-incoming-ledger production.
+The older [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger) repository is a stale migration artifact unless an explicit repo migration task says otherwise. Do not patch or deploy it for production bug fixes.
 
 ## Stack
 

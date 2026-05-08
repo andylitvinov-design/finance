@@ -17,6 +17,10 @@ The expected Vercel project is `ezohata-incoming-ledger`. The status payload mus
 - `service: "ezohata-incoming-ledger"`
 - `vercelProjectName: "ezohata-incoming-ledger"` after the status update is deployed
 - `vercel.productionUrl: "ezohata-incoming-ledger.vercel.app"`
+- `gitRepoSlug: "finance"`
+- `commitSha` matching `origin/main` from [andylitvinov-design/finance](https://github.com/andylitvinov-design/finance)
+
+The older [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger) repository is not the production source of truth. If `/api/status.gitRepoSlug` ever reports `ezohata-incoming-ledger`, treat it as a source-of-truth regression before shipping more app changes.
 
 ## Production Env
 
