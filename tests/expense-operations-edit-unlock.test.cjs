@@ -4,26 +4,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const patchJs = fs.readFileSync(path.join(root, "expense-operations-edit-unlock.js"), "utf8");
+const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
-test("YooMoney operation edit unlock patch is loaded after ui.js", () => {
-  const uiIndex = indexHtml.indexOf("./ui.js");
-  const patchIndex = indexHtml.indexOf("./expense-operations-edit-unlock.js");
-
-  assert.ok(uiIndex > 0, "ui.js should be loaded");
-  assert.ok(patchIndex > uiIndex, "edit unlock patch must run after ui.js binds row handlers");
+test("YooMoney operation edit unlock DOM patch is no longer loaded", () => {
+  assert.doesNotMatch(indexHtml, /expense-operations-edit-unlock\.js/);
 });
 
-test("YooMoney operation edit unlock only targets operation action buttons", () => {
-  assert.match(patchJs, /TARGET_SOURCES = new Set\(\["yoomoney"\]\)/);
-  assert.match(patchJs, /ACTION_TEXT_RE = \/\^\(редактировать\|удалить\)\$\/i/);
-  assert.match(patchJs, /isExpenseOperationsViewActive/);
-  assert.match(patchJs, /normalize\(node\.textContent\) === "операции"/);
+test("server manual overlay rows can be edited without browser Google OAuth", () => {
+  assert.match(uiJs, /function isServerManualOverlayOperationRow/);
+  assert.match(uiJs, /function canEditExpenseOperationRow/);
+  assert.match(uiJs, /hasConfiguredManualFinanceEndpoint\(\) \|\| isServerManualOverlayOperationRow\(row\)/);
+  assert.match(uiJs, /serverManualOverlay:/);
 });
 
-test("YooMoney operation edit unlock does not change finance semantics", () => {
-  assert.doesNotMatch(patchJs, /amountNet|amount_net|amountGross|amount_gross|amountFee|amount_fee|balance/i);
-  assert.doesNotMatch(patchJs, /fetch\(/);
-  assert.doesNotMatch(patchJs, /googleSheetsFetch|overwriteSheetValues|batchUpdateSheetValues/);
+test("server manual overlay saves through ledger-operation endpoint instead of browser Sheets OAuth", () => {
+  assert.match(uiJs, /postLedgerOperation\("update"/);
+  assert.match(uiJs, /postLedgerOperation\("delete"/);
+  assert.match(uiJs, /\.\/api\/ledger-operation/);
+  assert.match(uiJs, /updateManualLedgerRowDirect\(state\.expenseAccounting\.operationDraft\)/);
+  assert.match(uiJs, /deleteManualLedgerRowDirect\(row\.sheetRowNumber\)/);
 });

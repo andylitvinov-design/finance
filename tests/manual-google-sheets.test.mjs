@@ -752,7 +752,9 @@ test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when raw exch
     assert.equal(repository.operations.length, 3);
     assert.equal(repository.operations[0].amountUsd, "25");
     assert.equal(repository.operations[0].source, "yoomoney");
+    assert.equal(repository.operations[0].sheetRowNumber, 2);
     assert.equal(repository.operations[1].amountUsd, "10");
+    assert.equal(repository.operations[1].sheetRowNumber, 3);
     assert.equal(repository.operations[2].amountUsd, "");
     assert.equal(repository.operations[2].ledgerV2.amount_usd, "-35.47932");
     assert.doesNotMatch(repository.warnings.join("\n"), /exchange row.*amount_usd/i);

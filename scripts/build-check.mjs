@@ -18,6 +18,7 @@ const requiredFiles = [
   "vercel.json",
   "api/index.js",
   "api/status.js",
+  "api/ledger-operation.js",
   "api/paypal-transactions.js",
   "api/wise-transactions.js",
   "api/monobank-transactions.js",
