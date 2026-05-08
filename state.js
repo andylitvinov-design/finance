@@ -25,6 +25,7 @@ const state = {
   },
   expenseAccounting: {
     activeSubtab: "list",
+    expensePieMode: "direction",
     resultTab: "spent",
     operationsFilters: {
       source: "all",

@@ -364,6 +364,105 @@ tr:nth-child(even) td { background: #fffcf7; }
 .analytics-section { display: grid; gap: 12px; min-width: 0; }
 .analysis-table-wrap table { min-width: 640px; }
 .analytics-section + .analytics-section { margin-top: 18px; }
+.expense-pie-section {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.expense-pie-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.expense-pie-title {
+  margin-bottom: 0;
+  font-weight: 700;
+}
+.expense-pie-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.expense-pie-toggle-button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.expense-pie-toggle-button.active {
+  background: var(--ink);
+  color: #fff;
+}
+.expense-pie-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+.expense-pie-chart {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 220px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(var(--expense-pie-background, #e7ded2));
+  position: relative;
+}
+.expense-pie-chart::after {
+  content: "";
+  position: absolute;
+  inset: 24%;
+  border-radius: 50%;
+  background: #fffaf4;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+.expense-pie-total {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  line-height: 1.1;
+}
+.expense-pie-total strong { font-size: 24px; }
+.expense-pie-total span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.expense-pie-legend {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.expense-pie-legend-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  gap: 9px;
+  align-items: center;
+  font-size: 13px;
+}
+.expense-pie-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.expense-pie-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.expense-pie-value { font-weight: 700; }
+.expense-pie-percent { color: var(--muted); }
 .movement-summary {
   margin-top: 16px;
   width: 100%;
