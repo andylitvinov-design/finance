@@ -1596,6 +1596,76 @@ test("mergeLedgerRealIncomeFallback keeps provider totals primary and fills empt
   assert.equal(merged.summaryByChannel["Яндекс руб"].realNetUsd, 25);
 });
 
+test("mergeLedgerRealIncomeFallback uses Monobank Ledger provider fallback when API summary is zero", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const merged = plain(context.mergeLedgerRealIncomeFallback({
+    realIncome: {
+      summaryByChannel: {
+        "монобанк грн": {
+          channel: "монобанк грн",
+          currency: "UAH",
+          realNetUsd: 0,
+        }
+      }
+    },
+    operations: [
+      { date: "2026-04-09", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "14870", amount: "14870", currency: "UAH" },
+      { date: "2026-04-10", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "1000", amount: "1000", currency: "UAH" },
+      { date: "2026-04-28", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "10307", amount: "10307", currency: "UAH" },
+    ],
+    movementValues: [],
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" }
+  }));
+
+  assert.equal(merged.summaryByChannel["монобанк грн"].realNetUsd, 596.8308);
+});
+
+test("mergeLedgerRealIncomeFallback keeps non-zero Monobank API summary primary", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const merged = plain(context.mergeLedgerRealIncomeFallback({
+    realIncome: {
+      summaryByChannel: {
+        "монобанк грн": {
+          channel: "монобанк грн",
+          currency: "UAH",
+          realNetUsd: 700,
+        }
+      }
+    },
+    operations: [
+      { date: "2026-04-09", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "14870", amount: "14870", currency: "UAH" },
+    ],
+    movementValues: [],
+    period: { startDate: "2026-04-01", endDate: "2026-04-30" }
+  }));
+
+  assert.equal(merged.summaryByChannel["монобанк грн"].realNetUsd, 700);
+});
+
+test("buildLedgerRealIncomeSummaryByChannel excludes out-of-period Monobank provider rows", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    { date: "2026-04-09", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "14870", amount: "14870", currency: "UAH" },
+    { date: "2026-05-04", operation: "income", source: "monobank", to_channel: "монобанк грн", amount_net: "4305", amount: "4305", currency: "UAH" },
+  ], [], { startDate: "2026-04-01", endDate: "2026-04-30" }));
+
+  assert.equal(summary["монобанк грн"].realNetUsd, 339.0333);
+});
+
+test("buildLedgerRealIncomeSummaryByChannel does not force-merge unknown Monobank-like rows", () => {
+  const context = createApiLedgerRealIncomeContext();
+
+  const summary = plain(context.buildLedgerRealIncomeSummaryByChannel([
+    { date: "2026-04-09", operation: "income", source: "unknown", to_channel: "монобанк грн", amount_net: "14870", amount: "14870", currency: "UAH" },
+    { date: "2026-04-10", operation: "income", source: "monobank", to_channel: "", amount_net: "1000", amount: "1000", currency: "UAH" },
+  ], [], { startDate: "2026-04-01", endDate: "2026-04-30" }));
+
+  assert.equal(summary["монобанк грн"].realNetUsd, 0);
+});
+
 test("buildMissingPaymentsAudit reports one missing Wise payment from 9 planned and 8 actual", () => {
   const context = createMissingPaymentsContext();
   const movementValues = [
