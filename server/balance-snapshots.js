@@ -1,4 +1,4 @@
-import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 

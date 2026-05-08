@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
+import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
@@ -12,7 +13,7 @@ import { fetchMonobankStatementEntries } from "./monobank-transactions.js";
 import { fetchPrivatBankStatementEntries } from "./privatbank-transactions.js";
 import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
 
-const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync"]);
+const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
@@ -141,6 +142,11 @@ export default async function handler(request, response) {
       supportedGetActions: Array.from(SUPPORTED_GET_ACTIONS),
       supportedPostActions: Array.from(SUPPORTED_POST_ACTIONS),
     });
+  }
+
+  if (request.method === "GET" && normalizeLegacyGetAction(request.query.action || "getDashboardData") === "balanceSnapshots") {
+    const snapshot = await buildBalanceSnapshotsSnapshot({ query: request.query || {} });
+    return response.status(200).json(snapshot);
   }
 
   if (!upstream) {

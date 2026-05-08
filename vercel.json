@@ -1,5 +1,11 @@
 {
   "outputDirectory": ".",
+  "rewrites": [
+    {
+      "source": "/api/balance-snapshots",
+      "destination": "/api/index?action=balanceSnapshots"
+    }
+  ],
   "cleanUrls": true,
   "trailingSlash": false
 }
