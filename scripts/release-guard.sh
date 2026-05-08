@@ -97,11 +97,15 @@ if [[ "$alias_production_url" != "ezohata-incoming-ledger.vercel.app" ]]; then
   echo "release-guard: production alias status reports unexpected production URL: ${alias_production_url:-missing}." >&2
   exit 1
 fi
-if [[ "$alias_repo_slug" != "finance" ]]; then
-  echo "release-guard: production alias must report gitRepoSlug=finance, got ${alias_repo_slug:-missing}." >&2
-  echo "Do not release from the stale andylitvinov-design/ezohata-incoming-ledger repo." >&2
-  exit 1
-fi
+case "$alias_repo_slug" in
+  "finance"|"andylitvinov-design/finance")
+    ;;
+  *)
+    echo "release-guard: production alias must report finance repo slug, got ${alias_repo_slug:-missing}." >&2
+    echo "Do not release from the stale andylitvinov-design/ezohata-incoming-ledger repo." >&2
+    exit 1
+    ;;
+esac
 
 node --test tests/*.test.*
 
