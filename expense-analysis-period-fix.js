@@ -1,5 +1,5 @@
 // Additive guard for Учёт расходов → анализ финансов.
-// Keeps Ledger/provider real-income and expense fallbacks scoped to the currently selected date range.
+// Keeps Ledger/provider real-income, expense fallbacks, and income counters scoped to the selected date range.
 (function applyExpenseAnalysisPeriodFix() {
   if (typeof window === "undefined") return;
 
@@ -60,14 +60,15 @@
       : rows;
   }
 
-  function wrapPeriodScopedSummary(name, guardFlag) {
+  function wrapPeriodScopedSummary(name, guardFlag, optionsArgOffset = 1) {
     const original = window[name];
     if (typeof original !== "function" || original[guardFlag]) return;
 
-    function periodScopedSummary(rows, rateLookup, options = {}, ...rest) {
-      const period = getSelectedPeriod(options || {});
+    function periodScopedSummary(rows, ...args) {
+      const periodOptions = args[optionsArgOffset] || {};
+      const period = getSelectedPeriod(periodOptions);
       const scopedRows = scopeRowsToPeriod(rows, period);
-      return original.call(this, scopedRows, rateLookup, options, ...rest);
+      return original.call(this, scopedRows, ...args);
     }
 
     periodScopedSummary[guardFlag] = true;
@@ -75,8 +76,9 @@
     window[name] = periodScopedSummary;
   }
 
-  wrapPeriodScopedSummary("buildLedgerProviderExpenseByChannel", "__expenseAnalysisPeriodGuard");
-  wrapPeriodScopedSummary("buildLedgerRealIncomeSummaryByChannel", "__expenseAnalysisRealIncomePeriodGuard");
+  wrapPeriodScopedSummary("buildLedgerProviderExpenseByChannel", "__expenseAnalysisPeriodGuard", 1);
+  wrapPeriodScopedSummary("buildLedgerRealIncomeSummaryByChannel", "__expenseAnalysisRealIncomePeriodGuard", 1);
+  wrapPeriodScopedSummary("buildLedgerIncomeCountSummaryByChannel", "__expenseAnalysisIncomeCountPeriodGuard", 0);
 
   window.EzohataExpenseAnalysisPeriodFix = {
     normalizeDateValue,
