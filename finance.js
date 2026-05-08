@@ -295,7 +295,17 @@ function calculateTransferBalance(rows = [], period = {}) {
     if (!isTransferOrExchangeRow(row) || !isMetricRowInPeriod(row, period)) return totals;
     const operation = normalizeLedgerClassifierText(row?.operation || row?.ledgerV2?.operation);
     const category = normalizeLedgerClassifierText(row?.category || row?.ledgerV2?.category);
-    if (operation.includes("exchange") || category === "exchange") return totals;
+    const text = normalizeLedgerClassifierText([
+      row?.comment,
+      row?.description,
+      row?.ledgerV2?.comment,
+      row?.ledgerV2?.description
+    ].filter(Boolean).join(" "));
+    const transferLike = /(^| )(transfer|transfer in|transfer out|partner transfer|internal movement)( |$)/.test(operation)
+      || /перевод|internal movement|internal account|partner transfer|\btransfer\b/.test(text);
+    const exchangeLike = operation.includes("exchange") || category === "exchange" || /(^| )обмен( |$)/.test(operation) || /(^| )обмен( |$)/.test(text);
+    if (exchangeLike && !transferLike) return totals;
+    if (!transferLike) return totals;
     const amountUsd = getLedgerMetricAmountUsd(row);
     const direction = normalizeLedgerClassifierText(row?.direction || row?.ledgerV2?.direction);
     const isIn = direction === "in" || operation === "transfer in" || amountUsd > 0;
@@ -2808,7 +2818,12 @@ function buildServerExpenseRowsFromLedgerV2(rows, startDate, endDate) {
     const row = rawRow?.ledgerV2 || rawRow;
     const date = normalizeIncomingSheetDateValue(row?.date);
     if (!date || date < startDate || date > endDate) return;
-    const category = mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
+    const operationName = normalizeLedgerClassifierText(row?.operation || row?.legacy_operation || rawRow?.operation || "");
+    const categoryName = normalizeLedgerClassifierText(row?.category || rawRow?.category || rawRow?.legacy_category || "");
+    if (isTransferOrExchangeRow(row) && !operationName.includes("exchange") && categoryName !== "exchange") return;
+    const category = isTransferOrExchangeRow(row)
+      ? MANUAL_EXCHANGE_CATEGORY
+      : mapLedgerV2CategoryToManualExpenseCategory(row?.category || rawRow?.category || rawRow?.legacy_category);
     if (!category || category === MANUAL_NOW_CATEGORY) return;
     if (category === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row, rawRow)) return;
     const amount = getLedgerBalanceAmountForFinance(row);

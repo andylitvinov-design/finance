@@ -317,11 +317,12 @@ test("calculateTransferBalance reports transfer in minus transfer out separately
     { date: "2026-05-02", operation: "transfer_out", amountUsd: "-45" },
     { date: "2026-05-03", operation: "partner_transfer", amountUsd: "-10" },
     { date: "2026-05-04", operation: "exchange_out", amountUsd: "-999" },
+    { date: "2026-05-05", operation: "exchange_out", amountUsd: "-50", comment: "Перевод на карту" },
     { date: "2026-04-30", operation: "transfer", amountUsd: "100", direction: "in" },
   ], { startDate: "2026-05-01", endDate: "2026-05-08" })), {
     transferIn: 120,
-    transferOut: 55,
-    transferBalance: 65,
+    transferOut: 105,
+    transferBalance: 15,
   });
 });
 
@@ -1039,6 +1040,8 @@ test("aggregated manual service plan excludes provider, wise, paypal, and mcp in
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(financeJs, "normalizeLookupText")}\n` +
+    `${extractFunction(financeJs, "normalizeLedgerClassifierText")}\n` +
+    `${extractFunction(financeJs, "isTransferOrExchangeRow")}\n` +
     `${extractFunction(financeJs, "resolveManualFinanceChannelAlias")}\n` +
     `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
     `${extractFunction(financeJs, "buildEmptyExpenseAmounts")}\n` +
@@ -1108,6 +1111,7 @@ test("repository ledger expense rows also exclude provider, wise, paypal, and mc
       return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
     },
   };
+  context.getManualFinanceChannels = () => context.MANUAL_FINANCE_MONEY_CHANNELS.slice();
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(financeJs, "normalizeLookupText")}\n` +
@@ -1156,6 +1160,62 @@ test("repository ledger expense rows also exclude provider, wise, paypal, and mc
       },
     },
   ]);
+});
+
+test("repository ledger expense rows classify transfer and exchange operations outside owner costs", () => {
+  const context = {
+    MANUAL_NOW_CATEGORY: "now",
+    MANUAL_EXCHANGE_CATEGORY: "exchange",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "пейпал дол", "трансервайз дол"],
+    getManualFinanceChannels() {
+      return context.MANUAL_FINANCE_MONEY_CHANNELS.slice();
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").slice(0, 10);
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value) {
+      return Number(value || 0).toFixed(4).replace(".", ",");
+    },
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeLookupText")}\n` +
+    `${extractFunction(financeJs, "normalizeLedgerClassifierText")}\n` +
+    `${extractFunction(financeJs, "isTransferOrExchangeRow")}\n` +
+    `${extractFunction(financeJs, "normalizeManualLedgerCategoryForStorage")}\n` +
+    `${extractFunction(financeJs, "mapManualLedgerCategoryToLegacy")}\n` +
+    `${extractFunction(financeJs, "normalizeManualLedgerOperation")}\n` +
+    `${extractFunction(financeJs, "resolveManualFinanceChannelAlias")}\n` +
+    `${extractFunction(financeJs, "canonicalManualFinanceChannel")}\n` +
+    `${extractFunction(financeJs, "buildEmptyExpenseAmounts")}\n` +
+    `${extractFunction(financeJs, "createManualFinanceExpenseRow")}\n` +
+    "function normalizeManualLedgerSource(value, fallback = \"\") { return String(value || fallback || \"\").trim().toLowerCase(); }\n" +
+    `${extractFunction(googleSheetsJs, "shouldIncludeLedgerRowInManualServicePlan")}\n` +
+    `${extractFunction(googleSheetsJs, "buildExpenseRowsFromLedgerRows")}\n` +
+    "this.buildExpenseRowsFromLedgerRows = buildExpenseRowsFromLedgerRows;",
+    context
+  );
+
+  const rows = plain(context.buildExpenseRowsFromLedgerRows([
+    { date: "2026-05-02", operation: "business_expense", category: "business", fromChannel: "пейпал дол", amount: "50" },
+    { date: "2026-05-03", operation: "exchange_out", category: "business", fromChannel: "трансервайз дол", amount: "415", comment: "Sent money to internal account" },
+    { date: "2026-05-04", operation: "transfer", category: "business", fromChannel: "Яндекс руб", amount: "1000", comment: "Перевод на карту" },
+  ], "2026-05-01", "2026-05-08"));
+
+  assert.equal(rows.find((row) => row.category === "business").amounts["пейпал дол"], "50,0000");
+  assert.equal(rows.find((row) => row.category === "business").amounts["трансервайз дол"], "");
+  assert.equal(rows.find((row) => row.category === "business").amounts["Яндекс руб"], "");
+  assert.equal(rows.find((row) => row.category === "exchange").amounts["трансервайз дол"], "-415,0000");
+  assert.equal(rows.find((row) => row.category === "exchange").amounts["Яндекс руб"], "");
 });
 
 test("expense analysis falls back to existing summaries when Ledger is empty", () => {

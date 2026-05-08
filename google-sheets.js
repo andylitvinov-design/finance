@@ -1057,7 +1057,16 @@ function buildExpenseRowsFromLedgerRows(ledgerRows, startDate, endDate) {
   (ledgerRows || []).forEach((row) => {
     const date = normalizeIncomingSheetDateValue(row?.date);
     if (!date || date < startDate || date > endDate) return;
-    const legacyCategory = mapManualLedgerCategoryToLegacy(row?.category);
+    const operationName = typeof normalizeLedgerClassifierText === "function"
+      ? normalizeLedgerClassifierText(row?.operation || row?.legacy_operation || "")
+      : String(row?.operation || row?.legacy_operation || "").trim().toLowerCase();
+    const categoryName = typeof normalizeLedgerClassifierText === "function"
+      ? normalizeLedgerClassifierText(row?.category || "")
+      : String(row?.category || "").trim().toLowerCase();
+    if (typeof isTransferOrExchangeRow === "function" && isTransferOrExchangeRow(row) && !operationName.includes("exchange") && categoryName !== "exchange") return;
+    const legacyCategory = typeof isTransferOrExchangeRow === "function" && isTransferOrExchangeRow(row)
+      ? "exchange"
+      : mapManualLedgerCategoryToLegacy(row?.category);
     if (!legacyCategory || legacyCategory === MANUAL_NOW_CATEGORY) return;
     if (legacyCategory === "serviceIncome" && !shouldIncludeLedgerRowInManualServicePlan(row)) return;
     const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
