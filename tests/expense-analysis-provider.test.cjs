@@ -39,6 +39,26 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function createElementStub(tagName) {
+  return {
+    tagName,
+    children: [],
+    style: {},
+    className: "",
+    textContent: "",
+    innerHTML: "",
+    disabled: false,
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    append(...children) {
+      this.children.push(...children);
+    },
+    addEventListener() {},
+  };
+}
+
 function createApiLedgerRealIncomeContext() {
   const context = {
     REAL_INCOME_CHANNELS: [
@@ -2102,4 +2122,83 @@ test("getCurrentFactMetricTotals uses aggregated period rows instead of stale fa
     myServices: 500,
     myCosts: 100,
   });
+});
+
+test("expense financial analysis profit uses provider real income instead of movement received USD", () => {
+  const summaryCards = [];
+  const context = {
+    document: {
+      createElement: createElementStub,
+    },
+    state: {
+      expenseAccounting: { loading: false },
+      aggregatedManualRange: { transferRows: [] },
+      manualTransfers: { data: null },
+      manualFinance: { data: null },
+      data: {
+        tabs: {
+          movement: { values: [] },
+        },
+      },
+    },
+    MANUAL_EXPENSE_ACCOUNTING_CATEGORIES: ["business", "flat", "food", "fun", "travel", "study"],
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    formatSheetNumber(value) {
+      return Number(value || 0).toFixed(4).replace(".", ",");
+    },
+    parseLooseNumber(value) {
+      return Number(String(value ?? "").replace(",", ".")) || 0;
+    },
+    getManualOverlayUnavailableMessage: () => "",
+    getExpenseAnalysisLedgerWarnings: () => [],
+    getExpenseAnalysisLedgerRows: () => [],
+    buildManualFinanceUsdRateLookup: () => ({}),
+    getExpenseAnalysisChannelSummary: () => ({
+      incomeTotals: { realUsd: 319.87 },
+      expenseTotals: {},
+      rows: [],
+    }),
+    getExpenseAnalysisProviderExpenseByChannel: () => ({}),
+    renderExpenseAnalysisChannelBlock: () => createElementStub("section"),
+    getMissingPaymentsAuditSummary: () => ({}),
+    renderMissingPaymentsBlock: () => createElementStub("section"),
+    getBalanceReconciliationSummary: () => ({ rows: [] }),
+    renderBalanceReconciliationBlock: () => createElementStub("section"),
+    getActivePayPalSummary: () => null,
+    getActiveWiseSummary: () => null,
+    getActiveYooMoneySummary: () => null,
+    getActiveMonobankSummary: () => null,
+    getActivePrivatBankSummary: () => null,
+    getActiveTdBankSummary: () => null,
+    hasProviderSummaryData: () => false,
+    getCurrentAnalyticsManualRows: () => [
+      { channel: "пейпал дол", serviceIncome: "15", business: "2393.2409", flat: "", food: "", fun: "", travel: "", study: "" },
+    ],
+    getManualFinanceFieldUsdNumber(row, key) {
+      return Number(String(row?.[key] || "0").replace(",", ".")) || 0;
+    },
+    calculateMovementChannelStats: () => ({
+      usdByChannel: { "пейпал дол": 463.5057 },
+    }),
+    renderExpenseSummaryCard(label, value) {
+      summaryCards.push({ label, value });
+      return createElementStub("article");
+    },
+    renderPlainTable: () => createElementStub("table"),
+    refreshExpenseFinancialAnalysis() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "renderExpenseFinancialAnalysis")}\n` +
+    "this.renderExpenseFinancialAnalysis = renderExpenseFinancialAnalysis;",
+    context
+  );
+
+  context.renderExpenseFinancialAnalysis();
+
+  assert.deepEqual(summaryCards, [
+    { label: "прибыль", value: "-2058,3709 USD" },
+    { label: "приход", value: "334,8700 USD" },
+    { label: "расходы", value: "2393,2409 USD" },
+  ]);
 });

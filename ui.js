@@ -823,10 +823,9 @@ function renderExpenseFinancialAnalysis() {
     if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
     return sum + getManualFinanceFieldUsdNumber(row, "serviceIncome", usdRateLookup);
   }, 0);
-  const movementStats = calculateMovementChannelStats(state.data?.tabs?.movement?.values || []);
-  const movementIncomeUsd = Object.values(movementStats.usdByChannel || {}).reduce((sum, value) => sum + parseLooseNumber(value), 0);
+  const realIncomeUsd = parseLooseNumber(channelReconciliation?.incomeTotals?.realUsd);
   const totalExpensesUsd = Object.values(expenseUsd).reduce((sum, value) => sum + value, 0);
-  const totalIncomeUsd = incomeUsd + movementIncomeUsd;
+  const totalIncomeUsd = incomeUsd + realIncomeUsd;
   const cards = document.createElement("div");
   cards.className = "expense-summary-grid";
   [["прибыль", totalIncomeUsd - totalExpensesUsd], ["приход", totalIncomeUsd], ["расходы", totalExpensesUsd]]
