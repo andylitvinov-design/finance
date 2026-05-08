@@ -238,6 +238,93 @@ const MOVEMENT_HEADER = [
   "BALANCE"
 ];
 
+test("expense analysis excludes transfer and exchange ledger rows from real expenses", () => {
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб", "пейпал дол", "трансервайз дол"],
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").slice(0, 10);
+    },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim();
+    },
+    resolveLedgerFactAmountUsdInfo(row) {
+      return { amountUsd: Math.abs(context.parseLooseNumber(row.amountUsd ?? row.amount_usd ?? row.amount)) };
+    },
+    roundProviderSummaryAmount(value) {
+      return Math.round((Number(value) || 0) * 10000) / 10000;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeLedgerClassifierText")}\n` +
+    `${extractFunction(financeJs, "isTransferOrExchangeRow")}\n` +
+    `${extractFunction(uiJs, "getNormalizedLedgerFactOperation")}\n` +
+    `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
+    `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
+    `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    "this.buildLedgerProviderExpenseByChannel = buildLedgerProviderExpenseByChannel;",
+    context
+  );
+
+  const totals = context.buildLedgerProviderExpenseByChannel([
+    { date: "2026-05-02", operation: "business_expense", category: "business", fromChannel: "пейпал дол", amountUsd: "-50" },
+    { date: "2026-05-03", operation: "exchange_out", category: "business", fromChannel: "трансервайз дол", amountUsd: "-415", comment: "Sent money to internal account" },
+    { date: "2026-05-04", operation: "exchange_out", category: "exchange", fromChannel: "пейпал дол", amountUsd: "-132.59" },
+    { date: "2026-05-05", operation: "transfer", category: "business", fromChannel: "Яндекс руб", toChannel: "приват 24-грн", amountUsd: "-884.2807", comment: "Перевод на карту" },
+    { date: "2026-05-06", operation: "partner_transfer", category: "partner", fromChannel: "трансервайз дол", amountUsd: "-100" }
+  ], {}, { startDate: "2026-05-01", endDate: "2026-05-08" });
+
+  assert.equal(totals["пейпал дол"], 50);
+  assert.equal(totals["трансервайз дол"], 0);
+  assert.equal(totals["Яндекс руб"], 0);
+});
+
+test("calculateTransferBalance reports transfer in minus transfer out separately", () => {
+  const context = {
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").slice(0, 10);
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "normalizeLedgerClassifierText")}\n` +
+    `${extractFunction(financeJs, "normalizeMetricPeriodDate")}\n` +
+    `${extractFunction(financeJs, "isMetricRowInPeriod")}\n` +
+    `${extractFunction(financeJs, "getLedgerMetricAmountUsd")}\n` +
+    `${extractFunction(financeJs, "isTransferOrExchangeRow")}\n` +
+    `${extractFunction(financeJs, "calculateTransferBalance")}\n` +
+    "this.calculateTransferBalance = calculateTransferBalance;",
+    context
+  );
+
+  assert.deepEqual(plain(context.calculateTransferBalance([
+    { date: "2026-05-01", operation: "transfer", amountUsd: "120", direction: "in" },
+    { date: "2026-05-02", operation: "transfer_out", amountUsd: "-45" },
+    { date: "2026-05-03", operation: "partner_transfer", amountUsd: "-10" },
+    { date: "2026-05-04", operation: "exchange_out", amountUsd: "-999" },
+    { date: "2026-04-30", operation: "transfer", amountUsd: "100", direction: "in" },
+  ], { startDate: "2026-05-01", endDate: "2026-05-08" })), {
+    transferIn: 120,
+    transferOut: 55,
+    transferBalance: 65,
+  });
+});
+
 function movementRow(orderId, channel, amount, client = `Client ${orderId}`) {
   return [String(orderId), "2026-05-10", client, `Service ${orderId}`, channel, amount, amount, "", "", amount];
 }
@@ -2194,7 +2281,7 @@ test("getCurrentFactMetricTotals uses aggregated period rows instead of stale fa
   });
 });
 
-test("expense financial analysis profit uses provider real income instead of movement received USD", () => {
+test("expense financial analysis profit uses owner order share instead of provider real income", () => {
   const summaryCards = [];
   const context = {
     document: {
@@ -2226,6 +2313,7 @@ test("expense financial analysis profit uses provider real income instead of mov
     getExpenseAnalysisChannelSummary: () => ({
       incomeTotals: { realUsd: 319.87 },
       expenseTotals: {},
+      ownerOrderShare30Pct: 139.0517,
       rows: [],
     }),
     getExpenseAnalysisProviderExpenseByChannel: () => ({}),
@@ -2267,8 +2355,8 @@ test("expense financial analysis profit uses provider real income instead of mov
   context.renderExpenseFinancialAnalysis();
 
   assert.deepEqual(summaryCards, [
-    { label: "прибыль", value: "-2058,3709 USD" },
-    { label: "приход", value: "334,8700 USD" },
+    { label: "прибыль", value: "-2239,1892 USD" },
+    { label: "приход", value: "154,0517 USD" },
     { label: "расходы", value: "2393,2409 USD" },
   ]);
 });

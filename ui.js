@@ -823,9 +823,9 @@ function renderExpenseFinancialAnalysis() {
     if (!row?.channel || row.channel === MANUAL_FINANCE_TOTAL_LABEL) return sum;
     return sum + getManualFinanceFieldUsdNumber(row, "serviceIncome", usdRateLookup);
   }, 0);
-  const realIncomeUsd = parseLooseNumber(channelReconciliation?.incomeTotals?.realUsd);
+  const ownerOrderShareUsd = parseLooseNumber(channelReconciliation?.ownerOrderShare30Pct);
   const totalExpensesUsd = Object.values(expenseUsd).reduce((sum, value) => sum + value, 0);
-  const totalIncomeUsd = incomeUsd + realIncomeUsd;
+  const totalIncomeUsd = incomeUsd + ownerOrderShareUsd;
   const cards = document.createElement("div");
   cards.className = "expense-summary-grid";
   [["прибыль", totalIncomeUsd - totalExpensesUsd], ["приход", totalIncomeUsd], ["расходы", totalExpensesUsd]]
@@ -857,8 +857,10 @@ function renderExpenseAnalysisChannelBlock(summary) {
   cards.appendChild(renderExpenseSummaryCard("план услуги", `${formatSheetNumber(summary.incomeTotals.servicePlanUsd)} USD`));
   cards.appendChild(renderExpenseSummaryCard("план всего", `${formatSheetNumber(summary.incomeTotals.plannedUsd)} USD`));
   cards.appendChild(renderExpenseSummaryCard("пришло реально", `${formatSheetNumber(summary.incomeTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("30% заказов", `${formatSheetNumber(summary.ownerOrderShare30Pct || 0)} USD`));
   cards.appendChild(renderExpenseSummaryCard("потрачено план", `${formatSheetNumber(summary.expenseTotals.plannedUsd)} USD`));
   cards.appendChild(renderExpenseSummaryCard("потрачено реал", `${formatSheetNumber(summary.expenseTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("баланс переводов", `${formatSheetNumber(summary.transferBalance?.transferBalance || 0)} USD`));
   block.appendChild(cards);
   const wrap = document.createElement("div");
   wrap.className = "table-wrap analysis-table-wrap";
@@ -1016,7 +1018,10 @@ function getExpenseAnalysisChannelSummary() {
     ledgerRows,
     realIncomeSummaryByChannel,
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup, selectedPeriod),
-    usdRateLookup
+    usdRateLookup,
+    transferBalance: typeof calculateTransferBalance === "function"
+      ? calculateTransferBalance(ledgerRows, selectedPeriod)
+      : { transferIn: 0, transferOut: 0, transferBalance: 0 }
   });
 }
 
@@ -1155,6 +1160,7 @@ function isLedgerProviderIncomeSource(row) {
 }
 
 function getLedgerExpenseChannel(row) {
+  if (typeof isTransferOrExchangeRow === "function" && isTransferOrExchangeRow(row)) return "";
   const operation = getNormalizedLedgerFactOperation(row);
   if (!["expense", "business_expense", "personal_expense", "exchange_out", "partner_transfer"].includes(operation)) return "";
   const channel = canonicalManualFinanceChannel(row?.fromChannel ?? row?.from_channel);

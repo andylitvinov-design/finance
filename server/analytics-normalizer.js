@@ -574,7 +574,18 @@ function normalizeManualCategory(value) {
   return normalized;
 }
 
+function isTransferOrExchangeOperation(operation) {
+  const op = normalizeCell(operation?.operation).replace(/[_-]+/g, " ");
+  const category = normalizeCell(operation?.category).replace(/[_-]+/g, " ");
+  const comment = normalizeCell(`${operation?.comment || ""} ${operation?.description || ""}`);
+  if (/(^| )(transfer|transfer in|transfer out|partner transfer|internal movement|exchange|exchange in|exchange out)( |$)/.test(op)) return true;
+  if (/(^| )(перевод|обмен)( |$)/.test(op)) return true;
+  if (category === "exchange" || category === "partner") return true;
+  return /перевод|обмен|internal movement/.test(comment);
+}
+
 function mapOperationToManualCategory(operation) {
+  if (isTransferOrExchangeOperation(operation)) return "exchange";
   const category = normalizeManualCategory(operation?.category);
   const op = normalizeCell(operation?.operation);
   if (category === "serviceIncome") return "serviceIncome";

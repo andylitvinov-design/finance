@@ -236,6 +236,78 @@ function sumManualFinanceSpendUsdNumber(rows, rateLookup = { byChannel: {}, byCu
   }, 0);
 }
 
+function normalizeLedgerClassifierText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function isTransferOrExchangeRow(row) {
+  const operation = normalizeLedgerClassifierText(row?.operation || row?.ledgerV2?.operation);
+  const category = normalizeLedgerClassifierText(row?.category || row?.ledgerV2?.category);
+  const direction = normalizeLedgerClassifierText(row?.direction || row?.ledgerV2?.direction);
+  const text = normalizeLedgerClassifierText([
+    row?.comment,
+    row?.description,
+    row?.ledgerV2?.comment,
+    row?.ledgerV2?.description
+  ].filter(Boolean).join(" "));
+  if (/(^| )(transfer|transfer in|transfer out|partner transfer|internal movement|exchange|exchange in|exchange out)( |$)/.test(operation)) return true;
+  if (/(^| )(перевод|обмен)( |$)/.test(operation)) return true;
+  if (category === "exchange" || category === "partner") return true;
+  if (/^(in|out)$/.test(direction) && /перевод|обмен|internal movement|sent money/.test(text)) return true;
+  return /перевод|обмен|internal movement/.test(text);
+}
+
+function normalizeMetricPeriodDate(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (typeof normalizeIncomingSheetDateValue === "function") return normalizeIncomingSheetDateValue(raw);
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const display = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  if (display) return `${display[3]}-${display[2].padStart(2, "0")}-${display[1].padStart(2, "0")}`;
+  return raw.slice(0, 10);
+}
+
+function isMetricRowInPeriod(row, period = {}) {
+  const startDate = normalizeMetricPeriodDate(period.startDate || period.from || "");
+  const endDate = normalizeMetricPeriodDate(period.endDate || period.to || "");
+  if (!startDate && !endDate) return true;
+  const date = normalizeMetricPeriodDate(row?.date || row?.operationDate || row?.transactionDate || row?.createdAt || row?.created_at || "");
+  if (!date) return false;
+  if (startDate && date < startDate) return false;
+  if (endDate && date > endDate) return false;
+  return true;
+}
+
+function getLedgerMetricAmountUsd(row) {
+  const raw = String(row?.amountUsd ?? row?.amount_usd ?? row?.ledgerV2?.amount_usd ?? "").trim();
+  if (raw) return parseLooseNumber(raw);
+  return parseLooseNumber(row?.amount ?? row?.ledgerV2?.amount);
+}
+
+function calculateTransferBalance(rows = [], period = {}) {
+  return (Array.isArray(rows) ? rows : []).reduce((totals, row) => {
+    if (!isTransferOrExchangeRow(row) || !isMetricRowInPeriod(row, period)) return totals;
+    const operation = normalizeLedgerClassifierText(row?.operation || row?.ledgerV2?.operation);
+    const category = normalizeLedgerClassifierText(row?.category || row?.ledgerV2?.category);
+    if (operation.includes("exchange") || category === "exchange") return totals;
+    const amountUsd = getLedgerMetricAmountUsd(row);
+    const direction = normalizeLedgerClassifierText(row?.direction || row?.ledgerV2?.direction);
+    const isIn = direction === "in" || operation === "transfer in" || amountUsd > 0;
+    const absAmount = Math.abs(amountUsd);
+    if (!absAmount) return totals;
+    if (isIn) totals.transferIn += absAmount;
+    else totals.transferOut += absAmount;
+    totals.transferBalance = totals.transferIn - totals.transferOut;
+    return totals;
+  }, { transferIn: 0, transferOut: 0, transferBalance: 0 });
+}
+
 
 // ============================================================
 // HELPERS
@@ -896,7 +968,8 @@ function buildExpenseAnalysisChannelSummary({
   ledgerRows = [],
   realIncomeSummaryByChannel = {},
   providerExpenseByChannel = {},
-  usdRateLookup = { byChannel: {}, byCurrency: {} }
+  usdRateLookup = { byChannel: {}, byCurrency: {} },
+  transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 }
 } = {}) {
   const rows = [[
     "канал",
@@ -1005,7 +1078,13 @@ function buildExpenseAnalysisChannelSummary({
       auto: incomeCountTotals.auto,
       manual: incomeCountTotals.manual,
       screenshot: incomeCountTotals.screenshot
-    }
+    },
+    transferBalance: {
+      transferIn: roundExpenseAnalysisAmount(transferBalance.transferIn),
+      transferOut: roundExpenseAnalysisAmount(transferBalance.transferOut),
+      transferBalance: roundExpenseAnalysisAmount(transferBalance.transferBalance)
+    },
+    ownerOrderShare30Pct: roundExpenseAnalysisAmount(incomeTotals.plannedUsd * 0.3)
   };
 }
 
@@ -3905,8 +3984,10 @@ function buildTopMetricsSummary() {
   const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
   const balance = movementTotals.balanceTotal + ordersBalanceTotal;
   const totalOrdersSeventyPct = movementSeventyTotal + (manualOrdersTotal * 0.7);
+  const ownerOrderShare30Pct = totalOrders - totalOrdersSeventyPct;
   const upgradeTotals = buildAnalyticsUpgradeTotals({
     totalOrdersSeventyPct,
+    ownerOrderShare30Pct,
     totalPaid,
     realIncomeTotal: getRealIncomeUsdForProfit(totalReceivedUsd),
     myServicesTotal: factTotals.myServices,
@@ -3918,6 +3999,8 @@ function buildTopMetricsSummary() {
     balance,
     totalPaid,
     total: upgradeTotals.total,
+    ownerOrderShare30Pct: upgradeTotals.ownerOrderShare30Pct,
+    realIncomeTotal: upgradeTotals.realIncomeTotal,
     myServices: factTotals.myServices,
     myCosts: factTotals.myCosts,
     profit: upgradeTotals.profit
@@ -3938,8 +4021,9 @@ function getRealIncomeUsdForProfit(fallbackReceivedUsd = 0) {
   return parseLooseNumber(fallbackReceivedUsd);
 }
 
-function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0, realIncomeTotal = 0, myServicesTotal = 0, myCostsTotal = 0 } = {}) {
+function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, ownerOrderShare30Pct = 0, totalPaid = 0, realIncomeTotal = 0, myServicesTotal = 0, myCostsTotal = 0 } = {}) {
   const accrued = parseLooseNumber(totalOrdersSeventyPct);
+  const ownerShare = parseLooseNumber(ownerOrderShare30Pct);
   const paid = parseLooseNumber(totalPaid);
   const realIncome = parseLooseNumber(realIncomeTotal);
   const services = parseLooseNumber(myServicesTotal);
@@ -3947,11 +4031,12 @@ function buildAnalyticsUpgradeTotals({ totalOrdersSeventyPct = 0, totalPaid = 0,
   const rawTotal = accrued + paid + services;
   return {
     totalOrdersSeventyPct: accrued,
+    ownerOrderShare30Pct: ownerShare,
     rawTotal,
     total: -rawTotal,
     realIncomeTotal: realIncome,
-    incomeForProfit: realIncome + services,
-    profit: realIncome + services - costs
+    incomeForProfit: ownerShare + services,
+    profit: ownerShare + services - costs
   };
 }
 
