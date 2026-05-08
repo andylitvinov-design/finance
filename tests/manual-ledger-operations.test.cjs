@@ -166,6 +166,7 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "parseManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "buildManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeLedgerAmountUsdForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "firstNonEmpty")}\n` +
     `${extractFunction(googleSheetsJs, "getLedgerUsdPerLocalRate")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeLedgerExchangeUsdSign")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerRowsForSave")}\n` +
@@ -571,6 +572,64 @@ test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail
   assert.equal(normalized.rows[0].description, "Privat payment");
   assert.equal(normalized.rows[0].externalId, "PB-DETAIL-1");
   assert.equal(normalized.rows[0].source, "privatbank");
+});
+
+test("normalizeManualLedgerRowsForSave derives non-PayPal net when incoming net is blank", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-06",
+      operation: "income",
+      toChannel: "монобанк грн",
+      amount: "253",
+      currency: "UAH",
+      amountNet: "",
+      category: "servicein",
+      direction: "in",
+      source: "monobank",
+      externalId: "mono-blank-net",
+      rawSourceId: "mono-blank-net"
+    },
+    {
+      date: "2026-05-06",
+      operation: "income",
+      toChannel: "Яндекс руб",
+      amount: "438.98",
+      currency: "RUB",
+      amount_net: "",
+      category: "servicein",
+      direction: "in",
+      source: "yoomoney",
+      externalId: "yoomoney-blank-net",
+      rawSourceId: "yoomoney-blank-net"
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 2);
+  assert.equal(saved.rows[0].amountNet, "253,0000");
+  assert.equal(saved.rows[1].amountNet, "438,9800");
+});
+
+test("normalizeManualLedgerRowsForSave keeps PayPal net blank when fee is unavailable", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-06",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "200",
+      currency: "USD",
+      amountNet: "",
+      category: "servicein",
+      direction: "in",
+      source: "paypal",
+      externalId: "paypal-blank-net",
+      rawSourceId: "paypal-blank-net"
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.rows[0].amountNet, "");
 });
 
 test("filterExpenseOperationsRows filters by period, channels, and source", () => {

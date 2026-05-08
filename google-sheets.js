@@ -817,12 +817,12 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const amountGross = normalizeManualFinancePersistedNumberInput(row?.amountGross ?? row?.amount_gross ?? row?.localAmount ?? row?.amount ?? amount);
     const amountFee = normalizeManualFinancePersistedNumberInput(row?.amountFee ?? row?.amount_fee ?? row?.feeAmount ?? "");
     const resolvedSource = resolveManualLedgerSource(row?.source, rawSourceId, "other", { fromChannel, toChannel });
-    const hasExplicitFee = Number.isFinite(parseLooseNumber(amountFee));
+    const hasExplicitFee = String(amountFee || "").trim() !== "" && Number.isFinite(parseLooseNumber(amountFee));
     const derivedAmountNet = hasExplicitFee
       ? formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))))
       : (resolvedSource === "paypal" ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
     const amountNet = normalizeManualFinancePersistedNumberInput(
-      row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? derivedAmountNet
+      firstNonEmpty(row?.amountNet, row?.amount_net, row?.netAmount, derivedAmountNet)
     );
     const ledgerV2 = normalizeLedgerRowForContract({
       ...row,
@@ -886,6 +886,13 @@ function normalizeLedgerAmountUsdForSave(row, context = {}) {
   const channel = context.fromChannel || context.toChannel || row?.fromChannel || row?.toChannel || row?.from_channel || row?.to_channel || "";
   const rate = getLedgerUsdPerLocalRate(row, currency, channel);
   return normalizeLedgerExchangeUsdSign(formatSheetNumber(amount * rate), context.operation || row?.operation, context.category || row?.category);
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (String(value ?? "").trim()) return value;
+  }
+  return "";
 }
 
 function getLedgerUsdPerLocalRate(row, currency, channel = "") {
