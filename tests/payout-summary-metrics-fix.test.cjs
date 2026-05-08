@@ -137,6 +137,23 @@ test("server manual transfer rows are included for the selected payout period", 
   assert.equal(round4(context.buildTopMetricsSummary().totalPaid), -744.7385);
 });
 
+test("server manual transfer rows are excluded outside the selected payout period", () => {
+  const context = makeContext(
+    { totalOrders: 360.4944, balance: 205.9943, totalPaid: -154.5001, total: -205.9943 },
+    [],
+    {
+      startDate: "2026-05-04",
+      endDate: "2026-05-06",
+      serverTransferRows: [
+        { transferDate: "2026-04-24", who: "me", amount: "950", currency: "USD", channel: "usdt", rate: "1", usdAmount: "950" },
+      ],
+    }
+  );
+
+  assert.equal(context.calculateCurrentPayoutTransferUsdTotal(), 0);
+  assert.equal(round4(context.buildTopMetricsSummary().totalPaid), -154.5001);
+});
+
 test("payout summary fix loads after finance and before ui", () => {
   assert.match(indexHtml, /finance\.js[\s\S]*orders\.js[\s\S]*payout-summary-metrics-fix\.js[\s\S]*ui\.js/);
 });

@@ -712,6 +712,103 @@ test("loadManualRepositoryFromGoogleSheets derives missing amount_usd for exchan
   }
 });
 
+test("loadManualRepositoryFromGoogleSheets includes Russian display-date transfer rows", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:P",
+                values: [["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category"]],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+              {
+                range: "'Переводы'!A1:G",
+                values: [
+                  ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+                  ["24.04.2026", "я", "950", "USD", "usdt", "1", "950"],
+                  ["5 мая", "я", "26000", "грн", "фоп", "44,05", "590,2384"],
+                ],
+              },
+              { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.deepEqual(repository.transfers, [
+      { transferDate: "2026-04-24", who: "я", amount: "950", currency: "USD", channel: "usdt", rate: "1", usdAmount: "950" },
+      { transferDate: "2026-05-05", who: "я", amount: "26000", currency: "грн", channel: "фоп", rate: "44,05", usdAmount: "590,2384" },
+    ]);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets warns when transfer sheet rows cannot be parsed", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:P",
+                values: [["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category"]],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "Яндекс руб"]] },
+              { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+              {
+                range: "'Переводы'!A1:G",
+                values: [
+                  ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+                  ["не дата", "я", "26000", "грн", "фоп", "44,05", "590,2384"],
+                ],
+              },
+              { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.deepEqual(repository.transfers, []);
+    assert.match(repository.warnings.join("\n"), /Переводы sheet has data rows but no parsed transfer rows/);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
 test("loadManualRepositoryFromGoogleSheets keeps valid ledger rows when raw exchange amount_usd is derived", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
