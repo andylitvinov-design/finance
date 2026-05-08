@@ -89,6 +89,7 @@ alias_status="$(curl -fsS https://ezohata-incoming-ledger.vercel.app/api/status)
 alias_project="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.vercelProjectName || j.service || ""); });')"
 alias_production_url="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write((j.vercel && j.vercel.productionUrl) || ""); });')"
 alias_repo_slug="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.gitRepoSlug || ""); });')"
+alias_commit_sha="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.commitSha || ""); });')"
 if [[ "$alias_project" != "ezohata-incoming-ledger" ]]; then
   echo "release-guard: production alias does not report project ezohata-incoming-ledger." >&2
   exit 1
@@ -99,6 +100,14 @@ if [[ "$alias_production_url" != "ezohata-incoming-ledger.vercel.app" ]]; then
 fi
 case "$alias_repo_slug" in
   "finance"|"andylitvinov-design/finance")
+    ;;
+  "unknown"|"")
+    if ! git cat-file -e "${alias_commit_sha}^{commit}" 2>/dev/null \
+      || ! git merge-base --is-ancestor "$alias_commit_sha" "$base_ref"; then
+      echo "release-guard: production alias has no repo slug and commit is not present in $base_ref: ${alias_commit_sha:-missing}." >&2
+      echo "Do not release from the stale andylitvinov-design/ezohata-incoming-ledger repo." >&2
+      exit 1
+    fi
     ;;
   *)
     echo "release-guard: production alias must report finance repo slug, got ${alias_repo_slug:-missing}." >&2
