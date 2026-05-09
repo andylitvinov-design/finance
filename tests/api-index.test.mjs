@@ -708,6 +708,7 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
     const movementRows = response.body?.data?.tabs?.movement?.values || [];
     const ordersRows = response.body?.data?.tabs?.orders?.values || [];
     const missingPaymentRow = movementRows.find((row) => row?.[0] === "18101");
+    const explicitFopRow = movementRows.find((row) => row?.[0] === "18103");
     const fullyMissingRow = movementRows.find((row) => row?.[0] === "18104");
     const positions = movementRows.map((row) => row?.[0]).filter(Boolean);
     assert.deepEqual(positions, [
@@ -725,14 +726,16 @@ test("GET getDashboardData overlays fresh source movement rows even when upstrea
       "Итого"
     ]);
     assert.equal(missingPaymentRow?.[22], "206");
-    assert.equal(missingPaymentRow?.[23], "NEEDS VERIFICATION");
+    assert.equal(missingPaymentRow?.[14], "приват-фоп");
+    assert.equal(missingPaymentRow?.[23], "CHECK REQUIRED");
     assert.match(String(missingPaymentRow?.[24] || ""), /provider fee\/net missing|balance not calculated from incomplete source row/i);
+    assert.equal(explicitFopRow?.[14], "приват ФОП");
     assert.equal(fullyMissingRow?.[22], "206");
     const clientRows = movementRows.filter((row) => /^\d+$/.test(String(row?.[0] || "")));
     assert.ok(clientRows.length > 0);
     assert.equal(clientRows.every((row) => String(row?.[22] || "").trim()), true);
     assert.equal(clientRows.filter((row) => row?.[2] === "Сергей Ковалев").every((row) => String(row?.[22] || "").trim()), true);
-    assert.equal(fullyMissingRow?.[23], "NEEDS VERIFICATION");
+    assert.equal(fullyMissingRow?.[23], "CHECK REQUIRED");
     assert.equal(ordersRows.at(-1)?.[0], "Итого");
   } finally {
     global.fetch = previousFetch;
@@ -1791,6 +1794,16 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
             paymentMethod: "сайт, дол, пэйпэл",
           }),
           makeSourceRow({
+            number: "18132",
+            date: "2026-04-18",
+            client: "Сергей Ковалев",
+            service: "Empty Kovalev payment defaults to Privat FOP",
+            priceBase: 500,
+            accruedPlus: 515,
+            paymentMethod: "",
+            receivedUsd: 515,
+          }),
+          makeSourceRow({
             number: "18149",
             date: "2026-04-20",
             client: "Инна Устименко",
@@ -1883,6 +1896,9 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.equal(kovalevNoPaymentRow?.[2], "Сергей Ковалев");
     assert.equal(kovalevNoPaymentRow?.[18], "");
     assert.equal(kovalevNoPaymentRow?.[22], "515");
+    const kovalevDefaultedRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18132");
+    assert.equal(kovalevDefaultedRow?.[14], "приват-фоп");
+    assert.equal(kovalevDefaultedRow?.[18], "515");
     const innaDefaultedRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18149");
     assert.equal(innaDefaultedRow?.[14], "пейпал дол");
     assert.equal(innaDefaultedRow?.[18], "103");
@@ -1896,6 +1912,9 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.match(realIncomeWarnings, /needs verification/i);
     assert.match(realIncomeWarnings, /missing fee on income transaction PAYPAL-NOFEE-1/i);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.plannedReceivedUsd, 206);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.currency, "UAH");
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.plannedReceivedUsd, 515);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват 24-грн"]?.plannedReceivedUsd, 0);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;

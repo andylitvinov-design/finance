@@ -69,6 +69,7 @@ const DEFAULT_MANUAL_CHANNEL_MAP = MANUAL_LEDGER_CONTRACT.CHANNEL_MAP || {
   "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
   "приват 24-дол": ["privat usd", "privat 24 usd", "приват 24 дол"],
   "приват 24-евро": ["privat eur", "privat 24 eur", "приват 24 евро"],
+  "приват-фоп": ["приват фоп", "фоп приват", "privat fop", "privat24 fop", "privat 24 fop", "privat fop uah", "приват24 фоп", "приват 24 фоп"],
   "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
   "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
   "трансервайз дол": ["wise usd", "transferwise usd"],
@@ -108,10 +109,13 @@ const ANALYTICS_PAYMENT_RULES = {
     currency: "USD",
     usdPatterns: [/сайт, дол, пэйпэл|сайт, пэйпэл, дол/i]
   },
-  "приват 24-грн": {
+  "приват-фоп": {
     currency: "UAH",
     localPatterns: [/приват фоп|фоп приват/i],
     usdPatterns: [/приват фоп|фоп приват/i]
+  },
+  "приват 24-грн": {
+    currency: "UAH"
   },
   "монобанк грн": {
     currency: "UAH",
@@ -125,7 +129,7 @@ const ANALYTICS_PAYMENT_RULES = {
   }
 };
 const MANUAL_FINANCE_MONEY_CHANNELS = [
-  "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн",
+  "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
   "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
   "Бинанс spot","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];

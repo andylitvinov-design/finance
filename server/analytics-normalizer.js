@@ -59,6 +59,7 @@ const PAYMENT_RULE_CURRENCIES = {
   "приват 24-дол": "USD",
   "приват 24-евро": "EUR",
   "приват 24-грн": "UAH",
+  "приват-фоп": "UAH",
   "монобанк грн": "UAH",
   "Бинанс spot": "USD",
   "binance save": "USD",
@@ -75,6 +76,7 @@ function resolveManualChannelAlias(value) {
     { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
     { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
     { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+    { pattern: /^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/, channel: "приват-фоп" },
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
     { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" }
   ];
