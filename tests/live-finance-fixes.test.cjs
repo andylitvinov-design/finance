@@ -55,6 +55,26 @@ test("live finance fixes normalize text discounts before orders mapping reaches 
   assert.deepEqual(mapped.rows.map((row) => row[3]), ["51.5", "51.5", "51.5"]);
 });
 
+test("live finance fixes use action multiplier and propagate within same date/client group", () => {
+  const helper = {
+    mapLegacyOrdersValues: (values) => ({
+      headers: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ"],
+      rows: values.slice(1).map((row) => [row[1], row[2], row[3], row[6]]),
+    }),
+  };
+  runFixesWithHelper(helper);
+
+  const mapped = helper.mapLegacyOrdersValues([
+    ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACCRUED +3%", "ACTION", "STATUS"],
+    ["18152", "03.05.2026", "Сергей Ковалев", "Заказ 1", "", "100", "103", "", "NEEDS VERIFICATION"],
+    ["18153", "03.05.2026", "Сергей Ковалев", "Заказ 2", "", "100", "103", "0.5", "NEEDS VERIFICATION"],
+    ["18154", "04.05.2026", "Другой Клиент", "Заказ 3", "", "100", "103", "", "NEEDS VERIFICATION"],
+  ]);
+
+  assert.equal(helper.parseDiscountMultiplier("0.5"), 0.5);
+  assert.deepEqual(mapped.rows.map((row) => row[3]), ["51.5", "51.5", "103"]);
+});
+
 test("paid total display fix changes only negative metric text to absolute display", () => {
   let metricText = "-847,7385";
   const metric = {
