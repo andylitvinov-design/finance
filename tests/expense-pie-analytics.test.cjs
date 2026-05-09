@@ -86,6 +86,47 @@ test("builds channel segments and supports house/travel aliases", () => {
   );
 });
 
+test("direction and channel totals use the same positive expense contributions", () => {
+  const rows = [
+    { channel: "монобанк грн", business: 1104.4334, flat: -258.9931, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 },
+    { channel: "Итого", business: 9999, flat: 9999 }
+  ];
+
+  const byDirection = analytics.buildExpensePieSegments({
+    mode: "direction",
+    manualRows: rows,
+    usdRateLookup: global.buildManualFinanceUsdRateLookup()
+  });
+  const byChannel = analytics.buildExpensePieSegments({
+    mode: "channel",
+    manualRows: rows,
+    usdRateLookup: global.buildManualFinanceUsdRateLookup()
+  });
+
+  assert.equal(Number(byDirection.total.toFixed(4)), 1104.4334);
+  assert.equal(Number(byChannel.total.toFixed(4)), 1104.4334);
+  assert.deepEqual(
+    byDirection.segments.map((segment) => [segment.label, segment.value]),
+    [["business", 1104.4334]]
+  );
+  assert.deepEqual(
+    byChannel.segments.map((segment) => [segment.label, segment.value]),
+    [["монобанк грн", 1104.4334]]
+  );
+});
+
+test("expense pie contribution rows drop non-positive category cells before grouping", () => {
+  const contributions = analytics.getExpensePieContributionRows([
+    { channel: "PayPal", business: 100, flat: -40, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 },
+    { channel: "Wise", business: 25, flat: 0, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 }
+  ], global.buildManualFinanceUsdRateLookup());
+
+  assert.deepEqual(contributions, [
+    { channel: "PayPal", category: "business", amount: 100 },
+    { channel: "Wise", category: "business", amount: 25 }
+  ]);
+});
+
 test("installs into the active expense financial analysis renderer", () => {
   global.document = { createElement: createTestElement };
   global.getCurrentAnalyticsManualRows = () => [

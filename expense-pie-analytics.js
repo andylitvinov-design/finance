@@ -111,26 +111,34 @@
     };
   }
 
+  function getExpensePieContributionRows(manualRows, usdRateLookup) {
+    const contributions = [];
+    manualRows.forEach((row) => {
+      if (isExpensePieTotalRow(row)) return;
+      const channel = String(row.channel || "").trim();
+      if (!channel) return;
+      getExpensePieCategories().forEach((category) => {
+        const amount = getExpensePieCategoryUsd(row, category, usdRateLookup);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        contributions.push({ channel, category, amount });
+      });
+    });
+    return contributions;
+  }
+
   function buildExpensePieSegments(options = {}) {
     const mode = options.mode === "channel" ? "channel" : "direction";
     const manualRows = Array.isArray(options.manualRows) ? options.manualRows : getExpensePieManualRows();
     const usdRateLookup = options.usdRateLookup || getExpensePieRateLookup();
-    const categoryTotals = Object.fromEntries(getExpensePieCategories().map((category) => [category, 0]));
-    const channelTotals = {};
-
-    manualRows.forEach((row) => {
-      if (isExpensePieTotalRow(row)) return;
-      let rowTotal = 0;
-      getExpensePieCategories().forEach((category) => {
-        const value = getExpensePieCategoryUsd(row, category, usdRateLookup);
-        categoryTotals[category] = (categoryTotals[category] || 0) + value;
-        rowTotal += value;
-      });
-      const channel = String(row.channel || "").trim();
-      if (channel && rowTotal > 0) channelTotals[channel] = (channelTotals[channel] || 0) + rowTotal;
+    const totals = mode === "direction"
+      ? Object.fromEntries(getExpensePieCategories().map((category) => [category, 0]))
+      : {};
+    getExpensePieContributionRows(manualRows, usdRateLookup).forEach((entry) => {
+      const label = mode === "channel" ? entry.channel : entry.category;
+      totals[label] = (totals[label] || 0) + entry.amount;
     });
 
-    const rawSegments = Object.entries(mode === "channel" ? channelTotals : categoryTotals)
+    const rawSegments = Object.entries(totals)
       .filter(([, value]) => value > 0)
       .sort((a, b) => b[1] - a[1]);
     const total = rawSegments.reduce((sum, [, value]) => sum + value, 0);
@@ -271,6 +279,7 @@
 
   root.ExpensePieAnalytics = {
     buildExpensePieSegments,
+    getExpensePieContributionRows,
     getExpensePieCategoryUsd,
     installExpensePieAnalytics,
     renderExpensePieAnalytics
