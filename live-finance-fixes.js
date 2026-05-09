@@ -3,7 +3,7 @@
 // ============================================================
 // Minimal runtime fixes for the current live finance repo:
 // 1) display paid total as positive without changing payout semantics;
-// 2) normalize text discount cells in wide orders mapping;
+// 2) normalize text discount/action cells in wide orders mapping;
 // 3) keep the original internal formulas untouched.
 
 (function attachLiveFinanceFixes(root) {
@@ -69,6 +69,14 @@
     return (header || []).findIndex((cell) => normalizedAliases.has(normalizeCell(cell)));
   }
 
+  function findHeaderIndexes(header, aliases) {
+    const normalizedAliases = new Set((aliases || []).map(normalizeCell));
+    return (header || [])
+      .map((cell, index) => [cell, index])
+      .filter(([cell]) => normalizedAliases.has(normalizeCell(cell)))
+      .map(([, index]) => index);
+  }
+
   function readCell(row, index) {
     return index >= 0 && index < (row || []).length ? String(row[index] || "").trim() : "";
   }
@@ -93,7 +101,7 @@
     if (!Number.isFinite(amount) || amount === 0) return 1;
     const hasPercent = /%/.test(raw);
     const looksLikeFraction = !hasPercent && Math.abs(amount) > 0 && Math.abs(amount) <= 1;
-    if (looksLikeFraction) return Math.max(0, 1 - Math.abs(amount));
+    if (looksLikeFraction) return Math.abs(amount);
     const percent = Math.min(Math.abs(amount), 100);
     return Math.max(0, 1 - percent / 100);
   }
@@ -102,6 +110,15 @@
     const amount = parseLooseNumber(amountValue);
     if (!Number.isFinite(amount)) return null;
     return amount * parseDiscountMultiplier(discountValue);
+  }
+
+  function sameGroup(left, right, dateIndex, clientIndex) {
+    if (!left || !right) return false;
+    const leftDate = dateIndex === -1 ? "" : normalizeCell(readCell(left, dateIndex));
+    const rightDate = dateIndex === -1 ? "" : normalizeCell(readCell(right, dateIndex));
+    const leftClient = clientIndex === -1 ? "" : normalizeCell(readCell(left, clientIndex));
+    const rightClient = clientIndex === -1 ? "" : normalizeCell(readCell(right, clientIndex));
+    return Boolean(leftDate && rightDate && leftDate === rightDate && leftClient && rightClient && leftClient === rightClient);
   }
 
   function patchOrdersDiscountMapping() {
@@ -115,21 +132,42 @@
       const header = Array.isArray(rows[0]) ? rows[0].map((cell) => String(cell || "").trim()) : [];
       if (!header.length || header.length <= 4 || !mapped?.rows?.length) return mapped;
 
-      const discountIndex = findHeaderIndex(header, [
+      const discountIndexes = findHeaderIndexes(header, [
+        "action", "actions", "коэффициент", "коэф", "factor", "multiplier",
         "discount", "discount %", "discount pct", "скидка", "скидка %", "% скидки", "скидок", "disc"
       ]);
-      if (discountIndex === -1) return mapped;
+      if (!discountIndexes.length) return mapped;
 
+      const dateIndex = findHeaderIndex(header, ["date", "дата"]);
+      const clientIndex = findHeaderIndex(header, ["client", "имя", "name", "клиент"]);
       const costIndexes = [
         findHeaderIndex(header, ["accrued +3%", "стоимость", "cost"]),
         findHeaderIndex(header, ["accrued"]),
         findHeaderIndex(header, ["price base", "price"]),
         findHeaderIndex(header, ["получено в долларах итого (сводный)", "received total usd"]),
       ];
+      const sourceRows = rows.slice(1);
+      const explicitDiscount = (sourceRow) => firstNonEmpty(discountIndexes.map((index) => readCell(sourceRow, index)));
+      const groupDiscount = (rowIndex) => {
+        const current = sourceRows[rowIndex];
+        const direct = explicitDiscount(current);
+        if (direct) return direct;
+        for (let index = rowIndex - 1; index >= 0; index -= 1) {
+          if (!sameGroup(current, sourceRows[index], dateIndex, clientIndex)) break;
+          const value = explicitDiscount(sourceRows[index]);
+          if (value) return value;
+        }
+        for (let index = rowIndex + 1; index < sourceRows.length; index += 1) {
+          if (!sameGroup(current, sourceRows[index], dateIndex, clientIndex)) break;
+          const value = explicitDiscount(sourceRows[index]);
+          if (value) return value;
+        }
+        return "";
+      };
 
       const nextRows = mapped.rows.map((row, rowIndex) => {
-        const sourceRow = rows[rowIndex + 1] || [];
-        const discountRaw = readCell(sourceRow, discountIndex);
+        const sourceRow = sourceRows[rowIndex] || [];
+        const discountRaw = groupDiscount(rowIndex);
         if (!discountRaw) return row;
         const rawCost = firstNonEmpty(costIndexes.map((index) => readCell(sourceRow, index)));
         const discounted = computeDiscountedAmount(rawCost, discountRaw);
