@@ -6,6 +6,7 @@
   root.EzohataAnalyticsPayoutsHelper = factory();
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const TOTAL_LABEL = "Итого";
+  const PAYMENT_CHANNEL_REFERENCE = getPaymentChannelReference();
 
   function normalizeCell(value) {
     return String(value || "").trim().toLowerCase();
@@ -56,6 +57,8 @@
   }
 
   function inferFallbackPaymentChannelFromClient(client) {
+    const referencedChannel = PAYMENT_CHANNEL_REFERENCE.resolveClientDefaultPaymentChannel(client);
+    if (referencedChannel) return referencedChannel;
     const normalized = normalizeLookupText(client);
     const familyKeys = getClientPaymentLookupKeys(client).join(" ");
     const text = `${normalized} ${familyKeys}`;
@@ -387,6 +390,22 @@
       row.totalUsd || "",
       row.nowUsd || ""
     ]);
+  }
+
+  function getPaymentChannelReference() {
+    if (typeof require === "function") {
+      try {
+        return require("./payment-channel-reference.js");
+      } catch {
+        // Browser builds use the global below.
+      }
+    }
+    const reference = (typeof globalThis !== "undefined" && globalThis.EzohataPaymentChannelReference) || {};
+    return {
+      resolveClientDefaultPaymentChannel: typeof reference.resolveClientDefaultPaymentChannel === "function"
+        ? reference.resolveClientDefaultPaymentChannel
+        : () => "",
+    };
   }
 
   function calculateCommissionTotalsByChannel(rows, channels = []) {

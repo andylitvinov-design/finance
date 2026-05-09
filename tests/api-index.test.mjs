@@ -1790,6 +1790,26 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
             accruedPlus: 515,
             paymentMethod: "сайт, дол, пэйпэл",
           }),
+          makeSourceRow({
+            number: "18149",
+            date: "2026-04-20",
+            client: "Инна Устименко",
+            service: "Empty payment channel defaults to PayPal",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "",
+            receivedUsd: 103,
+          }),
+          makeSourceRow({
+            number: "18151",
+            date: "2026-04-20",
+            client: "Инна Устименко",
+            service: "Explicit non-empty channel is preserved",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "сайт, дол",
+            receivedUsd: 115.5,
+          }),
         ];
         return {
           ok: true,
@@ -1863,11 +1883,19 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.equal(kovalevNoPaymentRow?.[2], "Сергей Ковалев");
     assert.equal(kovalevNoPaymentRow?.[18], "");
     assert.equal(kovalevNoPaymentRow?.[22], "515");
+    const innaDefaultedRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18149");
+    assert.equal(innaDefaultedRow?.[14], "пейпал дол");
+    assert.equal(innaDefaultedRow?.[18], "103");
+    assert.doesNotMatch(String(innaDefaultedRow?.[24] || ""), /payment channel missing/i);
+    const innaExplicitRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18151");
+    assert.equal(innaExplicitRow?.[14], "сайт, дол");
+    assert.equal(innaExplicitRow?.[18], "115,5");
     const clientRows = response.body?.data?.tabs?.movement?.values?.filter((row) => /^\d+$/.test(String(row?.[0] || ""))) || [];
     assert.equal(clientRows.every((row) => String(row?.[22] || "").trim()), true);
     const realIncomeWarnings = (response.body?.data?.realIncome?.warnings || []).join(" | ");
     assert.match(realIncomeWarnings, /needs verification/i);
     assert.match(realIncomeWarnings, /missing fee on income transaction PAYPAL-NOFEE-1/i);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.plannedReceivedUsd, 206);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
