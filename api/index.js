@@ -35,6 +35,7 @@ const REAL_INCOME_CHANNELS = [
   "приват 24-дол",
   "приват 24-евро",
   "приват 24-грн",
+  "приват-фоп",
   "монобанк грн",
   "БАНК КАНАДА cad",
   "трансервайз дол",
@@ -48,6 +49,7 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "приват 24-дол": "USD",
   "приват 24-евро": "EUR",
   "приват 24-грн": "UAH",
+  "приват-фоп": "UAH",
   "монобанк грн": "UAH",
   "БАНК КАНАДА cad": "CAD",
   "трансервайз дол": "USD",
@@ -1272,6 +1274,9 @@ function resolvePaymentChannel(value) {
   if (normalized === normalizeLookupText("binance save")) return "Бинанс spot";
   const exact = REAL_INCOME_CHANNELS.find((channel) => normalizeLookupText(channel) === normalized);
   if (exact) return exact;
+  if (/^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/.test(normalized)) {
+    return "приват-фоп";
+  }
   const paypalAlias = "(?:paypal|п[еэ]йп(?:а|э)л)";
   if (new RegExp(`(?:сайт.*${paypalAlias}.*дол|сайт.*дол.*${paypalAlias}|${paypalAlias}.*(?:usd|дол)|(?:usd|дол).*${paypalAlias})`).test(normalized)) {
     return "пейпал дол";
@@ -1297,6 +1302,8 @@ function resolvePaymentChannel(value) {
 }
 
 function inferFallbackPaymentChannelFromClient(client) {
+  const referencedChannel = PaymentChannelReference.resolveClientDefaultPaymentChannel(client);
+  if (referencedChannel) return referencedChannel;
   const text = `${normalizeLookupText(client)} ${getClientPaymentLookupKeys(client).join(" ")}`;
   if (/(william|вильям|вилл)/i.test(text)) return "трансервайз дол";
   if (/игнат/i.test(text)) return "пейпал дол";

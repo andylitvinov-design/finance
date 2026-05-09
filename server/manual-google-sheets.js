@@ -73,6 +73,7 @@ function canonicalManualFinanceChannel(value) {
     { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
     { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
     { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+    { pattern: /^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/, channel: "приват-фоп" },
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
     { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" },
   ];
@@ -87,7 +88,7 @@ function canonicalManualExpenseChannel(value) {
 }
 
 const MANUAL_FINANCE_CHANNELS = [
-  "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн",
+  "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
   "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
   "Бинанс spot","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];

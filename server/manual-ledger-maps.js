@@ -79,6 +79,7 @@ const DEFAULT_CHANNEL_MAP = {
   "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad", "paypal сad"],
   "приват 24-дол": ["privat usd", "privat 24 usd", "приват 24 дол", "приват 24-дол"],
   "приват 24-евро": ["privat eur", "privat 24 eur", "приват 24 евро", "приват 24-евро"],
+  "приват-фоп": ["приват фоп", "фоп приват", "privat fop", "privat24 fop", "privat 24 fop", "privat fop uah", "приват24 фоп", "приват 24 фоп"],
   "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah", "privat uah"],
   "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
   "трансервайз дол": ["wise usd", "transferwise usd", "трансервайз дол", "wise дол"],

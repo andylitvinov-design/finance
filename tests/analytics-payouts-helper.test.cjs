@@ -201,6 +201,33 @@ test("buildMovementPaymentSummaryRows maps yandex alias payment methods to Yande
   assert.deepEqual(rows[2], ["Итого", "100,0000", "103,0000", "72,1000", "90,0000", "-13,0000"]);
 });
 
+test("buildMovementPaymentSummaryRows maps Kovalev and FOP aliases to separate Privat FOP channel", () => {
+  const rows = buildMovementPaymentSummaryRows(
+    [
+      ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+      ["18118", "Сергей Ковалев", "", "500", "515", "360.5", "515", "0"],
+      ["18121", "Сергей Ковалёв", "фоп приват", "100", "103", "72.1", "103", "0"],
+      ["18146", "Sergey Kovalev", "приват фоп", "50", "51.5", "36.05", "51.5", "0"],
+      ["18147", "Ordinary Privat", "приват 24 грн", "25", "25.75", "18.025", "25.75", "0"]
+    ],
+    ["приват 24-грн", "приват-фоп"],
+    {
+      "приват-фоп": {
+        currency: "UAH",
+        localPatterns: [/приват фоп|фоп приват/i],
+        usdPatterns: [/приват фоп|фоп приват/i]
+      },
+      "приват 24-грн": {
+        currency: "UAH"
+      }
+    }
+  );
+
+  assert.deepEqual(rows[0], ["приват 24-грн", "25,0000", "25,7500", "18,0250", "25,7500", "0,0000"]);
+  assert.deepEqual(rows[1], ["приват-фоп", "650,0000", "669,5000", "468,6500", "669,5000", "0,0000"]);
+  assert.deepEqual(rows[2], ["Итого", "675,0000", "695,2500", "486,6750", "695,2500", "0,0000"]);
+});
+
 test("buildMovementPaymentSummaryRows ignores shifted duplicate table blocks", () => {
   const rows = buildMovementPaymentSummaryRows(
     [

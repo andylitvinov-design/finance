@@ -83,6 +83,7 @@
       { pattern: /^(пейпал|paypal)( евр| евро| eur)$/, channel: "пейпал евр" },
       { pattern: /^(пейпал|paypal)( cad| сad)$/, channel: "пейпал сad" },
       { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
+      { pattern: /^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/, channel: "приват-фоп" },
       { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
       { pattern: /^(binance save|бинанс save)$/, channel: "Бинанс spot" }
     ];
