@@ -15,6 +15,17 @@
         /устименк/i,
         /ustymenk/i
       ]
+    },
+    {
+      channel: "приват-фоп",
+      patterns: [
+        /\bserg(?:e|ey|ii|iy)\s+kovalev\b/i,
+        /\bkovalev\b/i,
+        /сергей\s+ковалев/i,
+        /сергей\s+ковалёв/i,
+        /ковалев/i,
+        /ковалёв/i
+      ]
     }
   ];
 
