@@ -4,7 +4,8 @@
 // Minimal runtime fixes for the current live finance repo:
 // 1) display paid total as positive without changing payout semantics;
 // 2) normalize text discount/action cells in wide orders mapping;
-// 3) keep the original internal formulas untouched.
+// 3) normalize movement balance variance sign as fact minus plan;
+// 4) keep the original internal formulas untouched.
 
 (function attachLiveFinanceFixes(root) {
   if (!root) return;
@@ -39,13 +40,102 @@
     return true;
   }
 
+  function normalizeLookupText(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ");
+  }
+
+  function collectElements(node, predicate, matches = []) {
+    if (!node) return matches;
+    if (predicate(node)) matches.push(node);
+    const children = Array.isArray(node.children) ? node.children : Array.from(node.children || []);
+    children.forEach((child) => collectElements(child, predicate, matches));
+    return matches;
+  }
+
+  function queryAll(node, selector) {
+    if (!node) return [];
+    if (typeof node.querySelectorAll === "function") return Array.from(node.querySelectorAll(selector));
+    const tagName = String(selector || "").trim().toUpperCase();
+    if (!tagName || /[^A-Z0-9-]/.test(tagName)) return [];
+    return collectElements(node, (item) => String(item.tagName || "").toUpperCase() === tagName);
+  }
+
+  function findColumnByAliases(cells, aliases) {
+    const normalizedAliases = (aliases || []).map(normalizeLookupText).filter(Boolean);
+    return (cells || []).findIndex((cell) => {
+      const text = normalizeLookupText(cell?.textContent ?? cell);
+      if (!text) return false;
+      return normalizedAliases.some((alias) => text === alias || text.includes(alias));
+    });
+  }
+
+  function normalizeMovementBalanceVarianceTables(rootNode = root.document) {
+    const tables = queryAll(rootNode, "table");
+    let changed = 0;
+    tables.forEach((table) => {
+      const rows = queryAll(table, "tr");
+      if (rows.length < 2) return;
+      const headerCells = Array.from(rows[0].children || []);
+      if (!headerCells.length) return;
+      const planIndex = findColumnByAliases(headerCells, [
+        "план", "план = accrued", "planned", "plan", "accrued", "стоимость", "cost"
+      ]);
+      const actualIndex = findColumnByAliases(headerCells, [
+        "пришло", "пришло в долларах", "получено", "получено в долларах", "факт", "оплачено", "paid", "received", "actual"
+      ]);
+      const balanceIndex = findColumnByAliases(headerCells, [
+        "баланс", "balance", "остаток", "отклонение", "delta", "variance"
+      ]);
+      if (planIndex === -1 || actualIndex === -1 || balanceIndex === -1) return;
+      if (balanceIndex === planIndex || balanceIndex === actualIndex) return;
+
+      rows.slice(1).forEach((row) => {
+        const cells = Array.from(row.children || []);
+        const planCell = cells[planIndex];
+        const actualCell = cells[actualIndex];
+        const balanceCell = cells[balanceIndex];
+        if (!planCell || !actualCell || !balanceCell) return;
+        const planned = parseLooseNumber(planCell.textContent);
+        const actual = parseLooseNumber(actualCell.textContent);
+        if (planned === null || actual === null) return;
+        const previousText = String(balanceCell.textContent || "");
+        const nextText = formatLikePrevious(actual - planned, previousText);
+        if (previousText === nextText) return;
+        balanceCell.textContent = nextText;
+        balanceCell.dataset = balanceCell.dataset || {};
+        balanceCell.dataset.displaySignNormalized = "movement-fact-minus-plan";
+        changed += 1;
+      });
+    });
+    return changed;
+  }
+
   function installPaidTotalDisplayFix() {
     normalizePaidTotalDisplay();
     const node = root.document?.getElementById?.("metricBalances");
     if (!node || node.dataset.paidTotalDisplayObserver === "true") return;
     node.dataset.paidTotalDisplayObserver = "true";
-    const observer = new MutationObserver(() => normalizePaidTotalDisplay());
+    const Observer = root.MutationObserver || globalThis.MutationObserver;
+    if (!Observer) return;
+    const observer = new Observer(() => normalizePaidTotalDisplay());
     observer.observe(node, { childList: true, characterData: true, subtree: true });
+  }
+
+  function installMovementBalanceDisplayFix() {
+    normalizeMovementBalanceVarianceTables(root.document);
+    const target = root.document?.getElementById?.("tabPanels") || root.document?.body;
+    if (!target || target.dataset?.movementBalanceDisplayObserver === "true") return;
+    target.dataset = target.dataset || {};
+    target.dataset.movementBalanceDisplayObserver = "true";
+    const Observer = root.MutationObserver || globalThis.MutationObserver;
+    if (!Observer) return;
+    const observer = new Observer(() => normalizeMovementBalanceVarianceTables(root.document));
+    observer.observe(target, { childList: true, characterData: true, subtree: true });
   }
 
   function wrapRenderMetrics() {
@@ -57,6 +147,18 @@
       return result;
     };
     root.renderMetrics.__ezohataPaidDisplayWrapped = true;
+    return true;
+  }
+
+  function wrapRenderTabsForMovementBalance() {
+    if (typeof root.renderTabs !== "function" || root.renderTabs.__ezohataMovementBalanceDisplayWrapped) return false;
+    const originalRenderTabs = root.renderTabs;
+    root.renderTabs = function renderTabsWithMovementBalanceSignFix(...args) {
+      const result = originalRenderTabs.apply(this, args);
+      normalizeMovementBalanceVarianceTables(root.document);
+      return result;
+    };
+    root.renderTabs.__ezohataMovementBalanceDisplayWrapped = true;
     return true;
   }
 
@@ -189,12 +291,15 @@
   function install() {
     patchOrdersDiscountMapping();
     wrapRenderMetrics();
+    wrapRenderTabsForMovementBalance();
     installPaidTotalDisplayFix();
+    installMovementBalanceDisplayFix();
   }
 
   root.EzohataLiveFinanceFixes = {
     install,
     normalizePaidTotalDisplay,
+    normalizeMovementBalanceVarianceTables,
     parseDiscountMultiplier,
     computeDiscountedAmount,
     patchOrdersDiscountMapping,
