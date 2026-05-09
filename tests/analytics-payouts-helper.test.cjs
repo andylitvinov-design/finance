@@ -147,6 +147,8 @@ test("buildMovementPaymentSummaryRows maps Lozin monobank payments to monobank U
 test("buildMovementPaymentSummaryRows falls back blank clients to transferwise and paypal", () => {
   const rows = buildMovementPaymentSummaryRows(
     [
+      ["дата 1", "01.05.2026", "дата 2", "09.05.2026"],
+      ["Поменяй даты.", "", "", "Обновлено"],
       ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%", "70% OF +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
       ["1", "William", "", "100", "103", "72.1", "103", "0"],
       ["2", "Вильям", "", "50", "51.5", "36.05", "51.5", "0"],

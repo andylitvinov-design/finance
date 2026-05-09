@@ -3701,7 +3701,8 @@ function calculateMovementChannelStats(values) {
   if (!values.length) {
     return { localByChannel: {}, usdByChannel: {}, accruedPlusByChannel: {}, accruedPlusCountByChannel: {}, balanceByChannel: {}, localByCurrency: {} };
   }
-  const header = values[0] || [];
+  const headerRowIndex = findMovementHeaderRowIndex(values);
+  const header = values[headerRowIndex] || [];
   const paymentMethodIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD"]);
   const clientIndex = findHeaderIndexByAliases(header, ["CLIENT", "КЛИЕНТ"]);
   const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%"]);
@@ -3715,7 +3716,7 @@ function calculateMovementChannelStats(values) {
   const accruedPlusCountByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const balanceByChannel = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const localByCurrency = {};
-  const dataRows = values.slice(1);
+  const dataRows = values.slice(headerRowIndex + 1);
   const nextPaymentByClient = {};
   for (let index = dataRows.length - 1; index >= 0; index -= 1) {
     const row = dataRows[index] || [];
@@ -3766,6 +3767,14 @@ function calculateMovementChannelStats(values) {
     }
   });
   return { localByChannel, usdByChannel, accruedPlusByChannel, accruedPlusCountByChannel, balanceByChannel, localByCurrency };
+}
+
+function findMovementHeaderRowIndex(values = []) {
+  const index = (values || []).findIndex((row) => {
+    const normalized = (row || []).map((cell) => normalizeCell(cell));
+    return normalized.includes("number") && normalized.includes("payment method");
+  });
+  return index === -1 ? 0 : index;
 }
 
 

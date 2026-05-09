@@ -107,7 +107,8 @@
   }
 
   function buildMovementPaymentSummaryRows(movementValues, channels = [], paymentRules = {}) {
-    const header = movementValues?.[0] || [];
+    const headerRowIndex = findMovementHeaderRowIndex(movementValues);
+    const header = movementValues?.[headerRowIndex] || [];
     const paymentIndex = findHeaderIndexByAliases(header, ["PAYMENT METHOD"]);
     const clientIndex = findHeaderIndexByAliases(header, ["CLIENT", "КЛИЕНТ"]);
     const accruedIndex = findHeaderIndexByAliases(header, ["ACCRUED"]);
@@ -133,7 +134,7 @@
       ])
     );
 
-    const dataRows = (movementValues || []).slice(1);
+    const dataRows = (movementValues || []).slice(headerRowIndex + 1);
     const nextPaymentByClient = {};
     for (let index = dataRows.length - 1; index >= 0; index -= 1) {
       const row = dataRows[index] || [];
@@ -197,6 +198,14 @@
         formatPayoutNumber(summary[5])
       ]
     ]);
+  }
+
+  function findMovementHeaderRowIndex(values = []) {
+    const index = (values || []).findIndex((row) => {
+      const normalized = (row || []).map((cell) => normalizeCell(cell));
+      return normalized.includes("number") && normalized.includes("payment method");
+    });
+    return index === -1 ? 0 : index;
   }
 
   function formatRateNumber(value) {

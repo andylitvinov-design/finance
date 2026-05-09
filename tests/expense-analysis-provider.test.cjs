@@ -2209,6 +2209,9 @@ test("calculateMovementChannelStats returns accrued plus totals by channel for e
       const normalizedAliases = aliases.map((value) => String(value).trim().toLowerCase());
       return header.findIndex((cell) => normalizedAliases.includes(String(cell || "").trim().toLowerCase()));
     },
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
     hasAnyValue(row) {
       return (row || []).some((cell) => String(cell || "").trim());
     },
@@ -2244,12 +2247,15 @@ test("calculateMovementChannelStats returns accrued plus totals by channel for e
   };
   vm.createContext(context);
   vm.runInContext(
+    `${extractFunction(financeJs, "findMovementHeaderRowIndex")}\n` +
     `${extractFunction(financeJs, "calculateMovementChannelStats")}\n` +
     "this.calculateMovementChannelStats = calculateMovementChannelStats;",
     context
   );
 
   const stats = plain(context.calculateMovementChannelStats([
+    ["дата 1", "01.05.2026", "дата 2", "09.05.2026"],
+    ["Поменяй даты.", "", "", "Обновлено"],
     ["NUMBER", "CLIENT", "PAYMENT METHOD", "ACCRUED +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
     ["1", "Client A", "paypal usd", "103", "100", "-3"],
     ["2", "Client B", "paypal eur", "206", "200", "-6"],
@@ -2274,6 +2280,9 @@ test("calculateMovementChannelStats counts Wise planned income from the same mov
     findHeaderIndexByAliases(header, aliases) {
       const normalizedAliases = aliases.map((value) => String(value).trim().toLowerCase());
       return header.findIndex((cell) => normalizedAliases.includes(String(cell || "").trim().toLowerCase()));
+    },
+    normalizeCell(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
     },
     hasAnyValue(row) {
       return (row || []).some((cell) => String(cell || "").trim());
@@ -2308,6 +2317,7 @@ test("calculateMovementChannelStats counts Wise planned income from the same mov
   };
   vm.createContext(context);
   vm.runInContext(
+    `${extractFunction(financeJs, "findMovementHeaderRowIndex")}\n` +
     `${extractFunction(financeJs, "calculateMovementChannelStats")}\n` +
     "this.calculateMovementChannelStats = calculateMovementChannelStats;",
     context
