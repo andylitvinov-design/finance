@@ -414,6 +414,108 @@ test("GET getDashboardData overlays fresh source movement rows when upstream is 
   }
 });
 
+test("GET getDashboardData applies adjacent ACTION multiplier to fresh orders rows", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL =
+    "https://script.google.com/macros/s/example/exec";
+
+  const sourceRow = ({ number, action = "" }) => {
+    const row = Array.from({ length: 51 }, () => "");
+    row[1] = number;
+    row[2] = "2026-05-06";
+    row[3] = "Сергей Ковалев";
+    row[4] = `Заказ ${number}`;
+    row[6] = "100";
+    row[7] = action;
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-05-03",
+                  endDate: "2026-05-09",
+                  timeZone: "Europe/Kiev"
+                },
+                tabs: {
+                  movement: { sheetName: "движение средства", values: [["NUMBER", "DATE", "BALANCE"]] },
+                  orders: { sheetName: "список моих заказы", values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]] }
+                }
+              }
+            });
+          }
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return [
+              Array.from({ length: 51 }, () => "").join(","),
+              Array.from({ length: 51 }, () => "").join(","),
+              ",,Дата,Клиент,Название заказа,Коммент/ остаток,Прайс база,25% акция,кол-во,всего,пр+3%",
+              sourceRow({ number: "18152" }).join(","),
+              sourceRow({ number: "18153", action: "0.5" }).join(","),
+              sourceRow({ number: "18154" }).join(","),
+            ].join("\n");
+          }
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const request = {
+      method: "GET",
+      query: {
+        action: "getDashboardData",
+        startDate: "2026-05-03",
+        endDate: "2026-05-09"
+      }
+    };
+    const response = createResponseRecorder();
+
+    await handler(request, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    const ordersRows = response.body?.data?.tabs?.orders?.values || [];
+    const row18152 = ordersRows.find((row) => row?.[0] === "18152");
+    const row18153 = ordersRows.find((row) => row?.[0] === "18153");
+    const row18154 = ordersRows.find((row) => row?.[0] === "18154");
+    const totalRow = ordersRows.find((row) => row?.[0] === "Итого");
+
+    assert.equal(row18152?.[9], "51,5");
+    assert.equal(row18152?.[22], "51,5");
+    assert.equal(row18153?.[9], "51,5");
+    assert.equal(row18153?.[22], "51,5");
+    assert.equal(row18154?.[9], "103");
+    assert.equal(row18154?.[22], "103");
+    assert.equal(totalRow?.[9], "206,0000");
+    assert.equal(totalRow?.[22], "206,0000");
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) {
+      delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    } else {
+      process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    }
+  }
+});
+
 test("GET getDashboardData overlays fresh source payout rows when upstream is stale", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;

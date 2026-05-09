@@ -1392,10 +1392,11 @@ function buildMovementRowsFromSource(rows, period) {
   const seenNumbers = new Set();
   const startDate = normalizeIsoDate(period?.startDate);
   const endDate = normalizeIsoDate(period?.endDate);
+  const sourceRows = rows.slice(3).map((row) => padRow(row, 51));
+  const actionMultiplierByNumber = buildSourceActionMultiplierLookup(sourceRows);
   let previousRates = { rubRate: "", uahRate: "" };
 
-  for (const row of rows.slice(3)) {
-    const padded = padRow(row, 51);
+  for (const padded of sourceRows) {
     const number = String(padded[1] || "").trim();
     if (!/^\d+$/.test(number) || seenNumbers.has(number)) continue;
 
@@ -1408,7 +1409,7 @@ function buildMovementRowsFromSource(rows, period) {
     if (endDate && isoDate > endDate) continue;
 
     seenNumbers.add(number);
-    output.push(mapSourceRowToMovementRow(padded, isoDate, derivedContext));
+    output.push(mapSourceRowToMovementRow(padded, isoDate, derivedContext, actionMultiplierByNumber[number] || 1));
   }
 
   return output;
@@ -1457,12 +1458,12 @@ function buildFreshPayoutTotalRow(rows) {
   return totalRow;
 }
 
-function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePaymentContext(row)) {
+function mapSourceRowToMovementRow(row, isoDate, derivedContext = buildSourcePaymentContext(row), actionMultiplier = 1) {
   const date = formatDisplayDate(isoDate);
   const paymentMethod = derivedContext.paymentMethod;
   const priceBase = normalizeNumberCell(row[6]);
   const quantity = normalizeNumberCell(row[8]);
-  const accrued = deriveAccruedAmount(row);
+  const accrued = deriveAccruedAmount(row, actionMultiplier);
   const accruedPlus3 = deriveAccruedPlusPercent(accrued, paymentMethod);
   const correctedContext = applySourceReceivedAmountCorrection(row, derivedContext);
   const receivedUsd = correctedContext.receivedUsd;
@@ -1539,16 +1540,57 @@ function buildMovementAmountSemantics({ paymentMethod, clientPaidUsd }) {
   };
 }
 
-function deriveAccruedAmount(row) {
+function deriveAccruedAmount(row, actionMultiplier = 1) {
   const explicitTotal = normalizeNumberCell(row?.[9]);
-  if (explicitTotal) return explicitTotal;
+  const multiplier = normalizeActionMultiplier(actionMultiplier);
+  if (explicitTotal) return formatDisplayNumber(parseLooseNumber(explicitTotal) * multiplier);
 
   const price = parseLooseNumber(row?.[6]);
   if (price === null) return "";
 
   const quantity = parseLooseNumber(row?.[8]);
-  const accrued = quantity ? price * quantity : price;
+  const accrued = (quantity ? price * quantity : price) * multiplier;
   return formatDisplayNumber(accrued);
+}
+
+function buildSourceActionMultiplierLookup(rows) {
+  const multipliers = {};
+  (rows || []).forEach((row, index) => {
+    const number = String(row?.[1] || "").trim();
+    if (!/^\d+$/.test(number)) return;
+    const directMultiplier = parseSourceActionMultiplier(row?.[7]);
+    if (directMultiplier === null) return;
+    multipliers[number] = directMultiplier;
+
+    const previous = rows[index - 1];
+    const previousNumber = String(previous?.[1] || "").trim();
+    if (!/^\d+$/.test(previousNumber) || parseSourceActionMultiplier(previous?.[7]) !== null) return;
+    if (!isAdjacentSourceOrderPair(previous, row)) return;
+    multipliers[previousNumber] = directMultiplier;
+  });
+  return multipliers;
+}
+
+function parseSourceActionMultiplier(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const amount = parseLooseNumber(raw);
+  if (!Number.isFinite(amount) || amount === 0) return null;
+  if (!/%/.test(raw) && Math.abs(amount) > 0 && Math.abs(amount) <= 1) return Math.abs(amount);
+  return Math.max(0, 1 - Math.min(Math.abs(amount), 100) / 100);
+}
+
+function normalizeActionMultiplier(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : 1;
+}
+
+function isAdjacentSourceOrderPair(left, right) {
+  const leftDate = normalizeIsoDate(left?.[2]);
+  const rightDate = normalizeIsoDate(right?.[2]);
+  const leftClient = normalizeLookupText(left?.[3]);
+  const rightClient = normalizeLookupText(right?.[3]);
+  return Boolean(leftDate && rightDate && leftDate === rightDate && leftClient && leftClient === rightClient);
 }
 
 function applySourceReceivedAmountCorrection(row, derivedContext) {
