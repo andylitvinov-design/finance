@@ -1,0 +1,52 @@
+/* Mobile horizontal scroll fix for wide finance/analytics tables.
+   Loaded after style.css to override generic mobile table rules. */
+@media (max-width: 680px) {
+  .table-wrap,
+  .analysis-table-wrap,
+  .finance-shell .table-wrap,
+  .analytics-section .table-wrap,
+  .expense-operations-wrap,
+  .movement-summary {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+  }
+
+  .analysis-table-wrap table,
+  .finance-shell .table-wrap table,
+  .analytics-section .table-wrap table,
+  .expense-operations-wrap table,
+  .movement-summary table,
+  .table-wrap .desktop-table,
+  .table-wrap .desktop-table > table {
+    width: max-content;
+    min-width: max-content;
+    max-width: none;
+  }
+
+  .analysis-table-wrap th,
+  .analysis-table-wrap td,
+  .finance-shell .table-wrap th,
+  .finance-shell .table-wrap td,
+  .analytics-section .table-wrap th,
+  .analytics-section .table-wrap td,
+  .expense-operations-wrap th,
+  .expense-operations-wrap td,
+  .movement-summary th,
+  .movement-summary td {
+    white-space: nowrap;
+  }
+
+  .analysis-table-wrap table tr > :first-child,
+  .finance-shell .table-wrap table tr > :first-child,
+  .analytics-section .table-wrap table tr > :first-child,
+  .expense-operations-wrap table tr > :first-child,
+  .movement-summary table tr > :first-child {
+    position: static;
+    left: auto;
+    z-index: auto;
+  }
+}
