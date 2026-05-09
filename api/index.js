@@ -12,6 +12,7 @@ import { fetchWiseStatementEntries } from "./wise-transactions.js";
 import { fetchMonobankStatementEntries } from "./monobank-transactions.js";
 import { fetchPrivatBankStatementEntries } from "./privatbank-transactions.js";
 import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
+import PaymentChannelReference from "../payment-channel-reference.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
@@ -1761,7 +1762,11 @@ function isExplicitNoFeeDirectPayment(paymentMethod) {
 
 function buildSourcePaymentContext(row, previousRates = {}) {
   const payment = extractSourcePaymentMethod(row);
-  const paymentMethod = payment.paymentMethod;
+  const extractedPaymentMethod = payment.paymentMethod;
+  const defaultPaymentMethod = !extractedPaymentMethod
+    ? PaymentChannelReference.resolveClientDefaultPaymentChannel(row?.[3])
+    : "";
+  const paymentMethod = extractedPaymentMethod || defaultPaymentMethod;
   const paymentShift = payment.shift || 0;
   const hasExplicitPaymentMethod = Boolean(paymentMethod);
   const receivedUsd = hasExplicitPaymentMethod ? normalizeSumCell(row[30 + paymentShift]) : "";
