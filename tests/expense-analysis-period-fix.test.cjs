@@ -126,3 +126,79 @@ test("expense analysis period guard exposes helper and supports alternate date f
   ], {}, {}), ["snake"]);
   assert.equal(typeof context.window.EzohataExpenseAnalysisPeriodFix.scopeRowsToPeriod, "function");
 });
+
+test("expense analysis period guard can filter server savings rows by selected period", () => {
+  const context = {
+    window: {},
+    document: {
+      getElementById(id) {
+        return { value: id === "startDate" ? "2026-05-03" : "2026-05-09" };
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+
+  const values = [
+    ["Переводы"],
+    ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+    ["02.05.2026", "old", "100", "USD", "пейпал дол", "1", "100"],
+    ["03.05.2026", "start", "10", "USD", "пейпал дол", "1", "10"],
+    ["09.05.2026", "end", "20", "USD", "пейпал дол", "1", "20"],
+    ["10.05.2026", "future", "200", "USD", "пейпал дол", "1", "200"],
+    ["Итого", "", "330", "", "", "", "330"],
+  ];
+
+  assert.deepEqual(
+    context.window.EzohataExpenseAnalysisPeriodFix.prepareSavingsValuesForSelectedPeriod(values, "2026-05-03", "2026-05-09"),
+    [
+      ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"],
+      ["03.05.2026", "start", "10", "USD", "пейпал дол", "1", "10"],
+      ["09.05.2026", "end", "20", "USD", "пейпал дол", "1", "20"],
+    ]
+  );
+});
+
+test("expense analysis period guard wraps buildPreparedDashboardData savings tab", () => {
+  const context = {
+    window: {
+      buildPreparedDashboardData(data) {
+        return {
+          tabs: {
+            savings: { values: data.tabs.savings.values, sourceType: "server" },
+            movement: { values: [] },
+          },
+        };
+      },
+    },
+    document: {
+      getElementById(id) {
+        return { value: id === "startDate" ? "2026-05-03" : "2026-05-09" };
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+
+  const installed = context.window.EzohataExpenseAnalysisPeriodFix.installMainDashboardPeriodGuards();
+  assert.equal(installed.buildPreparedDashboardData, true);
+
+  const prepared = context.window.buildPreparedDashboardData({
+    tabs: {
+      savings: {
+        values: [
+          ["дата перевода", "кто", "сумма"],
+          ["2026-05-02", "old", "100"],
+          ["2026-05-04", "inside", "10"],
+          ["2026-05-10", "future", "200"],
+        ],
+      },
+    },
+  }, "2026-05-03", "2026-05-09");
+
+  assert.equal(prepared.tabs.savings.periodScoped, true);
+  assert.deepEqual(prepared.tabs.savings.values, [
+    ["дата перевода", "кто", "сумма"],
+    ["2026-05-04", "inside", "10"],
+  ]);
+});
