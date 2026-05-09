@@ -214,6 +214,16 @@ test("audit snapshot returns ok JSON with required top-level fields", async () =
   assert.ok(Array.isArray(response.audit_checks));
 });
 
+test("audit snapshot accepts dashboard startDate/endDate aliases and DD/MM/YYYY dates", async () => {
+  const response = await buildFixtureSnapshot({ startDate: "02/05/2026", endDate: "09/05/2026" });
+
+  assert.deepEqual(response.period, { from: "2026-05-02", to: "2026-05-09" });
+  assert.equal(response.summary.ledger_rows, 6);
+  const excluded = await buildFixtureSnapshot({ startDate: "03/05/2026", endDate: "09/05/2026" });
+  assert.deepEqual(excluded.period, { from: "2026-05-03", to: "2026-05-09" });
+  assert.equal(excluded.summary.ledger_rows, 0);
+});
+
 test("audit snapshot does not expose secret-looking fields or values", async () => {
   const response = await buildFixtureSnapshot({ includeRows: "1" });
   const serialized = JSON.stringify(response).toLowerCase();

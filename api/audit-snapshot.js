@@ -241,8 +241,8 @@ function parsePeriodFilter(query = {}) {
       period: { from: `${period}-01`, to: lastDayOfMonth(period) },
     };
   }
-  const from = normalizeDate(query.from);
-  const to = normalizeDate(query.to);
+  const from = normalizeDate(query.from || query.startDate || query.dateFrom);
+  const to = normalizeDate(query.to || query.endDate || query.dateTo);
   return {
     from,
     to,
@@ -666,7 +666,12 @@ function parseBoolean(value) {
 
 function normalizeDate(value) {
   const raw = String(value || "").trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const displayMatch = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (displayMatch) {
+    return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
+  }
+  return "";
 }
 
 function lastDayOfMonth(period) {

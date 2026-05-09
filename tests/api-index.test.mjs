@@ -133,6 +133,125 @@ test("GET getDashboardData maps to calculatePeriod for Apps Script v2", async ()
   }
 });
 
+test("GET getDashboardData forwards ISO dates and scopes manual ledger rows to the selected period", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-overlay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        assert.match(value, /startDate=2026-05-03/);
+        assert.match(value, /endDate=2026-05-09/);
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-05-03", endDate: "2026-05-09", timeZone: "Europe/Kyiv" },
+                tabs: {
+                  movement: { sheetName: "движение средства", values: [["NUMBER", "DATE", "BALANCE"]] },
+                  analytics: {
+                    sheetName: "аналитика",
+                    values: [
+                      ["Личные расходы"],
+                      ["валюта", "now", "приход от услуг", "spent for business", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+                      ["пейпал дол", "0", "", "", "", "", "", "", ""],
+                      ["Итого", "0", "", "", "", "", "", "", ""],
+                      [],
+                      ["Plan"],
+                      ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+                      ["пейпал дол", "0", "999", "999", "999", "0", "", "", "999", "0"],
+                      ["Итого", "0", "999", "999", "999", "0", "", "", "999", "0"],
+                      [],
+                      ["БАЛАНС"],
+                      ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+                      ["пейпал дол", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                      ["Итого", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+                    ]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+      if (value.includes("oauth2.googleapis.com/token")) {
+        return { ok: true, status: 200, async json() { return { access_token: "test-access-token" }; } };
+      }
+      if (value.includes("sheets.googleapis.com") && value.includes("values:batchGet")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              valueRanges: [
+                {
+                  range: "'Ledger'!A:Q",
+                  values: [
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                    ["2026-05-02", "income", "", "пейпал дол", "999", "USD", "999", "999", "servicein", "", "in", "outside", "manual", "outside", "", "", ""],
+                    ["2026-05-03", "income", "", "пейпал дол", "100", "USD", "100", "100", "servicein", "", "in", "inside", "manual", "inside-income", "", "", ""],
+                    ["2026-05-04", "business_expense", "пейпал дол", "", "10", "USD", "10", "10", "business", "", "out", "inside", "manual", "inside-expense", "", "", ""],
+                    ["2026-05-10", "business_expense", "пейпал дол", "", "900", "USD", "900", "900", "business", "", "out", "outside", "manual", "outside-expense", "", "", ""]
+                  ]
+                },
+                { range: "'Расходы'!A1:Z", values: [["дата", "категория", "пейпал дол"]] },
+                { range: "'Остатки'!A1:G", values: [["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"]] },
+                { range: "'Переводы'!A1:G", values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]] },
+                { range: "'Комиссии'!A1:D", values: [["дата", "канал", "сумма в долларах", "комментарий"]] }
+              ]
+            };
+          }
+        };
+      }
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return { ok: true, status: 200, async text() { return ""; } };
+      }
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({
+      method: "GET",
+      query: { action: "getDashboardData", startDate: "03/05/2026", endDate: "09/05/2026" }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.deepEqual(response.body?.data?.period_applied, {
+      start: "2026-05-03",
+      end: "2026-05-09",
+      source_rows_total: 4,
+      source_rows_in_period: 2,
+    });
+    assert.deepEqual(
+      (response.body?.data?.manual?.operations || []).map((row) => row.rawSourceId || row.raw_source_id),
+      ["inside-income", "inside-expense"]
+    );
+    const personalTotal = response.body?.data?.tabs?.analytics?.values?.find((row) => row?.[0] === "Итого");
+    assert.equal(personalTotal?.[2], "100,0000");
+    assert.equal(personalTotal?.[3], "10,0000");
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    if (previousServiceEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousServiceEmail;
+    if (previousPrivateKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousPrivateKey;
+  }
+});
+
 test("GET getDashboardData overlays fresh source movement rows when upstream is stale", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
