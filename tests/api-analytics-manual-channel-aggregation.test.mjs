@@ -226,6 +226,54 @@ test("normalizeServerAnalyticsPayload rebuilds movement period columns from ledg
   assert.equal(rowByChannel(plan.header, plan.rows, "binance save")["обмен"], "-950,0000");
 });
 
+test("normalizeServerAnalyticsPayload clears full-range legacy values for channels without period ledger rows", () => {
+  const values = [
+    ["Личные расходы"],
+    ["валюта", "now", "приход от услуг", "spent for business", "spent for flat", "spent for food", "spent for fun", "spent for study", "spent for travel", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+    ["пейпал дол", "100", "999", "999", "", "", "", "", "", "999", "", "", "999", "100"],
+    ["Бинанс spot", "200", "", "888", "", "", "", "", "", "888", "", "", "888", "200"],
+    ["Итого", "300", "999", "1887", "", "", "", "", "", "1887", "", "", "1887", "300"],
+    [],
+    ["Plan"],
+    ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+    ["пейпал дол", "", "999", "999", "999", "", "", "", "999", "0"],
+    ["Бинанс spot", "", "", "888", "888", "", "", "", "888", "0"],
+    ["Итого", "", "999", "1887", "1887", "", "", "", "1887", "0"],
+    [],
+    ["БАЛАНС"],
+    ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+    ["пейпал дол", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+    ["Бинанс spot", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+    ["Итого", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+    []
+  ];
+
+  const payload = normalizeServerAnalyticsPayload({
+    period: { startDate: "2026-05-03", endDate: "2026-05-09" },
+    tabs: { analytics: { values, rowCount: values.length, columnCount: 14 } },
+    manual: {
+      operations: [
+        { date: "2026-05-03", operation: "income", toChannel: "пейпал дол", amount: "100", currency: "USD", amountUsd: "100", category: "servicein" },
+        { date: "2026-05-04", operation: "business_expense", fromChannel: "пейпал дол", amount: "10", currency: "USD", amountUsd: "10", category: "business" },
+        { date: "2026-05-10", operation: "business_expense", fromChannel: "Бинанс spot", amount: "888", currency: "USD", amountUsd: "888", category: "business" }
+      ],
+      transfers: [],
+      balances: []
+    }
+  });
+
+  const movement = sectionRows(payload.tabs.analytics.values, "Личные расходы");
+  assert.equal(rowByChannel(movement.header, movement.rows, "пейпал дол")["приход от услуг"], "100,0000");
+  assert.equal(rowByChannel(movement.header, movement.rows, "пейпал дол")["затраты-мои"], "10,0000");
+  assert.equal(rowByChannel(movement.header, movement.rows, "Бинанс spot")["затраты-мои"], "");
+  assert.equal(rowByChannel(movement.header, movement.rows, "Итого")["приход от услуг"], "100,0000");
+  assert.equal(rowByChannel(movement.header, movement.rows, "Итого")["затраты-мои"], "10,0000");
+
+  const plan = sectionRows(payload.tabs.analytics.values, "Plan");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Итого")["затраты-мои"], "10,0000");
+  assert.equal(rowByChannel(plan.header, plan.rows, "Итого")["затраты-мои-дол"], "10,0000");
+});
+
 test("normalizeServerAnalyticsPayload excludes transfer and exchange ledger operations from owner costs", () => {
   const values = [
     ["Личные расходы"],

@@ -334,10 +334,21 @@ function rebuildPlanSection(section, manualRows) {
 function buildManualRowsForPeriod(legacyRows, manual, period = {}) {
   const startDate = normalizeDate(period.startDate);
   const endDate = normalizeDate(period.endDate);
+  const hasSelectedPeriod = Boolean(startDate || endDate);
+  const hasPeriodSourceRows = Boolean(
+    (Array.isArray(manual?.operations) && manual.operations.length) ||
+    (Array.isArray(manual?.expenseRows) && manual.expenseRows.length)
+  );
+  const shouldResetLegacyPeriodFields = hasSelectedPeriod && hasPeriodSourceRows;
   const manualPeriodChannels = collectManualPeriodChannels(manual, { startDate, endDate });
   const lookup = new Map((legacyRows || []).map((row) => {
     const channel = getCanonicalManualChannelKey(row.channel);
-    return [channel, manualPeriodChannels.has(channel) ? resetManualPeriodFields(row, channel) : { ...row, channel }];
+    return [
+      channel,
+      shouldResetLegacyPeriodFields || manualPeriodChannels.has(channel)
+        ? resetManualPeriodFields(row, channel)
+        : { ...row, channel }
+    ];
   }));
   const rateLookup = buildManualRateLookup(manual?.transfers || [], endDate);
 
