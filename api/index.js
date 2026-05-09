@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
+import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
@@ -130,6 +131,11 @@ export default async function handler(request, response) {
 
   if (request.method === "OPTIONS") {
     return response.status(200).json({ ok: true });
+  }
+
+  const debugAction = String(request.query?.action || "").trim();
+  if (isDebugAction(debugAction)) {
+    return await handleDebugAction(request, response, debugAction);
   }
 
   const upstream = normalizeUpstreamUrl(process.env.EZOHATA_V2_APPS_SCRIPT_URL);
