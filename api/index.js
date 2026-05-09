@@ -236,7 +236,7 @@ async function forwardGet(request, response, upstream) {
 
   Object.entries(request.query || {}).forEach(([key, value]) => {
     if (key === "action" || value == null || value === "") return;
-    target.searchParams.set(key, String(value));
+    target.searchParams.set(key, normalizeForwardedQueryValue(key, value));
   });
 
   const upstreamResponse = await fetch(target.toString(), {
@@ -244,7 +244,7 @@ async function forwardGet(request, response, upstream) {
     headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" },
   });
 
-  return await pipeResponse(response, upstreamResponse, action);
+  return await pipeResponse(response, upstreamResponse, action, request.query || {});
 }
 
 async function forwardPost(request, response, upstream) {
@@ -261,10 +261,10 @@ async function forwardPost(request, response, upstream) {
     body: JSON.stringify({ ...payload, action: mapUpstreamAction(action, "POST") }),
   });
 
-  return await pipeResponse(response, upstreamResponse, action);
+  return await pipeResponse(response, upstreamResponse, action, payload || {});
 }
 
-async function pipeResponse(response, upstreamResponse, action) {
+async function pipeResponse(response, upstreamResponse, action, requestParams = {}) {
   const text = await upstreamResponse.text();
   let payload = {};
 
@@ -283,7 +283,7 @@ async function pipeResponse(response, upstreamResponse, action) {
   }
 
   const data = payload.ok
-    ? normalizeServerAnalyticsPayload(await maybeOverlayManualRepositoryData(await maybeOverlayFreshSourceData(payload.data)))
+    ? normalizeServerAnalyticsPayload(await maybeOverlayManualRepositoryData(await maybeOverlayFreshSourceData(payload.data), requestParams))
     : payload.data;
 
   return response.status(payload.ok ? 200 : 502).json({
@@ -293,6 +293,13 @@ async function pipeResponse(response, upstreamResponse, action) {
       ? { data }
       : { error: payload.error || "Upstream returned an error." }),
   });
+}
+
+function normalizeForwardedQueryValue(key, value) {
+  if (["startDate", "endDate", "dateFrom", "dateTo", "from", "to"].includes(String(key))) {
+    return normalizeIsoDate(value) || String(value);
+  }
+  return String(value);
 }
 
 async function maybeOverlayFreshSourceData(data) {
@@ -334,25 +341,36 @@ async function maybeOverlayFreshSourceData(data) {
   }
 }
 
-async function maybeOverlayManualRepositoryData(data) {
+async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
   if (!data?.period || !data?.tabs?.analytics?.values?.length) return data;
   const manualRepository = await loadManualRepositoryFromGoogleSheets();
   if (!manualRepository.ok) {
     return appendManualWarning(data, manualRepository.warning);
   }
+  const period = resolveDashboardPeriod(data.period || {}, requestParams || {});
+  const periodFilter = {
+    startDate: normalizeIsoDate(period.startDate),
+    endDate: normalizeIsoDate(period.endDate),
+  };
+  const filterByPeriod = (rows) => filterRepositoryRowsByPeriod(rows || [], periodFilter);
+  const periodOperations = filterByPeriod(manualRepository.operations || []);
+  const periodExpenseRows = filterByPeriod(manualRepository.expenseRows || []);
+  const periodTransfers = filterByPeriod(manualRepository.transfers || []);
+  const periodCommissionRows = filterByPeriod(manualRepository.commissionRows || []);
+  const periodLedgerV2Rows = filterByPeriod(manualRepository.ledgerV2Rows || []);
 
   const isLedgerRepository = /^ledger-v[12]/.test(String(manualRepository.schema || ""));
   const nextManual = {
     ...(data.manual || {}),
     schema: manualRepository.schema,
     warnings: manualRepository.warnings || [],
-    expenseRows: manualRepository.expenseRows,
+    expenseRows: periodExpenseRows,
     balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
     balanceRows: manualRepository.balances,
-    transfers: manualRepository.transfers,
-    commissionRows: manualRepository.commissionRows,
+    transfers: periodTransfers,
+    commissionRows: periodCommissionRows,
     views: manualRepository.views,
-    ledgerV2Rows: manualRepository.ledgerV2Rows || [],
+    ledgerV2Rows: periodLedgerV2Rows,
     sourceType: "manual-google-sheets",
     manualSpreadsheetId: manualRepository.spreadsheetId,
     fallbackSchema: manualRepository.fallbackSchema || null,
@@ -360,24 +378,73 @@ async function maybeOverlayManualRepositoryData(data) {
 
   if (isLedgerRepository) {
     nextManual.primarySource = "ledger";
-    nextManual.operations = manualRepository.operations;
+    nextManual.operations = periodOperations;
     delete nextManual.compatibilityMode;
   }
 
   const nextRealIncome = isLedgerRepository
     ? mergeLedgerRealIncomeFallback({
         realIncome: data.realIncome || null,
-        operations: manualRepository.operations || [],
+        operations: periodOperations,
         movementValues: data.tabs?.movement?.values || [],
-        period: data.period || {}
+        period
       })
     : (data.realIncome || null);
 
   return {
     ...data,
+    period,
+    period_applied: {
+      start: periodFilter.startDate || "",
+      end: periodFilter.endDate || "",
+      source_rows_total: (manualRepository.operations || []).length,
+      source_rows_in_period: periodOperations.length,
+    },
     manual: nextManual,
     ...(nextRealIncome ? { realIncome: nextRealIncome } : {})
   };
+}
+
+function resolveDashboardPeriod(period = {}, requestParams = {}) {
+  const startDate =
+    normalizeIsoDate(requestParams.startDate || requestParams.from || requestParams.dateFrom) ||
+    normalizeIsoDate(period.startDate || period.from || period.dateFrom);
+  const endDate =
+    normalizeIsoDate(requestParams.endDate || requestParams.to || requestParams.dateTo) ||
+    normalizeIsoDate(period.endDate || period.to || period.dateTo);
+  return {
+    ...period,
+    ...(startDate ? { startDate } : {}),
+    ...(endDate ? { endDate } : {}),
+  };
+}
+
+function filterRepositoryRowsByPeriod(rows, period = {}) {
+  const startDate = normalizeIsoDate(period.startDate);
+  const endDate = normalizeIsoDate(period.endDate);
+  if (!startDate && !endDate) return Array.isArray(rows) ? rows.slice() : [];
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const date = normalizeRepositoryRowDate(row);
+    if (!date) return false;
+    if (startDate && date < startDate) return false;
+    if (endDate && date > endDate) return false;
+    return true;
+  });
+}
+
+function normalizeRepositoryRowDate(row) {
+  if (!row || typeof row !== "object") return "";
+  return normalizeIsoDate(
+    row.date ||
+    row.operationDate ||
+    row.transactionDate ||
+    row.transferDate ||
+    row.createdAt ||
+    row.created_at ||
+    row.updatedAt ||
+    row.updated_at ||
+    ""
+  );
 }
 
 function appendManualWarning(data, warning) {
@@ -1910,18 +1977,18 @@ function padRow(row, width) {
 function normalizeIsoDate(value) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (/^\d{2}\.\d{2}\.\d{4}$/.test(raw)) {
-    const [day, month, year] = raw.split(".");
-    return `${year}-${month}-${day}`;
+  if (/^\d{1,2}[./]\d{1,2}[./]\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split(/[./]/);
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
   return "";
 }
 
 function normalizeDisplayDate(value) {
   const raw = String(value || "").trim();
-  if (/^\d{2}\.\d{2}\.\d{4}$/.test(raw)) {
-    const [day, month, year] = raw.split(".");
-    return `${year}-${month}-${day}`;
+  if (/^\d{1,2}[./]\d{1,2}[./]\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split(/[./]/);
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
   return normalizeIsoDate(raw);
 }
