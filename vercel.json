@@ -4,6 +4,14 @@
     {
       "source": "/api/balance-snapshots",
       "destination": "/api/index?action=balanceSnapshots"
+    },
+    {
+      "source": "/api/debug-full",
+      "destination": "/api/index?action=debugFull"
+    },
+    {
+      "source": "/api/debug-analytics",
+      "destination": "/api/index?action=debugAnalytics"
     }
   ],
   "cleanUrls": true,
