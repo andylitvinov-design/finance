@@ -97,38 +97,53 @@
     return true;
   }
 
-  function ensureFopTransferOptions() {
-    if (typeof document === "undefined") return;
-    document.querySelectorAll("select.expense-select").forEach((select) => {
-      if (Array.from(select.options || []).some((option) => option.value === FOP_TRANSFER_CATEGORY)) return;
+  function ensureSelectHasFopTransferOption(select) {
+    if (!select) return false;
+    if (!Array.from(select.options || []).some((option) => option.value === FOP_TRANSFER_CATEGORY)) {
       const option = document.createElement("option");
       option.value = FOP_TRANSFER_CATEGORY;
       option.textContent = FOP_TRANSFER_LABEL;
       select.appendChild(option);
+      return true;
+    }
+    return false;
+  }
+
+  function selectFopTransferCategory(container, entry) {
+    if (!isFopTransferCategory(entry?.category)) return;
+    const select = container?.querySelector?.("select.expense-select");
+    if (!select) return;
+    ensureSelectHasFopTransferOption(select);
+    select.value = FOP_TRANSFER_CATEGORY;
+  }
+
+  function ensureFopTransferOptions() {
+    if (typeof document === "undefined") return;
+    document.querySelectorAll("select.expense-select").forEach((select) => {
+      ensureSelectHasFopTransferOption(select);
     });
   }
 
   function installExpenseRowRenderPatch() {
-    const original = getFunction("renderExpenseAccountingRow");
-    if (typeof original !== "function" || original.__fopTransferWrapped) return false;
-    function wrappedRenderExpenseAccountingRow(entry) {
-      const row = original.apply(this, arguments);
-      const select = row?.querySelector?.("select.expense-select");
-      if (select && isFopTransferCategory(entry?.category)) {
-        if (!Array.from(select.options || []).some((option) => option.value === FOP_TRANSFER_CATEGORY)) {
-          const option = document.createElement("option");
-          option.value = FOP_TRANSFER_CATEGORY;
-          option.textContent = FOP_TRANSFER_LABEL;
-          select.appendChild(option);
-        }
-        select.value = FOP_TRANSFER_CATEGORY;
+    let patched = false;
+    [
+      "renderExpenseAccountingTableRow",
+      "renderExpenseAccountingMobileCard",
+      "renderExpenseAccountingRow"
+    ].forEach((functionName) => {
+      const original = getFunction(functionName);
+      if (typeof original !== "function" || original.__fopTransferWrapped) return;
+      function wrappedExpenseAccountingRender(entry) {
+        const node = original.apply(this, arguments);
+        selectFopTransferCategory(node, entry);
+        return node;
       }
-      return row;
-    }
-    wrappedRenderExpenseAccountingRow.__fopTransferWrapped = true;
-    wrappedRenderExpenseAccountingRow.__original = original;
-    setFunction("renderExpenseAccountingRow", wrappedRenderExpenseAccountingRow);
-    return true;
+      wrappedExpenseAccountingRender.__fopTransferWrapped = true;
+      wrappedExpenseAccountingRender.__original = original;
+      setFunction(functionName, wrappedExpenseAccountingRender);
+      patched = true;
+    });
+    return patched;
   }
 
   function installRenderPatch() {
