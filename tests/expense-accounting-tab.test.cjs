@@ -48,3 +48,15 @@ test("no filter in ui.js excludes expenseAccounting", () => {
     .filter((m) => m.includes("expenseAccounting"));
   assert.equal(suspects.length, 0, `Found filter that may hide expenseAccounting: ${suspects.join(", ")}`);
 });
+
+test("main.js renders tabs before silent Google OAuth", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../main.js"), "utf8");
+  const firstRenderTabs = src.indexOf("renderTabs();");
+  const initializeGoogleAuth = src.indexOf("await initializeGoogleAuth();");
+  const trySilentGoogleConnect = src.indexOf("await trySilentGoogleConnect()");
+  assert.ok(firstRenderTabs !== -1, "init must call renderTabs");
+  assert.ok(initializeGoogleAuth !== -1, "init must initialize Google auth");
+  assert.ok(trySilentGoogleConnect !== -1, "init must try silent Google auth");
+  assert.ok(firstRenderTabs < initializeGoogleAuth, "tabs must render before Google auth initialization can block");
+  assert.ok(firstRenderTabs < trySilentGoogleConnect, "tabs must render before silent Google auth can block");
+});
