@@ -21,15 +21,17 @@ async function init() {
   elements.connectGoogleButton.addEventListener("click", () => connectGoogle(true));
   elements.disconnectGoogleButton.addEventListener("click", disconnectGoogle);
   window.addEventListener("focus", handleTdBankWindowFocus);
+  refreshAuthButtons();
+  renderMetrics();
+  renderTabs();
+  void updateLiveCadRate();
   await initializeGoogleAuth();
   if (state.googleAuth.readyError) {
     setManualFinanceStatus(state.googleAuth.readyError, true);
   }
   await trySilentGoogleConnect().catch(() => false);
   refreshAuthButtons();
-  renderMetrics();
   renderTabs();
-  void updateLiveCadRate();
   await loadDashboardData();
 }
 
