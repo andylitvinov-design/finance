@@ -9,9 +9,30 @@ const bridgeJs = fs.readFileSync(path.join(repoRoot, "fop-transfer-category.js")
 const configJs = fs.readFileSync(path.join(repoRoot, "config.js"), "utf8");
 const indexHtml = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
 
+function createSelect(optionsBucket = []) {
+  return {
+    options: optionsBucket,
+    value: "",
+    appendChild(option) {
+      optionsBucket.push(option);
+    },
+  };
+}
+
+function createRowWithSelect(select) {
+  return {
+    querySelector(selector) {
+      return selector === "select.expense-select" ? select : null;
+    },
+  };
+}
+
 function createBridgeContext() {
   const calls = [];
   const options = [];
+  const tableSelect = createSelect(options);
+  const mobileSelect = createSelect([]);
+  const legacySelect = createSelect([]);
   const context = {
     window: null,
     globalThis: null,
@@ -35,19 +56,14 @@ function createBridgeContext() {
     normalizeManualExpenseCategory(value) {
       return String(value || "").trim();
     },
-    renderExpenseAccountingRow(entry) {
-      return {
-        querySelector(selector) {
-          if (selector !== "select.expense-select") return null;
-          return {
-            options,
-            value: "",
-            appendChild(option) {
-              options.push(option);
-            },
-          };
-        },
-      };
+    renderExpenseAccountingTableRow() {
+      return createRowWithSelect(tableSelect);
+    },
+    renderExpenseAccountingMobileCard() {
+      return createRowWithSelect(mobileSelect);
+    },
+    renderExpenseAccountingRow() {
+      return createRowWithSelect(legacySelect);
     },
     renderTabs() {
       calls.push({ type: "renderTabs" });
@@ -87,7 +103,7 @@ function createBridgeContext() {
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(bridgeJs, context);
-  return { context, calls, options };
+  return { context, calls, options, tableSelect, mobileSelect, legacySelect };
 }
 
 test("FOP bridge is loaded after ui.js and before expense pie analytics", () => {
@@ -112,6 +128,18 @@ test("FOP category aliases normalize to transferFop", () => {
   assert.equal(context.normalizeManualExpenseCategory("перевод фоп"), "transferFop");
   assert.equal(context.normalizeManualExpenseCategory("fop transfer"), "transferFop");
   assert.equal(context.normalizeManualExpenseCategory("business"), "business");
+});
+
+test("FOP category is selected in current desktop and mobile expense row renderers", () => {
+  const { context, tableSelect, mobileSelect, legacySelect } = createBridgeContext();
+  context.renderExpenseAccountingTableRow({ category: "Перевод ФОП" });
+  context.renderExpenseAccountingMobileCard({ category: "transferFop" });
+  context.renderExpenseAccountingRow({ category: "fop transfer" });
+
+  assert.equal(tableSelect.value, "transferFop");
+  assert.equal(mobileSelect.value, "transferFop");
+  assert.equal(legacySelect.value, "transferFop");
+  assert.ok(tableSelect.options.some((option) => option.value === "transferFop" && option.textContent === "Перевод ФОП"));
 });
 
 test("FOP transfer entries are converted to transfer rows, not regular expense saves", async () => {
