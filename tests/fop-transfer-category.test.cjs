@@ -27,10 +27,10 @@ function createRowWithSelect(select) {
   };
 }
 
-function createBridgeContext() {
+function createBridgeContext(options = {}) {
   const calls = [];
-  const options = [];
-  const tableSelect = createSelect(options);
+  const selectOptions = [];
+  const tableSelect = createSelect(selectOptions);
   const mobileSelect = createSelect([]);
   const legacySelect = createSelect([]);
   const context = {
@@ -98,12 +98,31 @@ function createBridgeContext() {
       calls.push({ type: "saveExpenses", entries });
       return { rowCount: entries.length };
     },
+    async fetch(url, request = {}) {
+      calls.push({ type: "fetch", url, request });
+      if (options.fetchOk === false) {
+        return {
+          ok: false,
+          status: 500,
+          async json() {
+            return { ok: false, error: "boom" };
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true };
+        },
+      };
+    },
   };
   context.window = context;
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(bridgeJs, context);
-  return { context, calls, options, tableSelect, mobileSelect, legacySelect };
+  return { context, calls, options: selectOptions, tableSelect, mobileSelect, legacySelect };
 }
 
 test("FOP bridge is loaded after ui.js and before expense pie analytics", () => {
@@ -142,10 +161,41 @@ test("FOP category is selected in current desktop and mobile expense row rendere
   assert.ok(tableSelect.options.some((option) => option.value === "transferFop" && option.textContent === "Перевод ФОП"));
 });
 
-test("FOP transfer entries are converted to transfer rows, not regular expense saves", async () => {
+test("Ledger-persisted partner_transfer to Privat FOP renders as FOP transfer", () => {
+  const { context, tableSelect } = createBridgeContext();
+  assert.equal(context.EzohataFopTransferCategory.isFopTransferLedgerRow({
+    category: "partner",
+    operation: "partner_transfer",
+    toChannel: "приват-фоп",
+  }), true);
+  context.renderExpenseAccountingTableRow({
+    category: "partner",
+    operation: "partner_transfer",
+    toChannel: "приват-фоп",
+  });
+  assert.equal(tableSelect.value, "transferFop");
+});
+
+test("plain partner transfers do not render as FOP transfers", () => {
+  const { context, tableSelect } = createBridgeContext();
+  assert.equal(context.EzohataFopTransferCategory.isFopTransferLedgerRow({
+    category: "partner",
+    operation: "partner_transfer",
+    toChannel: "пейпал дол",
+  }), false);
+  context.renderExpenseAccountingTableRow({
+    category: "partner",
+    operation: "partner_transfer",
+    toChannel: "пейпал дол",
+  });
+  assert.equal(tableSelect.value, "");
+});
+
+test("FOP transfer entries are converted to transfer rows and update existing Ledger row", async () => {
   const { context, calls } = createBridgeContext();
   const result = await context.saveExpenseAccountingEntriesDirect([
     {
+      sheetRowNumber: 12,
       date: "2026-05-08",
       category: "Перевод ФОП",
       localAmount: "8400",
@@ -157,6 +207,7 @@ test("FOP transfer entries are converted to transfer rows, not regular expense s
   ]);
 
   assert.equal(result.fopTransferRows, 1);
+  assert.equal(result.updatedLedgerRows, 1);
   assert.equal(calls.some((call) => call.type === "saveExpenses"), false);
   const transferCall = calls.find((call) => call.type === "saveTransfers");
   assert.ok(transferCall, "FOP rows must be saved through saveManualTransfersSheetDirect");
@@ -171,18 +222,53 @@ test("FOP transfer entries are converted to transfer rows, not regular expense s
     rate: "84,0000",
     usdAmount: "100,0000",
   });
+  const ledgerCall = calls.find((call) => call.type === "fetch" && call.url === "/api/ledger-operation");
+  assert.ok(ledgerCall, "FOP rows with sheetRowNumber must update the existing Ledger row");
+  assert.equal(ledgerCall.request.method, "POST");
+  assert.deepEqual(JSON.parse(ledgerCall.request.body), {
+    action: "update",
+    sheetRowNumber: 12,
+    operation: "partner_transfer",
+    category: "partner",
+    to_channel: "приват-фоп",
+    direction: "out",
+  });
 });
 
-test("mixed save keeps regular expenses on the original path and FOP on transfers", async () => {
+test("FOP transfer entries without sheetRowNumber still save to transfers and skip Ledger update", async () => {
+  const { context, calls } = createBridgeContext();
+  const result = await context.saveExpenseAccountingEntriesDirect([
+    { date: "2026-05-08", category: "transferFop", localAmount: "100", currency: "USD", channel: "пейпал дол" },
+  ]);
+
+  assert.equal(result.fopTransferRows, 1);
+  assert.equal(result.updatedLedgerRows, 0);
+  assert.ok(calls.some((call) => call.type === "saveTransfers"));
+  assert.equal(calls.some((call) => call.type === "fetch"), false);
+});
+
+test("FOP Ledger update failure is surfaced with row context", async () => {
+  const { context } = createBridgeContext({ fetchOk: false });
+  await assert.rejects(
+    () => context.saveExpenseAccountingEntriesDirect([
+      { sheetRowNumber: 9, date: "2026-05-08", category: "transferFop", localAmount: "100", currency: "USD", channel: "пейпал дол" },
+    ]),
+    /Не удалось обновить Ledger строку 9 как Перевод ФОП: boom/
+  );
+});
+
+test("mixed save keeps regular expenses on the original path and FOP on transfers plus Ledger update", async () => {
   const { context, calls } = createBridgeContext();
   await context.saveExpenseAccountingEntriesDirect([
     { date: "2026-05-08", category: "business", localAmount: "12", currency: "USD", channel: "пейпал дол" },
-    { date: "2026-05-08", category: "transferFop", localAmount: "100", currency: "USD", channel: "пейпал дол" },
+    { sheetRowNumber: 14, date: "2026-05-08", category: "transferFop", localAmount: "100", currency: "USD", channel: "пейпал дол" },
   ]);
 
   const expenseCall = calls.find((call) => call.type === "saveExpenses");
   const transferCall = calls.find((call) => call.type === "saveTransfers");
+  const ledgerCall = calls.find((call) => call.type === "fetch");
   assert.equal(expenseCall.entries.length, 1);
   assert.equal(expenseCall.entries[0].category, "business");
   assert.ok(transferCall.transferRows.some((row) => row.who === "Перевод ФОП" && row.amount === "100,0000"));
+  assert.equal(JSON.parse(ledgerCall.request.body).sheetRowNumber, 14);
 });

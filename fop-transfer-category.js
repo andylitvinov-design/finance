@@ -2,6 +2,7 @@
   const root = typeof window !== "undefined" ? window : globalThis;
   const FOP_TRANSFER_CATEGORY = "transferFop";
   const FOP_TRANSFER_LABEL = "Перевод ФОП";
+  const FOP_TARGET_CHANNEL = "приват-фоп";
 
   function normalizeText(value) {
     return String(value || "")
@@ -19,6 +20,14 @@
       normalized === "transfer fop" ||
       normalized === "перевод фоп" ||
       (normalized.includes("перевод") && normalized.includes("фоп"));
+  }
+
+  function isFopTransferLedgerRow(entry) {
+    if (isFopTransferCategory(entry?.category || entry?.ledgerV2?.legacy_category)) return true;
+    const category = normalizeText(entry?.category || entry?.ledgerV2?.legacy_category || entry?.ledgerV2?.category);
+    const operation = normalizeText(entry?.operation || entry?.ledgerV2?.legacy_operation || entry?.ledgerV2?.operation);
+    const toChannel = normalizeText(entry?.toChannel || entry?.to_channel || entry?.ledgerV2?.to_channel);
+    return category === "partner" && operation === "partner transfer" && toChannel === normalizeText(FOP_TARGET_CHANNEL);
   }
 
   function getGlobalValue(name) {
@@ -110,7 +119,7 @@
   }
 
   function selectFopTransferCategory(container, entry) {
-    if (!isFopTransferCategory(entry?.category)) return;
+    if (!isFopTransferLedgerRow(entry)) return;
     const select = container?.querySelector?.("select.expense-select");
     if (!select) return;
     ensureSelectHasFopTransferOption(select);
@@ -187,13 +196,46 @@
     }
   }
 
+  async function updateLedgerRowsForFopEntries(entries) {
+    const rows = (Array.isArray(entries) ? entries : [])
+      .map((entry) => ({ entry, sheetRowNumber: Number(entry?.sheetRowNumber || entry?.sheet_row_number || 0) }))
+      .filter((row) => Number.isInteger(row.sheetRowNumber) && row.sheetRowNumber >= 2);
+    if (!rows.length) return { updatedLedgerRows: 0 };
+    const fetchImpl = typeof fetch === "function" ? fetch : root.fetch;
+    if (typeof fetchImpl !== "function") {
+      throw new Error("Не найден fetch для обновления Ledger строки Перевод ФОП.");
+    }
+    let updatedLedgerRows = 0;
+    for (const row of rows) {
+      const response = await fetchImpl("/api/ledger-operation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          sheetRowNumber: row.sheetRowNumber,
+          operation: "partner_transfer",
+          category: "partner",
+          to_channel: FOP_TARGET_CHANNEL,
+          direction: "out"
+        })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok === false) {
+        const message = payload?.error || `Ledger update HTTP ${response.status}`;
+        throw new Error(`Не удалось обновить Ledger строку ${row.sheetRowNumber} как Перевод ФОП: ${message}`);
+      }
+      updatedLedgerRows += 1;
+    }
+    return { updatedLedgerRows };
+  }
+
   function installSavePatch() {
     const original = getFunction("saveExpenseAccountingEntriesDirect");
     if (typeof original !== "function" || original.__fopTransferWrapped) return false;
     async function wrappedSaveExpenseAccountingEntriesDirect(entries) {
       const rows = Array.isArray(entries) ? entries : [];
-      const fopEntries = rows.filter((entry) => isFopTransferCategory(entry?.category));
-      const regularEntries = rows.filter((entry) => !isFopTransferCategory(entry?.category));
+      const fopEntries = rows.filter((entry) => isFopTransferLedgerRow(entry));
+      const regularEntries = rows.filter((entry) => !isFopTransferLedgerRow(entry));
       let result = { rowCount: 0 };
       if (regularEntries.length) {
         result = await original.call(this, regularEntries);
@@ -213,9 +255,11 @@
         [...(existing.transferRows || []), ...fopTransferRows],
         existing.commissionRows || []
       );
+      const ledgerUpdate = await updateLedgerRowsForFopEntries(fopEntries);
       return {
         ...result,
         ...saved,
+        ...ledgerUpdate,
         rowCount: Number(result?.rowCount || 0) + fopTransferRows.length,
         fopTransferRows: fopTransferRows.length
       };
@@ -237,9 +281,12 @@
   root.EzohataFopTransferCategory = {
     FOP_TRANSFER_CATEGORY,
     FOP_TRANSFER_LABEL,
+    FOP_TARGET_CHANNEL,
     entryToFopTransferRow,
     install,
-    isFopTransferCategory
+    isFopTransferCategory,
+    isFopTransferLedgerRow,
+    updateLedgerRowsForFopEntries
   };
 
   install();
