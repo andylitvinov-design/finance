@@ -8,6 +8,7 @@
     "build": "node scripts/build-check.mjs",
     "migration:check": "node scripts/check-migration-lock.mjs",
     "release-guard": "bash scripts/release-guard.sh",
+    "preflight:production": "node scripts/production-debug-preflight.mjs",
     "verify:production": "node scripts/verify-production.mjs",
     "verify:live": "node scripts/verify-production.mjs"
   },
