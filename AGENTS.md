@@ -8,6 +8,18 @@
 - Do not use the legacy `reconcile-v2/` folder as a new source of production commits.
 - Production URL: `https://ezohata-incoming-ledger.vercel.app/`
 
+## Project Memory
+
+Before production debugging, read the shared project memory:
+
+- `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/systems/production-debug-protocol.md`
+- `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/DEBUG_PLAYBOOK.md`
+- `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/CHECKS.md`
+- `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/RISKS.md`
+- `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/DEBUG_LOG.md`
+
+After meaningful production work, update the relevant project memory files or explicitly report that a memory update is needed.
+
 ## Autonomy
 
 Default mode: **Production Debugger Autopilot**.
@@ -34,11 +46,34 @@ Stop and ask before risky actions:
 - changing balance/gross/net/fee/source semantics without proven root cause and regression tests;
 - broad architecture rewrites.
 
+## Production Debug Preflight
+
+For every production UI/runtime/API/provider/balance bug, run source-of-truth preflight before patching formulas or UI logic:
+
+```bash
+node scripts/production-debug-preflight.mjs
+```
+
+Report:
+
+1. live URL;
+2. `/api/status` HTTP status/content-type/body excerpt if failing;
+3. production project/service;
+4. production repo slug;
+5. production commit SHA;
+6. production branch/ref;
+7. relevant open PRs;
+8. classification: `source ok`, `deploy/source-of-truth mismatch`, or `needs verification`.
+
+If production does not contain the intended fix, or production is serving a stale feature branch, do not patch business formulas yet. Resolve deploy/source-of-truth mismatch first.
+
 ## Root Cause First
 
 For runtime/API/import/balance/analytics/UI bugs, prove the failing layer before patching:
 
 `UI -> API route -> provider/import -> normalization -> ledger save -> balance -> analytics`
+
+For production bugs, also prove `deploy/source-of-truth` before this chain.
 
 For each issue report:
 
@@ -62,6 +97,19 @@ If the root cause is not proven, write `likely bug in [layer], needs verificatio
 - Determine PayPal direction from the original sign before `Math.abs`.
 - Provider non-JSON/plain-text/HTML errors must become structured JSON errors, not raw SyntaxError or HTML in UI.
 
+## Movement Table Invariant
+
+For `Движение средства`, the rendered `Итого` row under `BALANCE` must equal the sum of visible numeric `NUMBER` rows for the selected period.
+
+Known regression fixture:
+
+- period: `2026-05-05..2026-05-11`;
+- wrong total: `-340.5000`;
+- visible rows sum: `218.2244`;
+- expected total: `218.2244`.
+
+If this fails, first check production source-of-truth. Then patch the final movement aggregation/render layer.
+
 ## Deployment
 
 - Start production-facing work from `origin/main`, run `bash scripts/release-guard.sh`, then push a branch and merge through PR.
@@ -75,6 +123,7 @@ Run available checks and report exact results:
 
 ```bash
 node --test tests/*.test.*
+node scripts/production-debug-preflight.mjs
 bash scripts/release-guard.sh
 npm run build
 ```
