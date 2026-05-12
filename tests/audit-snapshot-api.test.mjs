@@ -429,6 +429,169 @@ test("audit snapshot counts unknown source rows", async () => {
   assert.equal(response.summary.unknown_source_rows, 1);
 });
 
+test("audit snapshot exposes finance analysis planned vs auto/MCP breakdown without forcing equality", async () => {
+  const response = await buildAuditSnapshot({
+    query: { startDate: "2026-05-05", endDate: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          date: "2026-05-08",
+          toChannel: "Яндекс руб",
+          amount: "50",
+          amountUsd: "50",
+          amountNet: "50",
+          source: "mcp",
+          ledgerV2: { date: "2026-05-08", to_channel: "Яндекс руб", amount: "50", amount_usd: "50", amount_net: "50", balance_amount: 50, source: "mcp", external_id: "YANDEX-1" },
+        }),
+        ledgerOperation({
+          date: "2026-05-09",
+          toChannel: "Яндекс руб",
+          amount: "40",
+          amountUsd: "40",
+          amountNet: "40",
+          source: "yoomoney",
+          ledgerV2: { date: "2026-05-09", to_channel: "Яндекс руб", amount: "40", amount_usd: "40", amount_net: "40", balance_amount: 40, source: "yoomoney", external_id: "YANDEX-2" },
+        }),
+        ledgerOperation({
+          date: "2026-05-10",
+          toChannel: "Яндекс руб",
+          amount: "30",
+          amountUsd: "30",
+          amountNet: "30",
+          source: "mcp",
+          ledgerV2: { date: "2026-05-10", to_channel: "Яндекс руб", amount: "30", amount_usd: "30", amount_net: "30", balance_amount: 30, source: "mcp", external_id: "YANDEX-3" },
+        }),
+      ],
+      financeAnalysis: {
+        plannedRows: [
+          { orderId: "18101", date: "2026-05-05", paymentMethod: "Яндекс руб", accruedPlus: "10" },
+          { orderId: "18102", date: "2026-05-06", paymentMethod: "yoomoney rub", accruedPlus: "20" },
+          { orderId: "18103", date: "2026-05-07", paymentMethod: "сайт,рубли", accruedPlus: "30" },
+          { orderId: "18104", date: "2026-05-08", paymentMethod: "Яндекс руб", accruedPlus: "40" },
+        ],
+      },
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = response.finance_analysis.channels.find((item) => item.channel === "Яндекс руб");
+  assert.equal(row.planned_count, 4);
+  assert.equal(row.actual_auto_mcp_count, 3);
+  assert.equal(row.planned_total, 100);
+  assert.equal(row.actual_total, 120);
+  assert.equal(row.unmatched_planned.length, 4);
+  assert.equal(row.unmatched_actual.length, 3);
+});
+
+test("audit snapshot flags planned Yandex order paid through PayPal EUR as channel mismatch diagnostic", async () => {
+  const response = await buildAuditSnapshot({
+    query: { startDate: "2026-05-05", endDate: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          date: "2026-05-08",
+          toChannel: "пейпал евр",
+          amount: "36",
+          currency: "EUR",
+          amountUsd: "41.76",
+          amountNet: "36",
+          source: "paypal_mcp",
+          ledgerV2: { date: "2026-05-08", to_channel: "пейпал евр", amount: "36", currency: "EUR", amount_usd: "41.76", amount_net: "36", balance_amount: 36, source: "paypal_mcp", external_id: "PAYPAL-EUR-1" },
+        }),
+      ],
+      financeAnalysis: {
+        plannedRows: [
+          { orderId: "18105", date: "2026-05-08", paymentMethod: "Яндекс руб", accruedPlus: "40" },
+        ],
+      },
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const yandex = response.finance_analysis.channels.find((item) => item.channel === "Яндекс руб");
+  const paypal = response.finance_analysis.channels.find((item) => item.channel === "пейпал евр");
+  assert.equal(yandex.planned_total, 40);
+  assert.equal(paypal.actual_total, 41.76);
+  assert.equal(yandex.possible_channel_mismatches.length, 1);
+  assert.equal(yandex.possible_channel_mismatches[0].actual_channel, "пейпал евр");
+});
+
+test("audit snapshot finance analysis excludes auto/MCP income outside selected period", async () => {
+  const response = await buildAuditSnapshot({
+    query: { startDate: "2026-05-05", endDate: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          date: "2026-05-08",
+          toChannel: "Яндекс руб",
+          amount: "25",
+          amountUsd: "25",
+          amountNet: "25",
+          source: "mcp",
+          ledgerV2: { date: "2026-05-08", to_channel: "Яндекс руб", amount: "25", amount_usd: "25", amount_net: "25", balance_amount: 25, source: "mcp" },
+        }),
+        ledgerOperation({
+          date: "2026-05-12",
+          toChannel: "Яндекс руб",
+          amount: "99",
+          amountUsd: "99",
+          amountNet: "99",
+          source: "mcp",
+          ledgerV2: { date: "2026-05-12", to_channel: "Яндекс руб", amount: "99", amount_usd: "99", amount_net: "99", balance_amount: 99, source: "mcp" },
+        }),
+      ],
+      financeAnalysis: {
+        plannedRows: [
+          { orderId: "18106", date: "2026-05-08", paymentMethod: "Яндекс руб", accruedPlus: "25" },
+        ],
+      },
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = response.finance_analysis.channels.find((item) => item.channel === "Яндекс руб");
+  assert.equal(row.actual_auto_mcp_count, 1);
+  assert.equal(row.actual_total, 25);
+});
+
+test("audit snapshot finance analysis does not count PayPal USD expense as income", async () => {
+  const response = await buildAuditSnapshot({
+    query: { startDate: "2026-05-05", endDate: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          date: "2026-05-08",
+          operation: "business_expense",
+          fromChannel: "пейпал дол",
+          toChannel: "",
+          amount: "12",
+          amountUsd: "-12",
+          amountNet: "12",
+          source: "paypal_mcp",
+          ledgerV2: { date: "2026-05-08", operation: "expense", from_channel: "пейпал дол", to_channel: "", amount: "12", amount_usd: "-12", amount_net: "12", balance_amount: -12, source: "paypal_mcp" },
+        }),
+      ],
+      financeAnalysis: { plannedRows: [] },
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.finance_analysis.totals.actual_auto_mcp_count, 0);
+  assert.equal(response.finance_analysis.totals.actual_total, 0);
+});
+
 test("audit snapshot counts migration rows separately from unknown", async () => {
   const response = await buildAuditSnapshot({
     repositoryLoader: async () => ({
