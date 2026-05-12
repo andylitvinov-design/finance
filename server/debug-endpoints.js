@@ -539,6 +539,7 @@ function normalizeRowDate(row) {
   return normalizeDate(
     row?.ledgerV2?.date ||
     row?.date ||
+    row?.DATE ||
     row?.operationDate ||
     row?.transactionDate ||
     row?.transferDate ||
@@ -634,7 +635,8 @@ function sanitizeText(value) {
   text = text.replace(/Basic\s+[A-Za-z0-9+/=._~-]+/gi, "Basic [redacted]");
   text = text.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email redacted]");
   text = text.replace(/\b\d{12,19}\b/g, "[number redacted]");
-  text = text.replace(/(access_token|refresh_token|client_secret|private_key|token|secret)["':=\s]+[^\s,;]+/gi, "$1 [redacted]");
+  text = text.replace(/(access_token|refresh_token|client_secret|private_key|token|secret)["':=]+\s*[^\s,;]+/gi, "$1 [redacted]");
+  text = text.replace(/(access_token|refresh_token|client_secret|private_key|token|secret)\s+[A-Za-z0-9._~+/-]{12,}/gi, "$1 [redacted]");
   if (SECRET_PATTERN.test(text)) {
     text = text.replace(/[A-Za-z0-9._~+/-]{24,}/g, "[redacted]");
   }
