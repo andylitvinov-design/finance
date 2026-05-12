@@ -23,6 +23,15 @@ function makeNode(text = "") {
   return { textContent: text };
 }
 
+function runPayablePatch(buildTopMetricsSummary) {
+  const context = { buildTopMetricsSummary };
+  context.globalThis = context;
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(topMetricPayableShareFixJs, context);
+  return context.buildTopMetricsSummary();
+}
+
 test("summary metrics render directly in the top card flow", () => {
   assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
   assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/summary-metrics-fix\.js["'][^>]*>/);
@@ -68,17 +77,17 @@ test("summary metrics render directly in the top card flow", () => {
 });
 
 test("payable helper calculates 30 percent of orders minus paid", () => {
-  const context = {
-    buildTopMetricsSummary: () => ({ totalOrders: 1148.45, totalPaid: 847.7385, total: 43.8235 }),
-  };
-  context.globalThis = context;
-  context.window = context;
-  vm.createContext(context);
-  vm.runInContext(topMetricPayableShareFixJs, context);
-
-  const summary = context.buildTopMetricsSummary();
+  const summary = runPayablePatch(() => ({ totalOrders: 1148.45, totalPaid: 847.7385, total: 43.8235 }));
 
   assert.equal(Number(summary.payable.toFixed(4)), -503.2035);
   assert.equal(summary.total, summary.payable);
   assert.equal(summary.payableFormula, "totalOrders * 0.3 - totalPaid");
+});
+
+test("payable helper leaves a positive amount when paid is below 30 percent", () => {
+  const summary = runPayablePatch(() => ({ totalOrders: 1000, totalPaid: 100, total: -999 }));
+
+  assert.equal(summary.payable, 200);
+  assert.equal(summary.total, 200);
+  assert.equal(summary.payableShareRate, 0.3);
 });
