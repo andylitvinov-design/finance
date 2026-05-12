@@ -28,7 +28,7 @@ Do not ask the user for confirmation before safe engineering actions:
 
 - inspect repo-local code/docs and project memory;
 - check recent PRs/commits and production source-of-truth metadata;
-- check live read-only endpoints such as `/api/status` and `/api/audit-snapshot`;
+- check live read-only endpoints such as `/api/status`, `/api/audit-snapshot`, and `/api/debug-ui-state`;
 - create a branch/worktree from `origin/main`;
 - edit/update files for a minimal safe patch;
 - add/update regression tests;
@@ -66,6 +66,19 @@ Report:
 8. classification: `source ok`, `deploy/source-of-truth mismatch`, or `needs verification`.
 
 If production does not contain the intended fix, or production is serving a stale feature branch, do not patch business formulas yet. Resolve deploy/source-of-truth mismatch first.
+
+## Agent Debug Surface
+
+For screenshot/UI aggregate discrepancies, use this read-only evidence chain before patching:
+
+1. `/api/status` — prove deployed commit/source.
+2. `/api/audit-snapshot` — prove normalized ledger, balance, provider, exchange, source, and daily-balance state.
+3. `/api/debug-ui-state` — prove server-derived UI aggregate inputs and channel breakdowns.
+4. Screenshot/user report — use only after the machine-readable evidence above.
+
+`/api/debug-ui-state` is routed through the existing `/api/index` function, so it does not add another Vercel Hobby serverless function. It is observability only and must not become a finance calculation source of truth.
+
+Row-level mode requires `includeRows=1` plus a configured debug token. Never expose the token, secrets/env values, full provider payloads, emails, account numbers, or private comments. See `docs/debugger-access-architecture.md`.
 
 ## Root Cause First
 
