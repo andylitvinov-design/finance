@@ -1914,7 +1914,9 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["пейпал дол"]?.plannedReceivedUsd, 206);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.currency, "UAH");
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.plannedReceivedUsd, 515);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.realNetUsd, 515);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват 24-грн"]?.plannedReceivedUsd, 0);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват 24-грн"]?.realNetUsd, 0);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;

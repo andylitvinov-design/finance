@@ -681,7 +681,7 @@ async function buildRealIncomePayload(period, movementValues) {
     unmatchedEntries,
     summaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
     summaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
-    unmatchedSummaryByChannel: summarizeRealIncomeByChannel(unmatchedEntries, movementValues),
+    unmatchedSummaryByChannel: summarizeRealIncomeByChannel(unmatchedEntries, movementValues, { includeMovementDirectFallback: false }),
     warnings: [...new Set(warnings.filter(Boolean))],
   };
 }
@@ -850,13 +850,18 @@ function getExplicitRealIncomeNetUsd(entry) {
   return null;
 }
 
-function summarizeRealIncomeByChannel(entries, movementValues) {
+function summarizeRealIncomeByChannel(entries, movementValues, { includeMovementDirectFallback = true } = {}) {
   const movementStats = summarizeMovementChannels(movementValues);
+  const directMovementIncome = includeMovementDirectFallback
+    ? summarizeDirectMovementRealIncomeByChannel(movementValues)
+    : {};
   return Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
     const channelEntries = entries.filter((entry) => entry.channel === channel);
-    const grossUsd = sumBy(channelEntries, "realGrossUsd");
+    const fallbackNetUsd = roundNumber(directMovementIncome[channel] || 0);
+    const entryNetUsd = sumBy(channelEntries, "realNetUsd");
+    const netUsd = entryNetUsd || fallbackNetUsd;
+    const grossUsd = sumBy(channelEntries, "realGrossUsd") || fallbackNetUsd;
     const feeUsd = sumBy(channelEntries, "realFeeUsd");
-    const netUsd = sumBy(channelEntries, "realNetUsd");
     const plannedReceivedUsd = roundNumber(movementStats.plannedReceivedUsdByChannel[channel] || 0);
     const differenceUsd = roundNumber(plannedReceivedUsd - netUsd);
     return [channel, {
@@ -870,6 +875,19 @@ function summarizeRealIncomeByChannel(entries, movementValues) {
       differencePct: calculateDifferencePct(differenceUsd, netUsd),
     }];
   }));
+}
+
+function summarizeDirectMovementRealIncomeByChannel(movementValues) {
+  const totals = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
+  const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  for (const row of rows) {
+    const channel = resolveMovementRowChannel(row);
+    if (channel !== "приват-фоп") continue;
+    const netUsd = parseLooseNumber(row?.[20]) || parseLooseNumber(row?.[18]);
+    if (netUsd <= 0) continue;
+    totals[channel] = roundNumber(totals[channel] + netUsd);
+  }
+  return totals;
 }
 
 function getRealIncomeSummaryTotalsFromSummary(summaryByChannel = {}) {
