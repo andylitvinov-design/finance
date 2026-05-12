@@ -120,7 +120,7 @@ function buildResult({ liveUrl, statusUrl, response, contentType, bodyExcerpt, p
     warnings,
     bodyExcerpt,
     next: problems.length
-      ? "Resolve production source-of-truth mismatch before patching formulas/UI logic."
+      ? "Resolve deploy/source-of-truth mismatch before patching formulas/UI logic."
       : "Production source preflight passed. Continue to prove failing layer before patching.",
   };
 }
