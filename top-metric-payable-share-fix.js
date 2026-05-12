@@ -38,7 +38,7 @@
         payable,
         payableShare: payable,
         payableShareRate: PAYABLE_SHARE_RATE,
-        payableFormula: "totalOrders * 0.3 - totalPaid"
+        payableFormula: "totalOrders * 0.3 - abs(totalPaid)"
       };
     };
 

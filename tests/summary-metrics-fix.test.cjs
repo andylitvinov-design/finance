@@ -81,7 +81,7 @@ test("payable helper calculates 30 percent of orders minus paid", () => {
 
   assert.equal(Number(summary.payable.toFixed(4)), -503.2035);
   assert.equal(summary.total, summary.payable);
-  assert.equal(summary.payableFormula, "totalOrders * 0.3 - totalPaid");
+  assert.equal(summary.payableFormula, "totalOrders * 0.3 - abs(totalPaid)");
 });
 
 test("payable helper uses the displayed paid amount when internal paid total is negative", () => {
