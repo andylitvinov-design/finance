@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
+import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
@@ -140,6 +141,11 @@ export default async function handler(request, response) {
     return await handleDebugAction(request, response, debugAction);
   }
 
+  if (debugAction === "manualWorkbook") {
+    const routeName = String(request.query?.route || "manual-workbook").trim() || "manual-workbook";
+    return await createManualWorkbookHandler(routeName)(request, response);
+  }
+
   const upstream = normalizeUpstreamUrl(process.env.EZOHATA_V2_APPS_SCRIPT_URL);
   if (request.method === "GET" && request.query.health === "1") {
     return response.status(200).json({
@@ -148,8 +154,8 @@ export default async function handler(request, response) {
       configured: Boolean(upstream),
       fallbackSnapshot: !upstream,
       statusEndpoint: "/api/status",
-      supportedGetActions: Array.from(SUPPORTED_GET_ACTIONS),
-      supportedPostActions: Array.from(SUPPORTED_POST_ACTIONS),
+      supportedGetActions: [...Array.from(SUPPORTED_GET_ACTIONS), "manualWorkbook"],
+      supportedPostActions: [...Array.from(SUPPORTED_POST_ACTIONS), "manualWorkbook"],
     });
   }
 

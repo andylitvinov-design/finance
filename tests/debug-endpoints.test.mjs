@@ -118,7 +118,7 @@ test("vercel rewrites expose debug paths through the existing index function", a
     { source: "/api/debug-full", destination: "/api/index?action=debugFull" },
     { source: "/api/debug-analytics", destination: "/api/index?action=debugAnalytics" }
   ]);
-  assert.ok(vercelConfig.rewrites.some((rewrite) => rewrite.source === "/api/manual-finance" && rewrite.destination === "/api/manual-workbook?route=manual-finance"));
+  assert.ok(vercelConfig.rewrites.some((rewrite) => rewrite.source === "/api/manual-finance" && rewrite.destination === "/api/index?action=manualWorkbook&route=manual-finance"));
 });
 
 test("existing status and dashboard handlers keep their current contracts", async () => {

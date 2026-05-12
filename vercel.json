@@ -15,19 +15,19 @@
     },
     {
       "source": "/api/manual-finance",
-      "destination": "/api/manual-workbook?route=manual-finance"
+      "destination": "/api/index?action=manualWorkbook&route=manual-finance"
     },
     {
       "source": "/api/manual-orders",
-      "destination": "/api/manual-workbook?route=manual-orders"
+      "destination": "/api/index?action=manualWorkbook&route=manual-orders"
     },
     {
       "source": "/api/manual-transfers",
-      "destination": "/api/manual-workbook?route=manual-transfers"
+      "destination": "/api/index?action=manualWorkbook&route=manual-transfers"
     },
     {
       "source": "/api/manual-savings",
-      "destination": "/api/manual-workbook?route=manual-savings"
+      "destination": "/api/index?action=manualWorkbook&route=manual-savings"
     }
   ],
   "cleanUrls": true,

@@ -3,7 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import manualWorkbookHandler from "../api/manual-workbook.js";
+import indexHandler from "../api/index.js";
 
 function createResponseRecorder() {
   return {
@@ -53,9 +53,9 @@ test("manual workbook routes normalize Google quota errors", async () => {
 
   try {
     const response = createResponseRecorder();
-    await manualWorkbookHandler({
+    await indexHandler({
       method: "POST",
-      query: { route: "manual-finance" },
+      query: { action: "manualWorkbook", route: "manual-finance" },
       body: {
         action: "sheetsFetch",
         method: "GET",
