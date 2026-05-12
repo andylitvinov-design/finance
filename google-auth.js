@@ -15,8 +15,8 @@ async function initializeGoogleAuth() {
       }
       state.googleAuth.accessToken = response.access_token || "";
       refreshAuthButtons();
-      setManualFinanceStatus("Google Sheets access granted. Пересчитываю все вкладки.", false);
-      loadDashboardData().catch(() => {});
+      state.manualServer.fallbackVisible = true;
+      setManualFinanceStatus("Google Sheets browser OAuth fallback enabled for debugging.", false);
     }
   });
   state.googleAuth.initialized = true;
@@ -56,9 +56,9 @@ async function connectGoogle(interactive = true) {
       }
       state.googleAuth.accessToken = response.access_token || "";
       refreshAuthButtons();
-      setManualFinanceStatus("Google подключен. Пересчитываю все вкладки за выбранный период.", false);
+      state.manualServer.fallbackVisible = true;
+      setManualFinanceStatus("Google browser OAuth fallback enabled for debugging.", false);
       renderTabs();
-      loadDashboardData().catch(() => {});
       resolve();
     };
     try {
@@ -104,7 +104,7 @@ function disconnectGoogle() {
   refreshAuthButtons();
   renderMetrics();
   setStatus("Google доступ отключён. Серверные вкладки продолжают работать без авторизации.");
-  setManualFinanceStatus("Google доступ отключён. Для fact и orders потребуется повторное подключение.", true);
+  setManualFinanceStatus("Google доступ отключён. Server access active — Google browser OAuth not required.", false);
   renderTabs();
 }
 
@@ -119,10 +119,12 @@ function refreshAuthButtons() {
   elements.connectGoogleButton.disabled = connected || !state.googleAuth.configured;
   elements.disconnectGoogleButton.disabled = !connected;
   elements.manualEndpointLabel.textContent = connected
-    ? "Connected via browser OAuth for fact/orders"
-    : state.googleAuth.configured
-      ? getOAuthReadinessMessage()
-      : "Set googleAuth.clientId in sheet-config.json for fact/orders editing";
+    ? "Browser OAuth fallback active for debugging."
+    : hasManualWorkbookServerAccess()
+      ? "Server access active — Google browser OAuth not required."
+      : state.googleAuth.configured
+        ? getOAuthReadinessMessage()
+        : "Set googleAuth.clientId in sheet-config.json for fallback/debug editing";
 }
 
 function getConfiguredOAuthOrigins() {
@@ -146,7 +148,14 @@ function getOAuthReadinessMessage() {
 }
 
 function refreshGoogleControlsVisibility() {
-  const shouldShow = state.activeTab === "analytics" || state.activeTab === "manualFinance" || state.activeTab === "expenseAccounting" || state.activeTab === "savings" || state.activeTab === "orders";
+  const fallbackVisible = Boolean(state.manualServer?.fallbackVisible || state.googleAuth.accessToken);
+  const shouldShow = fallbackVisible && (
+    state.activeTab === "analytics" ||
+    state.activeTab === "manualFinance" ||
+    state.activeTab === "expenseAccounting" ||
+    state.activeTab === "savings" ||
+    state.activeTab === "orders"
+  );
   const display = shouldShow ? "" : "none";
   elements.connectGoogleButton.style.display = display;
   elements.disconnectGoogleButton.style.display = display;

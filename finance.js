@@ -1994,6 +1994,7 @@ function buildManualFinanceSummaryRows(expenseRows, latestNowByChannel = {}) {
 function updateManualFinanceMoneyValue(rowIndex, key, rawValue) {
   const row = state.manualFinance.data?.moneyRows?.[rowIndex];
   if (!row) return;
+  clearManualServerCache();
   row[key] = rawValue;
   state.manualFinance.data.moneyRows = normalizeManualFinanceMoneyRows(state.manualFinance.data.moneyRows);
   state.manualFinance.data.expenseRows = convertLegacyFactMoneyRowsToExpenseRows(
@@ -2009,6 +2010,7 @@ function updateManualFinanceMoneyValue(rowIndex, key, rawValue) {
 function updateManualFinanceTransferValue(rowIndex, key, rawValue) {
   const row = state.manualFinance.data?.transferRows?.[rowIndex];
   if (!row) return;
+  clearManualServerCache();
   row[key] = rawValue;
   state.manualFinance.dirty = true;
   applyCurrentManualFinancePreview();
@@ -2017,6 +2019,7 @@ function updateManualFinanceTransferValue(rowIndex, key, rawValue) {
 
 function addManualFinanceTransferRow() {
   if (!state.manualFinance.data) return;
+  clearManualServerCache();
   state.manualFinance.data.transferRows.push(createEmptyManualFinanceTransferRow());
   state.manualFinance.dirty = true;
   applyCurrentManualFinancePreview();
@@ -2026,6 +2029,7 @@ function addManualFinanceTransferRow() {
 
 function removeManualFinanceTransferRow(rowIndex) {
   if (!state.manualFinance.data) return;
+  clearManualServerCache();
   state.manualFinance.data.transferRows.splice(rowIndex, 1);
   while (state.manualFinance.data.transferRows.length < MANUAL_TRANSFER_MIN_ROWS) {
     state.manualFinance.data.transferRows.push(createEmptyManualFinanceTransferRow());
@@ -2039,6 +2043,7 @@ function removeManualFinanceTransferRow(rowIndex) {
 function updateManualTransfersValue(rowIndex, key, rawValue) {
   const row = state.manualTransfers.data?.transferRows?.[rowIndex];
   if (!row) return;
+  clearManualServerCache();
   row[key] = rawValue;
   state.manualTransfers.dirty = true;
 }
@@ -2046,12 +2051,14 @@ function updateManualTransfersValue(rowIndex, key, rawValue) {
 function updateManualCommissionValue(rowIndex, key, rawValue) {
   const row = state.manualTransfers.data?.commissionRows?.[rowIndex];
   if (!row) return;
+  clearManualServerCache();
   row[key] = rawValue;
   state.manualTransfers.dirty = true;
 }
 
 function addManualTransfersRow() {
   if (!state.manualTransfers.data) return;
+  clearManualServerCache();
   state.manualTransfers.data.transferRows.push(createEmptyManualFinanceTransferRow());
   state.manualTransfers.dirty = true;
   renderTabs();
@@ -2059,6 +2066,7 @@ function addManualTransfersRow() {
 
 function addManualCommissionRow() {
   if (!state.manualTransfers.data) return;
+  clearManualServerCache();
   state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false });
   state.manualTransfers.data.commissionRows.push(createEmptyManualCommissionRow());
   state.manualTransfers.dirty = true;
@@ -2067,6 +2075,7 @@ function addManualCommissionRow() {
 
 function removeManualTransfersRow(rowIndex) {
   if (!state.manualTransfers.data) return;
+  clearManualServerCache();
   state.manualTransfers.data.transferRows.splice(rowIndex, 1);
   while (state.manualTransfers.data.transferRows.length < MANUAL_TRANSFER_MIN_ROWS) {
     state.manualTransfers.data.transferRows.push(createEmptyManualFinanceTransferRow());
@@ -2077,6 +2086,7 @@ function removeManualTransfersRow(rowIndex) {
 
 function removeManualCommissionRow(rowIndex) {
   if (!state.manualTransfers.data) return;
+  clearManualServerCache();
   state.manualTransfers.data.commissionRows = normalizeManualCommissionRows(state.manualTransfers.data.commissionRows || [], { padToMinimum: false });
   state.manualTransfers.data.commissionRows.splice(rowIndex, 1);
   while (state.manualTransfers.data.commissionRows.length < MANUAL_TRANSFER_MIN_ROWS) {
@@ -2095,9 +2105,6 @@ async function loadManualTransfersSheet(startDate, endDate, interactive = false)
   state.manualTransfers.loading = true;
   renderTabs();
   try {
-    if (!hasConfiguredManualFinanceEndpoint() && interactive && hasManualFinanceEndpointConfig()) {
-      await ensureGoogleAccess(true);
-    }
     if (!hasConfiguredManualFinanceEndpoint()) {
       throw new Error(getManualFinanceUnavailableMessage());
     }
@@ -2150,9 +2157,6 @@ async function saveManualTransfersSheet() {
   state.manualTransfers.loading = true;
   renderTabs();
   try {
-    if (!hasConfiguredManualFinanceEndpoint() && hasManualFinanceEndpointConfig()) {
-      await ensureGoogleAccess(true);
-    }
     if (!hasConfiguredManualFinanceEndpoint()) {
       throw new Error(getManualFinanceUnavailableMessage());
     }
@@ -2284,9 +2288,6 @@ async function loadManualFinanceSheet(startDate, endDate, interactive = false) {
   state.manualFinance.loading = true;
   renderTabs();
   try {
-    if (!hasConfiguredManualFinanceEndpoint() && interactive && hasManualFinanceEndpointConfig()) {
-      await ensureGoogleAccess(true);
-    }
     if (!hasConfiguredManualFinanceEndpoint()) {
       throw new Error(getManualFinanceUnavailableMessage());
     }
@@ -2368,15 +2369,6 @@ async function saveManualFinanceSheet() {
       usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount)
     })).filter((row) => Object.values(row).some((value) => String(value || "").trim() !== ""))
   };
-  if (!hasConfiguredManualFinanceEndpoint() && hasManualFinanceEndpointConfig()) {
-    try {
-      await ensureGoogleAccess(true);
-    } catch (error) {
-      setManualFinanceStatus(error.message || "Не удалось подключить Google.", true);
-      renderTabs();
-      return;
-    }
-  }
   if (!hasConfiguredManualFinanceEndpoint()) {
     persistLocalDraft(payload.startDate, payload.endDate, payload);
     state.manualFinance.dirty = false;
@@ -2682,13 +2674,10 @@ function setManualFinanceStatus(message, isError = false) {
 }
 
 function getManualFinanceUnavailableMessage() {
-  if (!state.googleAuth.configured) {
-    return "Google OAuth client is not configured in sheet-config.json yet.";
+  if (hasManualWorkbookServerAccess()) {
+    return "Manual workbook server access is unavailable. Browser OAuth fallback is debug-only.";
   }
-  if (!state.googleAuth.accessToken) {
-    return "Google OAuth обязателен. Подключите Google, чтобы открыть fact и пересчитать аналитику.";
-  }
-  return "Manual workbook is not available right now.";
+  return "Manual workbook server access is not configured.";
 }
 
 

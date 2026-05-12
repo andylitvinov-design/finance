@@ -17,7 +17,7 @@ async function init() {
   await applyDefaultDatesFromSnapshot();
   elements.todayButton.addEventListener("click", setToday);
   elements.weekButton.addEventListener("click", setWeekRange);
-  elements.calculateButton.addEventListener("click", () => loadDashboardData());
+  elements.calculateButton.addEventListener("click", () => requestDashboardLoad());
   elements.connectGoogleButton.addEventListener("click", () => connectGoogle(true));
   elements.disconnectGoogleButton.addEventListener("click", disconnectGoogle);
   window.addEventListener("focus", handleTdBankWindowFocus);
@@ -29,10 +29,9 @@ async function init() {
   if (state.googleAuth.readyError) {
     setManualFinanceStatus(state.googleAuth.readyError, true);
   }
-  await trySilentGoogleConnect().catch(() => false);
   refreshAuthButtons();
   renderTabs();
-  await loadDashboardData();
+  await requestDashboardLoad();
 }
 
 async function fetchLiveCadUsdRate() {
@@ -151,6 +150,35 @@ async function loadDashboardData() {
   }
 }
 
+function requestDashboardLoad() {
+  if (state.dashboardRequests.debounceTimer) {
+    window.clearTimeout(state.dashboardRequests.debounceTimer);
+  }
+  return new Promise((resolve, reject) => {
+    state.dashboardRequests.debounceTimer = window.setTimeout(() => {
+      state.dashboardRequests.debounceTimer = null;
+      loadDashboardDataDeduped().then(resolve, reject);
+    }, 200);
+  });
+}
+
+async function loadDashboardDataDeduped() {
+  const startDate = elements.startDate.value;
+  const endDate = elements.endDate.value;
+  const key = `${startDate}|${endDate}`;
+  if (state.dashboardRequests.inFlight.has(key)) {
+    return await state.dashboardRequests.inFlight.get(key);
+  }
+  const promise = loadDashboardData();
+  state.dashboardRequests.inFlight.set(key, promise);
+  try {
+    await promise;
+    state.dashboardRequests.lastLoadedAt.set(key, Date.now());
+  } finally {
+    state.dashboardRequests.inFlight.delete(key);
+  }
+}
+
 async function loadDashboardDataDirect(startDate, endDate) {
   const endpoint = getDashboardEndpoint();
   if (endpoint) {
@@ -158,8 +186,8 @@ async function loadDashboardDataDirect(startDate, endDate) {
       const payload = await loadDashboardDataViaEndpoint(startDate, endDate);
       return buildPreparedDashboardData(payload, startDate, endDate);
     } catch (error) {
-      console.warn("Dashboard endpoint failed, falling back to direct Sheets access.", error);
-      if (!state.googleAuth.accessToken) throw error;
+      console.warn("Dashboard endpoint failed.", error);
+      if (!state.googleAuth.accessToken || hasManualWorkbookServerAccess()) throw error;
     }
   }
 

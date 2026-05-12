@@ -3,11 +3,11 @@
 // ============================================================
 
 function hasConfiguredManualFinanceEndpoint() {
-  return Boolean(state.googleAuth.configured && state.googleAuth.accessToken);
+  return Boolean(hasManualWorkbookServerAccess() || (state.googleAuth.configured && state.googleAuth.accessToken));
 }
 
 function hasManualFinanceEndpointConfig() {
-  return Boolean(state.googleAuth.configured && getManualFinanceSpreadsheetId());
+  return Boolean(hasManualWorkbookServerAccess() || (state.googleAuth.configured && getManualFinanceSpreadsheetId()));
 }
 
 
@@ -36,12 +36,25 @@ function getManualOrdersConfig() {
 // ============================================================
 
 function hasConfiguredManualOrdersEndpoint() {
-  return Boolean(state.googleAuth.configured && state.googleAuth.accessToken && getManualOrdersConfig().spreadsheetId);
+  return Boolean(hasManualWorkbookServerAccess() || (state.googleAuth.configured && state.googleAuth.accessToken && getManualOrdersConfig().spreadsheetId));
 }
 
 async function googleSheetsFetch(path, options = {}) {
+  if (hasManualWorkbookServerAccess()) {
+    try {
+      return await googleSheetsFetchViaManualServer(path, options);
+    } catch (error) {
+      if (!isManualServerFallbackEligible(error) || !state.googleAuth.accessToken) {
+        state.manualServer.fallbackVisible = true;
+        refreshAuthButtons();
+        refreshGoogleControlsVisibility();
+        throw error;
+      }
+      console.warn("Manual workbook server access failed, using browser OAuth fallback.", error);
+    }
+  }
   if (!state.googleAuth.accessToken) {
-    await connectGoogle(true);
+    throw new Error("Manual workbook server access is unavailable. Browser OAuth fallback can be used for debugging.");
   }
   const response = await fetch(`https://sheets.googleapis.com/v4${path}`, {
     ...options,
@@ -67,6 +80,79 @@ async function googleSheetsFetch(path, options = {}) {
     throw new Error(message);
   }
   return payload;
+}
+
+function hasManualWorkbookServerAccess() {
+  return Boolean(state.manualServer?.enabled !== false && state.manualServer?.activeRoute);
+}
+
+function resolveManualServerUrl(route) {
+  const raw = String(route || "/api/manual-finance").trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (window.location.protocol === "file:") {
+    return `${FILE_PROTOCOL_DASHBOARD_ORIGIN}${raw.startsWith("/") ? raw : `/${raw}`}`;
+  }
+  return new URL(raw, window.location.href).toString();
+}
+
+async function googleSheetsFetchViaManualServer(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const body = typeof options.body === "string" ? options.body : (options.body ? JSON.stringify(options.body) : "");
+  const route = state.manualServer?.activeRoute || "/api/manual-finance";
+  const cacheKey = `${route}|${method}|${path}|${body}`;
+  if (method === "GET") {
+    const cached = state.manualServer.cache.get(cacheKey);
+    if (cached && Date.now() - cached.time < 45000) return cached.data;
+  }
+  if (state.manualServer.inFlight.has(cacheKey)) {
+    return await state.manualServer.inFlight.get(cacheKey);
+  }
+  const promise = (async () => {
+    const response = await fetch(resolveManualServerUrl(route), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ action: "sheetsFetch", path, method, body })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.ok) {
+      const error = new Error(payload?.error || `Manual workbook server API failed (${response.status}).`);
+      error.status = response.status;
+      error.retryAfter = payload?.retryAfter;
+      throw error;
+    }
+    if (method !== "GET") {
+      clearManualServerCache();
+    } else {
+      state.manualServer.cache.set(cacheKey, { time: Date.now(), data: payload.data || {} });
+    }
+    state.manualServer.fallbackVisible = false;
+    return payload.data || {};
+  })();
+  state.manualServer.inFlight.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    state.manualServer.inFlight.delete(cacheKey);
+  }
+}
+
+function isManualServerFallbackEligible(error) {
+  const status = Number(error?.status || 0);
+  return status === 404 || status === 501 || status === 503;
+}
+
+function clearManualServerCache() {
+  if (state.manualServer?.cache) state.manualServer.cache.clear();
+}
+
+async function withManualServerRoute(route, callback) {
+  const previousRoute = state.manualServer.activeRoute;
+  state.manualServer.activeRoute = route;
+  try {
+    return await callback();
+  } finally {
+    state.manualServer.activeRoute = previousRoute;
+  }
 }
 
 
@@ -1335,6 +1421,7 @@ function mergeLatestNowEntries(primary = {}, fallback = {}) {
 // ============================================================
 
 async function listManualSheetDatesDirect() {
+  return await withManualServerRoute("/api/manual-finance", async () => {
   await ensureManualLedgerSourceColumn();
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
@@ -1361,9 +1448,11 @@ async function listManualSheetDatesDirect() {
     title: state.config?.manualFinance?.title || "EzoHata Manual Inputs",
     writeEnabled: true
   };
+  });
 }
 
 async function getManualSheetDirect(startDate, endDate) {
+  return await withManualServerRoute("/api/manual-finance", async () => {
   const period = normalizePeriod(startDate, endDate);
   const snapshotDate = period.endDate;
   await ensureManualLedgerSourceColumn();
@@ -1431,6 +1520,7 @@ async function getManualSheetDirect(startDate, endDate) {
     writeEnabled: true,
     spreadsheetUrl: state.config?.manualFinance?.spreadsheetUrl || ""
   };
+  });
 }
 
 async function saveBalanceSnapshotRowsDirect(rows) {
@@ -1467,6 +1557,7 @@ async function saveBalanceSnapshotRowsDirect(rows) {
 }
 
 async function getManualTransfersSheetDirect(startDate, endDate) {
+  return await withManualServerRoute("/api/manual-transfers", async () => {
   const period = normalizePeriod(startDate, endDate);
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
@@ -1495,6 +1586,7 @@ async function getManualTransfersSheetDirect(startDate, endDate) {
     writeEnabled: true,
     spreadsheetUrl: state.config?.manualFinance?.spreadsheetUrl || ""
   };
+  });
 }
 
 
@@ -1503,6 +1595,7 @@ async function getManualTransfersSheetDirect(startDate, endDate) {
 // ============================================================
 
 async function saveManualTransfersSheetDirect(startDate, endDate, rawTransferRows, rawCommissionRows = []) {
+  return await withManualServerRoute("/api/manual-transfers", async () => {
   const period = normalizePeriod(startDate, endDate);
   const metadata = await getManualSpreadsheetMetadata();
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
@@ -1556,9 +1649,11 @@ async function saveManualTransfersSheetDirect(startDate, endDate, rawTransferRow
     savedAt: new Date().toLocaleString("ru-RU"),
     writeEnabled: true
   };
+  });
 }
 
 async function saveManualSheetDirect(params) {
+  return await withManualServerRoute("/api/manual-finance", async () => {
   const period = normalizePeriod(params.startDate, params.endDate);
   const snapshotDate = period.endDate;
   await ensureManualLedgerSourceColumn();
@@ -1622,6 +1717,7 @@ async function saveManualSheetDirect(params) {
     savedAt: new Date().toLocaleString("ru-RU"),
     writeEnabled: true
   };
+  });
 }
 
 
@@ -1630,6 +1726,7 @@ async function saveManualSheetDirect(params) {
 // ============================================================
 
 async function getManualOrdersSheetDirect() {
+  return await withManualServerRoute("/api/manual-orders", async () => {
   const config = getManualOrdersConfig();
   const metadata = await getSpreadsheetMetadata(config.spreadsheetId);
   const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
@@ -1650,6 +1747,7 @@ async function getManualOrdersSheetDirect() {
     rows: parsed.rows,
     spreadsheetUrl: config.spreadsheetUrl
   };
+  });
 }
 
 
@@ -1658,6 +1756,7 @@ async function getManualOrdersSheetDirect() {
 // ============================================================
 
 async function saveManualOrdersSheetDirect(params) {
+  return await withManualServerRoute("/api/manual-orders", async () => {
   const config = getManualOrdersConfig();
   const headers = normalizeManualOrdersHeaders(params.headers);
   const rows = normalizeManualOrdersRows(params.rows);
@@ -1669,6 +1768,7 @@ async function saveManualOrdersSheetDirect(params) {
     savedAt: new Date().toLocaleString("ru-RU"),
     writeEnabled: true
   };
+  });
 }
 
 
