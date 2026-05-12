@@ -85,6 +85,12 @@ if ! grep -Eq '(^|[[:space:]])ezohata-incoming-ledger([[:space:]]|$)' <<<"$proje
   exit 1
 fi
 
+preflight_args=()
+if [[ "${RELEASE_GUARD_STRICT_PRODUCTION_REF:-}" == "1" ]]; then
+  preflight_args+=("--strict")
+fi
+node scripts/production-debug-preflight.mjs "${preflight_args[@]}"
+
 alias_status="$(curl -fsS https://ezohata-incoming-ledger.vercel.app/api/status)"
 alias_project="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.vercelProjectName || j.service || ""); });')"
 alias_production_url="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write((j.vercel && j.vercel.productionUrl) || ""); });')"

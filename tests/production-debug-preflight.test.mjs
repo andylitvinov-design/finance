@@ -5,6 +5,7 @@ import test from "node:test";
 const script = readFileSync(new URL("../scripts/production-debug-preflight.mjs", import.meta.url), "utf8");
 const agents = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const releaseGuard = readFileSync(new URL("../scripts/release-guard.sh", import.meta.url), "utf8");
 
 test("production preflight script checks live status and source metadata", () => {
   assert.match(script, /\/api\/status/);
@@ -30,4 +31,10 @@ test("AGENTS requires production debug preflight before production patches", () 
 
 test("package exposes production preflight command", () => {
   assert.equal(packageJson.scripts["preflight:production"], "node scripts/production-debug-preflight.mjs");
+});
+
+test("release guard runs production debug preflight", () => {
+  assert.match(releaseGuard, /node scripts\/production-debug-preflight\.mjs/);
+  assert.match(releaseGuard, /RELEASE_GUARD_STRICT_PRODUCTION_REF/);
+  assert.match(releaseGuard, /--strict/);
 });
