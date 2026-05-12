@@ -55,10 +55,9 @@ async function handleTabClick(tabId) {
 async function openManualFinanceToday() {
   setToday();
   state.activeTab = "manualFinance";
-  setManualFinanceStatus("Подключаю Google и открываю fact за сегодня.", false);
+  setManualFinanceStatus("Server access active — Google browser OAuth not required.", false);
   renderTabs();
   try {
-    await ensureGoogleAccess(true);
     await loadManualFinanceSheet(elements.startDate.value, elements.endDate.value, true);
   } catch (error) {
     setManualFinanceStatus(error.message || "Не удалось открыть fact за сегодня.", true);
@@ -2093,9 +2092,11 @@ async function saveWiseBalanceSnapshotsIfNeeded(balances) {
     return { saved: false, statusSuffix: " Баланс Wise за сегодня уже сохранялся в этой сессии." };
   }
   if (!hasConfiguredManualFinanceEndpoint()) {
-    return { saved: false, statusSuffix: " Snapshot баланса Wise пропущен: Google write access не подключен." };
+    return { saved: false, statusSuffix: " Snapshot баланса Wise пропущен: Google write access via manual workbook server is unavailable." };
   }
-  const response = await saveBalanceSnapshotRowsDirect(pendingRows);
+  const response = typeof withManualServerRoute === "function"
+    ? await withManualServerRoute("/api/manual-savings", () => saveBalanceSnapshotRowsDirect(pendingRows))
+    : await saveBalanceSnapshotRowsDirect(pendingRows);
   pendingRows.forEach((row) => {
     state.expenseAccounting.wiseBalanceSnapshotKeys.add(getWiseBalanceSnapshotAttemptKey(snapshotDate, row.channel));
   });
@@ -3140,12 +3141,8 @@ async function refreshExpenseFinancialAnalysis() {
   setExpenseAccountingStatus("Обновляю анализ финансов...", false);
   renderTabs();
   try {
-    if (state.googleAuth.accessToken) {
-      await connectGoogle(false);
-    } else {
-      await loadDashboardData();
-      setExpenseAccountingStatus("Анализ финансов обновлён. Активной Google-сессии не было, обновлены серверные данные.", false);
-    }
+    await loadDashboardData();
+    setExpenseAccountingStatus("Анализ финансов обновлён через server access. Google browser OAuth not required.", false);
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось обновить анализ финансов.", true);
   } finally {
@@ -3567,9 +3564,6 @@ async function saveExpenseAccountingEntries() {
       entries,
       state.data?.manual?.operations || state.manualFinance?.data?.ledgerRows || []
     ).map((item) => item.message);
-    if (!hasConfiguredManualFinanceEndpoint() && hasManualFinanceEndpointConfig()) {
-      await ensureGoogleAccess(true);
-    }
     if (!hasConfiguredManualFinanceEndpoint()) {
       throw new Error(getManualFinanceUnavailableMessage());
     }
@@ -4254,18 +4248,14 @@ function renderManualFinanceBlock() {
     isLive
       ? (state.manualFinance.data
           ? "Диапазон открыт из накопительных вкладок manual workbook."
-          : "Google подключен. Откройте диапазон для чтения и сохранения.")
-      : (state.googleAuth.configured
-          ? "Google OAuth обязателен. Подключите Google, чтобы загрузить и пересчитать данные."
-          : "Google OAuth client is not configured")
+          : "Server access active — Google browser OAuth not required.")
+      : "Manual workbook server access is unavailable."
   );
   const modeText = isLive
-    ? "Google OAuth + Sheets API"
+    ? "Server service account + Sheets API"
     : (state.googleAuth.accessToken
-        ? "Google подключен, откройте период"
-        : (state.googleAuth.configured
-            ? "OAuth required, Google not connected"
-            : "Google OAuth not configured"));
+        ? "Browser OAuth fallback active"
+        : "Server unavailable / fallback hidden");
   const showError = state.manualFinance.error && !isLive;
   meta.innerHTML =
     `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
@@ -4396,14 +4386,12 @@ function renderManualTransfersBlock() {
   const statusText = state.manualTransfers.status || (
     isLive
       ? "Переводы открыты из manual workbook."
-      : (state.googleAuth.configured
-          ? "Google OAuth обязателен. Подключите Google, чтобы открыть и сохранить переводы."
-          : "Google OAuth client is not configured")
+      : "Manual workbook server access is unavailable."
   );
   meta.innerHTML =
     `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
     `<div class="finance-status${state.manualTransfers.error && !isLive ? " error" : ""}">${escapeHtml(statusText)}</div>` +
-    `<div class="config-note">Mode: ${escapeHtml(isLive ? "Google OAuth + Sheets API" : "OAuth required")}</div>` +
+    `<div class="config-note">Mode: ${escapeHtml(isLive ? "Server service account + Sheets API" : "Server unavailable / fallback hidden")}</div>` +
     (state.manualTransfers.data ? (
       `<div class="config-note">Source sheet: ${escapeHtml(state.manualTransfers.data.sourceSheetName || getManualTransfersSheetName())}</div>` +
       `<div class="config-note">Rows: ${escapeHtml(state.manualTransfers.data.transferRows.length.toString())}</div>`
@@ -4554,7 +4542,7 @@ function renderManualOrdersBlock() {
 
   const header = document.createElement("div");
   header.className = "tab-header";
-  header.innerHTML = `<div><h2>Список моих заказов</h2><div class="tab-note">Ручной ввод заказов с сохранением в Google Sheets через browser OAuth.</div></div>`;
+  header.innerHTML = `<div><h2>Список моих заказов</h2><div class="tab-note">Server access active — Google browser OAuth not required.</div></div>`;
   const actions = document.createElement("div");
   actions.className = "finance-actions";
 
@@ -4586,17 +4574,13 @@ function renderManualOrdersBlock() {
   const statusText = state.manualOrders.status || (
     isLive
       ? "Orders открыты из manual workbook."
-      : (state.googleAuth.configured
-          ? "Google OAuth готов. Подключите Google и откройте orders."
-          : "Orders доступны только локально, пока OAuth не настроен.")
+      : "Orders server access is unavailable."
   );
   const modeText = isLive
-    ? "Google OAuth + Sheets API"
+    ? "Server service account + Sheets API"
     : (state.googleAuth.accessToken
-        ? "Google подключен, откройте orders"
-        : (state.googleAuth.configured
-            ? "OAuth ready, Google not connected"
-            : "Browser draft / Google OAuth not connected"));
+        ? "Browser OAuth fallback active"
+        : "Server unavailable / fallback hidden");
   meta.innerHTML =
     `<div class="finance-status${state.manualOrders.error && !isLive ? " error" : ""}">${escapeHtml(statusText)}</div>` +
     `<div class="config-note">Mode: ${escapeHtml(modeText)}</div>` +

@@ -7,11 +7,6 @@ async function loadManualOrdersSheet(interactive = false) {
   renderTabs();
   try {
     if (!hasConfiguredManualOrdersEndpoint()) {
-      if (interactive && getManualOrdersConfig().spreadsheetId) {
-        await ensureGoogleAccess(true);
-      }
-    }
-    if (!hasConfiguredManualOrdersEndpoint()) {
       throw new Error(getManualOrdersUnavailableMessage());
     }
     const payload = await getManualOrdersSheetDirect();
@@ -48,17 +43,6 @@ function openLocalManualOrders(statusMessage, isError = true) {
 async function saveManualOrdersSheet() {
   if (!state.manualOrders.data) return;
   if (!hasConfiguredManualOrdersEndpoint()) {
-    if (getManualOrdersConfig().spreadsheetId) {
-      try {
-        await ensureGoogleAccess(true);
-      } catch (error) {
-        setManualOrdersStatus(error.message || "Не удалось подключить Google для orders.", true);
-        renderTabs();
-        return;
-      }
-    }
-  }
-  if (!hasConfiguredManualOrdersEndpoint()) {
     persistLocalOrdersDraft(state.manualOrders.data);
     state.manualOrders.dirty = false;
     setManualOrdersStatus("Локальный orders draft сохранён в браузере.", false);
@@ -68,6 +52,7 @@ async function saveManualOrdersSheet() {
   state.manualOrders.loading = true;
   renderTabs();
   try {
+    clearManualServerCache();
     const response = await saveManualOrdersSheetDirect({
       headers: state.manualOrders.data.headers,
       rows: state.manualOrders.data.rows
@@ -211,13 +196,10 @@ function setManualOrdersStatus(message, isError = false) {
 }
 
 function getManualOrdersUnavailableMessage() {
-  if (!state.googleAuth.configured) {
-    return "Google OAuth client is not configured in sheet-config.json yet.";
+  if (hasManualWorkbookServerAccess()) {
+    return "Orders server access is unavailable. Browser OAuth fallback is debug-only.";
   }
-  if (!state.googleAuth.accessToken) {
-    return "Google OAuth обязателен. Подключите Google, чтобы открыть orders и пересчитать сводки.";
-  }
-  return "Orders workbook is not available right now.";
+  return "Orders server access is not configured.";
 }
 
 async function syncManualOrdersForCurrentRange(startDate, endDate) {

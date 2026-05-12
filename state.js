@@ -15,6 +15,18 @@ const state = {
     initializing: false,
     readyError: ""
   },
+  manualServer: {
+    enabled: true,
+    fallbackVisible: false,
+    activeRoute: "/api/manual-finance",
+    cache: new Map(),
+    inFlight: new Map()
+  },
+  dashboardRequests: {
+    debounceTimer: null,
+    inFlight: new Map(),
+    lastLoadedAt: new Map()
+  },
   manualFinance: {
     loading: false,
     data: null,
