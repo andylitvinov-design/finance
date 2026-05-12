@@ -202,7 +202,7 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["manual_fact", "manual_finance"].includes(normalizedToken)) return "manual";
   if (["paypal", "paypal_mcp"].includes(normalizedToken)) return "paypal";
   if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
-  if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdc", "trc20", "erc20"].includes(normalizedToken)) return "binance";
+  if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";
   if (["monobank", "mono"].includes(normalizedToken)) return "monobank";
   if (["privatbank", "privat24", "privat_24"].includes(normalizedToken)) return "privatbank";
   if (["tdbank", "td_bank"].includes(normalizedToken)) return "td_bank";
@@ -231,15 +231,17 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
 }
 
 function inferManualLedgerSourceFromChannels(...values) {
-  const normalized = values.map((value) => normalizeToken(value)).filter(Boolean).join(" ");
-  if (!normalized) return "";
-  if (/(paypal|пейпал)/.test(normalized)) return "paypal";
-  if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
-  if (/(binance|бинанс|crypto|крипт|usdt|usdc|trc20|erc20)/.test(normalized)) return "binance";
-  if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
-  if (/(privat|приват)/.test(normalized)) return "privatbank";
-  if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
-  if (/(yoomoney|youmoney|yandex|яндекс|юмани|юmoney|юмоней)/.test(normalized)) return "yoomoney";
+  for (const value of values) {
+    const normalized = normalizeToken(value);
+    if (!normalized) continue;
+    if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+    if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
+    if (/(binance|бинанс|crypto|крипт|usdt|usdc|trc20|erc20)/.test(normalized)) return "binance";
+    if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
+    if (/(privat|приват)/.test(normalized)) return "privatbank";
+    if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
+    if (/(yoomoney|youmoney|yandex|яндекс|юмани|юmoney|юмоней)/.test(normalized)) return "yoomoney";
+  }
   return "";
 }
 

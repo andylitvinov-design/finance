@@ -31,6 +31,13 @@ test("server ledger infers Binance source from raw_source_id and channels", () =
   assert.equal(resolveManualLedgerSource("", "", "", { from_channel: "binance save" }), "binance");
 });
 
+test("server ledger keeps existing channel precedence when exchange rows mention Binance", () => {
+  assert.equal(resolveManualLedgerSource("mcp", "", "", {
+    from_channel: "Яндекс руб",
+    to_channel: "Бинанс spot",
+  }), "yoomoney");
+});
+
 test("server ledger keeps Binance spot and Binance save as distinct balance channels", () => {
   assert.equal(normalizeManualLedgerChannel("binance spot", CHANNELS), "Бинанс spot");
   assert.equal(normalizeManualLedgerChannel("бинанс", CHANNELS), "Бинанс spot");
