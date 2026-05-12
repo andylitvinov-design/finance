@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import statusHandler from "../api/status.js";
 import indexHandler from "../api/index.js";
+import { buildDebugUiState } from "../server/debug-endpoints.js";
 
 function createResponseRecorder() {
   return {
@@ -37,6 +38,113 @@ function restoreEnv(snapshot) {
   }
 }
 
+function repositoryFixture() {
+  return {
+    ok: true,
+    schema: "ledger-v2-compatible",
+    operations: [
+      {
+        date: "2026-05-02",
+        operation: "income",
+        toChannel: "пейпал дол",
+        amount: "324",
+        amountUsd: "311.06",
+        amountNet: "311.06",
+        source: "paypal",
+        sourceTransactionId: "PAYPAL-1234567890",
+        comment: "client email customer@example.com token abcdefghijklmnopqrstuvwxyz",
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "income",
+          to_channel: "пейпал дол",
+          amount: "324",
+          currency: "USD",
+          amount_usd: "311.06",
+          amount_net: "311.06",
+          balance_amount: 311.06,
+          source: "paypal",
+          raw_source_id: "PAYPAL-RAW-1",
+          category: "service",
+          comment: "paid by customer@example.com with private_key abcdefghijklmnopqrstuvwxyz"
+        }
+      },
+      {
+        date: "2026-05-03",
+        operation: "expense",
+        fromChannel: "трансервайз дол",
+        amount: "52.94",
+        amountUsd: "-52.94",
+        amountNet: "52.94",
+        source: "wise",
+        ledgerV2: {
+          date: "2026-05-03",
+          operation: "expense",
+          from_channel: "трансервайз дол",
+          amount: "52.94",
+          currency: "USD",
+          amount_usd: "-52.94",
+          amount_net: "52.94",
+          balance_amount: -52.94,
+          source: "wise",
+          category: "business_expense"
+        }
+      },
+      {
+        date: "2026-05-04",
+        operation: "transfer",
+        fromChannel: "трансервайз дол",
+        toChannel: "cash usd",
+        amount: "10",
+        amountUsd: "-10",
+        amountNet: "10",
+        source: "manual",
+        ledgerV2: {
+          date: "2026-05-04",
+          operation: "transfer",
+          from_channel: "трансервайз дол",
+          to_channel: "cash usd",
+          amount: "10",
+          currency: "USD",
+          amount_usd: "-10",
+          amount_net: "10",
+          balance_amount: -10,
+          source: "manual"
+        }
+      },
+      {
+        date: "2026-06-01",
+        operation: "income",
+        toChannel: "пейпал дол",
+        amount: "999",
+        amountUsd: "999",
+        amountNet: "999",
+        source: "paypal",
+        ledgerV2: {
+          date: "2026-06-01",
+          operation: "income",
+          to_channel: "пейпал дол",
+          amount: "999",
+          currency: "USD",
+          amount_usd: "999",
+          amount_net: "999",
+          balance_amount: 999,
+          source: "paypal"
+        }
+      }
+    ],
+    movementRows: [
+      {
+        DATE: "2026-05-02",
+        "PAYMENT METHOD": "пейпал дол",
+        "AMOUNT (USD)": "324",
+        "ОПЛАЧЕНО КЛИЕНТОМ USD": "324",
+        "ДОШЛО ДО НАС USD": "311.06"
+      }
+    ],
+    warnings: []
+  };
+}
+
 test("GET /api/debug-full returns deploy metadata and endpoint inventory", async () => {
   const envBackup = snapshotEnv([
     "VERCEL_GIT_COMMIT_SHA",
@@ -68,8 +176,10 @@ test("GET /api/debug-full returns deploy metadata and endpoint inventory", async
     assert.equal(response.body?.deploy?.source, "andylitvinov-design/finance");
     assert.equal(response.body?.endpoints?.status?.path, "/api/status");
     assert.equal(response.body?.endpoints?.dashboardData?.path, "/api?action=getDashboardData");
+    assert.equal(response.body?.endpoints?.auditSnapshot?.path, "/api/audit-snapshot");
     assert.equal(response.body?.endpoints?.debugFull?.path, "/api/debug-full");
     assert.equal(response.body?.endpoints?.debugAnalytics?.path, "/api/debug-analytics");
+    assert.equal(response.body?.endpoints?.debugUiState?.path, "/api/debug-ui-state");
     assert.deepEqual(response.body?.warnings, []);
   } finally {
     restoreEnv(envBackup);
@@ -97,8 +207,78 @@ test("GET /api/debug-analytics returns period guard scaffold", async () => {
   assert.deepEqual(response.body?.warnings, []);
 });
 
+test("debug UI state returns aggregate-only payload without row token", async () => {
+  const envBackup = snapshotEnv(["AGENT_DEBUG_TOKEN", "DEBUG_SNAPSHOT_TOKEN", "EZOHATA_DEBUG_TOKEN"]);
+  delete process.env.AGENT_DEBUG_TOKEN;
+  delete process.env.DEBUG_SNAPSHOT_TOKEN;
+  delete process.env.EZOHATA_DEBUG_TOKEN;
+
+  try {
+    const payload = await buildDebugUiState({
+      query: { from: "2026-05-01", to: "2026-05-31", includeRows: "1" },
+      repositoryLoader: async () => repositoryFixture()
+    });
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.status, "ok");
+    assert.deepEqual(payload.period, { from: "2026-05-01", to: "2026-05-31" });
+    assert.equal(payload.debug_access.includeRowsAuthorized, false);
+    assert.match(payload.warnings.join("\n"), /no debug token env is configured/i);
+    assert.equal(payload.finance_analysis.actual_income_rows, undefined);
+    assert.deepEqual(payload.row_samples, {});
+    assert.equal(payload.top_metrics.formula, "total_orders_usd * 0.3 - total_paid_usd");
+    assert.equal(payload.top_metrics.payable_usd, -213.86);
+    assert.equal(payload.finance_analysis.actual_income[0].channel, "пейпал дол");
+    assert.equal(payload.finance_analysis.actual_income[0].amount_usd_signed_sum, 311.06);
+    assert.equal(payload.expense_analysis.real_expense[0].channel, "трансервайз дол");
+    assert.equal(payload.transfer_analysis.transfers[0].channel, "трансервайз дол");
+  } finally {
+    restoreEnv(envBackup);
+  }
+});
+
+test("debug UI state can expose safe sanitized rows with configured token", async () => {
+  const envBackup = snapshotEnv(["AGENT_DEBUG_TOKEN"]);
+  process.env.AGENT_DEBUG_TOKEN = "safe-debug-token";
+
+  try {
+    const payload = await buildDebugUiState({
+      query: { period: "2026-05", includeRows: "1", debugToken: "safe-debug-token" },
+      repositoryLoader: async () => repositoryFixture()
+    });
+    const serialized = JSON.stringify(payload).toLowerCase();
+
+    assert.equal(payload.debug_access.includeRowsAuthorized, true);
+    assert.equal(payload.finance_analysis.actual_income_rows.length, 1);
+    assert.equal(payload.row_samples.income.length, 1);
+    assert.equal(payload.row_samples.expense.length, 1);
+    assert.equal(payload.row_samples.transfer.length, 1);
+    assert.equal(serialized.includes("customer@example.com"), false);
+    assert.equal(serialized.includes("private_key abcdefghijklmnopqrstuvwxyz"), false);
+    assert.equal(serialized.includes("token abcdefghijklmnopqrstuvwxyz"), false);
+    assert.match(payload.row_samples.income[0].comment_excerpt, /\[email redacted\]/);
+    assert.match(payload.row_samples.income[0].comment_excerpt, /private_key \[redacted\]/);
+  } finally {
+    restoreEnv(envBackup);
+  }
+});
+
+test("GET /api/debug-ui-state routes through existing index function", async () => {
+  const response = createResponseRecorder();
+  await indexHandler({
+    method: "GET",
+    query: { action: "debugUiState", from: "2099-01-01", to: "2099-01-02" }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers["content-type"], "application/json; charset=utf-8");
+  assert.equal(response.body?.ok, true);
+  assert.ok(response.body?.debug_access);
+  assert.ok(response.body?.ui_aggregate_contract);
+});
+
 test("POST debug endpoints return 405 JSON", async () => {
-  for (const action of ["debugFull", "debugAnalytics"]) {
+  for (const action of ["debugFull", "debugAnalytics", "debugUiState"]) {
     const response = createResponseRecorder();
     await indexHandler({ method: "POST", query: { action } }, response);
 
@@ -113,10 +293,11 @@ test("vercel rewrites expose debug paths through the existing index function", a
   const { readFile } = await import("node:fs/promises");
   const vercelConfig = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
 
-  assert.deepEqual(vercelConfig.rewrites.slice(0, 3), [
+  assert.deepEqual(vercelConfig.rewrites.slice(0, 4), [
     { source: "/api/balance-snapshots", destination: "/api/index?action=balanceSnapshots" },
     { source: "/api/debug-full", destination: "/api/index?action=debugFull" },
-    { source: "/api/debug-analytics", destination: "/api/index?action=debugAnalytics" }
+    { source: "/api/debug-analytics", destination: "/api/index?action=debugAnalytics" },
+    { source: "/api/debug-ui-state", destination: "/api/index?action=debugUiState" }
   ]);
   assert.ok(vercelConfig.rewrites.some((rewrite) => rewrite.source === "/api/manual-finance" && rewrite.destination === "/api/index?action=manualWorkbook&route=manual-finance"));
 });
