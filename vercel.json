@@ -14,6 +14,10 @@
       "destination": "/api/index?action=debugAnalytics"
     },
     {
+      "source": "/api/debug-ui-state",
+      "destination": "/api/index?action=debugUiState"
+    },
+    {
       "source": "/api/manual-finance",
       "destination": "/api/index?action=manualWorkbook&route=manual-finance"
     },
