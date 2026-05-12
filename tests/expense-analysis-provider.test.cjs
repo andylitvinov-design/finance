@@ -105,7 +105,12 @@ function createApiLedgerRealIncomeContext() {
     `${extractFunction(apiIndex, "sumBy")}\n` +
     `${extractFunction(apiIndex, "inferChannelCurrency")}\n` +
     `${extractFunction(apiIndex, "resolvePaymentChannel")}\n` +
+    `${extractFunction(apiIndex, "isAmbiguousPersonalCardPayment")}\n` +
+    `${extractFunction(apiIndex, "getClientPaymentLookupKeys")}\n` +
+    `${extractFunction(apiIndex, "inferFallbackPaymentChannelFromClient")}\n` +
+    `${extractFunction(apiIndex, "resolveMovementRowChannel")}\n` +
     `${extractFunction(apiIndex, "summarizeMovementChannels")}\n` +
+    `${extractFunction(apiIndex, "summarizeDirectMovementRealIncomeByChannel")}\n` +
     `${extractFunction(apiIndex, "summarizeRealIncomeByChannel")}\n` +
     `${extractFunction(apiIndex, "getRealIncomeSummaryTotalsFromSummary")}\n` +
     `${extractFunction(apiIndex, "isLedgerProviderIncomeSource")}\n` +
