@@ -113,11 +113,12 @@ test("vercel rewrites expose debug paths through the existing index function", a
   const { readFile } = await import("node:fs/promises");
   const vercelConfig = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
 
-  assert.deepEqual(vercelConfig.rewrites, [
+  assert.deepEqual(vercelConfig.rewrites.slice(0, 3), [
     { source: "/api/balance-snapshots", destination: "/api/index?action=balanceSnapshots" },
     { source: "/api/debug-full", destination: "/api/index?action=debugFull" },
     { source: "/api/debug-analytics", destination: "/api/index?action=debugAnalytics" }
   ]);
+  assert.ok(vercelConfig.rewrites.some((rewrite) => rewrite.source === "/api/manual-finance" && rewrite.destination === "/api/manual-workbook?route=manual-finance"));
 });
 
 test("existing status and dashboard handlers keep their current contracts", async () => {

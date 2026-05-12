@@ -12,6 +12,22 @@
     {
       "source": "/api/debug-analytics",
       "destination": "/api/index?action=debugAnalytics"
+    },
+    {
+      "source": "/api/manual-finance",
+      "destination": "/api/manual-workbook?route=manual-finance"
+    },
+    {
+      "source": "/api/manual-orders",
+      "destination": "/api/manual-workbook?route=manual-orders"
+    },
+    {
+      "source": "/api/manual-transfers",
+      "destination": "/api/manual-workbook?route=manual-transfers"
+    },
+    {
+      "source": "/api/manual-savings",
+      "destination": "/api/manual-workbook?route=manual-savings"
     }
   ],
   "cleanUrls": true,
