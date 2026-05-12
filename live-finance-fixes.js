@@ -94,7 +94,20 @@
       if (planIndex === -1 || actualIndex === -1 || balanceIndex === -1) return;
       if (balanceIndex === planIndex || balanceIndex === actualIndex) return;
 
-      rows.slice(1).forEach((row) => {
+      const totalRowIndex = rows.findIndex((row, index) => {
+        if (index === 0) return false;
+        const firstCell = Array.from(row.children || [])[0];
+        return normalizeLookupText(firstCell?.textContent) === "итого";
+      });
+      const candidateRows = totalRowIndex === -1 ? rows.slice(1) : rows.slice(1, totalRowIndex);
+      const dataRows = totalRowIndex === -1
+        ? candidateRows
+        : candidateRows.filter((row) => {
+            const firstCell = Array.from(row.children || [])[0];
+            return parseLooseNumber(firstCell?.textContent) !== null;
+          });
+
+      dataRows.forEach((row) => {
         const cells = Array.from(row.children || []);
         const planCell = cells[planIndex];
         const actualCell = cells[actualIndex];
@@ -111,6 +124,26 @@
         balanceCell.dataset.displaySignNormalized = "movement-fact-minus-plan";
         changed += 1;
       });
+
+      if (totalRowIndex !== -1) {
+        const totalRow = rows[totalRowIndex];
+        const totalCells = Array.from(totalRow.children || []);
+        const totalBalanceCell = totalCells[balanceIndex];
+        if (!totalBalanceCell) return;
+        const visibleRowsSum = dataRows.reduce((sum, row) => {
+          const balanceCell = Array.from(row.children || [])[balanceIndex];
+          const value = parseLooseNumber(balanceCell?.textContent);
+          return value === null ? sum : sum + value;
+        }, 0);
+        const previousText = String(totalBalanceCell.textContent || "");
+        const nextText = formatLikePrevious(visibleRowsSum, previousText);
+        totalBalanceCell.dataset = totalBalanceCell.dataset || {};
+        if (previousText !== nextText) {
+          totalBalanceCell.textContent = nextText;
+          changed += 1;
+        }
+        totalBalanceCell.dataset.displaySignNormalized = "movement-total-visible-rows";
+      }
     });
     return changed;
   }

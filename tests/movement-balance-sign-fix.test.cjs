@@ -117,3 +117,34 @@ test("movement balance sign normalizer ignores tables without plan/fact/balance 
   assert.equal(fixes.normalizeMovementBalanceVarianceTables(document), 0);
   assert.equal(untouchedCell.textContent, "-20,0000");
 });
+
+test("movement total balance is recomputed from visible normalized numeric rows only", () => {
+  const row18148Balance = cell("td", "-999,0000");
+  const row18149Balance = cell("td", "-999,0000");
+  const row18153Balance = cell("td", "999,0000");
+  const ignoredSummaryBalance = cell("td", "999,0000");
+  const totalBalance = cell("td", "-340,5000");
+  const afterTotalBalance = cell("td", "777,0000");
+  const document = createDocument([
+    table([
+      row([cell("th", "NUMBER"), cell("th", "План"), cell("th", "Пришло"), cell("th", "Баланс")]),
+      row([cell("td", "18148"), cell("td", "0"), cell("td", "6"), row18148Balance]),
+      row([cell("td", "18149"), cell("td", "0"), cell("td", "103"), row18149Balance]),
+      row([cell("td", "Сводка"), cell("td", "1"), cell("td", "999"), ignoredSummaryBalance]),
+      row([cell("td", "18153"), cell("td", "51,5"), cell("td", "0"), row18153Balance]),
+      row([cell("td", "Итого"), cell("td", ""), cell("td", ""), totalBalance]),
+      row([cell("td", "18154"), cell("td", "0"), cell("td", "10"), afterTotalBalance]),
+    ]),
+  ]);
+
+  const fixes = loadFixes(document);
+  const changed = fixes.normalizeMovementBalanceVarianceTables(document);
+  assert.equal(row18148Balance.textContent, "6,0000");
+  assert.equal(row18149Balance.textContent, "103,0000");
+  assert.equal(row18153Balance.textContent, "-51,5000");
+  assert.equal(totalBalance.textContent, "57,5000");
+  assert.equal(totalBalance.dataset.displaySignNormalized, "movement-total-visible-rows");
+  assert.equal(ignoredSummaryBalance.textContent, "999,0000");
+  assert.equal(afterTotalBalance.textContent, "777,0000");
+  assert.equal(changed, 4);
+});
