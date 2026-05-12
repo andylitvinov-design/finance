@@ -26,9 +26,14 @@
     return raw.slice(0, 10);
   }
 
+  function getDomValue(id) {
+    if (typeof document === "undefined" || !document.getElementById) return "";
+    return document.getElementById(id)?.value || "";
+  }
+
   function getSelectedPeriod() {
-    const startDate = normalizeDate(document?.getElementById?.("startDate")?.value || "");
-    const endDate = normalizeDate(document?.getElementById?.("endDate")?.value || "");
+    const startDate = normalizeDate(getDomValue("startDate"));
+    const endDate = normalizeDate(getDomValue("endDate"));
     return { startDate, endDate };
   }
 
