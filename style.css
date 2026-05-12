@@ -128,7 +128,7 @@ th {
 }
 tr:nth-child(even) td { background: #fffcf7; }
 .empty { padding: 24px; color: var(--muted); text-align: center; }
-.finance-shell { display: grid; gap: 16px; }
+.finance-shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .finance-meta {
   display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 18px;
   background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,239,230,0.82));
@@ -361,7 +361,16 @@ tr:nth-child(even) td { background: #fffcf7; }
 .expense-summary-value { margin-top: 8px; font-size: 22px; font-weight: 700; }
 .expense-currency-line + .expense-currency-line { margin-top: 4px; }
 .expense-analysis-shell { min-width: 0; }
-.analytics-section { display: grid; gap: 12px; min-width: 0; }
+.analytics-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.analysis-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
 .analysis-table-wrap table { min-width: 640px; }
 .analytics-section + .analytics-section { margin-top: 18px; }
 .expense-pie-section {
@@ -550,6 +559,11 @@ tr:nth-child(even) td { background: #fffcf7; }
     left: 0;
     z-index: 2;
     background: #fffaf2;
+  }
+  .analysis-table-wrap table tr > :first-child {
+    position: static;
+    left: auto;
+    z-index: auto;
   }
   .manual-transfer-table-wrap,
   .manual-commission-table-wrap {
