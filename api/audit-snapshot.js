@@ -69,6 +69,13 @@ export async function buildAuditSnapshot(options = {}) {
   const exchange = buildExchangeSummary(operations);
   const sources = buildSourcesSummary(operations);
   const balanceFixes = buildBalanceFixes(operations, balanceCoverage);
+  const weeklyBalanceSummary = buildWeeklyBalanceSummary({
+    period,
+    balanceCoverage,
+    balanceFixes,
+    balanceResult,
+    dailyBalanceResult,
+  });
 
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...balanceResult.warnings);
@@ -134,7 +141,10 @@ export async function buildAuditSnapshot(options = {}) {
       actionable_rows: dailyBalanceResult.actionable_rows,
       summary: dailyBalanceResult.summary,
     },
-    balance_coverage: balanceCoverage,
+    balance_coverage: {
+      ...balanceCoverage,
+      weekly_summary: weeklyBalanceSummary,
+    },
     balance_fixes: balanceFixes,
     paypal,
     exchange: omitInternalWarnings(exchange),
@@ -202,10 +212,26 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
         },
       },
     },
-    balance_coverage: buildBalanceCoverage({
-      rows: [],
-      summary: { excluded_missing_amount_net_rows: 0 },
-    }),
+    balance_coverage: {
+      ...buildBalanceCoverage({
+        rows: [],
+        summary: { excluded_missing_amount_net_rows: 0 },
+      }),
+      weekly_summary: {
+        period,
+        status: "ok",
+        accounts_checked: 0,
+        fully_reconciled: 0,
+        mismatch: 0,
+        missing_opening_balance: 0,
+        missing_provider_balance: 0,
+        needs_verification: 0,
+        missing_amount_net_rows: 0,
+        excluded_missing_amount_net_rows: 0,
+        actionable_accounts: [],
+        copyable_ostatki_rows: "",
+      },
+    },
     balance_fixes: {
       missing_amount_net_rows: [],
       missing_ostatki_rows: [],
@@ -229,6 +255,43 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
     sources: Object.fromEntries(SOURCE_KEYS.map((key) => [key, 0])),
     warnings: unique(warnings),
     audit_checks: auditChecks,
+  };
+}
+
+function buildWeeklyBalanceSummary({
+  period,
+  balanceCoverage,
+  balanceFixes,
+  balanceResult,
+  dailyBalanceResult,
+}) {
+  const coverageSummary = balanceCoverage?.summary || {};
+  const missingAmountNetRows = Number(balanceResult?.missing_amount_net_rows || 0);
+  const excludedMissingAmountNetRows = Number(
+    dailyBalanceResult?.summary?.excluded_missing_amount_net_rows ??
+      coverageSummary.excluded_missing_amount_net_rows ??
+      0
+  );
+  const mismatch = Number(coverageSummary.mismatch || 0);
+  const missingOpeningBalance = Number(coverageSummary.missing_opening_balance || 0);
+  const missingProviderBalance = Number(coverageSummary.missing_provider_balance || 0);
+  const needsVerification = Number(coverageSummary.needs_verification || 0);
+  const failed = mismatch || missingAmountNetRows || excludedMissingAmountNetRows;
+  const incomplete = missingOpeningBalance || missingProviderBalance || needsVerification;
+
+  return {
+    period,
+    status: failed ? "failed" : incomplete ? "needs_verification" : "ok",
+    accounts_checked: Number(coverageSummary.accounts_with_movement || 0),
+    fully_reconciled: Number(coverageSummary.fully_reconciled_accounts || 0),
+    mismatch,
+    missing_opening_balance: missingOpeningBalance,
+    missing_provider_balance: missingProviderBalance,
+    needs_verification: needsVerification,
+    missing_amount_net_rows: missingAmountNetRows,
+    excluded_missing_amount_net_rows: excludedMissingAmountNetRows,
+    actionable_accounts: balanceCoverage?.actionable_accounts || [],
+    copyable_ostatki_rows: String(balanceFixes?.copyable_ostatki_rows || ""),
   };
 }
 

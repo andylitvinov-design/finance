@@ -84,6 +84,7 @@
       return section;
     }
 
+    section.appendChild(renderWeeklyBalanceSummary(doc, coverage.weekly_summary));
     section.appendChild(renderCoverageSummary(doc, coverage.summary || {}));
     section.appendChild(renderBalanceFixesBlock(doc, snapshot?.balance_fixes || {}));
 
@@ -109,6 +110,67 @@
     wrap.appendChild(renderPlainCoverageTable(doc, rows));
     section.appendChild(wrap);
     return section;
+  }
+
+  function renderWeeklyBalanceSummary(doc, weekly) {
+    const block = doc.createElement("div");
+    block.className = "balance-weekly-summary";
+
+    const title = doc.createElement("h4");
+    title.textContent = "Сверка остатков за неделю";
+    block.appendChild(title);
+
+    const status = doc.createElement("div");
+    status.className = weekly?.status === "failed" ? "finance-status error" : "finance-status";
+    const statusLabel = weekly?.status === "ok" ? "OK" : weekly?.status === "failed" ? "НЕ ОК" : "Проверить";
+    const period = weekly?.period || {};
+    const periodText = period.from || period.to ? ` (${period.from || "?"} - ${period.to || "?"})` : "";
+    status.textContent = weekly?.status === "ok"
+      ? `OK${periodText}: Все счета за неделю сверены.`
+      : `${statusLabel}${periodText}: есть расхождения или недостающие данные для сверки остатков.`;
+    block.appendChild(status);
+
+    const counters = doc.createElement("div");
+    counters.className = "metrics balance-weekly-counters";
+    [
+      ["Проверено", weekly?.accounts_checked],
+      ["Сверено", weekly?.fully_reconciled],
+      ["Расхождения", weekly?.mismatch],
+      ["Нет начального", weekly?.missing_opening_balance],
+      ["Нет фактического", weekly?.missing_provider_balance],
+      ["Без amount_net", weekly?.missing_amount_net_rows ?? weekly?.excluded_missing_amount_net_rows],
+    ].forEach(([label, value]) => {
+      const card = doc.createElement("div");
+      card.className = "metric";
+      const labelNode = doc.createElement("div");
+      labelNode.className = "metric-label";
+      labelNode.textContent = label;
+      const valueNode = doc.createElement("div");
+      valueNode.className = "metric-value";
+      valueNode.textContent = String(Number(value || 0));
+      card.append(labelNode, valueNode);
+      counters.appendChild(card);
+    });
+    block.appendChild(counters);
+
+    const actions = weekly?.actionable_accounts || [];
+    if (actions.length) {
+      block.appendChild(renderFixSubsection(
+        doc,
+        "Где исправить",
+        ["Дата", "Счёт", "Валюта", "Разница", "Статус", "Что сделать"],
+        actions.map((row) => [
+          row.date || "—",
+          row.channel || "—",
+          row.currency || "—",
+          formatCoverageNumber(row.difference),
+          getStatusLabel(row.status),
+          getStatusAction(row.status),
+        ])
+      ));
+    }
+
+    return block;
   }
 
   function renderBalanceFixesBlock(doc, fixes) {

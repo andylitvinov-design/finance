@@ -40,6 +40,11 @@
     white-space: nowrap;
   }
 
+  .expense-analysis-shell .analysis-table-wrap table tr > :first-child,
+  .analysis-table-wrap table tr > :first-child {
+    position: static;
+  }
+
   .expense-pie-section,
   .expense-pie-body,
   .expense-pie-legend {
