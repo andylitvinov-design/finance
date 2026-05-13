@@ -1,0 +1,33 @@
+@media (max-width: 680px) {
+  .expense-analysis-shell .analysis-table-wrap,
+  .expense-analysis-shell .analysis-table-wrap table {
+    max-width: none;
+  }
+
+  .expense-analysis-shell .analysis-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+  }
+
+  .expense-analysis-shell .analysis-table-wrap table {
+    width: max-content;
+    min-width: max-content;
+  }
+
+  .expense-analysis-shell .analysis-table-wrap table tr > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: #fffaf2;
+    box-shadow: 1px 0 0 #eee3d5;
+  }
+
+  .expense-analysis-shell .analysis-table-wrap table tr:first-child > :first-child {
+    z-index: 4;
+    background: #f9f2e8;
+  }
+}

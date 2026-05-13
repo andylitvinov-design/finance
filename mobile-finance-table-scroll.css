@@ -1,5 +1,5 @@
-/* Mobile horizontal scroll fix for wide finance/analytics tables.
-   Loaded after style.css to override generic mobile table rules. */
+@import url("./mobile-expense-analysis-sticky.css");
+
 @media (max-width: 680px) {
   .table-wrap,
   .analysis-table-wrap,
@@ -40,13 +40,59 @@
     white-space: nowrap;
   }
 
-  .analysis-table-wrap table tr > :first-child,
-  .finance-shell .table-wrap table tr > :first-child,
-  .analytics-section .table-wrap table tr > :first-child,
-  .expense-operations-wrap table tr > :first-child,
-  .movement-summary table tr > :first-child {
-    position: static;
-    left: auto;
-    z-index: auto;
+  .expense-pie-section,
+  .expense-pie-body,
+  .expense-pie-legend {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .expense-pie-header,
+  .expense-pie-body {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .expense-pie-toggle {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .expense-pie-toggle-button {
+    width: 100%;
+  }
+
+  .expense-pie-chart {
+    width: min(240px, 72vw);
+    max-width: 100%;
+    margin-inline: auto;
+  }
+
+  .expense-pie-legend {
+    display: grid;
+    gap: 10px;
+  }
+
+  .expense-pie-legend-item {
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .expense-pie-label {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .expense-pie-value {
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .expense-pie-percent {
+    display: none;
   }
 }
