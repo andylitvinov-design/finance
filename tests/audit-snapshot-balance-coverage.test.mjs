@@ -64,6 +64,63 @@ test("audit snapshot exposes balance coverage for reconciled account currency ro
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "ok");
 });
 
+test("audit snapshot exposes weekly balance summary when all account currency rows reconcile", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({ date: "2026-05-11", amount: "206", amountUsd: "206", amountNet: "206" }),
+        operation({
+          date: "2026-05-12",
+          toChannel: "wise eur",
+          currency: "EUR",
+          amount: "100",
+          amountUsd: "108",
+          amountNet: "100",
+          ledgerV2: {
+            date: "2026-05-12",
+            operation: "income",
+            to_channel: "wise eur",
+            currency: "EUR",
+            amount: "100",
+            amount_usd: "108",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000" },
+        { date: "2026-05-11", channel: "wise usd", currency: "USD", amount: "1206" },
+        { date: "2026-05-11", channel: "wise eur", currency: "EUR", amount: "500" },
+        { date: "2026-05-12", channel: "wise eur", currency: "EUR", amount: "600" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_coverage.weekly_summary, {
+    period: { from: "2026-05-11", to: "2026-05-17" },
+    status: "ok",
+    accounts_checked: 2,
+    fully_reconciled: 2,
+    mismatch: 0,
+    missing_opening_balance: 0,
+    missing_provider_balance: 0,
+    needs_verification: 0,
+    missing_amount_net_rows: 0,
+    excluded_missing_amount_net_rows: 0,
+    actionable_accounts: [],
+    copyable_ostatki_rows: "",
+  });
+});
+
 test("audit snapshot balance coverage flags missing closing balance without changing balances.by_channel", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { period: "2026-05" },
@@ -84,8 +141,80 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.balances.by_channel[0].channel, "wise usd");
   assert.equal(snapshot.balances.by_channel[0].balance_amount, 206);
   assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 1);
+  assert.equal(snapshot.balance_coverage.weekly_summary.status, "needs_verification");
+  assert.equal(snapshot.balance_coverage.weekly_summary.missing_provider_balance, 1);
+  assert.match(snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows, /2026-05-02\twise usd\tUSD\t1206/);
   assert.equal(snapshot.balance_coverage.actionable_accounts[0].status, "missing_provider_balance");
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "needs verification");
+});
+
+test("audit snapshot weekly balance summary fails on mismatched provider balance", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation({ date: "2026-05-11" })],
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000" },
+        { date: "2026-05-11", channel: "wise usd", currency: "USD", amount: "1200" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const weekly = snapshot.balance_coverage.weekly_summary;
+  assert.equal(weekly.status, "failed");
+  assert.equal(weekly.mismatch, 1);
+  assert.equal(weekly.fully_reconciled, 0);
+  assert.equal(weekly.actionable_accounts[0].date, "2026-05-11");
+  assert.equal(weekly.actionable_accounts[0].channel, "wise usd");
+  assert.equal(weekly.actionable_accounts[0].currency, "USD");
+  assert.equal(weekly.actionable_accounts[0].difference, -6);
+});
+
+test("audit snapshot weekly balance summary blocks ok status when amount_net is missing", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-11",
+          amountNet: "",
+          ledgerV2: {
+            date: "2026-05-11",
+            operation: "income",
+            to_channel: "wise usd",
+            currency: "USD",
+            amount: "206",
+            amount_usd: "206",
+            amount_net: "",
+            balance_amount: 206,
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000" },
+        { date: "2026-05-11", channel: "wise usd", currency: "USD", amount: "1206" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_coverage.weekly_summary.status, "failed");
+  assert.equal(snapshot.balance_coverage.weekly_summary.accounts_checked, 0);
+  assert.equal(snapshot.balance_coverage.weekly_summary.missing_amount_net_rows, 1);
+  assert.equal(snapshot.balance_coverage.weekly_summary.excluded_missing_amount_net_rows, 1);
+  assert.equal(snapshot.balance_fixes.missing_amount_net_rows[0].channel, "wise usd");
 });
 
 test("audit snapshot reconciles today's balance change against same-day closing snapshot", async () => {

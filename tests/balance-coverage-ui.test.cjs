@@ -182,6 +182,89 @@ test("balance coverage UI renders actionable fixes and copy button", () => {
   assert.match(block.textContent, /17363/);
 });
 
+test("balance coverage UI renders weekly not-ok summary with exact action rows", () => {
+  const block = ui.renderBalanceCoverageBlock(createTestDocument(), {
+    balance_coverage: {
+      weekly_summary: {
+        period: { from: "2026-05-11", to: "2026-05-17" },
+        status: "failed",
+        accounts_checked: 5,
+        fully_reconciled: 0,
+        mismatch: 1,
+        missing_opening_balance: 0,
+        missing_provider_balance: 4,
+        needs_verification: 0,
+        missing_amount_net_rows: 1,
+        excluded_missing_amount_net_rows: 1,
+        actionable_accounts: [
+          {
+            date: "2026-05-12",
+            channel: "трансервайз дол",
+            currency: "USD",
+            difference: -138.59,
+            status: "mismatch",
+          },
+          {
+            date: "2026-05-11",
+            channel: "монобанк грн",
+            currency: "UAH",
+            computed_closing_balance: 14033,
+            status: "missing_provider_balance",
+          },
+        ],
+      },
+      summary: {},
+      accounts: [],
+      actionable_accounts: [],
+    },
+    balance_fixes: {
+      missing_amount_net_rows: [],
+      missing_ostatki_rows: [],
+      copyable_ostatki_rows: "",
+    },
+  });
+
+  assert.match(block.textContent, /Сверка остатков за неделю/);
+  assert.match(block.textContent, /НЕ ОК/);
+  assert.match(block.textContent, /2026-05-12/);
+  assert.match(block.textContent, /трансервайз дол/);
+  assert.match(block.textContent, /-138\.59/);
+  assert.match(block.textContent, /Проверить выписку \/ amount_net \/ Остатки/);
+  assert.match(block.textContent, /Добавить фактический остаток на дату в лист Остатки/);
+});
+
+test("balance coverage UI renders weekly ok summary only when blocking counters are zero", () => {
+  const block = ui.renderBalanceCoverageBlock(createTestDocument(), {
+    balance_coverage: {
+      weekly_summary: {
+        period: { from: "2026-05-11", to: "2026-05-17" },
+        status: "ok",
+        accounts_checked: 2,
+        fully_reconciled: 2,
+        mismatch: 0,
+        missing_opening_balance: 0,
+        missing_provider_balance: 0,
+        needs_verification: 0,
+        missing_amount_net_rows: 0,
+        excluded_missing_amount_net_rows: 0,
+        actionable_accounts: [],
+      },
+      summary: {},
+      accounts: [],
+      actionable_accounts: [],
+    },
+    balance_fixes: {
+      missing_amount_net_rows: [],
+      missing_ostatki_rows: [],
+      copyable_ostatki_rows: "",
+    },
+  });
+
+  assert.match(block.textContent, /Сверка остатков за неделю/);
+  assert.match(block.textContent, /OK/);
+  assert.match(block.textContent, /Все счета за неделю сверены/);
+});
+
 test("balance coverage UI shows empty success message when there are no required fixes", () => {
   const block = ui.renderBalanceCoverageBlock(createTestDocument(), {
     balance_coverage: {
