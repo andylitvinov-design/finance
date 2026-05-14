@@ -2007,6 +2007,180 @@ function updateManualFinanceMoneyValue(rowIndex, key, rawValue) {
   renderMetrics();
 }
 
+function normalizeManualFinanceBalanceRows(rows = [], options = {}) {
+  const defaultDate = normalizeIncomingSheetDateValue(options.defaultDate || state.manualFinance.data?.periodEnd || elements.endDate.value);
+  const normalized = (rows || []).map((row) => {
+    const channel = canonicalManualFinanceChannel(row?.channel || row?.accountName || "");
+    const currency = String(row?.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase();
+    return {
+      date: normalizeIncomingSheetDateValue(row?.date || "") || defaultDate,
+      channel,
+      amount: normalizeManualFinancePersistedNumberInput(row?.amount ?? row?.actual_balance ?? row?.balanceAmount),
+      currency,
+      rate: normalizeManualFinancePersistedNumberInput(row?.rate),
+      usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount ?? row?.amountUsd),
+      comment: String(row?.comment || "").trim()
+    };
+  });
+  return normalized.filter((row, index, items) => {
+    const hasValue = row.date || row.channel || row.amount || row.currency || row.rate || row.usdAmount || row.comment;
+    if (!hasValue) return false;
+    if (row.channel || row.amount || row.usdAmount || row.comment) return true;
+    return index === items.length - 1;
+  });
+}
+
+function isManualFinanceCashChannel(channel) {
+  return /cash|нал|налично/i.test(String(channel || ""));
+}
+
+function getManualFinanceCashChannels() {
+  const channels = typeof getManualFinanceChannels === "function" ? getManualFinanceChannels() : [];
+  return channels.filter(isManualFinanceCashChannel);
+}
+
+function normalizeManualFinanceCashRows(rows = [], options = {}) {
+  const defaultDate = normalizeIncomingSheetDateValue(options.defaultDate || state.manualFinance.data?.periodEnd || elements.endDate.value);
+  const cashChannels = getManualFinanceCashChannels();
+  const defaultChannel = cashChannels[0] || "";
+  const normalized = (rows || []).map((row) => {
+    const channel = canonicalManualFinanceChannel(row?.channel || row?.fromChannel || row?.toChannel || defaultChannel);
+    const direction = row?.direction === "income" ? "income" : "expense";
+    const amount = normalizeManualFinancePersistedNumberInput(row?.amount ?? row?.localAmount);
+    return {
+      date: normalizeIncomingSheetDateValue(row?.date || "") || defaultDate,
+      channel,
+      direction,
+      amount,
+      currency: String(row?.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase(),
+      category: String(row?.category || (direction === "income" ? "servicein" : "business")).trim(),
+      subcategory: String(row?.subcategory || "").trim(),
+      comment: String(row?.comment || row?.description || "").trim()
+    };
+  });
+  return normalized.filter((row, index, items) => {
+    const hasValue = row.date || row.channel || row.amount || row.currency || row.category || row.subcategory || row.comment;
+    if (!hasValue) return false;
+    if (row.amount || row.comment || row.subcategory) return true;
+    return index === items.length - 1;
+  });
+}
+
+function buildManualFinanceCashRowsFromLedgerRows(ledgerRows = [], startDate = "", endDate = "") {
+  const periodStart = normalizeIncomingSheetDateValue(startDate);
+  const periodEnd = normalizeIncomingSheetDateValue(endDate || startDate);
+  return normalizeManualFinanceCashRows((ledgerRows || [])
+    .filter((row) => {
+      const date = normalizeIncomingSheetDateValue(row?.date || "");
+      if (!date || (periodStart && date < periodStart) || (periodEnd && date > periodEnd)) return false;
+      const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
+      if (source && source !== "manual" && source !== "fact") return false;
+      const channel = row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "";
+      if (!isManualFinanceCashChannel(channel)) return false;
+      const operation = String(row?.operation || "").trim();
+      return operation === "income" || operation === "expense" || operation === "business_expense" || operation === "personal_expense";
+    })
+    .map((row) => {
+      const operation = String(row?.operation || "").trim();
+      const direction = operation === "income" ? "income" : "expense";
+      const channel = direction === "income"
+        ? (row?.toChannel || row?.to_channel || row?.fromChannel || row?.from_channel || "")
+        : (row?.fromChannel || row?.from_channel || row?.toChannel || row?.to_channel || "");
+      return {
+        date: row.date,
+        channel,
+        direction,
+        amount: row.amountNet || row.amount_net || row.amount || row.localAmount || "",
+        currency: row.currency || inferManualFinanceChannelCurrency(channel),
+        category: row.category || (direction === "income" ? "servicein" : "business"),
+        subcategory: row.subcategory || "",
+        comment: row.comment || row.description || ""
+      };
+    }), { defaultDate: periodEnd || periodStart });
+}
+
+function buildManualFinanceCashEntries(cashRows = []) {
+  return normalizeManualFinanceCashRows(cashRows)
+    .map((row, index) => {
+      const amount = Math.abs(parseLooseNumber(row.amount));
+      if (!row.date || !row.channel || !amount) return null;
+      return {
+        id: `manual-cash:${row.date}:${row.direction}:${row.channel}:${index}`,
+        date: row.date,
+        channel: row.channel,
+        direction: row.direction,
+        localAmount: amount,
+        currency: row.currency || inferManualFinanceChannelCurrency(row.channel),
+        category: row.category || (row.direction === "income" ? "servicein" : "business"),
+        subcategory: row.subcategory || "",
+        description: row.comment || "",
+        transactionSubject: row.comment || "",
+        source: "manual",
+        amountGross: amount,
+        amount_gross: amount,
+        amountNet: amount,
+        amount_net: amount,
+        netAmount: amount,
+        sourceTransactionId: `manual-cash:${row.date}:${row.direction}:${formatManualFinanceStableIdPart(row.channel)}:${formatManualFinanceStableIdPart(row.amount)}:${index}`
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatManualFinanceStableIdPart(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "blank";
+}
+
+function updateManualFinanceBalanceValue(rowIndex, key, rawValue) {
+  if (!state.manualFinance.data) return;
+  const rows = state.manualFinance.data.balanceRows || [];
+  if (!rows[rowIndex]) rows[rowIndex] = {};
+  clearManualServerCache();
+  rows[rowIndex][key] = rawValue;
+  state.manualFinance.data.balanceRows = normalizeManualFinanceBalanceRows(rows);
+  state.manualFinance.dirty = true;
+  renderMetrics();
+}
+
+function updateManualFinanceCashValue(rowIndex, key, rawValue) {
+  if (!state.manualFinance.data) return;
+  const rows = state.manualFinance.data.cashRows || [];
+  if (!rows[rowIndex]) rows[rowIndex] = {};
+  clearManualServerCache();
+  rows[rowIndex][key] = rawValue;
+  state.manualFinance.data.cashRows = normalizeManualFinanceCashRows(rows);
+  state.manualFinance.dirty = true;
+  renderMetrics();
+}
+
+function addManualFinanceBalanceRow() {
+  if (!state.manualFinance.data) return;
+  clearManualServerCache();
+  state.manualFinance.data.balanceRows = normalizeManualFinanceBalanceRows([
+    ...(state.manualFinance.data.balanceRows || []),
+    { date: state.manualFinance.data.periodEnd || elements.endDate.value, channel: "", amount: "", currency: "", comment: "" }
+  ]);
+  state.manualFinance.dirty = true;
+  renderTabs();
+}
+
+function addManualFinanceCashRow() {
+  if (!state.manualFinance.data) return;
+  clearManualServerCache();
+  state.manualFinance.data.cashRows = normalizeManualFinanceCashRows([
+    ...(state.manualFinance.data.cashRows || []),
+    { date: state.manualFinance.data.periodEnd || elements.endDate.value, channel: getManualFinanceCashChannels()[0] || "", direction: "expense", amount: "", currency: "", category: "business", comment: "" }
+  ]);
+  state.manualFinance.dirty = true;
+  renderTabs();
+}
+
 function updateManualFinanceTransferValue(rowIndex, key, rawValue) {
   const row = state.manualFinance.data?.transferRows?.[rowIndex];
   if (!row) return;
@@ -2196,9 +2370,18 @@ function buildManualFinanceStateFromPayload(data, startDate, endDate) {
     transferTitle: data.transferTitle || MANUAL_FINANCE_TRANSFER_TITLE,
     transferHeaders: Array.isArray(data.transferHeaders) && data.transferHeaders.length ? data.transferHeaders : MANUAL_TRANSFER_HEADERS,
     transferRows: normalizeManualFinanceTransferRows(data.transferRows),
+    balanceTitle: data.balanceTitle || MANUAL_FINANCE_BALANCE_TITLE,
+    balanceHeaders: Array.isArray(data.balanceHeaders) && data.balanceHeaders.length ? data.balanceHeaders : MANUAL_BALANCE_HEADERS,
+    balanceRows: normalizeManualFinanceBalanceRows(data.balanceRows, { defaultDate: data.periodEnd || endDate }),
     ledgerTitle: data.ledgerTitle || MANUAL_FINANCE_LEDGER_TITLE,
     ledgerRows: Array.isArray(data.ledgerRows) ? data.ledgerRows.map((row) => ({ ...row })) : [],
     ledgerWarnings: Array.isArray(data.ledgerWarnings) ? data.ledgerWarnings.slice() : [],
+    cashRows: normalizeManualFinanceCashRows(
+      Array.isArray(data.cashRows) && data.cashRows.length
+        ? data.cashRows
+        : buildManualFinanceCashRowsFromLedgerRows(data.ledgerRows, data.periodStart || startDate, data.periodEnd || endDate),
+      { defaultDate: data.periodEnd || endDate }
+    ),
     expenseTitle: data.expenseTitle || MANUAL_FINANCE_EXPENSE_TITLE,
     expenseHeaders: Array.isArray(data.expenseHeaders) && data.expenseHeaders.length ? data.expenseHeaders : buildManualExpenseHeaders(),
     expenseRows
@@ -2330,6 +2513,10 @@ function openLocalManualFinancePeriod(startDate, endDate, statusMessage, isError
     transferTitle: MANUAL_FINANCE_TRANSFER_TITLE,
     transferHeaders: MANUAL_TRANSFER_HEADERS,
     transferRows: normalizeManualFinanceTransferRows(saved?.transferRows),
+    balanceTitle: MANUAL_FINANCE_BALANCE_TITLE,
+    balanceHeaders: MANUAL_BALANCE_HEADERS,
+    balanceRows: normalizeManualFinanceBalanceRows(saved?.balanceRows, { defaultDate: endDate }),
+    cashRows: normalizeManualFinanceCashRows(saved?.cashRows, { defaultDate: endDate }),
     expenseTitle: MANUAL_FINANCE_EXPENSE_TITLE,
     expenseHeaders: buildManualExpenseHeaders(),
     expenseRows,
@@ -2343,6 +2530,15 @@ function openLocalManualFinancePeriod(startDate, endDate, statusMessage, isError
 
 async function saveManualFinanceSheet() {
   if (!state.manualFinance.data) return;
+  const activeInnerTab = state.manualFinance.activeInnerTab || "balances";
+  if (activeInnerTab === "cash") {
+    await saveManualFinanceCashRows();
+    return;
+  }
+  if (activeInnerTab === "balances") {
+    await saveManualFinanceBalanceRows();
+    return;
+  }
   const moneyRows = state.manualFinance.data.moneyRows || [];
   const payload = {
     startDate: state.manualFinance.data.periodStart,
@@ -2386,6 +2582,76 @@ async function saveManualFinanceSheet() {
     setManualFinanceStatus(`Fact за период сохранён в репозиторий. ${response?.savedAt || ""}`.trim(), false);
   } catch (error) {
     setManualFinanceStatus(error.message || "Не удалось сохранить входящие данные.", true);
+  } finally {
+    state.manualFinance.loading = false;
+    renderTabs();
+  }
+}
+
+async function saveManualFinanceBalanceRows() {
+  if (!state.manualFinance.data) return;
+  const rows = normalizeManualFinanceBalanceRows(state.manualFinance.data.balanceRows, {
+    defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
+  }).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+  if (!hasConfiguredManualFinanceEndpoint()) {
+    persistLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd, {
+      ...(getLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd) || {}),
+      balanceRows: rows
+    });
+    state.manualFinance.data.balanceRows = rows;
+    state.manualFinance.dirty = false;
+    setManualFinanceStatus("Локальный draft Остатки сохранён в браузере.", false);
+    renderTabs();
+    return;
+  }
+  state.manualFinance.loading = true;
+  renderTabs();
+  try {
+    const response = await saveBalanceSnapshotRowsDirect(rows);
+    state.manualFinance.data.balanceRows = rows;
+    state.manualFinance.dirty = false;
+    await loadDashboardData();
+    setManualFinanceStatus(`Остатки сохранены: ${response?.rowCount || 0}. ${response?.savedAt || ""}`.trim(), false);
+  } catch (error) {
+    setManualFinanceStatus(error.message || "Не удалось сохранить Остатки.", true);
+  } finally {
+    state.manualFinance.loading = false;
+    renderTabs();
+  }
+}
+
+async function saveManualFinanceCashRows() {
+  if (!state.manualFinance.data) return;
+  const rows = normalizeManualFinanceCashRows(state.manualFinance.data.cashRows, {
+    defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
+  });
+  const entries = buildManualFinanceCashEntries(rows);
+  if (!hasConfiguredManualFinanceEndpoint()) {
+    persistLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd, {
+      ...(getLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd) || {}),
+      cashRows: rows
+    });
+    state.manualFinance.data.cashRows = rows;
+    state.manualFinance.dirty = false;
+    setManualFinanceStatus("Локальный draft Наличные сохранён в браузере.", false);
+    renderTabs();
+    return;
+  }
+  if (!entries.length) {
+    setManualFinanceStatus("Нет строк Наличные для сохранения.", true);
+    renderTabs();
+    return;
+  }
+  state.manualFinance.loading = true;
+  renderTabs();
+  try {
+    const response = await saveExpenseAccountingEntriesDirect(entries);
+    state.manualFinance.data.cashRows = rows;
+    state.manualFinance.dirty = false;
+    await loadDashboardData();
+    setManualFinanceStatus(`Наличные сохранены в Ledger: ${response?.ledgerRowCount || entries.length}. ${response?.savedAt || ""}`.trim(), false);
+  } catch (error) {
+    setManualFinanceStatus(error.message || "Не удалось сохранить Наличные.", true);
   } finally {
     state.manualFinance.loading = false;
     renderTabs();

@@ -1474,6 +1474,7 @@ async function getManualSheetDirect(startDate, endDate) {
   ]);
   const ledgerParse = parseManualLedgerSheetValues(ledgerValues);
   const ledgerExpenseRows = buildExpenseRowsFromLedgerRows(ledgerParse.rows, snapshotDate, snapshotDate);
+  const parsedBalanceRows = parseIncomingBalanceSheetValues(balanceValues);
   const transferRows = parseIncomingTransferSheetValues(transferValues).filter((row) => {
     return row.transferDate && row.transferDate === snapshotDate;
   });
@@ -1482,7 +1483,7 @@ async function getManualSheetDirect(startDate, endDate) {
   });
   const flowExpenseRows = filterManualFlowExpenseRows(expenseRows);
   const latestNowEntriesByChannel = mergeLatestNowEntries(
-    buildLatestBalanceEntriesByChannel(parseIncomingBalanceSheetValues(balanceValues), snapshotDate),
+    buildLatestBalanceEntriesByChannel(parsedBalanceRows, snapshotDate),
     buildLatestNowEntriesByChannel(ledgerExpenseRows, snapshotDate)
   );
   return {
@@ -1510,6 +1511,9 @@ async function getManualSheetDirect(startDate, endDate) {
     transferTitle: getManualTransfersSheetName(),
     transferHeaders: MANUAL_TRANSFER_HEADERS,
     transferRows,
+    balanceTitle: getManualBalancesSheetName(),
+    balanceHeaders: MANUAL_BALANCE_HEADERS,
+    balanceRows: parsedBalanceRows.filter((row) => row.date === snapshotDate),
     ledgerTitle: getManualLedgerSheetName(),
     ledgerRows: ledgerParse.rows,
     ledgerWarnings: ledgerParse.warnings,
