@@ -9,7 +9,27 @@ import {
   getBinanceProviderConfigFromEnv,
   normalizeBinanceDeposit,
   normalizeBinanceWithdrawal,
-} from "../api/binance-transactions.js";
+} from "../server/binance-transactions.js";
+import apiHandler from "../api/index.js";
+
+function createResponseRecorder() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: null,
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+  };
+}
 
 test("missing Binance env returns no provider config", () => {
   assert.equal(getBinanceProviderConfigFromEnv({}), null);
@@ -25,6 +45,16 @@ test("missing Binance env returns no provider config", () => {
       baseUrl: "https://api.binance.com"
     }
   );
+});
+
+test("GET /api/binance-transactions is routed through index and returns 405", async () => {
+  const response = createResponseRecorder();
+  await apiHandler({ method: "GET", query: { action: "binanceTransactions" }, body: null }, response);
+
+  assert.equal(response.statusCode, 405);
+  assert.equal(response.body?.ok, false);
+  assert.equal(response.body?.error, "Unsupported method: GET");
+  assert.equal(response.headers["access-control-allow-methods"], "POST, OPTIONS");
 });
 
 test("Binance signed request uses timestamp signature and X-MBX-APIKEY header", async () => {

@@ -6,6 +6,10 @@
       "destination": "/api/index?action=balanceSnapshots"
     },
     {
+      "source": "/api/binance-transactions",
+      "destination": "/api/index?action=binanceTransactions"
+    },
+    {
       "source": "/api/debug-full",
       "destination": "/api/index?action=debugFull"
     },

@@ -293,12 +293,17 @@ test("vercel rewrites expose debug paths through the existing index function", a
   const { readFile } = await import("node:fs/promises");
   const vercelConfig = JSON.parse(await readFile(new URL("../vercel.json", import.meta.url), "utf8"));
 
-  assert.deepEqual(vercelConfig.rewrites.slice(0, 4), [
+  for (const expectedRewrite of [
     { source: "/api/balance-snapshots", destination: "/api/index?action=balanceSnapshots" },
     { source: "/api/debug-full", destination: "/api/index?action=debugFull" },
     { source: "/api/debug-analytics", destination: "/api/index?action=debugAnalytics" },
     { source: "/api/debug-ui-state", destination: "/api/index?action=debugUiState" }
-  ]);
+  ]) {
+    assert.ok(
+      vercelConfig.rewrites.some((rewrite) => rewrite.source === expectedRewrite.source && rewrite.destination === expectedRewrite.destination),
+      `${expectedRewrite.source} rewrite is configured`
+    );
+  }
   assert.ok(vercelConfig.rewrites.some((rewrite) => rewrite.source === "/api/manual-finance" && rewrite.destination === "/api/index?action=manualWorkbook&route=manual-finance"));
 });
 
