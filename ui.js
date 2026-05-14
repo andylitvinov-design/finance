@@ -4258,7 +4258,7 @@ function renderManualFinanceBlock() {
 
   const header = document.createElement("div");
   header.className = "tab-header";
-  header.innerHTML = `<div><h2>fact</h2><div class="tab-note">При сохранении данные пишутся в Ledger как операции manual, а Переводы и Остатки остаются служебными таблицами.</div></div>`;
+  header.innerHTML = `<div><h2>fact</h2><div class="tab-note">Остатки сохраняются как фактические балансы, Наличные — как manual Ledger операции.</div></div>`;
   const headerActions = document.createElement("div");
   headerActions.className = "finance-actions";
   const openButton = document.createElement("button");
@@ -4305,7 +4305,7 @@ function renderManualFinanceBlock() {
       `<div class="config-note">Source sheet: ${escapeHtml(state.manualFinance.data.sourceSheetName || "local-preview")}</div>` +
       `<div class="config-note">Status: ${escapeHtml(state.manualFinance.data.status || "draft")}</div>` +
       `<div class="config-note">Source type: ${escapeHtml(state.manualFinance.data.sourceType || "local")}</div>` +
-      `<div class="config-note">Transfers: ${escapeHtml(state.manualFinance.data.transferRows.length.toString())}, fact rows: ${escapeHtml(state.manualFinance.data.moneyRows.length.toString())}</div>`
+      `<div class="config-note">Transfers: ${escapeHtml(state.manualFinance.data.transferRows.length.toString())}, balance rows: ${escapeHtml((state.manualFinance.data.balanceRows || []).length.toString())}, cash rows: ${escapeHtml((state.manualFinance.data.cashRows || []).length.toString())}</div>`
     ) : "") +
     (spreadsheetUrl ? `<div class="config-note">Manual workbook: <a href="${escapeHtml(spreadsheetUrl)}" target="_blank" rel="noreferrer">${escapeHtml(spreadsheetUrl)}</a></div>` : "");
   shell.appendChild(meta);
@@ -4334,58 +4334,167 @@ function renderManualFinanceBlock() {
     return shell;
   }
 
-  const factWrap = document.createElement("div");
-  factWrap.className = "table-wrap";
-  const factTable = document.createElement("table");
-  const factBody = document.createElement("tbody");
-  const factHeader = document.createElement("tr");
-  const usdRateLookup = buildManualFinanceUsdRateLookup(
-    state.manualFinance.data.transferRows,
-    state.data?.tabs?.movement?.values || []
-  );
-  shell.appendChild(renderManualFinanceRateTable(usdRateLookup));
-  getManualFinanceDisplayHeaders(state.manualFinance.data.moneyHeaders || MANUAL_FINANCE_HEADERS).forEach((cell) => {
-    const th = document.createElement("th");
-    th.textContent = cell || "";
-    factHeader.appendChild(th);
-  });
-  factBody.appendChild(factHeader);
-  state.manualFinance.data.moneyRows.forEach((row, rowIndex) => {
-    const tr = document.createElement("tr");
-    const isTotal = row.channel === MANUAL_FINANCE_TOTAL_LABEL;
-
-    const channelTd = document.createElement("td");
-    channelTd.className = "readonly-cell";
-    channelTd.textContent = row.channel || "";
-    tr.appendChild(channelTd);
-
-    ["now", "serviceIncome", "business", "house", "food", "study", "travelFun", "total", "exchange", "totalUsd", "nowUsd"].forEach((key) => {
-      const td = document.createElement("td");
-      if (key === "totalUsd") {
-        td.className = "readonly-cell";
-        td.textContent = getManualFinanceTotalUsdValue(row, usdRateLookup);
-      } else if (key === "nowUsd") {
-        td.className = "readonly-cell";
-        td.textContent = getManualFinanceNowUsdValue(row, usdRateLookup);
-      } else if (key === "total" || isTotal) {
-        td.className = "readonly-cell";
-        td.textContent = row[key] || "";
-      } else {
-        const input = document.createElement("input");
-        input.className = "finance-input";
-        input.value = row[key] || "";
-        input.addEventListener("input", (event) => updateManualFinanceMoneyValue(rowIndex, key, event.target.value));
-        td.appendChild(input);
-      }
-      tr.appendChild(td);
+  const activeInnerTab = state.manualFinance.activeInnerTab || "balances";
+  const subtabs = document.createElement("div");
+  subtabs.className = "expense-subtabs";
+  [
+    ["balances", "Остатки / Баланс"],
+    ["cash", "Наличные"]
+  ].forEach(([id, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "expense-subtab" + (activeInnerTab === id ? " active" : "");
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      state.manualFinance.activeInnerTab = id;
+      renderTabs();
     });
-    factBody.appendChild(tr);
+    subtabs.appendChild(button);
   });
-  factTable.appendChild(factBody);
-  factWrap.appendChild(factTable);
-  shell.appendChild(factWrap);
+  shell.appendChild(subtabs);
 
+  if (activeInnerTab === "cash") {
+    shell.appendChild(renderManualFinanceCashEditor());
+    return shell;
+  }
+
+  shell.appendChild(renderManualFinanceBalanceEditor());
   return shell;
+}
+
+function renderManualFinanceBalanceEditor() {
+  const block = document.createElement("div");
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "secondary";
+  addButton.textContent = "Добавить остаток";
+  addButton.addEventListener("click", () => addManualFinanceBalanceRow());
+  actions.appendChild(addButton);
+  block.appendChild(actions);
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const body = document.createElement("tbody");
+  const header = document.createElement("tr");
+  ["дата", "канал / счет", "валюта", "actual_balance", "курс", "сумма_usd", "комментарий"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    header.appendChild(th);
+  });
+  body.appendChild(header);
+
+  const rows = state.manualFinance.data?.balanceRows?.length
+    ? state.manualFinance.data.balanceRows
+    : [{ date: state.manualFinance.data?.periodEnd || elements.endDate.value, channel: "", amount: "", currency: "", rate: "", usdAmount: "", comment: "" }];
+  rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    appendManualFinanceInputCell(tr, row.date || "", "date", (value) => updateManualFinanceBalanceValue(rowIndex, "date", value));
+    appendManualFinanceSelectCell(tr, row.channel || "", getManualFinanceChannels(), (value) => updateManualFinanceBalanceValue(rowIndex, "channel", value));
+    appendManualFinanceInputCell(tr, row.currency || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "currency", value));
+    appendManualFinanceInputCell(tr, row.amount || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "amount", value));
+    appendManualFinanceReadonlyCell(tr, row.rate || "");
+    appendManualFinanceReadonlyCell(tr, row.usdAmount || "");
+    appendManualFinanceInputCell(tr, row.comment || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "comment", value));
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderManualFinanceCashEditor() {
+  const block = document.createElement("div");
+  const actions = document.createElement("div");
+  actions.className = "finance-actions";
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "secondary";
+  addButton.textContent = "Добавить наличные";
+  addButton.addEventListener("click", () => addManualFinanceCashRow());
+  actions.appendChild(addButton);
+  block.appendChild(actions);
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const body = document.createElement("tbody");
+  const header = document.createElement("tr");
+  ["дата", "cash account", "тип", "сумма", "валюта", "категория", "подкатегория", "комментарий"].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    header.appendChild(th);
+  });
+  body.appendChild(header);
+
+  const cashChannels = getManualFinanceCashChannels();
+  const rows = state.manualFinance.data?.cashRows?.length
+    ? state.manualFinance.data.cashRows
+    : [{ date: state.manualFinance.data?.periodEnd || elements.endDate.value, channel: cashChannels[0] || "", direction: "expense", amount: "", currency: "", category: "business", subcategory: "", comment: "" }];
+  rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    appendManualFinanceInputCell(tr, row.date || "", "date", (value) => updateManualFinanceCashValue(rowIndex, "date", value));
+    appendManualFinanceSelectCell(tr, row.channel || "", cashChannels, (value) => updateManualFinanceCashValue(rowIndex, "channel", value));
+    appendManualFinanceSelectCell(tr, row.direction || "expense", [["income", "приход"], ["expense", "расход"]], (value) => updateManualFinanceCashValue(rowIndex, "direction", value));
+    appendManualFinanceInputCell(tr, row.amount || "", "text", (value) => updateManualFinanceCashValue(rowIndex, "amount", value));
+    appendManualFinanceInputCell(tr, row.currency || "", "text", (value) => updateManualFinanceCashValue(rowIndex, "currency", value));
+    appendManualFinanceInputCell(tr, row.category || "", "text", (value) => updateManualFinanceCashValue(rowIndex, "category", value));
+    appendManualFinanceInputCell(tr, row.subcategory || "", "text", (value) => updateManualFinanceCashValue(rowIndex, "subcategory", value));
+    appendManualFinanceInputCell(tr, row.comment || "", "text", (value) => updateManualFinanceCashValue(rowIndex, "comment", value));
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  wrap.appendChild(table);
+  block.appendChild(wrap);
+  return block;
+}
+
+function appendManualFinanceInputCell(row, value, type, onInput) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.className = "finance-input";
+  input.type = type || "text";
+  input.value = value || "";
+  input.addEventListener("input", (event) => onInput(event.target.value));
+  td.appendChild(input);
+  row.appendChild(td);
+}
+
+function appendManualFinanceSelectCell(row, value, options, onChange) {
+  const td = document.createElement("td");
+  const select = document.createElement("select");
+  select.className = "finance-input";
+  (options || []).forEach((option) => {
+    const node = document.createElement("option");
+    if (Array.isArray(option)) {
+      node.value = option[0];
+      node.textContent = option[1];
+    } else {
+      node.value = option;
+      node.textContent = option;
+    }
+    select.appendChild(node);
+  });
+  if (value && !Array.from(select.options).some((option) => option.value === value)) {
+    const node = document.createElement("option");
+    node.value = value;
+    node.textContent = value;
+    select.appendChild(node);
+  }
+  select.value = value || "";
+  select.addEventListener("change", (event) => onChange(event.target.value));
+  td.appendChild(select);
+  row.appendChild(td);
+}
+
+function appendManualFinanceReadonlyCell(row, value) {
+  const td = document.createElement("td");
+  td.className = "readonly-cell";
+  td.textContent = value || "";
+  row.appendChild(td);
 }
 
 function renderManualTransfersBlock() {

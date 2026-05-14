@@ -371,6 +371,56 @@ test("expense accounting imports write Ledger only and do not update legacy Ра
   assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
 
+test("manual cash income creates Ledger income row with cash toChannel and amount_net", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-14",
+      channel: "Налично -я-евр",
+      direction: "income",
+      localAmount: 75,
+      currency: "EUR",
+      category: "servicein",
+      source: "manual",
+      netAmount: 75,
+      sourceTransactionId: "manual-cash-income-1"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, "income");
+  assert.equal(rows[0].fromChannel, "");
+  assert.equal(rows[0].toChannel, "Налично -я-евр");
+  assert.equal(rows[0].direction, "in");
+  assert.equal(rows[0].source, "manual");
+  assert.equal(rows[0].amountNet, "75,0000");
+});
+
+test("manual cash expense creates Ledger expense row with cash fromChannel and amount_net", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-14",
+      channel: "нал-мам-дол",
+      direction: "expense",
+      localAmount: 42.5,
+      currency: "USD",
+      category: "food",
+      source: "manual",
+      netAmount: 42.5,
+      sourceTransactionId: "manual-cash-expense-1"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, "personal_expense");
+  assert.equal(rows[0].fromChannel, "нал-мам-дол");
+  assert.equal(rows[0].toChannel, "");
+  assert.equal(rows[0].direction, "out");
+  assert.equal(rows[0].source, "manual");
+  assert.equal(rows[0].amountNet, "42,5000");
+});
+
 test("buildLedgerRowsFromAccountingEntries maps provider rows to provider sources and OCR rows to screenshot sources", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
