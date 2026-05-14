@@ -372,6 +372,12 @@ tr:nth-child(even) td { background: #fffcf7; }
   overscroll-behavior-x: contain;
 }
 .analysis-table-wrap table { min-width: 640px; }
+.balance-reconciliation-table-wrap table { min-width: 920px; }
+.balance-reconciliation-table-wrap table tr > :first-child {
+  min-width: 150px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .analytics-section + .analytics-section { margin-top: 18px; }
 .expense-pie-section {
   padding: 16px;
@@ -547,6 +553,7 @@ tr:nth-child(even) td { background: #fffcf7; }
   .expense-row .expense-select { grid-column: 1 / -1; }
   .expense-summary-grid { grid-template-columns: 1fr; }
   .analysis-table-wrap table { min-width: 560px; }
+  .balance-reconciliation-table-wrap table { min-width: 920px; }
   .expense-table-desktop { display: none; }
   .expense-table-mobile { display: grid; }
   .expense-operation-editor-grid { grid-template-columns: 1fr; }

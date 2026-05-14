@@ -354,17 +354,17 @@
     if (normalized === "ok") return "OK";
     if (normalized === "mismatch") return "Расхождение";
     if (normalized === "missing_opening_balance") return "Нет начального остатка";
-    if (normalized === "missing_provider_balance") return "Введите фактический остаток";
-    return "Проверить данные";
+    if (normalized === "missing_provider_balance") return "Нет фактического остатка";
+    return "Проверить";
   }
 
   function getStatusAction(status) {
     const normalized = String(status || "").trim();
     if (normalized === "ok") return "Сверено";
-    if (normalized === "mismatch") return "Проверить выписку / amount_net / Остатки";
-    if (normalized === "missing_opening_balance") return "Добавить остаток на предыдущую дату в лист Остатки";
-    if (normalized === "missing_provider_balance") return "Добавить фактический остаток на дату в лист Остатки";
-    return "Проверить строку Остатки: дата, счёт, валюта, сумма";
+    if (normalized === "mismatch") return "Проверить выписку / Ledger / amount_net / Остатки";
+    if (normalized === "missing_opening_balance") return "Добавить остаток на начало периода";
+    if (normalized === "missing_provider_balance") return "Добавить фактический остаток в Остатки";
+    return "Проверить выписку / Ledger / amount_net / Остатки";
   }
 
   function accountKey(row) {

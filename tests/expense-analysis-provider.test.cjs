@@ -363,6 +363,18 @@ test("expense analysis mobile tables pin the first column despite generic scroll
   assert.match(mobileExpenseAnalysisStickyCss, /box-shadow: 1px 0 0 #eee3d5/);
 });
 
+test("balance reconciliation UI renders missing balances as actionable text", () => {
+  assert.match(uiJs, /"нет начального остатка"/);
+  assert.match(uiJs, /"нет фактического остатка"/);
+  assert.match(uiJs, /"Добавить остаток на начало периода"/);
+  assert.match(uiJs, /"Добавить фактический остаток в Остатки"/);
+  assert.match(uiJs, /"Проверить выписку \/ Ledger \/ amount_net \/ Остатки"/);
+  assert.match(uiJs, /"что сделать"/);
+  assert.match(uiJs, /balance-reconciliation-table-wrap/);
+  assert.match(styleCss, /\.balance-reconciliation-table-wrap table \{ min-width: 920px; \}/);
+  assert.match(styleCss, /\.balance-reconciliation-table-wrap table tr > :first-child/);
+});
+
 test("expense accounting UI renders dedicated counterparty column that stays visible on mobile", () => {
   assert.match(uiJs, /textContent = "От кого \/ Кому"/);
   assert.match(uiJs, /buildExpenseAccountingCounterpartyLabel\(entry\)/);

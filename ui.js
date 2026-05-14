@@ -960,7 +960,7 @@ function renderBalanceReconciliationBlock(summary) {
   title.textContent = "Сверка изменения баланса";
   block.appendChild(title);
   const wrap = document.createElement("div");
-  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.className = "table-wrap analysis-table-wrap balance-reconciliation-table-wrap";
   wrap.appendChild(renderBalanceReconciliationTable(summary.rows || []));
   block.appendChild(wrap);
   return block;
@@ -974,20 +974,60 @@ function renderBalanceReconciliationTable(rows) {
     "факт Δ",
     "ledger Δ",
     "разница",
-    "статус"
+    "статус",
+    "что сделать"
   ]];
   (rows || []).forEach((row) => {
     values.push([
       row.channel || "",
-      row.openingBalanceUsd === null ? "" : formatSheetNumber(row.openingBalanceUsd),
-      row.closingBalanceUsd === null ? "" : formatSheetNumber(row.closingBalanceUsd),
+      formatBalanceReconciliationOpening(row),
+      formatBalanceReconciliationClosing(row),
       row.realDelta === null ? "" : formatSheetNumber(row.realDelta),
       formatSheetNumber(row.ledgerDelta || 0),
       row.diff === null ? "" : formatSheetNumber(row.diff),
-      row.status || ""
+      getBalanceReconciliationStatusLabel(row),
+      getBalanceReconciliationAction(row)
     ]);
   });
   return renderPlainTable(values);
+}
+
+function formatBalanceReconciliationOpening(row) {
+  if (row?.openingBalanceUsd === null || row?.openingBalanceUsd === undefined || row?.openingBalanceUsd === "") {
+    return "нет начального остатка";
+  }
+  return formatSheetNumber(row.openingBalanceUsd);
+}
+
+function formatBalanceReconciliationClosing(row) {
+  if (row?.closingBalanceUsd === null || row?.closingBalanceUsd === undefined || row?.closingBalanceUsd === "") {
+    return "нет фактического остатка";
+  }
+  return formatSheetNumber(row.closingBalanceUsd);
+}
+
+function getBalanceReconciliationStatusLabel(row) {
+  if (row?.openingBalanceUsd === null || row?.openingBalanceUsd === undefined || row?.openingBalanceUsd === "") {
+    return "Нет начального остатка";
+  }
+  if (row?.closingBalanceUsd === null || row?.closingBalanceUsd === undefined || row?.closingBalanceUsd === "") {
+    return "Нет фактического остатка";
+  }
+  if (row?.status === "OK") return "OK";
+  if (row?.status === "MISMATCH") return "Расхождение";
+  return "Проверить";
+}
+
+function getBalanceReconciliationAction(row) {
+  if (row?.openingBalanceUsd === null || row?.openingBalanceUsd === undefined || row?.openingBalanceUsd === "") {
+    return "Добавить остаток на начало периода";
+  }
+  if (row?.closingBalanceUsd === null || row?.closingBalanceUsd === undefined || row?.closingBalanceUsd === "") {
+    return "Добавить фактический остаток в Остатки";
+  }
+  if (row?.status === "MISMATCH") return "Проверить выписку / Ledger / amount_net / Остатки";
+  if (row?.status === "OK") return "OK";
+  return "Проверить выписку / Ledger / amount_net / Остатки";
 }
 
 function getExpenseAnalysisChannelSummary() {
