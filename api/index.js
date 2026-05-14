@@ -14,6 +14,7 @@ import { fetchWiseStatementEntries } from "./wise-transactions.js";
 import { fetchMonobankStatementEntries } from "./monobank-transactions.js";
 import { fetchPrivatBankStatementEntries } from "./privatbank-transactions.js";
 import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
+import { fetchBinanceStatementEntries, getBinanceProviderConfigFromEnv } from "./binance-transactions.js";
 import PaymentChannelReference from "../payment-channel-reference.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
@@ -41,6 +42,8 @@ const REAL_INCOME_CHANNELS = [
   "БАНК КАНАДА cad",
   "трансервайз дол",
   "трансервайз евро",
+  "Бинанс spot",
+  "binance save",
 ];
 const REAL_INCOME_CHANNEL_CURRENCY = {
   "Яндекс руб": "RUB",
@@ -55,6 +58,8 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "БАНК КАНАДА cad": "CAD",
   "трансервайз дол": "USD",
   "трансервайз евро": "EUR",
+  "Бинанс spot": "USD",
+  "binance save": "USD",
 };
 const REAL_INCOME_FALLBACK_USD_RATES = {
   RUB: 1 / 84.5563,
@@ -651,6 +656,7 @@ async function buildRealIncomePayload(period, movementValues) {
     loadMonobankProviderEntries(startDate, endDate),
     loadPrivatBankProviderEntries(startDate, endDate),
     loadYooMoneyProviderEntries(startDate, endDate),
+    loadBinanceProviderEntries(startDate, endDate),
   ]);
   for (const result of providerResults) {
     if (!result) continue;
@@ -793,6 +799,22 @@ async function loadYooMoneyProviderEntries(startDate, endDate) {
     return { entries: result.entries || [], warnings: [] };
   } catch (error) {
     return { entries: [], warnings: [`YooMoney real income: ${String(error?.message || error)}`] };
+  }
+}
+
+async function loadBinanceProviderEntries(startDate, endDate) {
+  const config = getBinanceProviderConfigFromEnv(process.env);
+  if (!config) return null;
+  try {
+    const result = await fetchBinanceStatementEntries({
+      startDate,
+      endDate,
+      ...config,
+      fetchImpl: fetch,
+    });
+    return { entries: result.entries || [], warnings: result.warnings || [] };
+  } catch (error) {
+    return { entries: [], warnings: [`Binance real income: ${String(error?.message || error)}`] };
   }
 }
 
@@ -1007,7 +1029,8 @@ function isLedgerProviderIncomeSource(row) {
     "yandex",
     "monobank",
     "wise",
-    "transferwise"
+    "transferwise",
+    "binance"
   ].includes(normalizedSource)) return true;
   const rawSourceId = String(
     row?.rawSourceId ||
@@ -1017,7 +1040,7 @@ function isLedgerProviderIncomeSource(row) {
     row?.ledgerV2?.raw_source_id ||
     ""
   ).trim().toLowerCase();
-  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|binance|usdt|usdc|crypto|mcp):/.test(rawSourceId);
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -1061,6 +1084,12 @@ function getLedgerIncomeChannel(row) {
     if (["wise", "transferwise", "трансервайз"].includes(normalized)) {
       return currency === "EUR" ? "трансервайз евро" : "трансервайз дол";
     }
+    if (["binance", "бинанс", "binance spot", "бинанс spot", "crypto", "крипт", "usdt", "usdc"].includes(normalized)) {
+      return "Бинанс spot";
+    }
+    if (["binance save", "binance savings", "бинанс save", "бинанс сейв"].includes(normalized)) {
+      return "binance save";
+    }
   }
 
   const normalizedSource = String(
@@ -1080,6 +1109,9 @@ function getLedgerIncomeChannel(row) {
   if (["wise", "transferwise"].includes(normalizedSource)) {
     if (currency === "EUR") return "трансервайз евро";
     if (currency === "USD") return "трансервайз дол";
+  }
+  if (normalizedSource === "binance") {
+    return "Бинанс spot";
   }
   return "";
 }
@@ -1295,7 +1327,7 @@ function resolvePaymentChannel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const normalized = normalizeLookupText(raw);
-  if (normalized === normalizeLookupText("binance save")) return "Бинанс spot";
+  if (normalized === normalizeLookupText("binance save")) return "binance save";
   const exact = REAL_INCOME_CHANNELS.find((channel) => normalizeLookupText(channel) === normalized);
   if (exact) return exact;
   if (/^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/.test(normalized)) {
@@ -1313,6 +1345,8 @@ function resolvePaymentChannel(value) {
   }
   if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
+  if (/binance.*sav|бинанс.*сейв/.test(normalized)) return "binance save";
+  if (/(binance|бинанс|crypto|крипт|usdt|usdc)/.test(normalized)) return "Бинанс spot";
   if (/(mono|monobank|монобанк).*(uah|грн|грив)|(?:uah|грн|грив).*(mono|monobank|монобанк)/.test(normalized)) {
     return "монобанк грн";
   }

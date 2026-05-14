@@ -110,6 +110,12 @@ test("ledger v2 refuses balance fallback when net is missing", () => {
 });
 
 test("ledger v2 source normalization maps provider aliases to contract vocabulary", () => {
+  assert.equal(contract.LEDGER_V2_SOURCES.includes("binance"), true);
+  assert.equal(contract.normalizeLedgerRow({ source: "binance" }).source, "binance");
+  assert.equal(contract.normalizeLedgerRow({ source: "binance spot" }).source, "binance");
+  assert.equal(contract.normalizeLedgerRow({ source: "binance save" }).source, "binance");
+  assert.equal(contract.normalizeLedgerRow({ source: "USDT TRC20" }).source, "binance");
+  assert.equal(contract.normalizeLedgerRow({ source: "USDC ERC20" }).source, "binance");
   assert.equal(contract.normalizeLedgerRow({ source: "privat24" }).source, "privatbank");
   assert.equal(contract.normalizeLedgerRow({ source: "paypal mcp" }).source, "paypal");
   assert.equal(contract.normalizeLedgerRow({ source: "tdbank" }).source, "td_bank");
