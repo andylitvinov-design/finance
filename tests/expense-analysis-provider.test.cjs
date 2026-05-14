@@ -10,6 +10,7 @@ const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
 const googleSheetsJs = fs.readFileSync(path.join(root, "google-sheets.js"), "utf8");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
+const mobileExpenseAnalysisStickyCss = fs.readFileSync(path.join(root, "mobile-expense-analysis-sticky.css"), "utf8");
 
 function extractFunction(source, name) {
   let start = source.indexOf(`function ${name}`);
@@ -351,6 +352,15 @@ test("expense analysis UI keeps refresh action and scrollable tables", () => {
   );
   assert.doesNotMatch(uiJs, /renderResponsiveDataView\(rows, \{ mobileTableColumnCount: 2 \}\)/);
   assert.match(styleCss, /\.analysis-table-wrap table \{ min-width: 640px; \}/);
+});
+
+test("expense analysis mobile tables pin the first column despite generic scroll rules", () => {
+  assert.match(mobileExpenseAnalysisStickyCss, /\.expense-analysis-shell \.analysis-table-wrap th:first-child/);
+  assert.match(mobileExpenseAnalysisStickyCss, /\.expense-analysis-shell \.analysis-table-wrap td:first-child/);
+  assert.match(mobileExpenseAnalysisStickyCss, /position: sticky !important;/);
+  assert.match(mobileExpenseAnalysisStickyCss, /left: 0;/);
+  assert.match(mobileExpenseAnalysisStickyCss, /z-index: 5;/);
+  assert.match(mobileExpenseAnalysisStickyCss, /box-shadow: 1px 0 0 #eee3d5/);
 });
 
 test("expense accounting UI renders dedicated counterparty column that stays visible on mobile", () => {
