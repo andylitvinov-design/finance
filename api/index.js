@@ -14,11 +14,15 @@ import { fetchWiseStatementEntries } from "./wise-transactions.js";
 import { fetchMonobankStatementEntries } from "./monobank-transactions.js";
 import { fetchPrivatBankStatementEntries } from "./privatbank-transactions.js";
 import { fetchYooMoneyStatementEntries } from "./yoomoney-transactions.js";
-import { fetchBinanceStatementEntries, getBinanceProviderConfigFromEnv } from "./binance-transactions.js";
+import binanceTransactionsHandler, {
+  fetchBinanceStatementEntries,
+  getBinanceProviderConfigFromEnv,
+} from "../server/binance-transactions.js";
 import PaymentChannelReference from "../payment-channel-reference.js";
 
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
+const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -142,6 +146,10 @@ export default async function handler(request, response) {
   }
 
   const debugAction = String(request.query?.action || "").trim();
+  if (debugAction === BINANCE_TRANSACTIONS_ACTION) {
+    return await binanceTransactionsHandler(request, response);
+  }
+
   if (isDebugAction(debugAction)) {
     return await handleDebugAction(request, response, debugAction);
   }

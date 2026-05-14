@@ -24,6 +24,7 @@ const requiredFiles = [
   "api/monobank-transactions.js",
   "api/privatbank-transactions.js",
   "api/yoomoney-transactions.js",
+  "server/binance-transactions.js",
 ];
 const buildMetaCandidates = [
   {
