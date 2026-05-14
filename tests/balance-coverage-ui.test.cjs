@@ -66,9 +66,10 @@ test("balance coverage UI maps statuses to user-facing labels and actions", () =
   assert.equal(ui.getStatusLabel("ok"), "OK");
   assert.equal(ui.getStatusLabel("mismatch"), "Расхождение");
   assert.equal(ui.getStatusLabel("missing_opening_balance"), "Нет начального остатка");
-  assert.equal(ui.getStatusLabel("missing_provider_balance"), "Введите фактический остаток");
-  assert.equal(ui.getStatusAction("mismatch"), "Проверить выписку / amount_net / Остатки");
-  assert.equal(ui.getStatusAction("missing_provider_balance"), "Добавить фактический остаток на дату в лист Остатки");
+  assert.equal(ui.getStatusLabel("missing_provider_balance"), "Нет фактического остатка");
+  assert.equal(ui.getStatusAction("mismatch"), "Проверить выписку / Ledger / amount_net / Остатки");
+  assert.equal(ui.getStatusAction("missing_opening_balance"), "Добавить остаток на начало периода");
+  assert.equal(ui.getStatusAction("missing_provider_balance"), "Добавить фактический остаток в Остатки");
 });
 
 test("balance coverage UI builds table with actionable rows first", () => {
@@ -119,8 +120,49 @@ test("balance coverage UI builds table with actionable rows first", () => {
 
   assert.equal(rows[0][0], "Дата");
   assert.equal(rows[1][9], "Расхождение");
-  assert.equal(rows[1][10], "Проверить выписку / amount_net / Остатки");
+  assert.equal(rows[1][10], "Проверить выписку / Ledger / amount_net / Остатки");
   assert.equal(rows[2][9], "OK");
+});
+
+test("balance coverage UI renders missing opening/provider balances as text, not blanks", () => {
+  const rows = ui.buildBalanceCoverageTableValues({
+    balance_coverage: {
+      accounts: [
+        {
+          date: "2026-05-11",
+          channel: "монобанк грн",
+          currency: "UAH",
+          opening_balance: null,
+          inflow: 100,
+          outflow: 0,
+          computed_closing_balance: null,
+          provider_reported_balance: 120,
+          difference: null,
+          status: "missing_opening_balance",
+        },
+        {
+          date: "2026-05-11",
+          channel: "пейпал дол",
+          currency: "USD",
+          opening_balance: 10,
+          inflow: 0,
+          outflow: 5,
+          computed_closing_balance: 5,
+          provider_reported_balance: null,
+          difference: null,
+          status: "missing_provider_balance",
+        },
+      ],
+      actionable_accounts: [],
+    },
+  });
+
+  assert.equal(rows[1][3], "—");
+  assert.equal(rows[1][9], "Нет начального остатка");
+  assert.equal(rows[1][10], "Добавить остаток на начало периода");
+  assert.equal(rows[2][7], "—");
+  assert.equal(rows[2][9], "Нет фактического остатка");
+  assert.equal(rows[2][10], "Добавить фактический остаток в Остатки");
 });
 
 test("balance coverage UI keeps same channel with multiple currencies separate", () => {
@@ -229,8 +271,8 @@ test("balance coverage UI renders weekly not-ok summary with exact action rows",
   assert.match(block.textContent, /2026-05-12/);
   assert.match(block.textContent, /трансервайз дол/);
   assert.match(block.textContent, /-138\.59/);
-  assert.match(block.textContent, /Проверить выписку \/ amount_net \/ Остатки/);
-  assert.match(block.textContent, /Добавить фактический остаток на дату в лист Остатки/);
+  assert.match(block.textContent, /Проверить выписку \/ Ledger \/ amount_net \/ Остатки/);
+  assert.match(block.textContent, /Добавить фактический остаток в Остатки/);
 });
 
 test("balance coverage UI renders weekly ok summary only when blocking counters are zero", () => {
