@@ -25,6 +25,7 @@ const requiredFiles = [
   "api/privatbank-transactions.js",
   "api/yoomoney-transactions.js",
   "server/binance-transactions.js",
+  "server/period-balance-reconciliation-route.js",
 ];
 const buildMetaCandidates = [
   {

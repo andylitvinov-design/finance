@@ -23,6 +23,10 @@
       "destination": "/api/index?action=debugUiState"
     },
     {
+      "source": "/api/period-balance-reconciliation",
+      "destination": "/api/index?action=periodBalanceReconciliation"
+    },
+    {
       "source": "/api/manual-finance",
       "destination": "/api/index?action=manualWorkbook&route=manual-finance"
     },

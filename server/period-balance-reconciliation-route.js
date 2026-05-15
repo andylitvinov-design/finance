@@ -1,9 +1,9 @@
-import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
-import { buildPeriodBalanceReconciliation } from "../server/period-balance-reconciliation-engine.js";
+import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 
-export default async function handler(request, response) {
+export default async function periodBalanceReconciliationHandler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
