@@ -2682,13 +2682,13 @@ function normalizeStatementHeader(value) {
     .replace(/[^0-9a-zа-яіїєґ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (["date", "transaction date", "posting date", "дата"].includes(header)) return "date";
-  if (["description", "transaction description", "details", "memo", "описание", "назначение"].includes(header)) return "description";
+  if (["date", "date utc", "time", "transaction date", "posting date", "дата"].includes(header)) return "date";
+  if (["description", "transaction description", "details", "memo", "operation", "type", "описание", "назначение"].includes(header)) return "description";
   if (["name", "payee", "merchant"].includes(header)) return "name";
   if (["debit", "withdrawal", "withdrawals", "paid out", "expense", "расход", "списание"].includes(header)) return "debit";
   if (["credit", "deposit", "deposits", "paid in", "income", "приход", "зачисление"].includes(header)) return "credit";
   if (["amount", "transaction amount", "сумма"].includes(header)) return "amount";
-  if (["currency", "cur", "валюта"].includes(header)) return "currency";
+  if (["currency", "cur", "coin", "asset", "валюта"].includes(header)) return "currency";
   if (["balance", "running balance", "остаток"].includes(header)) return "balance";
   return header;
 }
@@ -2719,14 +2719,16 @@ function buildPayPalGrossFeeMetadata(gross, fee, message) {
 function normalizeGenericStatementCurrency(value, description = "", context = {}) {
   const raw = String(value || "").trim().toUpperCase();
   if (/^(CAD|USD|EUR|UAH|RUB)$/.test(raw)) return raw;
+  if (/^(USDT|USDC|BUSD|FDUSD|TUSD)$/.test(raw)) return "USD";
+  if (/^[A-Z0-9]{2,10}$/.test(raw)) return raw;
   if (/^C\$|CAD|КАНАД/.test(raw)) return "CAD";
-  if (/USD|US\$|\$|ДОЛ/.test(raw)) return "USD";
+  if (/USDT|USDC|BUSD|FDUSD|TUSD|USD|US\$|\$|ДОЛ/.test(raw)) return "USD";
   if (/EUR|€|ЕВР/.test(raw)) return "EUR";
   if (/UAH|ГРН/.test(raw)) return "UAH";
   if (/RUB|РУБ/.test(raw)) return "RUB";
   const text = `${description || ""} ${context.defaultCurrency || ""}`;
   if (/CAD|C\$|КАНАД/i.test(text)) return "CAD";
-  if (/USD|US\$|\$|ДОЛ/i.test(text)) return "USD";
+  if (/USDT|USDC|BUSD|FDUSD|TUSD|USD|US\$|\$|ДОЛ/i.test(text)) return "USD";
   if (/EUR|€|ЕВР/i.test(text)) return "EUR";
   if (/UAH|ГРН/i.test(text)) return "UAH";
   if (/RUB|РУБ/i.test(text)) return "RUB";
@@ -2743,6 +2745,15 @@ function inferGenericStatementChannel({ context = {}, currency = "", description
   if (providerHint === "privatbank" && currency === "UAH") return findConfiguredChannelByAliases(["приват 24-грн", "privat 24 uah"]);
   if (providerHint === "yoomoney" && currency === "RUB") return findConfiguredChannelByAliases(["Яндекс руб", "yoomoney rub", "yandex rub"]);
   if (providerHint === "wise") return inferWiseGenericStatementChannel(currency);
+  if (providerHint === "binance") {
+    const normalizedDescription = normalizeLookupText(description);
+    if (/earn|saving|savings|flexible|save|стейкинг|сейв/.test(normalizedDescription)) {
+      return findConfiguredChannelByAliases(["binance save", "бинанс save", "binance savings", "бинанс сейв"]);
+    }
+    if (!currency || currency === "USD") {
+      return findConfiguredChannelByAliases(["Бинанс spot", "binance spot", "бинанс spot"]);
+    }
+  }
   return "";
 }
 
@@ -2782,6 +2793,11 @@ function detectGenericStatementProvider({ fileName = "", headers = [], rawHeader
       [/yoomoney|yoo money|яндекс|yandex|юмани|юmoney/, 0.75, "filename/text"],
       [/кошелек|кошелек/, 0.2, "headers"],
       [/\brub\b|руб/, 0.1, "currency"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("binance", [
+      [/\bbinance\b|бинанс/, 0.75, "filename/text"],
+      [/\bcoin\b|\basset\b|\bnetwork\b|\btxid\b|transaction id/, 0.2, "headers"],
+      [/\busdt\b|\busdc\b|\bbusd\b|\bbtc\b|\beth\b/, 0.15, "currency"]
     ], haystack, currencySet, headerSet)
   ];
   if (headerSet.has("date") && headerSet.has("description") && headerSet.has("debit") && headerSet.has("credit") && headerSet.has("balance")) {

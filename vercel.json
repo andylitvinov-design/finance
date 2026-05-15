@@ -1,5 +1,10 @@
 {
   "outputDirectory": ".",
+  "functions": {
+    "api/index.js": {
+      "regions": ["fra1"]
+    }
+  },
   "rewrites": [
     {
       "source": "/api/balance-snapshots",
