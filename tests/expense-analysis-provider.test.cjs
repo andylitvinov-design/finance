@@ -282,22 +282,92 @@ test("expense analysis excludes transfer and exchange ledger rows from real expe
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
     `${extractFunction(uiJs, "getLedgerFactAmountUsd")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
+    "this.buildLedgerProviderExpenseBreakdownByChannel = buildLedgerProviderExpenseBreakdownByChannel;\n" +
     "this.buildLedgerProviderExpenseByChannel = buildLedgerProviderExpenseByChannel;",
     context
   );
 
-  const totals = context.buildLedgerProviderExpenseByChannel([
+  const rows = [
     { date: "2026-05-02", operation: "business_expense", category: "business", fromChannel: "пейпал дол", amountUsd: "-50" },
     { date: "2026-05-03", operation: "exchange_out", category: "business", fromChannel: "трансервайз дол", amountUsd: "-415", comment: "Sent money to internal account" },
     { date: "2026-05-04", operation: "exchange_out", category: "exchange", fromChannel: "пейпал дол", amountUsd: "-132.59" },
     { date: "2026-05-05", operation: "transfer", category: "business", fromChannel: "Яндекс руб", toChannel: "приват 24-грн", amountUsd: "-884.2807", comment: "Перевод на карту" },
     { date: "2026-05-06", operation: "partner_transfer", category: "partner", fromChannel: "трансервайз дол", amountUsd: "-100" }
-  ], {}, { startDate: "2026-05-01", endDate: "2026-05-08" });
+  ];
+  const totals = context.buildLedgerProviderExpenseByChannel(rows, {}, { startDate: "2026-05-01", endDate: "2026-05-08" });
+  const breakdown = context.buildLedgerProviderExpenseBreakdownByChannel(rows, {}, { startDate: "2026-05-01", endDate: "2026-05-08" });
 
   assert.equal(totals["пейпал дол"], 50);
   assert.equal(totals["трансервайз дол"], 0);
   assert.equal(totals["Яндекс руб"], 0);
+  assert.equal(breakdown["трансервайз дол"].excludedTransferExchange, 515);
+  assert.equal(breakdown["пейпал дол"].excludedTransferExchange, 132.59);
+});
+
+test("TransferWise expense analysis compares plan to business spend while preserving total and personal diagnostics", () => {
+  const context = buildLedgerAnalysisTestContext({
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол"],
+    calculateMovementChannelStats: () => ({ accruedPlusByChannel: {}, accruedPlusCountByChannel: {} }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+  });
+  loadLedgerAnalysisHelpers(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const ledgerRows = [
+    { date: "2026-05-01", operation: "business_expense", category: "business", fromChannel: "трансервайз дол", amountUsd: "-640.25", amountNet: "-640.25", currency: "USD" },
+    { date: "2026-05-02", operation: "personal_expense", category: "house", fromChannel: "трансервайз дол", amountUsd: "-150.67", amountNet: "-150.67", currency: "USD" },
+    { date: "2026-05-03", operation: "personal_expense", category: "food", fromChannel: "трансервайз дол", amountUsd: "-10.88", amountNet: "-10.88", currency: "USD" },
+    { date: "2026-05-04", operation: "exchange_out", category: "exchange", fromChannel: "трансервайз дол", amountUsd: "-415", amountNet: "-415", currency: "USD" },
+  ];
+  const breakdown = plain(context.buildLedgerProviderExpenseBreakdownByChannel(
+    ledgerRows,
+    {},
+    { startDate: "2026-05-01", endDate: "2026-05-15" }
+  ));
+  const totals = plain(context.buildLedgerProviderExpenseByChannel(
+    ledgerRows,
+    {},
+    { startDate: "2026-05-01", endDate: "2026-05-15" }
+  ));
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [{ channel: "трансервайз дол", totalUsd: "609.73" }],
+    movementValues: [],
+    ledgerRows,
+    providerExpenseByChannel: totals,
+    providerExpenseBreakdownByChannel: breakdown,
+    usdRateLookup: {},
+    period: { startDate: "2026-05-01", endDate: "2026-05-15" },
+  }));
+  const wiseRow = summary.rows.find((row) => row[0] === "трансервайз дол");
+
+  assert.equal(totals["трансервайз дол"], 801.8);
+  assert.equal(breakdown["трансервайз дол"].business, 640.25);
+  assert.equal(breakdown["трансервайз дол"].personal, 161.55);
+  assert.equal(breakdown["трансервайз дол"].byCategory.house, 150.67);
+  assert.equal(breakdown["трансервайз дол"].byCategory.food, 10.88);
+  assert.equal(breakdown["трансервайз дол"].excludedTransferExchange, 415);
+  assert.equal(summary.expenseTotals.realUsd, 640.25);
+  assert.equal(summary.expenseTotals.realTotalUsd, 801.8);
+  assert.equal(summary.expenseTotals.personalUsd, 161.55);
+  assert.equal(wiseRow[6], "609,7300");
+  assert.equal(wiseRow[7], "640,2500");
+  assert.equal(wiseRow[8], "801,8000");
+  assert.equal(wiseRow[9], "161,5500");
+  assert.equal(wiseRow[10], "415,0000");
+  assert.equal(Math.abs(context.parseLooseNumber(wiseRow[11])), 30.52);
+  assert.equal(ledgerRows.reduce((sum, row) => sum + context.parseLooseNumber(row.amountNet), 0), -1216.8);
 });
 
 test("calculateTransferBalance reports transfer in minus transfer out separately", () => {
@@ -564,10 +634,12 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     "this.getLedgerFactAmountUsd = getLedgerFactAmountUsd;\n" +
     "this.getExpenseAnalysisLedgerWarnings = getExpenseAnalysisLedgerWarnings;\n" +
     "this.buildLedgerRealIncomeSummaryByChannel = buildLedgerRealIncomeSummaryByChannel;\n" +
+    "this.buildLedgerProviderExpenseBreakdownByChannel = buildLedgerProviderExpenseBreakdownByChannel;\n" +
     "this.buildLedgerProviderExpenseByChannel = buildLedgerProviderExpenseByChannel;",
     context
   );
@@ -595,7 +667,7 @@ test("ledger expense analysis uses amount_usd before amount_net and does not tre
     "БАНК КАНАДА cad": { realNetUsd: 0 },
   });
   assert.deepEqual(plain(context.buildLedgerProviderExpenseByChannel(rows)), {
-    "пейпал дол": 12,
+    "пейпал дол": 0,
     "трансервайз дол": 0,
     "монобанк грн": 993,
     "БАНК КАНАДА cad": 0,
@@ -688,7 +760,7 @@ test("ledger provider expense summary includes YooMoney rows inside selected per
     { date: "2026-05-05", operation: "exchange_out", source: "yoomoney", from_channel: "Яндекс руб", amount_usd: "25.5", currency: "RUB" },
   ], {}, { startDate: "2026-05-01", endDate: "2026-05-05" }));
 
-  assert.equal(summary["Яндекс руб"], 125.5);
+  assert.equal(summary["Яндекс руб"], 100);
 });
 
 test("ledger provider expense summary prefers explicit period options over DOM dates", () => {
@@ -830,6 +902,7 @@ test("expense analysis summary keeps API Wise real income 978.5 when Ledger fall
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
     `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
@@ -843,9 +916,11 @@ test("expense analysis summary keeps API Wise real income 978.5 when Ledger fall
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
     `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
@@ -945,6 +1020,7 @@ test("expense analysis summary derives provider real income and expense from led
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseOperationsRows")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
@@ -959,9 +1035,11 @@ test("expense analysis summary derives provider real income and expense from led
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
     `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
@@ -1309,6 +1387,7 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
     `${extractFunction(uiJs, "getLedgerFactRateLookupChannel")}\n` +
@@ -1322,9 +1401,11 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderExpenseRowInPeriod")}\n` +
+    `${extractFunction(uiJs, "buildLedgerProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerProviderExpenseByChannel")}\n` +
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseBreakdownByChannel")}\n` +
     `${extractFunction(uiJs, "hasExpenseAnalysisRealIncomeValue")}\n` +
     `${extractFunction(uiJs, "mergeExpenseAnalysisRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisChannelSummary")}\n` +
@@ -1361,6 +1442,7 @@ test("provider expense entries use explicit USD and never treat local RUB net as
   vm.runInContext(
     `${extractFunction(uiJs, "getProviderEntryExpenseAmountUsd")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseByChannel")}\n` +
+    `${extractFunction(uiJs, "getExpenseAnalysisProviderExpenseBreakdownByChannel")}\n` +
     "this.getExpenseAnalysisProviderExpenseByChannel = getExpenseAnalysisProviderExpenseByChannel;",
     context
   );
@@ -1461,6 +1543,7 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -1484,10 +1567,10 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   }));
 
   assert.deepEqual(summary.rows, [
-    ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал", "разница", "план приходов, шт", "авто/MCP приходов, шт", "ручных приходов, шт", "скриншот приходов, шт"],
-    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "-90,5000", "1", "0", "0", "0"],
-    ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "-47,7500", "0", "0", "0", "0"],
-    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "-138,2500", "1", "0", "0", "0"],
+    ["канал", "план заказы", "план услуги", "план всего", "пришло реально", "разница", "потрачено план", "потрачено реал бизнес", "потрачено реал всего", "личные расходы", "transfer/exchange excluded", "разница", "план приходов, шт", "авто/MCP приходов, шт", "ручных приходов, шт", "скриншот приходов, шт"],
+    ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "120,5000", "0,0000", "0,0000", "-90,5000", "1", "0", "0", "0"],
+    ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "80,2500", "0,0000", "0,0000", "-47,7500", "0", "0", "0", "0"],
+    ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "200,7500", "0,0000", "0,0000", "-138,2500", "1", "0", "0", "0"],
   ]);
 });
 
@@ -1524,6 +1607,7 @@ test("expense analysis order base can use the same selected-period total as top 
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -1554,6 +1638,9 @@ test("expense analysis order base can use the same selected-period total as top 
     "0,0000",
     "0,0000",
     "0,0000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
     "0",
     "0",
     "0",
@@ -1580,6 +1667,7 @@ test("expense analysis channel summary receives top metrics order base for owner
     getExpenseAnalysisLedgerRows: () => [],
     mergeExpenseAnalysisRealIncomeSummaryByChannel: (summary) => summary,
     getExpenseAnalysisProviderExpenseByChannel: () => ({}),
+    getExpenseAnalysisProviderExpenseBreakdownByChannel: () => ({}),
     calculateTransferBalance: () => ({ transferIn: 0, transferOut: 0, transferBalance: 0 }),
     buildTopMetricsSummary: () => ({ totalOrders: 937.3, ownerOrderShare30Pct: 281.19 }),
     buildExpenseAnalysisChannelSummary(args) {
@@ -1690,6 +1778,7 @@ test("mixed imported PayPal and YooMoney income keeps non-zero income and expens
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -1762,6 +1851,7 @@ test("buildExpenseAnalysisChannelSummary appends income counters by source group
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -1982,6 +2072,7 @@ test("buildExpenseAnalysisChannelSummary passes selected period into income coun
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -1999,7 +2090,7 @@ test("buildExpenseAnalysisChannelSummary passes selected period into income coun
     period: { startDate: "2026-05-01", endDate: "2026-05-31" },
   }));
 
-  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "4");
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[13], "4");
 });
 
 test("buildExpenseAnalysisChannelSummary dedupes count diagnostics without changing amount totals", () => {
@@ -2038,6 +2129,7 @@ test("buildExpenseAnalysisChannelSummary dedupes count diagnostics without chang
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
     extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
     context
@@ -2052,7 +2144,7 @@ test("buildExpenseAnalysisChannelSummary dedupes count diagnostics without chang
     period: { startDate: "2026-05-05", endDate: "2026-05-11" },
   }));
 
-  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "1");
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[13], "1");
   assert.equal(summary.incomeTotals.realUsd, 200);
   assert.deepEqual(summary.incomeCountDiagnostics.rawRowsByChannel, { "Яндекс руб": 2 });
   assert.deepEqual(summary.incomeCountDiagnostics.dedupedEventsByChannel, { "Яндекс руб": 1 });
