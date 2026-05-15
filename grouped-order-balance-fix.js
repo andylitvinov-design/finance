@@ -1,11 +1,14 @@
 // ============================================================
 // GROUPED ORDER BALANCE DISPLAY FIX
 // ============================================================
-// Some source orders are split across adjacent rows for the same client/date,
-// while the payment is recorded on one row of the group. Row-level balance can
-// then show one overpaid row plus positive underpaid sibling rows even when the
-// group is fully paid. This display-only normalizer zeroes row balances only
-// when the adjacent group balance already nets to zero.
+// Display-only movement table normalizer.
+//
+// Existing movement rows are calculated independently. Some orders are split
+// across adjacent rows for the same client/date, while the payment is recorded
+// on one row of the group. That can show one overpaid row and positive sibling
+// balances even when the adjacent group is fully paid. This normalizer first
+// applies the existing display semantics `fact - plan`, then zeroes row balances
+// only when the adjacent same-client/date group already nets to zero.
 
 (function attachGroupedOrderBalanceFix(root) {
   if (!root) return;
@@ -101,9 +104,15 @@
       const numberIndex = findColumnByAliases(headerCells, ["number", "номер"]);
       const dateIndex = findColumnByAliases(headerCells, ["date", "дата"]);
       const clientIndex = findColumnByAliases(headerCells, ["client", "клиент", "имя"]);
+      const planIndex = findColumnByAliases(headerCells, [
+        "accrued +3%", "70% of +3%", "план", "planned", "plan", "accrued", "стоимость", "cost"
+      ]);
+      const actualIndex = findColumnByAliases(headerCells, [
+        "дошло до нас usd", "оплачено клиентом usd", "получено в долларах", "пришло", "получено", "факт", "оплачено", "paid", "received", "actual"
+      ]);
       const balanceIndex = findColumnByAliases(headerCells, ["balance", "баланс", "остаток"]);
       const reviewIndex = findColumnByAliases(headerCells, ["review note", "комментарий", "note"]);
-      if ([numberIndex, dateIndex, clientIndex, balanceIndex].some((index) => index === -1)) return;
+      if ([numberIndex, dateIndex, clientIndex, planIndex, actualIndex, balanceIndex].some((index) => index === -1)) return;
 
       const totalRowIndex = rows.findIndex((row, index) => {
         if (index === 0) return false;
@@ -111,7 +120,23 @@
       });
       const candidateRows = totalRowIndex === -1 ? rows.slice(1) : rows.slice(1, totalRowIndex);
       const dataRows = candidateRows.filter((row) => isNumericOrderRow(row, numberIndex));
-      if (dataRows.length < 2) return;
+      if (!dataRows.length) return;
+
+      dataRows.forEach((row) => {
+        const cells = rowCells(row);
+        const plan = parseLooseNumber(cells[planIndex]?.textContent);
+        const actual = parseLooseNumber(cells[actualIndex]?.textContent);
+        const balanceCell = cells[balanceIndex];
+        if (plan === null || actual === null || !balanceCell) return;
+        const previousText = String(balanceCell.textContent || "");
+        const nextText = formatLikePrevious(actual - plan, previousText);
+        balanceCell.dataset = balanceCell.dataset || {};
+        balanceCell.dataset.displaySignNormalized = "movement-fact-minus-plan";
+        if (previousText !== nextText) {
+          balanceCell.textContent = nextText;
+          changed += 1;
+        }
+      });
 
       let index = 0;
       while (index < dataRows.length) {
@@ -174,8 +199,11 @@
   function installGroupedOrderBalanceFix() {
     normalizeGroupedOrderBalanceTables(root.document);
     const target = root.document?.getElementById?.("tabPanels") || root.document?.body;
-    if (!target || target.dataset?.groupedOrderBalanceObserver === "true") return;
+    if (!target) return;
     target.dataset = target.dataset || {};
+    // Prevent the older movement observer from installing and fighting this combined normalizer.
+    target.dataset.movementBalanceDisplayObserver = "true";
+    if (target.dataset.groupedOrderBalanceObserver === "true") return;
     target.dataset.groupedOrderBalanceObserver = "true";
     const Observer = root.MutationObserver || globalThis.MutationObserver;
     if (!Observer) return;
