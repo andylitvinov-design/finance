@@ -9,6 +9,7 @@ const PAYPAL_ERROR_EXCERPT_LENGTH = 300;
 export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
+const PAYPAL_NON_LEDGER_EVENT_CODES = new Set(["T1501", "T1503"]);
 const PAYPAL_CHANNEL_BY_CURRENCY = {
   USD: "пейпал дол",
   EUR: "пейпал евр",
@@ -529,6 +530,7 @@ export async function fetchPayPalTransactionDetails(options = {}) {
     url.searchParams.set("start_date", toPayPalDateTime(options.startDate, false));
     url.searchParams.set("end_date", toPayPalDateTime(options.endDate, true));
     url.searchParams.set("fields", "all");
+    url.searchParams.set("balance_affecting_records_only", "Y");
     url.searchParams.set("page_size", String(PAYPAL_PAGE_SIZE));
     url.searchParams.set("page", String(page));
     const upstream = await fetchImpl(url.toString(), {
@@ -741,6 +743,7 @@ export function normalizePayPalTransactionDetails(details = []) {
     const organization = getPayPalCounterparty(detail, info);
     const direction = getPayPalEntryDirection(info, amount.value);
     const entryKind = getPayPalEntryKind(detail, info, amount.value);
+    if (shouldSkipPayPalLedgerDetail(info, entryKind)) return;
     const counterparty = buildPayPalCounterparty(detail, info, direction, entryKind, amount, exchangeLookup);
     const externalId = getPayPalExternalId(info);
     const grossAmount = Math.abs(amount.value);
@@ -832,6 +835,23 @@ function getPayPalEntryKind(detail, info, amount) {
     .join(" | ");
   if (PAYPAL_REFUND_EVENT_CODES.has(eventCode) || /\brefund(ed)?\b/.test(text)) return "refund";
   return amount < 0 ? "payment" : "payment";
+}
+
+function shouldSkipPayPalLedgerDetail(info = {}, entryKind = "") {
+  const eventCode = String(info?.transaction_event_code || "").trim().toUpperCase();
+  if (PAYPAL_NON_LEDGER_EVENT_CODES.has(eventCode)) return true;
+  const status = String(info?.transaction_status || "").trim().toUpperCase();
+  if (status && !["S", "V"].includes(status)) return true;
+  const text = [
+    info?.transaction_subject,
+    info?.transaction_note,
+    info?.paypal_reference_id_type,
+    info?.protection_eligibility
+  ].map((value) => String(value || "").trim().toLowerCase()).join(" | ");
+  if (entryKind !== "exchange" && /\b(pre[- ]?auth|preauthorization|authorization hold|open authorization|pending|temporary hold)\b/.test(text)) {
+    return true;
+  }
+  return false;
 }
 
 export function splitDateRange(startDate, endDate) {

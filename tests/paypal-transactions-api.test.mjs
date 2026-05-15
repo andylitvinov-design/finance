@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import handler, {
   buildPayPalProviderWarning,
+  fetchPayPalTransactionDetails,
+  fetchPayPalTransactionDetailsById,
   fetchPayPalStatementEntries,
   fetchPayPalStatementEntriesFromMcp,
   getReadablePayPalCounterparty,
@@ -282,6 +284,85 @@ test("normalizePayPalTransactionDetails keeps refunds out of merchant expense la
   assert.equal(entries[0].displayFromTo, "Merchant Support → Me");
 });
 
+test("normalizePayPalTransactionDetails skips authorization holds and keeps completed debit", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "AUTH-HOLD-1",
+        transaction_event_code: "T1501",
+        transaction_status: "P",
+        transaction_initiation_date: "2026-05-13T10:00:00Z",
+        transaction_amount: { value: "-12.67", currency_code: "USD" },
+        transaction_subject: "Account hold for open authorization"
+      }
+    },
+    {
+      transaction_info: {
+        transaction_id: "REAL-DEBIT-1",
+        transaction_event_code: "T0003",
+        transaction_status: "S",
+        transaction_initiation_date: "2026-05-13T12:00:00Z",
+        transaction_amount: { value: "-42.44", currency_code: "USD" }
+      }
+    }
+  ]);
+
+  assert.deepEqual(entries.map((entry) => entry.sourceTransactionId), ["REAL-DEBIT-1"]);
+  assert.equal(entries[0].direction, "expense");
+  assert.equal(entries[0].localAmount, 42.44);
+  assert.equal(entries[0].amountNet, 42.44);
+});
+
+test("normalizePayPalTransactionDetails May 13 fixture keeps only real PayPal debit", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "7S399229WP363332P",
+        transaction_event_code: "T0003",
+        transaction_status: "S",
+        transaction_initiation_date: "2026-05-13T08:00:00Z",
+        transaction_amount: { value: "-42.44", currency_code: "USD" }
+      }
+    },
+    {
+      transaction_info: {
+        transaction_id: "13T276871B448770C",
+        transaction_event_code: "T1501",
+        transaction_status: "P",
+        transaction_initiation_date: "2026-05-13T09:00:00Z",
+        transaction_amount: { value: "-12.67", currency_code: "USD" }
+      }
+    },
+    {
+      transaction_info: {
+        transaction_id: "24S06514DB429660P",
+        transaction_event_code: "T1501",
+        transaction_status: "P",
+        transaction_initiation_date: "2026-05-13T09:30:00Z",
+        transaction_amount: { value: "-12.64", currency_code: "USD" }
+      }
+    },
+    {
+      transaction_info: {
+        transaction_id: "09C61093N5819234U",
+        transaction_event_code: "T0003",
+        transaction_status: "P",
+        transaction_initiation_date: "2026-05-13T10:00:00Z",
+        transaction_amount: { value: "-27.14", currency_code: "EUR" },
+        transaction_subject: "Pending preauthorization"
+      }
+    }
+  ]);
+
+  assert.deepEqual(entries.map((entry) => ({
+    id: entry.sourceTransactionId,
+    amount: entry.localAmount,
+    currency: entry.currency
+  })), [
+    { id: "7S399229WP363332P", amount: 42.44, currency: "USD" }
+  ]);
+});
+
 test("normalizePayPalTransactionDetails extracts sandbox REST payee business and email fields", () => {
   const entries = normalizePayPalTransactionDetails([
     {
@@ -426,6 +507,7 @@ test("fetchPayPalStatementEntries requests token and transactions", async () => 
       assert.match(options.headers.Authorization, /^Bearer token$/);
       assert.match(String(url), /start_date=2026-04-01T00%3A00%3A00Z/);
       assert.match(String(url), /end_date=2026-04-02T23%3A59%3A59Z/);
+      assert.match(String(url), /balance_affecting_records_only=Y/);
       return {
         ok: true,
         status: 200,
@@ -452,6 +534,65 @@ test("fetchPayPalStatementEntries requests token and transactions", async () => 
   assert.equal(result.entries[0].channel, "пейпал сad");
   assert.deepEqual(result.summary.totalsByCurrency.CAD, { income: 0, expense: 5, net: -5 });
   assert.equal(result.transactionCount, 1);
+});
+
+test("fetchPayPalTransactionDetails main search requests only balance-affecting records", async () => {
+  const searchedUrls = [];
+  const details = await fetchPayPalTransactionDetails({
+    startDate: "2026-05-11",
+    endDate: "2026-05-13",
+    baseUrl: "https://api-m.sandbox.paypal.com",
+    accessToken: "token",
+    fetchImpl: async (url, options) => {
+      searchedUrls.push(String(url));
+      assert.equal(options.method, "GET");
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            total_pages: 1,
+            transaction_details: [
+              { transaction_info: { transaction_id: "BALANCE-1" } }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(details.length, 1);
+  assert.equal(new URL(searchedUrls[0]).searchParams.get("balance_affecting_records_only"), "Y");
+});
+
+test("fetchPayPalTransactionDetailsById enrichment lookup keeps all records", async () => {
+  const searchedUrls = [];
+  const details = await fetchPayPalTransactionDetailsById({
+    transactionId: "LOOKUP-1",
+    transactionDate: "2026-05-13",
+    baseUrl: "https://api-m.sandbox.paypal.com",
+    accessToken: "token",
+    fetchImpl: async (url) => {
+      searchedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            total_pages: 1,
+            transaction_details: [
+              { transaction_info: { transaction_id: "LOOKUP-1" } }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  assert.equal(details.length, 1);
+  const params = new URL(searchedUrls[0]).searchParams;
+  assert.equal(params.get("transaction_id"), "LOOKUP-1");
+  assert.equal(params.get("balance_affecting_records_only"), "N");
 });
 
 test("fetchPayPalStatementEntries warns when income fee is missing", async () => {

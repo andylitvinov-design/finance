@@ -79,6 +79,24 @@
     return filtered.filter(isExpenseLedgerRow).sort(compareExpenseLedgerRows);
   }
 
+  function getExpenseLedgerChannelFilter() {
+    return String(state.expenseAccounting.expenseLedgerChannelFilter || "all").trim() || "all";
+  }
+
+  function getExpenseLedgerChannelOptions(rows) {
+    return Array.from(new Set((rows || [])
+      .map(getExpenseLedgerPaymentChannel)
+      .map((channel) => String(channel || "").trim())
+      .filter(Boolean)))
+      .sort((left, right) => left.localeCompare(right, "ru"));
+  }
+
+  function getFilteredExpenseLedgerRows(rows, selectedChannel = getExpenseLedgerChannelFilter()) {
+    const channel = String(selectedChannel || "all").trim();
+    if (!channel || channel === "all") return rows;
+    return rows.filter((row) => getExpenseLedgerPaymentChannel(row) === channel);
+  }
+
   function isExpenseLedgerRow(row) {
     const operation = String(row?.operation || "").trim().toLowerCase();
     if (["expense", "business_expense", "personal_expense"].includes(operation)) return true;
@@ -140,14 +158,23 @@
     block.className = "expense-ledger-feed";
 
     const rows = getExpenseLedgerRowsForPeriod();
-    const changedRows = getChangedExpenseLedgerRows(rows);
+    const channelOptions = getExpenseLedgerChannelOptions(rows);
+    let selectedChannel = getExpenseLedgerChannelFilter();
+    if (selectedChannel !== "all" && !channelOptions.includes(selectedChannel)) {
+      selectedChannel = "all";
+      state.expenseAccounting.expenseLedgerChannelFilter = "all";
+    }
+    const visibleRows = getFilteredExpenseLedgerRows(rows, selectedChannel);
+    const changedRows = getChangedExpenseLedgerRows(visibleRows);
 
     const meta = document.createElement("div");
     meta.className = "finance-meta";
     meta.innerHTML =
       `<strong>Период:</strong> ${escapeHtml(buildManualFinancePeriodLabel(elements.startDate.value, elements.endDate.value))}` +
-      `<div class="config-note">Ledger expense rows: ${escapeHtml(String(rows.length))}; changed categories: ${escapeHtml(String(changedRows.length))}</div>`;
+      `<div class="config-note">Ledger expense rows: ${escapeHtml(String(rows.length))}; visible: ${escapeHtml(String(visibleRows.length))}; changed categories: ${escapeHtml(String(changedRows.length))}</div>`;
     block.appendChild(meta);
+
+    block.appendChild(renderExpenseLedgerChannelFilter(channelOptions, selectedChannel));
 
     const actions = document.createElement("div");
     actions.className = "finance-actions";
@@ -156,7 +183,7 @@
     saveButton.className = "primary";
     saveButton.textContent = changedRows.length ? `Сохранить категории (${changedRows.length})` : "Сохранить категории";
     saveButton.disabled = state.expenseAccounting.loading || !changedRows.length;
-    saveButton.addEventListener("click", async () => saveExpenseLedgerCategoryChanges(rows));
+    saveButton.addEventListener("click", async () => saveExpenseLedgerCategoryChanges(visibleRows));
     actions.appendChild(saveButton);
     block.appendChild(actions);
 
@@ -168,8 +195,16 @@
       return block;
     }
 
+    if (!visibleRows.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Для выбранного канала расходов не найдено.";
+      block.appendChild(empty);
+      return block;
+    }
+
     const grouped = new Map();
-    rows.forEach((row) => {
+    visibleRows.forEach((row) => {
       const date = row.date || "без даты";
       if (!grouped.has(date)) grouped.set(date, []);
       grouped.get(date).push(row);
@@ -187,6 +222,36 @@
     });
 
     return block;
+  }
+
+  function renderExpenseLedgerChannelFilter(channelOptions, selectedChannel) {
+    const controls = document.createElement("div");
+    controls.className = "finance-actions expense-ledger-filters";
+    const label = document.createElement("label");
+    label.className = "expense-filter-label";
+    label.textContent = "Канал";
+    const select = document.createElement("select");
+    select.className = "expense-select";
+    select.dataset.expenseLedgerChannelFilter = "true";
+    const all = document.createElement("option");
+    all.value = "all";
+    all.textContent = "Все каналы";
+    all.selected = selectedChannel === "all";
+    select.appendChild(all);
+    channelOptions.forEach((channel) => {
+      const option = document.createElement("option");
+      option.value = channel;
+      option.textContent = channel;
+      option.selected = selectedChannel === channel;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", (event) => {
+      state.expenseAccounting.expenseLedgerChannelFilter = event.target.value || "all";
+      renderTabs();
+    });
+    label.appendChild(select);
+    controls.appendChild(label);
+    return controls;
   }
 
   function buildExpenseLedgerDayTitle(date, rows) {
@@ -363,6 +428,9 @@
     isExpenseLedgerRow,
     extractExpenseLedgerTime,
     getExpenseLedgerCategoryOptions,
+    getExpenseLedgerChannelOptions,
+    getFilteredExpenseLedgerRows,
+    getExpenseLedgerPaymentChannel,
     buildExpenseLedgerUpdatePayload,
   };
 })();
