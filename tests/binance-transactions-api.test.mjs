@@ -7,6 +7,7 @@ import {
   fetchBinanceStatementEntries,
   fetchBinanceSignedJson,
   getBinanceProviderConfigFromEnv,
+  getBinanceProviderStatusFromEnv,
   normalizeBinanceDeposit,
   normalizeBinanceWithdrawal,
 } from "../server/binance-transactions.js";
@@ -47,14 +48,53 @@ test("missing Binance env returns no provider config", () => {
   );
 });
 
-test("GET /api/binance-transactions is routed through index and returns 405", async () => {
-  const response = createResponseRecorder();
-  await apiHandler({ method: "GET", query: { action: "binanceTransactions" }, body: null }, response);
+test("Binance health status is browser-safe and redacts configured secrets", () => {
+  const status = getBinanceProviderStatusFromEnv({
+    BINANCE_API_KEY: "key-should-not-leak",
+    BINANCE_API_SECRET: "secret-should-not-leak",
+    BINANCE_API_BASE_URL: "https://api.binance.com"
+  });
 
-  assert.equal(response.statusCode, 405);
-  assert.equal(response.body?.ok, false);
-  assert.equal(response.body?.error, "Unsupported method: GET");
-  assert.equal(response.headers["access-control-allow-methods"], "POST, OPTIONS");
+  assert.equal(status.ok, true);
+  assert.equal(status.provider, "binance");
+  assert.equal(status.configured, true);
+  assert.equal(status.ready, true);
+  assert.equal(status.env.BINANCE_API_KEY, "configured");
+  assert.equal(status.env.BINANCE_API_SECRET, "configured");
+  assert.equal(status.env.BINANCE_API_BASE_URL, "configured");
+  assert.equal(JSON.stringify(status).includes("key-should-not-leak"), false);
+  assert.equal(JSON.stringify(status).includes("secret-should-not-leak"), false);
+});
+
+test("GET /api/binance-transactions is routed through index and returns safe health status", async () => {
+  const previousKey = process.env.BINANCE_API_KEY;
+  const previousSecret = process.env.BINANCE_API_SECRET;
+  const previousBase = process.env.BINANCE_API_BASE_URL;
+  process.env.BINANCE_API_KEY = "live-key-should-not-leak";
+  process.env.BINANCE_API_SECRET = "live-secret-should-not-leak";
+  process.env.BINANCE_API_BASE_URL = "https://api.binance.com";
+
+  try {
+    const response = createResponseRecorder();
+    await apiHandler({ method: "GET", query: { action: "binanceTransactions" }, body: null }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(response.body?.provider, "binance");
+    assert.equal(response.body?.configured, true);
+    assert.equal(response.body?.env?.BINANCE_API_KEY, "configured");
+    assert.equal(response.body?.env?.BINANCE_API_SECRET, "configured");
+    assert.equal(response.headers["access-control-allow-methods"], "GET, POST, OPTIONS");
+    assert.equal(JSON.stringify(response.body).includes("live-key-should-not-leak"), false);
+    assert.equal(JSON.stringify(response.body).includes("live-secret-should-not-leak"), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.BINANCE_API_KEY;
+    else process.env.BINANCE_API_KEY = previousKey;
+    if (previousSecret === undefined) delete process.env.BINANCE_API_SECRET;
+    else process.env.BINANCE_API_SECRET = previousSecret;
+    if (previousBase === undefined) delete process.env.BINANCE_API_BASE_URL;
+    else process.env.BINANCE_API_BASE_URL = previousBase;
+  }
 });
 
 test("Binance signed request uses timestamp signature and X-MBX-APIKEY header", async () => {
