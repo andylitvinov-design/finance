@@ -59,11 +59,27 @@
 
   function findColumnByAliases(cells, aliases) {
     const normalizedAliases = (aliases || []).map(normalizeLookupText).filter(Boolean);
-    return (cells || []).findIndex((cell) => {
-      const text = normalizeLookupText(cell?.textContent ?? cell);
-      if (!text) return false;
-      return normalizedAliases.some((alias) => text === alias || text.includes(alias));
+    const normalizedCells = (cells || []).map((cell) => normalizeLookupText(cell?.textContent ?? cell));
+    for (const alias of normalizedAliases) {
+      const exactIndex = normalizedCells.findIndex((text) => text === alias);
+      if (exactIndex !== -1) return exactIndex;
+    }
+    for (const alias of normalizedAliases) {
+      const partialIndex = normalizedCells.findIndex((text) => text && text.includes(alias));
+      if (partialIndex !== -1) return partialIndex;
+    }
+    return -1;
+  }
+
+  function findColumnIndexesByAliases(cells, aliases) {
+    const normalizedAliases = (aliases || []).map(normalizeLookupText).filter(Boolean);
+    const normalizedCells = (cells || []).map((cell) => normalizeLookupText(cell?.textContent ?? cell));
+    const indexes = [];
+    normalizedCells.forEach((text, index) => {
+      if (!text) return;
+      if (normalizedAliases.some((alias) => text === alias || text.includes(alias))) indexes.push(index);
     });
+    return indexes;
   }
 
   function rowCells(row) {
@@ -73,6 +89,20 @@
   function isNumericOrderRow(row, numberIndex) {
     const value = rowCells(row)[numberIndex]?.textContent;
     return /^\d+$/.test(String(value || "").trim());
+  }
+
+  function findHeaderRow(rows) {
+    for (let index = 0; index < rows.length; index += 1) {
+      const cells = rowCells(rows[index]);
+      if (!cells.length) continue;
+      const numberIndex = findColumnByAliases(cells, ["number", "номер"]);
+      const clientIndex = findColumnByAliases(cells, ["client", "клиент", "имя"]);
+      const balanceIndex = findColumnByAliases(cells, ["balance", "баланс", "остаток"]);
+      if (numberIndex !== -1 && clientIndex !== -1 && balanceIndex !== -1) {
+        return { rowIndex: index, cells };
+      }
+    }
+    return null;
   }
 
   function groupKey(row, dateIndex, clientIndex) {
@@ -92,14 +122,28 @@
     reviewCell.textContent = current ? `${current} | ${note}` : note;
   }
 
+  function firstParsedNumber(cells, indexes, fallback = null) {
+    for (const index of indexes || []) {
+      const parsed = parseLooseNumber(cells[index]?.textContent);
+      if (parsed !== null) return parsed;
+    }
+    return fallback;
+  }
+
+  function groupZeroTolerance(planTotal) {
+    const plan = Math.abs(Number(planTotal) || 0);
+    return Math.max(0.02, Math.min(2.5, plan * 0.02));
+  }
+
   function normalizeGroupedOrderBalanceTables(rootNode = root.document) {
     const tables = queryAll(rootNode, "table");
     let changed = 0;
     tables.forEach((table) => {
       const rows = queryAll(table, "tr");
       if (rows.length < 3) return;
-      const headerCells = rowCells(rows[0]);
-      if (!headerCells.length) return;
+      const header = findHeaderRow(rows);
+      if (!header) return;
+      const headerCells = header.cells;
 
       const numberIndex = findColumnByAliases(headerCells, ["number", "номер"]);
       const dateIndex = findColumnByAliases(headerCells, ["date", "дата"]);
@@ -107,25 +151,27 @@
       const planIndex = findColumnByAliases(headerCells, [
         "accrued +3%", "70% of +3%", "план", "planned", "plan", "accrued", "стоимость", "cost"
       ]);
-      const actualIndex = findColumnByAliases(headerCells, [
+      const actualIndexes = findColumnIndexesByAliases(headerCells, [
         "дошло до нас usd", "оплачено клиентом usd", "получено в долларах", "пришло", "получено", "факт", "оплачено", "paid", "received", "actual"
       ]);
       const balanceIndex = findColumnByAliases(headerCells, ["balance", "баланс", "остаток"]);
       const reviewIndex = findColumnByAliases(headerCells, ["review note", "комментарий", "note"]);
-      if ([numberIndex, dateIndex, clientIndex, planIndex, actualIndex, balanceIndex].some((index) => index === -1)) return;
+      if ([numberIndex, dateIndex, clientIndex, planIndex, balanceIndex].some((index) => index === -1) || !actualIndexes.length) return;
 
       const totalRowIndex = rows.findIndex((row, index) => {
-        if (index === 0) return false;
-        return normalizeLookupText(rowCells(row)[0]?.textContent) === "итого";
+        if (index <= header.rowIndex) return false;
+        return normalizeLookupText(rowCells(row)[numberIndex]?.textContent) === "итого";
       });
-      const candidateRows = totalRowIndex === -1 ? rows.slice(1) : rows.slice(1, totalRowIndex);
+      const candidateRows = totalRowIndex === -1
+        ? rows.slice(header.rowIndex + 1)
+        : rows.slice(header.rowIndex + 1, totalRowIndex);
       const dataRows = candidateRows.filter((row) => isNumericOrderRow(row, numberIndex));
       if (!dataRows.length) return;
 
       dataRows.forEach((row) => {
         const cells = rowCells(row);
         const plan = parseLooseNumber(cells[planIndex]?.textContent);
-        const actual = parseLooseNumber(cells[actualIndex]?.textContent);
+        const actual = firstParsedNumber(cells, actualIndexes, 0);
         const balanceCell = cells[balanceIndex];
         if (plan === null || actual === null || !balanceCell) return;
         const previousText = String(balanceCell.textContent || "");
@@ -156,9 +202,10 @@
         const balances = group.map((row) => parseLooseNumber(rowCells(row)[balanceIndex]?.textContent));
         if (balances.some((value) => value === null)) continue;
         const sum = balances.reduce((acc, value) => acc + value, 0);
+        const planTotal = group.reduce((acc, row) => acc + (parseLooseNumber(rowCells(row)[planIndex]?.textContent) || 0), 0);
         const hasPositive = balances.some((value) => value > 0.01);
         const hasNegative = balances.some((value) => value < -0.01);
-        if (Math.abs(sum) > 0.02 || !hasPositive || !hasNegative) continue;
+        if (Math.abs(sum) > groupZeroTolerance(planTotal) || !hasPositive || !hasNegative) continue;
 
         group.forEach((row) => {
           const balanceCell = rowCells(row)[balanceIndex];

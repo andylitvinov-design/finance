@@ -31,7 +31,7 @@ function runFixesWithHelper(helper) {
 
 test("live finance fixes load before config and mobile scroll CSS after base CSS", () => {
   assert.match(indexHtml, /<link rel="stylesheet" href="style\.css">\s*<link rel="stylesheet" href="mobile-finance-table-scroll\.css">/);
-  assert.match(indexHtml, /<script src="\.\/orders-helper\.js"><\/script>\s*<script src="\.\/live-finance-fixes\.js"><\/script>\s*<script src="\.\/manual-ledger-contract\.js"><\/script>/);
+  assert.match(indexHtml, /<script src="\.\/orders-helper\.js"><\/script>\s*<script src="\.\/live-finance-fixes\.js"><\/script>\s*<script src="\.\/grouped-order-balance-fix\.js"><\/script>\s*<script src="\.\/manual-ledger-contract\.js"><\/script>/);
 });
 
 test("live finance fixes normalize text discounts before orders mapping reaches config", () => {
