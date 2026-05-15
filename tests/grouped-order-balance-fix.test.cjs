@@ -102,7 +102,7 @@ test("grouped adjacent same-client rows are zeroed only when group balance nets 
   ]);
 
   const fix = loadFix(document);
-  assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 4);
+  assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 7);
   assert.equal(firstBalance.textContent, "0,0000");
   assert.equal(secondBalance.textContent, "0,0000");
   assert.equal(thirdBalance.textContent, "0,0000");
@@ -116,16 +116,23 @@ test("grouped balance fix does not hide truly underpaid groups", () => {
   const secondBalance = cell("td", "50,0000");
   const document = createDocument([
     table([
-      row([cell("th", "NUMBER"), cell("th", "DATE"), cell("th", "CLIENT"), cell("th", "BALANCE")]),
-      row([cell("td", "18161"), cell("td", "14.05.2026"), cell("td", "Архипова"), firstBalance]),
-      row([cell("td", "18162"), cell("td", "14.05.2026"), cell("td", "Архипова"), secondBalance]),
+      row([
+        cell("th", "NUMBER"),
+        cell("th", "DATE"),
+        cell("th", "CLIENT"),
+        cell("th", "ACCRUED +3%"),
+        cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+        cell("th", "BALANCE"),
+      ]),
+      row([cell("td", "18161"), cell("td", "14.05.2026"), cell("td", "Архипова"), cell("td", "50"), cell("td", "40"), firstBalance]),
+      row([cell("td", "18162"), cell("td", "14.05.2026"), cell("td", "Архипова"), cell("td", "50"), cell("td", "0"), secondBalance]),
     ]),
   ]);
 
   const fix = loadFix(document);
-  assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 0);
-  assert.equal(firstBalance.textContent, "-40,0000");
-  assert.equal(secondBalance.textContent, "50,0000");
+  assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 1);
+  assert.equal(firstBalance.textContent, "-10,0000");
+  assert.equal(secondBalance.textContent, "-50,0000");
 });
 
 test("grouped balance fix script is loaded after live fixes and before main", () => {
