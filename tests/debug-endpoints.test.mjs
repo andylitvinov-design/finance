@@ -212,11 +212,34 @@ test("debug UI state returns aggregate-only payload without row token", async ()
   delete process.env.AGENT_DEBUG_TOKEN;
   delete process.env.DEBUG_SNAPSHOT_TOKEN;
   delete process.env.EZOHATA_DEBUG_TOKEN;
+  const fixture = repositoryFixture();
+  fixture.operations.push({
+    date: "2026-05-05",
+    operation: "expense",
+    fromChannel: "трансервайз дол",
+    amount: "10.88",
+    amountUsd: "-10.88",
+    amountNet: "10.88",
+    source: "wise",
+    category: "food",
+    ledgerV2: {
+      date: "2026-05-05",
+      operation: "expense",
+      from_channel: "трансервайз дол",
+      amount: "10.88",
+      currency: "USD",
+      amount_usd: "-10.88",
+      amount_net: "10.88",
+      balance_amount: -10.88,
+      source: "wise",
+      category: "food"
+    }
+  });
 
   try {
     const payload = await buildDebugUiState({
       query: { from: "2026-05-01", to: "2026-05-31", includeRows: "1" },
-      repositoryLoader: async () => repositoryFixture()
+      repositoryLoader: async () => fixture
     });
 
     assert.equal(payload.ok, true);
@@ -240,6 +263,18 @@ test("debug UI state returns aggregate-only payload without row token", async ()
       unmatched_income_rows_count: 0,
     });
     assert.equal(payload.expense_analysis.real_expense[0].channel, "трансервайз дол");
+    assert.deepEqual(payload.expense_analysis.real_expense_breakdown[0], {
+      channel: "трансервайз дол",
+      total: 63.82,
+      business: 52.94,
+      personal: 10.88,
+      byCategory: {
+        business_expense: 52.94,
+        food: 10.88,
+      },
+      bySubcategory: {},
+      excluded_transfer_exchange: 10,
+    });
     assert.equal(payload.transfer_analysis.transfers[0].channel, "трансервайз дол");
   } finally {
     restoreEnv(envBackup);

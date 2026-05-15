@@ -334,7 +334,7 @@ function buildExpenseBreakdownByChannel(expenseRows, excludedRows = []) {
       excluded_transfer_exchange: 0,
     };
     current.total += amountUsd;
-    if (operation === "personal_expense") {
+    if (operation === "personal_expense" || ["flat", "house", "food", "fun", "study", "travel", "extra"].includes(category)) {
       current.personal += amountUsd;
     } else {
       current.business += amountUsd;
