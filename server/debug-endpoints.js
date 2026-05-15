@@ -133,6 +133,7 @@ export async function buildDebugUiState(options = {}) {
     expense_analysis: {
       source: "server_derived_ledger_operations",
       real_expense: groupRowsByChannel(expenseRows),
+      real_expense_breakdown: buildExpenseBreakdownByChannel(expenseRows, [...transferRows, ...exchangeRows].filter(isOutflowRow)),
       transfer_outflows: groupRowsByChannel([...transferRows, ...exchangeRows].filter(isOutflowRow)),
       real_expense_rows: includeRows ? expenseRows.map(safeLedgerRow) : undefined,
     },
@@ -312,6 +313,67 @@ function groupRowsByChannel(rows, options = {}) {
       amount_usd_abs_sum: round(row.amount_usd_abs_sum),
       amount_net_abs_sum: round(row.amount_net_abs_sum),
     }));
+}
+
+function buildExpenseBreakdownByChannel(expenseRows, excludedRows = []) {
+  const grouped = new Map();
+  for (const row of expenseRows || []) {
+    const channel = getRowChannel(row);
+    if (!channel) continue;
+    const operation = String(row?.ledgerV2?.operation || row?.operation || "").trim();
+    const category = sanitizeText(row?.ledgerV2?.category || row?.category || "").slice(0, 80) || "uncategorized";
+    const subcategory = sanitizeText(row?.ledgerV2?.subcategory || row?.subcategory || "").slice(0, 80);
+    const amountUsd = Math.abs(parseNumber(getLedgerValue(row, "amount_usd")) || 0);
+    const current = grouped.get(channel) || {
+      channel,
+      total: 0,
+      business: 0,
+      personal: 0,
+      byCategory: {},
+      bySubcategory: {},
+      excluded_transfer_exchange: 0,
+    };
+    current.total += amountUsd;
+    if (operation === "personal_expense") {
+      current.personal += amountUsd;
+    } else {
+      current.business += amountUsd;
+    }
+    current.byCategory[category] = (current.byCategory[category] || 0) + amountUsd;
+    if (subcategory) current.bySubcategory[subcategory] = (current.bySubcategory[subcategory] || 0) + amountUsd;
+    grouped.set(channel, current);
+  }
+  for (const row of excludedRows || []) {
+    const channel = getRowChannel(row);
+    if (!channel) continue;
+    const amountUsd = Math.abs(parseNumber(getLedgerValue(row, "amount_usd")) || 0);
+    const current = grouped.get(channel) || {
+      channel,
+      total: 0,
+      business: 0,
+      personal: 0,
+      byCategory: {},
+      bySubcategory: {},
+      excluded_transfer_exchange: 0,
+    };
+    current.excluded_transfer_exchange += amountUsd;
+    grouped.set(channel, current);
+  }
+  return Array.from(grouped.values())
+    .sort((left, right) => left.channel.localeCompare(right.channel))
+    .map((row) => ({
+      ...row,
+      total: round(row.total),
+      business: round(row.business),
+      personal: round(row.personal),
+      byCategory: roundObject(row.byCategory),
+      bySubcategory: roundObject(row.bySubcategory),
+      excluded_transfer_exchange: round(row.excluded_transfer_exchange),
+    }));
+}
+
+function roundObject(values = {}) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, round(value)]));
 }
 
 function buildIncomeEventDiagnostics(incomeRows, movementRows) {

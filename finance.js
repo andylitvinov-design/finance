@@ -933,6 +933,32 @@ function getManualFinancePlannedExpenseUsdNumber(row, rateLookup = { byChannel: 
   );
 }
 
+function normalizeExpenseAnalysisProviderExpenseBreakdown(breakdown, fallbackTotal = 0) {
+  if (breakdown && typeof breakdown === "object" && !Array.isArray(breakdown)) {
+    const total = roundExpenseAnalysisAmount(breakdown.total);
+    const business = roundExpenseAnalysisAmount(
+      breakdown.business !== undefined ? breakdown.business : total
+    );
+    return {
+      total,
+      business,
+      personal: roundExpenseAnalysisAmount(breakdown.personal),
+      excludedTransferExchange: roundExpenseAnalysisAmount(breakdown.excludedTransferExchange),
+      byCategory: breakdown.byCategory || {},
+      bySubcategory: breakdown.bySubcategory || {}
+    };
+  }
+  const total = roundExpenseAnalysisAmount(fallbackTotal);
+  return {
+    total,
+    business: total,
+    personal: 0,
+    excludedTransferExchange: 0,
+    byCategory: {},
+    bySubcategory: {}
+  };
+}
+
 function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [], movementValues = [], channelByCurrency = {}) {
   const output = [];
   const manualLookup = Object.fromEntries(
@@ -979,6 +1005,7 @@ function buildExpenseAnalysisChannelSummary({
   ledgerRows = [],
   realIncomeSummaryByChannel = {},
   providerExpenseByChannel = {},
+  providerExpenseBreakdownByChannel = {},
   usdRateLookup = { byChannel: {}, byCurrency: {} },
   transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 },
   ownerOrderBaseUsd = "",
@@ -993,7 +1020,10 @@ function buildExpenseAnalysisChannelSummary({
     "пришло реально",
     "разница",
     "потрачено план",
-    "потрачено реал",
+    "потрачено реал бизнес",
+    "потрачено реал всего",
+    "личные расходы",
+    "transfer/exchange excluded",
     "разница",
     "план приходов, шт",
     "авто/MCP приходов, шт",
@@ -1017,7 +1047,11 @@ function buildExpenseAnalysisChannelSummary({
     const realIncomeUsd = roundExpenseAnalysisAmount(realIncomeSummaryByChannel?.[channel]?.realNetUsd);
     const incomeDifferenceUsd = roundExpenseAnalysisAmount(plannedIncomeUsd - realIncomeUsd);
     const plannedExpenseUsd = roundExpenseAnalysisAmount(getManualFinancePlannedExpenseUsdNumber(manualRow, usdRateLookup));
-    const realExpenseUsd = roundExpenseAnalysisAmount(providerExpenseByChannel?.[channel]);
+    const expenseBreakdown = normalizeExpenseAnalysisProviderExpenseBreakdown(
+      providerExpenseBreakdownByChannel?.[channel],
+      providerExpenseByChannel?.[channel]
+    );
+    const realExpenseUsd = expenseBreakdown.business;
     const expenseDifferenceUsd = roundExpenseAnalysisAmount(plannedExpenseUsd - realExpenseUsd);
     const planIncomeCount = getExpenseAnalysisPlannedIncomeCount(
       movementStats.accruedPlusCountByChannel?.[channel],
@@ -1036,6 +1070,9 @@ function buildExpenseAnalysisChannelSummary({
       formatSheetNumber(incomeDifferenceUsd),
       formatSheetNumber(plannedExpenseUsd),
       formatSheetNumber(realExpenseUsd),
+      formatSheetNumber(expenseBreakdown.total),
+      formatSheetNumber(expenseBreakdown.personal),
+      formatSheetNumber(expenseBreakdown.excludedTransferExchange),
       formatSheetNumber(expenseDifferenceUsd),
       String(planIncomeCount),
       String(autoIncomeCount),
@@ -1075,6 +1112,9 @@ function buildExpenseAnalysisChannelSummary({
       formatSheetNumber(0),
       formatSheetNumber(0),
       formatSheetNumber(0),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
       "0",
       "0",
       "0",
@@ -1091,6 +1131,16 @@ function buildExpenseAnalysisChannelSummary({
   const nextOwnerOrderShare30Pct = hasOwnerOrderShare
     ? roundExpenseAnalysisAmount(parsedOwnerOrderShare30Pct)
     : roundExpenseAnalysisAmount(incomeTotals.ordersPlanUsd * 0.3);
+  const providerExpenseBreakdownTotals = Object.values(providerExpenseBreakdownByChannel || {}).reduce((totals, breakdown) => {
+    const normalized = normalizeExpenseAnalysisProviderExpenseBreakdown(breakdown);
+    totals.total += normalized.total;
+    totals.personal += normalized.personal;
+    totals.excludedTransferExchange += normalized.excludedTransferExchange;
+    return totals;
+  }, { total: 0, personal: 0, excludedTransferExchange: 0 });
+  const realExpenseTotalUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.total || expenseTotals.realUsd);
+  const personalExpenseUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.personal);
+  const excludedTransferExchangeUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.excludedTransferExchange);
 
   rows.push([
     MANUAL_FINANCE_TOTAL_LABEL,
@@ -1101,6 +1151,9 @@ function buildExpenseAnalysisChannelSummary({
     formatSheetNumber(incomeTotals.differenceUsd),
     formatSheetNumber(expenseTotals.plannedUsd),
     formatSheetNumber(expenseTotals.realUsd),
+    formatSheetNumber(realExpenseTotalUsd),
+    formatSheetNumber(personalExpenseUsd),
+    formatSheetNumber(excludedTransferExchangeUsd),
     formatSheetNumber(expenseTotals.differenceUsd),
     String(incomeCountTotals.plan),
     String(incomeCountTotals.auto),
@@ -1120,6 +1173,9 @@ function buildExpenseAnalysisChannelSummary({
     expenseTotals: {
       plannedUsd: roundExpenseAnalysisAmount(expenseTotals.plannedUsd),
       realUsd: roundExpenseAnalysisAmount(expenseTotals.realUsd),
+      realTotalUsd: realExpenseTotalUsd,
+      personalUsd: personalExpenseUsd,
+      excludedTransferExchangeUsd,
       differenceUsd: roundExpenseAnalysisAmount(expenseTotals.differenceUsd)
     },
     incomeCountTotals: {
