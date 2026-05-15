@@ -110,6 +110,44 @@ If the root cause is not proven, write `likely bug in [layer], needs verificatio
 - Determine PayPal direction from the original sign before `Math.abs`.
 - Provider non-JSON/plain-text/HTML errors must become structured JSON errors, not raw SyntaxError or HTML in UI.
 
+## Finance Reverse-Math Guard
+
+For any screenshot/report where a displayed money value disagrees with a raw source amount, start with one-row arithmetic before broad code inspection.
+
+Required first checks:
+
+1. Pick one concrete row/client/date that contributes to the wrong number.
+2. Record raw source amount, source currency, displayed/derived USD amount, and any visible rate.
+3. Compute:
+   - `implied_rate = raw_local_amount / displayed_usd_amount`
+   - `implied_multiplier = displayed_usd_amount / raw_local_amount`
+   - `error_ratio = displayed_usd_amount / expected_usd_amount`
+4. Check whether the implied rate is realistic before blaming UI or JS aggregation.
+
+Expected local-per-USD sanity ranges:
+
+- UAH: `30..60`
+- RUB: `60..150`
+- CAD: `1.1..1.6`
+- EUR: use USD-per-EUR sanity `0.8..1.3`
+
+If the implied rate is outside the sanity range, prioritize source data, rate cells, sheet formulas, decimal comma/dot, missing digit, and derived USD columns before JS/UI hypotheses.
+
+Known regression pattern:
+
+- Source row: `4557.75 UAH`
+- Bad derived value: `1072.4118 USD`
+- Reverse math: `4557.75 / 1072.4118 = 4.25`
+- Root cause: UAH rate cell `4.25` instead of about `43..44`, before UI/analytics.
+
+For UAH movement rows, add/expect diagnostics such as:
+
+- `UAH_RATE_OUT_OF_RANGE`
+- `IMPLIED_RATE_OUT_OF_RANGE`
+- `DERIVED_USD_MISMATCH`
+
+A useful row-level proof table must include row number, date, client, channel/payment method, raw amount, rate, derived USD, implied rate, and whether the row is included in the displayed aggregate.
+
 ## Movement Table Invariant
 
 For `Движение средства`, the rendered `Итого` row under `BALANCE` must equal the sum of visible numeric `NUMBER` rows for the selected period.
