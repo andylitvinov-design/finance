@@ -152,7 +152,13 @@
         "accrued +3%", "70% of +3%", "план", "planned", "plan", "accrued", "стоимость", "cost"
       ]);
       const actualIndexes = findColumnIndexesByAliases(headerCells, [
-        "дошло до нас usd", "оплачено клиентом usd", "получено в долларах", "пришло", "получено", "факт", "оплачено", "paid", "received", "actual"
+        "дошло до нас usd",
+        "оплачено клиентом usd",
+        "получено в долларах",
+        "received usd",
+        "paid usd",
+        "actual usd",
+        "fact usd"
       ]);
       const balanceIndex = findColumnByAliases(headerCells, ["balance", "баланс", "остаток"]);
       const reviewIndex = findColumnByAliases(headerCells, ["review note", "комментарий", "note"]);
