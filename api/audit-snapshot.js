@@ -298,6 +298,14 @@ function buildWeeklyBalanceSummary({
 
 function parsePeriodFilter(query = {}) {
   const period = String(query.period || "").trim();
+  const range = period.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+  if (range) {
+    return {
+      from: range[1],
+      to: range[2],
+      period: { from: range[1], to: range[2] },
+    };
+  }
   if (/^\d{4}-\d{2}$/.test(period)) {
     return {
       from: `${period}-01`,

@@ -1128,6 +1128,11 @@ function buildExpenseAnalysisChannelSummary({
       manual: incomeCountTotals.manual,
       screenshot: incomeCountTotals.screenshot
     },
+    incomeCountDiagnostics: {
+      rawRowsByChannel: ledgerIncomeCounts.rawRowsByChannel || {},
+      dedupedEventsByChannel: ledgerIncomeCounts.dedupedEventsByChannel || {},
+      duplicateRowsByChannel: ledgerIncomeCounts.duplicateRowsByChannel || {}
+    },
     transferBalance: {
       transferIn: roundExpenseAnalysisAmount(transferBalance.transferIn),
       transferOut: roundExpenseAnalysisAmount(transferBalance.transferOut),
@@ -1525,8 +1530,12 @@ function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
   const summary = {
     autoByChannel: empty(),
     manualByChannel: empty(),
-    screenshotByChannel: empty()
+    screenshotByChannel: empty(),
+    rawRowsByChannel: empty(),
+    dedupedEventsByChannel: empty(),
+    duplicateRowsByChannel: empty()
   };
+  const events = new Set();
   (rows || []).forEach((rawRow) => {
     const row = rawRow?.ledgerV2 || rawRow || {};
     if (!isExpenseAnalysisIncomeRowInPeriod(row, rawRow, period)) return;
@@ -1536,11 +1545,85 @@ function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
     const channel = canonicalManualFinanceChannel(row?.to_channel || row?.toChannel || rawRow?.to_channel || rawRow?.toChannel || "");
     if (!channel || !Object.prototype.hasOwnProperty.call(summary.autoByChannel, channel)) return;
     const source = normalizeExpenseAnalysisIncomeSource(row?.source || rawRow?.source || rawRow?.displaySource || "");
-    if (isExpenseAnalysisAutoIncomeSource(source)) summary.autoByChannel[channel] += 1;
-    else if (isExpenseAnalysisManualIncomeSource(source)) summary.manualByChannel[channel] += 1;
-    else if (isExpenseAnalysisScreenshotIncomeSource(source)) summary.screenshotByChannel[channel] += 1;
+    let bucket = "";
+    if (isExpenseAnalysisAutoIncomeSource(source)) bucket = "auto";
+    else if (isExpenseAnalysisManualIncomeSource(source)) bucket = "manual";
+    else if (isExpenseAnalysisScreenshotIncomeSource(source)) bucket = "screenshot";
+    if (!bucket) return;
+    summary.rawRowsByChannel[channel] += 1;
+    const eventKey = buildLedgerIncomeEventDedupeKey(row, rawRow, channel);
+    if (events.has(eventKey)) {
+      summary.duplicateRowsByChannel[channel] += 1;
+      return;
+    }
+    events.add(eventKey);
+    summary.dedupedEventsByChannel[channel] += 1;
+    if (bucket === "auto") summary.autoByChannel[channel] += 1;
+    else if (bucket === "manual") summary.manualByChannel[channel] += 1;
+    else if (bucket === "screenshot") summary.screenshotByChannel[channel] += 1;
   });
   return summary;
+}
+
+function buildLedgerIncomeEventDedupeKey(row = {}, rawRow = {}, channel = "") {
+  const sourceTransactionId = normalizeExpenseAnalysisIncomeEventKeyPart(
+    row?.sourceTransactionId ||
+    rawRow?.sourceTransactionId ||
+    row?.externalId ||
+    rawRow?.externalId ||
+    row?.external_id ||
+    rawRow?.external_id ||
+    ""
+  );
+  if (sourceTransactionId) return `source:${sourceTransactionId}`;
+  const rawSourceId = normalizeExpenseAnalysisIncomeEventKeyPart(
+    row?.raw_source_id ||
+    rawRow?.raw_source_id ||
+    row?.rawSourceId ||
+    rawRow?.rawSourceId ||
+    ""
+  );
+  if (rawSourceId) return `raw:${rawSourceId}`;
+  const date = getExpenseAnalysisIncomeRowDate(row, rawRow);
+  const currency = normalizeExpenseAnalysisIncomeEventKeyPart(row?.currency || rawRow?.currency || "");
+  const amount = normalizeExpenseAnalysisIncomeEventAmount(
+    row?.amount_net ??
+    rawRow?.amount_net ??
+    row?.amountNet ??
+    rawRow?.amountNet ??
+    row?.netAmount ??
+    rawRow?.netAmount ??
+    row?.amount ??
+    rawRow?.amount
+  );
+  const text = normalizeLookupText(
+    row?.comment ||
+    rawRow?.comment ||
+    row?.counterparty ||
+    rawRow?.counterparty ||
+    row?.description ||
+    rawRow?.description ||
+    row?.organization ||
+    rawRow?.organization ||
+    ""
+  );
+  return [
+    "fallback",
+    normalizeExpenseAnalysisIncomeEventKeyPart(channel),
+    date,
+    currency,
+    amount,
+    text
+  ].join("|");
+}
+
+function normalizeExpenseAnalysisIncomeEventKeyPart(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeExpenseAnalysisIncomeEventAmount(value) {
+  const numeric = parseLooseNumber(value);
+  return Number.isFinite(numeric) ? String(Math.round(Math.abs(numeric) * 10000) / 10000) : "";
 }
 
 function normalizeExpenseAnalysisIncomeOperation(value) {
