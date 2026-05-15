@@ -12,22 +12,31 @@ function renderTabs() {
     button.textContent = tab.label;
     button.addEventListener("click", () => handleTabClick(tab.id));
     elements.tabs.appendChild(button);
-
-    const panel = document.createElement("section");
-    panel.className = "tab-panel" + (tab.id === state.activeTab ? " active" : "");
-    if (tab.id === "expenseAccounting") {
-      panel.appendChild(renderExpenseAccountingBlock());
-    } else if (tab.id === "manualFinance") {
-      panel.appendChild(renderManualFinanceBlock());
-    } else if (tab.id === "savings") {
-      panel.appendChild(renderManualTransfersBlock());
-    } else if (tab.id === "orders") {
-      panel.appendChild(renderManualOrdersBlock());
-    } else {
-      panel.appendChild(renderStandardTab(tab.id, tab.label));
-    }
-    elements.tabPanels.appendChild(panel);
   }
+
+  const activeTab = state.config.tabs.find((tab) => tab.id === state.activeTab) || state.config.tabs[0];
+  if (!activeTab) {
+    refreshGoogleControlsVisibility();
+    return;
+  }
+  if (activeTab.id !== state.activeTab) {
+    state.activeTab = activeTab.id;
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "tab-panel active";
+  if (activeTab.id === "expenseAccounting") {
+    panel.appendChild(renderExpenseAccountingBlock());
+  } else if (activeTab.id === "manualFinance") {
+    panel.appendChild(renderManualFinanceBlock());
+  } else if (activeTab.id === "savings") {
+    panel.appendChild(renderManualTransfersBlock());
+  } else if (activeTab.id === "orders") {
+    panel.appendChild(renderManualOrdersBlock());
+  } else {
+    panel.appendChild(renderStandardTab(activeTab.id, activeTab.label));
+  }
+  elements.tabPanels.appendChild(panel);
   refreshGoogleControlsVisibility();
 }
 
