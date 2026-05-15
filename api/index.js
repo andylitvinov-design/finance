@@ -4,6 +4,7 @@ import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
+import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
@@ -23,6 +24,7 @@ import PaymentChannelReference from "../payment-channel-reference.js";
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
+const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -148,6 +150,10 @@ export default async function handler(request, response) {
   const debugAction = String(request.query?.action || "").trim();
   if (debugAction === BINANCE_TRANSACTIONS_ACTION) {
     return await binanceTransactionsHandler(request, response);
+  }
+
+  if (debugAction === PERIOD_BALANCE_RECONCILIATION_ACTION) {
+    return await periodBalanceReconciliationHandler(request, response);
   }
 
   if (isDebugAction(debugAction)) {

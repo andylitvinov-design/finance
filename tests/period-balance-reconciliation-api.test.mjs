@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPeriodBalanceReconciliationSnapshot } from "../api/period-balance-reconciliation.js";
+import { buildPeriodBalanceReconciliationSnapshot } from "../server/period-balance-reconciliation-route.js";
 
 test("period balance reconciliation API snapshot exposes planned and real period deltas", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
