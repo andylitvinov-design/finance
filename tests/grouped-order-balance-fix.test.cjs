@@ -145,6 +145,7 @@ test("movement table metadata rows and split payments normalize like the live gr
   const innaThirdBalance = cell("td", "-110,35");
   const arkFirstBalance = cell("td", "25,75");
   const arkFourthBalance = cell("td", "-77,75");
+  const uahBalance = cell("td", "-6");
   const underpaidFirstBalance = cell("td", "40");
   const underpaidSecondBalance = cell("td", "-30");
   const document = createDocument([
@@ -160,20 +161,23 @@ test("movement table metadata rows and split payments normalize like the live gr
         cell("th", "ACCRUED +3%"),
         cell("th", "PAYMENT METHOD"),
         cell("th", "ПОЛУЧЕНО В ДОЛЛАРАХ"),
+        cell("th", "ПОЛУЧЕНО В РУБЛЯХ"),
+        cell("th", "ПОЛУЧЕНО В ГРИВНАХ"),
         cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
         cell("th", "ДОШЛО ДО НАС USD"),
         cell("th", "BALANCE"),
         cell("th", "REVIEW NOTE"),
       ]),
-      row([cell("td", "18149"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "A"), cell("td", "100"), cell("td", "103"), cell("td", "пейпал дол"), cell("td", ""), cell("td", ""), cell("td", ""), innaFirstBalance, cell("td", "")]),
-      row([cell("td", "18150"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "B"), cell("td", "5"), cell("td", "5,15"), cell("td", "пейпал дол"), cell("td", ""), cell("td", ""), cell("td", ""), innaSecondBalance, cell("td", "")]),
-      row([cell("td", "18151"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "C"), cell("td", "5"), cell("td", "5,15"), cell("td", "сайт, дол"), cell("td", "115,5"), cell("td", "115,5"), cell("td", ""), innaThirdBalance, cell("td", "")]),
-      row([cell("td", "18161"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "A"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), arkFirstBalance, cell("td", "")]),
-      row([cell("td", "18162"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "B"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", "25,75"), cell("td", "")]),
-      row([cell("td", "18163"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "C"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", "25,75"), cell("td", "")]),
-      row([cell("td", "18164"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "D"), cell("td", "25"), cell("td", "25,25"), cell("td", "крипта"), cell("td", "103"), cell("td", "103"), cell("td", ""), arkFourthBalance, cell("td", "")]),
-      row([cell("td", "19000"), cell("td", "15.05.2026"), cell("td", "Under Paid"), cell("td", "A"), cell("td", "50"), cell("td", "50"), cell("td", "card"), cell("td", "10"), cell("td", "10"), cell("td", ""), underpaidFirstBalance, cell("td", "")]),
-      row([cell("td", "19001"), cell("td", "15.05.2026"), cell("td", "Under Paid"), cell("td", "B"), cell("td", "50"), cell("td", "50"), cell("td", "card"), cell("td", "20"), cell("td", "20"), cell("td", ""), underpaidSecondBalance, cell("td", "")]),
+      row([cell("td", "18149"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "A"), cell("td", "100"), cell("td", "103"), cell("td", "пейпал дол"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), innaFirstBalance, cell("td", "")]),
+      row([cell("td", "18150"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "B"), cell("td", "5"), cell("td", "5,15"), cell("td", "пейпал дол"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), innaSecondBalance, cell("td", "")]),
+      row([cell("td", "18151"), cell("td", "05.05.2026"), cell("td", "Инна Устименко"), cell("td", "C"), cell("td", "5"), cell("td", "5,15"), cell("td", "сайт, дол"), cell("td", "115,5"), cell("td", ""), cell("td", ""), cell("td", "115,5"), cell("td", ""), innaThirdBalance, cell("td", "")]),
+      row([cell("td", "18155"), cell("td", "08.05.2026"), cell("td", "Надежда Юзова"), cell("td", "UAH"), cell("td", "100"), cell("td", "103"), cell("td", "сайт,рубли"), cell("td", ""), cell("td", ""), cell("td", "8703,04"), cell("td", "109"), cell("td", ""), uahBalance, cell("td", "")]),
+      row([cell("td", "18161"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "A"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), arkFirstBalance, cell("td", "")]),
+      row([cell("td", "18162"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "B"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", "25,75"), cell("td", "")]),
+      row([cell("td", "18163"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "C"), cell("td", "25"), cell("td", "25,75"), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", ""), cell("td", "25,75"), cell("td", "")]),
+      row([cell("td", "18164"), cell("td", "14.05.2026"), cell("td", "Ярослав Архипов"), cell("td", "D"), cell("td", "25"), cell("td", "25,25"), cell("td", "крипта"), cell("td", "103"), cell("td", ""), cell("td", ""), cell("td", "103"), cell("td", ""), arkFourthBalance, cell("td", "")]),
+      row([cell("td", "19000"), cell("td", "15.05.2026"), cell("td", "Under Paid"), cell("td", "A"), cell("td", "50"), cell("td", "50"), cell("td", "card"), cell("td", "10"), cell("td", ""), cell("td", ""), cell("td", "10"), cell("td", ""), underpaidFirstBalance, cell("td", "")]),
+      row([cell("td", "19001"), cell("td", "15.05.2026"), cell("td", "Under Paid"), cell("td", "B"), cell("td", "50"), cell("td", "50"), cell("td", "card"), cell("td", "20"), cell("td", ""), cell("td", ""), cell("td", "20"), cell("td", ""), underpaidSecondBalance, cell("td", "")]),
     ]),
   ]);
 
@@ -184,6 +188,7 @@ test("movement table metadata rows and split payments normalize like the live gr
   assert.equal(numericText(innaThirdBalance.textContent), 0);
   assert.equal(numericText(arkFirstBalance.textContent), 0);
   assert.equal(numericText(arkFourthBalance.textContent), 0);
+  assert.equal(uahBalance.textContent, "6,0000");
   assert.equal(underpaidFirstBalance.textContent, "-40,0000");
   assert.equal(underpaidSecondBalance.textContent, "-30,0000");
 });
