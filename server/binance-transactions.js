@@ -7,12 +7,15 @@ const BINANCE_ENDPOINT_WARNING = "Binance real income: endpoint/permission needs
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
   response.setHeader("Cache-Control", "no-store");
 
   if (request.method === "OPTIONS") {
     return response.status(200).json({ ok: true });
+  }
+  if (request.method === "GET") {
+    return response.status(200).json(getBinanceProviderStatusFromEnv(process.env));
   }
   if (request.method !== "POST") {
     return response.status(405).json({ ok: false, error: `Unsupported method: ${request.method}` });
@@ -45,6 +48,32 @@ export function getBinanceProviderConfigFromEnv(env = process.env) {
     apiKey,
     apiSecret,
     baseUrl: String(env.BINANCE_API_BASE_URL || BINANCE_BASE_URL).trim() || BINANCE_BASE_URL
+  };
+}
+
+export function getBinanceProviderStatusFromEnv(env = process.env) {
+  const apiKeyConfigured = Boolean(String(env.BINANCE_API_KEY || "").trim());
+  const apiSecretConfigured = Boolean(String(env.BINANCE_API_SECRET || "").trim());
+  const baseUrl = String(env.BINANCE_API_BASE_URL || BINANCE_BASE_URL).trim() || BINANCE_BASE_URL;
+  const configured = apiKeyConfigured && apiSecretConfigured;
+  return {
+    ok: true,
+    provider: "binance",
+    configured,
+    ready: configured,
+    baseUrl,
+    route: "/api/binance-transactions",
+    method: "POST",
+    healthMethod: "GET",
+    env: {
+      BINANCE_API_KEY: apiKeyConfigured ? "configured" : "missing",
+      BINANCE_API_SECRET: apiSecretConfigured ? "configured" : "missing",
+      BINANCE_API_BASE_URL: baseUrl ? "configured" : "missing"
+    },
+    requiredEnv: ["BINANCE_API_KEY", "BINANCE_API_SECRET", "BINANCE_API_BASE_URL"],
+    message: configured
+      ? "Binance credentials are configured. Use POST with startDate/endDate to fetch transactions."
+      : "Binance credentials are missing. Configure BINANCE_API_KEY and BINANCE_API_SECRET in Production env, then redeploy."
   };
 }
 
