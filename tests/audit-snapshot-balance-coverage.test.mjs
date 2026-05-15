@@ -145,7 +145,48 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.balance_coverage.weekly_summary.missing_provider_balance, 1);
   assert.match(snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows, /2026-05-02\twise usd\tUSD\t1206/);
   assert.equal(snapshot.balance_coverage.actionable_accounts[0].status, "missing_provider_balance");
+  assert.match(snapshot.balance_coverage.actionable_accounts[0].diagnosis, /Нет фактического остатка/);
+  assert.match(snapshot.balance_coverage.actionable_accounts[0].fix_action, /Добавить фактический остаток закрытия/);
+  assert.match(snapshot.balance_coverage.actionable_accounts[0].formula, /opening_balance 1000 \+ inflow 206 - outflow 0/);
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "needs verification");
+});
+
+test("audit snapshot exposes missing opening balance fix instructions without inventing amount", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation({ date: "2026-05-11" })],
+      balances: [
+        { date: "2026-05-11", channel: "wise usd", currency: "USD", amount: "1206" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const account = snapshot.balance_coverage.actionable_accounts[0];
+  assert.equal(account.status, "missing_opening_balance");
+  assert.equal(account.opening_balance, null);
+  assert.equal(account.computed_closing_balance, null);
+  assert.match(account.diagnosis, /Нет начального остатка/);
+  assert.match(account.fix_action, /сумму взять из провайдера/);
+  assert.match(account.formula, /opening_balance missing/);
+  assert.deepEqual(snapshot.balance_fixes.missing_opening_balance_rows, [
+    {
+      required_date: "2026-05-10",
+      movement_date: "2026-05-11",
+      channel: "wise usd",
+      currency: "USD",
+      amount: null,
+      diagnosis: account.diagnosis,
+      action: "Add a factual opening balance row to Остатки before the movement date; amount must come from provider/manual statement.",
+    },
+  ]);
+  assert.equal(snapshot.balance_fixes.copyable_ostatki_rows, "");
 });
 
 test("audit snapshot weekly balance summary fails on mismatched provider balance", async () => {
@@ -174,6 +215,7 @@ test("audit snapshot weekly balance summary fails on mismatched provider balance
   assert.equal(weekly.actionable_accounts[0].channel, "wise usd");
   assert.equal(weekly.actionable_accounts[0].currency, "USD");
   assert.equal(weekly.actionable_accounts[0].difference, -6);
+  assert.match(weekly.actionable_accounts[0].fix_action, /Проверить Ledger movement/);
 });
 
 test("audit snapshot weekly balance summary blocks ok status when amount_net is missing", async () => {

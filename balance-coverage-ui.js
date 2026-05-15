@@ -158,14 +158,16 @@
       block.appendChild(renderFixSubsection(
         doc,
         "Где исправить",
-        ["Дата", "Счёт", "Валюта", "Разница", "Статус", "Что сделать"],
+        ["Дата", "Счёт", "Валюта", "Разница", "Статус", "Диагноз", "Что сделать", "Формула"],
         actions.map((row) => [
           row.date || "—",
           row.channel || "—",
           row.currency || "—",
           formatCoverageNumber(row.difference),
           getStatusLabel(row.status),
-          getStatusAction(row.status),
+          row.diagnosis || "—",
+          row.fix_action || getStatusAction(row.status),
+          row.formula || "—",
         ])
       ));
     }
@@ -182,8 +184,9 @@
     block.appendChild(title);
 
     const amountNetRows = fixes?.missing_amount_net_rows || [];
+    const missingOpeningRows = fixes?.missing_opening_balance_rows || [];
     const ostatkiRows = fixes?.missing_ostatki_rows || [];
-    if (!amountNetRows.length && !ostatkiRows.length) {
+    if (!amountNetRows.length && !missingOpeningRows.length && !ostatkiRows.length) {
       const empty = doc.createElement("div");
       empty.className = "finance-status";
       empty.textContent = "Нет обязательных исправлений для сверки остатков.";
@@ -211,6 +214,22 @@
           formatCoverageNumber(row.amount),
           row.raw_source_id || "—",
           formatCoverageNumber(row.recommended_amount_net),
+          row.action || "—",
+        ])
+      ));
+    }
+
+    if (missingOpeningRows.length) {
+      block.appendChild(renderFixSubsection(
+        doc,
+        "Missing opening Остатки rows",
+        ["Дата Остатки", "Дата движения", "Счёт", "Валюта", "Сумма", "Что сделать"],
+        missingOpeningRows.map((row) => [
+          row.required_date || "—",
+          row.movement_date || "—",
+          row.channel || "—",
+          row.currency || "—",
+          formatCoverageNumber(row.amount),
           row.action || "—",
         ])
       ));
@@ -312,7 +331,10 @@
       "Факт остаток",
       "Разница",
       "Статус",
+      "Диагноз",
       "Что сделать",
+      "Формула",
+      "Приоритет",
     ];
     return [
       header,
@@ -327,7 +349,10 @@
         formatCoverageNumber(row.provider_reported_balance),
         formatCoverageNumber(row.difference),
         getStatusLabel(row.status),
-        getStatusAction(row.status),
+        row.diagnosis || "—",
+        row.fix_action || getStatusAction(row.status),
+        row.formula || "—",
+        formatCoverageNumber(row.fix_priority),
       ]),
     ];
   }

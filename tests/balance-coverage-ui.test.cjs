@@ -99,6 +99,10 @@ test("balance coverage UI builds table with actionable rows first", () => {
           provider_reported_balance: 1199,
           difference: -2,
           status: "mismatch",
+          diagnosis: "Расхождение: provider_reported_balance отличается от computed_closing_balance на -2.",
+          fix_action: "Проверить Ledger movement, amount_net и строку Остатки.",
+          formula: "opening_balance 1206 + inflow 0 - outflow 5 = computed_closing_balance 1201 ; provider_reported_balance 1199 ; difference -2",
+          fix_priority: 1,
         },
       ],
       actionable_accounts: [
@@ -113,6 +117,10 @@ test("balance coverage UI builds table with actionable rows first", () => {
           provider_reported_balance: 1199,
           difference: -2,
           status: "mismatch",
+          diagnosis: "Расхождение: provider_reported_balance отличается от computed_closing_balance на -2.",
+          fix_action: "Проверить Ledger movement, amount_net и строку Остатки.",
+          formula: "opening_balance 1206 + inflow 0 - outflow 5 = computed_closing_balance 1201 ; provider_reported_balance 1199 ; difference -2",
+          fix_priority: 1,
         },
       ],
     },
@@ -120,7 +128,10 @@ test("balance coverage UI builds table with actionable rows first", () => {
 
   assert.equal(rows[0][0], "Дата");
   assert.equal(rows[1][9], "Расхождение");
-  assert.equal(rows[1][10], "Проверить выписку / Ledger / amount_net / Остатки");
+  assert.match(rows[1][10], /Расхождение/);
+  assert.equal(rows[1][11], "Проверить Ledger movement, amount_net и строку Остатки.");
+  assert.match(rows[1][12], /computed_closing_balance 1201/);
+  assert.equal(rows[1][13], "1");
   assert.equal(rows[2][9], "OK");
 });
 
@@ -159,10 +170,10 @@ test("balance coverage UI renders missing opening/provider balances as text, not
 
   assert.equal(rows[1][3], "—");
   assert.equal(rows[1][9], "Нет начального остатка");
-  assert.equal(rows[1][10], "Добавить остаток на начало периода");
+  assert.equal(rows[1][11], "Добавить остаток на начало периода");
   assert.equal(rows[2][7], "—");
   assert.equal(rows[2][9], "Нет фактического остатка");
-  assert.equal(rows[2][10], "Добавить фактический остаток в Остатки");
+  assert.equal(rows[2][11], "Добавить фактический остаток в Остатки");
 });
 
 test("balance coverage UI keeps same channel with multiple currencies separate", () => {
@@ -205,6 +216,16 @@ test("balance coverage UI renders actionable fixes and copy button", () => {
           action: "Set amount_net to 253",
         },
       ],
+      missing_opening_balance_rows: [
+        {
+          required_date: "2026-04-29",
+          movement_date: "2026-04-30",
+          channel: "wise usd",
+          currency: "USD",
+          amount: null,
+          action: "Add a factual opening balance row to Остатки before the movement date; amount must come from provider/manual statement.",
+        },
+      ],
       missing_ostatki_rows: [
         {
           date: "2026-04-30",
@@ -221,6 +242,8 @@ test("balance coverage UI renders actionable fixes and copy button", () => {
   assert.match(block.textContent, /Что нужно исправить/);
   assert.match(block.textContent, /Скопировать строки для Остатки/);
   assert.match(block.textContent, /EXu_R1-KOv6NC6HsBw/);
+  assert.match(block.textContent, /Missing opening Остатки rows/);
+  assert.match(block.textContent, /2026-04-29/);
   assert.match(block.textContent, /17363/);
 });
 
@@ -245,6 +268,9 @@ test("balance coverage UI renders weekly not-ok summary with exact action rows",
             currency: "USD",
             difference: -138.59,
             status: "mismatch",
+            diagnosis: "Расхождение: provider_reported_balance отличается от computed_closing_balance на -138.59.",
+            fix_action: "Проверить Ledger movement, amount_net и строку Остатки.",
+            formula: "opening_balance 2217.41 + inflow 0 - outflow 52.79 = computed_closing_balance 2164.62 ; provider_reported_balance 2026.03 ; difference -138.59",
           },
           {
             date: "2026-05-11",
@@ -252,6 +278,9 @@ test("balance coverage UI renders weekly not-ok summary with exact action rows",
             currency: "UAH",
             computed_closing_balance: 14033,
             status: "missing_provider_balance",
+            diagnosis: "Нет фактического остатка: не найдена строка Остатки за 2026-05-11.",
+            fix_action: "Добавить фактический остаток закрытия в Остатки за дату движения.",
+            formula: "opening_balance 4928 + inflow 9105 - outflow 0 = computed_closing_balance 14033 ; provider_reported_balance missing ; difference missing",
           },
         ],
       },
@@ -271,8 +300,9 @@ test("balance coverage UI renders weekly not-ok summary with exact action rows",
   assert.match(block.textContent, /2026-05-12/);
   assert.match(block.textContent, /трансервайз дол/);
   assert.match(block.textContent, /-138\.59/);
-  assert.match(block.textContent, /Проверить выписку \/ Ledger \/ amount_net \/ Остатки/);
-  assert.match(block.textContent, /Добавить фактический остаток в Остатки/);
+  assert.match(block.textContent, /Расхождение: provider_reported_balance/);
+  assert.match(block.textContent, /Проверить Ledger movement, amount_net/);
+  assert.match(block.textContent, /provider_reported_balance missing/);
 });
 
 test("balance coverage UI renders weekly ok summary only when blocking counters are zero", () => {

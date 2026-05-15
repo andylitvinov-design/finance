@@ -22,8 +22,7 @@ function toCoverageAccount(row) {
   const hasOpeningBalance = row?.opening_balance !== null && row?.opening_balance !== undefined;
   const hasClosingBalance = row?.provider_reported_balance !== null && row?.provider_reported_balance !== undefined;
   const status = normalizeStatus(row?.status);
-
-  return {
+  const account = {
     date: String(row?.date || ""),
     channel: String(row?.channel || ""),
     currency: String(row?.currency || ""),
@@ -43,6 +42,65 @@ function toCoverageAccount(row) {
     status,
     balance_source: hasClosingBalance ? "manual" : "missing",
   };
+  return {
+    ...account,
+    diagnosis: buildDiagnosis(account),
+    fix_action: buildFixAction(account),
+    fix_priority: getFixPriority(status),
+    formula: buildFormula(account),
+  };
+}
+
+function buildDiagnosis(account) {
+  if (account.status === STATUS.OK) {
+    return "Сверено: opening_balance + inflow - outflow equals provider_reported_balance.";
+  }
+  if (account.status === STATUS.MISSING_OPENING) {
+    return `Нет начального остатка: не найдена строка Остатки до ${account.date} для ${account.channel} ${account.currency}.`;
+  }
+  if (account.status === STATUS.MISSING_PROVIDER) {
+    return `Нет фактического остатка: не найдена строка Остатки за ${account.date} для ${account.channel} ${account.currency}.`;
+  }
+  if (account.status === STATUS.MISMATCH) {
+    return `Расхождение: provider_reported_balance отличается от computed_closing_balance на ${formatDiagnosticNumber(account.difference)}.`;
+  }
+  return `Нужна проверка: найдена неполная строка Остатки или недостаточно данных для ${account.date} ${account.channel} ${account.currency}.`;
+}
+
+function buildFixAction(account) {
+  if (account.status === STATUS.OK) return "Действий не требуется.";
+  if (account.status === STATUS.MISSING_OPENING) {
+    return "Добавить фактический начальный остаток в Остатки до даты движения; сумму взять из провайдера, не рассчитывать автоматически.";
+  }
+  if (account.status === STATUS.MISSING_PROVIDER) {
+    return "Добавить фактический остаток закрытия в Остатки за дату движения; computed_closing_balance можно использовать как ожидаемую строку только после сверки с провайдером.";
+  }
+  if (account.status === STATUS.MISMATCH) {
+    return "Проверить Ledger movement, amount_net и строку Остатки: фактический остаток не равен расчетному.";
+  }
+  return "Проверить, что строка Остатки содержит дату, счет, валюту и сумму.";
+}
+
+function buildFormula(account) {
+  return [
+    `opening_balance ${formatFormulaValue(account.opening_balance)}`,
+    `+ inflow ${formatFormulaValue(account.inflow)}`,
+    `- outflow ${formatFormulaValue(account.outflow)}`,
+    `= computed_closing_balance ${formatFormulaValue(account.computed_closing_balance)}`,
+    `; provider_reported_balance ${formatFormulaValue(account.provider_reported_balance)}`,
+    `; difference ${formatFormulaValue(account.difference)}`,
+  ].join(" ");
+}
+
+function getFixPriority(status) {
+  const priority = {
+    [STATUS.MISMATCH]: 1,
+    [STATUS.NEEDS_VERIFICATION]: 2,
+    [STATUS.MISSING_OPENING]: 3,
+    [STATUS.MISSING_PROVIDER]: 4,
+    [STATUS.OK]: 0,
+  };
+  return priority[status] ?? 99;
 }
 
 function buildCoverageSummary(accounts, dailySummary) {
@@ -83,14 +141,8 @@ function normalizeStatus(value) {
 }
 
 function compareActionableRows(left, right) {
-  const priority = {
-    [STATUS.MISMATCH]: 0,
-    [STATUS.NEEDS_VERIFICATION]: 1,
-    [STATUS.MISSING_OPENING]: 2,
-    [STATUS.MISSING_PROVIDER]: 3,
-  };
-  const leftPriority = priority[left.status] ?? 99;
-  const rightPriority = priority[right.status] ?? 99;
+  const leftPriority = getFixPriority(left.status);
+  const rightPriority = getFixPriority(right.status);
   if (leftPriority !== rightPriority) return leftPriority - rightPriority;
   return compareCoverageRows(left, right);
 }
@@ -103,4 +155,16 @@ function compareCoverageRows(left, right) {
 
 function round(value) {
   return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function formatDiagnosticNumber(value) {
+  if (value === null || value === undefined || value === "") return "n/a";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(round(numeric)) : String(value);
+}
+
+function formatFormulaValue(value) {
+  if (value === null || value === undefined || value === "") return "missing";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(round(numeric)) : String(value);
 }
