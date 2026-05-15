@@ -250,7 +250,6 @@
   }
 
   function installGroupedOrderBalanceFix() {
-    normalizeGroupedOrderBalanceTables(root.document);
     const target = root.document?.getElementById?.("tabPanels") || root.document?.body;
     if (!target) return;
     target.dataset = target.dataset || {};
@@ -258,10 +257,37 @@
     target.dataset.movementBalanceDisplayObserver = "true";
     if (target.dataset.groupedOrderBalanceObserver === "true") return;
     target.dataset.groupedOrderBalanceObserver = "true";
+
+    let normalizeScheduled = false;
+    let isNormalizing = false;
+
+    function runNormalize() {
+      normalizeScheduled = false;
+      if (isNormalizing) return;
+      isNormalizing = true;
+      try {
+        normalizeGroupedOrderBalanceTables(target);
+      } finally {
+        isNormalizing = false;
+      }
+    }
+
+    function scheduleNormalize() {
+      if (normalizeScheduled || isNormalizing) return;
+      normalizeScheduled = true;
+      if (typeof root.requestAnimationFrame === "function") {
+        root.requestAnimationFrame(runNormalize);
+      } else {
+        setTimeout(runNormalize, 0);
+      }
+    }
+
+    runNormalize();
+
     const Observer = root.MutationObserver || globalThis.MutationObserver;
     if (!Observer) return;
-    const observer = new Observer(() => normalizeGroupedOrderBalanceTables(root.document));
-    observer.observe(target, { childList: true, characterData: true, subtree: true });
+    const observer = new Observer(scheduleNormalize);
+    observer.observe(target, { childList: true, subtree: true });
   }
 
   root.EzohataGroupedOrderBalanceFix = {

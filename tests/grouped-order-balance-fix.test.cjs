@@ -50,29 +50,46 @@ function table(rows) {
   return tableNode;
 }
 
-function createDocument(children = []) {
+function createDocument(children = [], options = {}) {
   return {
-    readyState: "loading",
+    readyState: options.readyState || "loading",
     children,
     body: new TestElement("body"),
-    getElementById() {
+    getElementById(id) {
+      if (options.elementsById && Object.hasOwn(options.elementsById, id)) {
+        return options.elementsById[id];
+      }
       return null;
     },
     addEventListener() {},
   };
 }
 
-function loadFix(document) {
+function loadFix(document, options = {}) {
+  const observers = [];
   const window = {
     document,
-    MutationObserver: function MutationObserver() {
-      return { observe() {} };
+    MutationObserver: function MutationObserver(callback) {
+      const observer = {
+        callback,
+        observeTarget: null,
+        observeOptions: null,
+        observe(target, observeOptions) {
+          this.observeTarget = target;
+          this.observeOptions = observeOptions;
+        },
+      };
+      observers.push(observer);
+      return observer;
     },
   };
+  if (typeof options.requestAnimationFrame === "function") {
+    window.requestAnimationFrame = options.requestAnimationFrame;
+  }
   const context = { window, globalThis: window, MutationObserver: window.MutationObserver };
   vm.createContext(context);
   vm.runInContext(fixJs, context);
-  return window.EzohataGroupedOrderBalanceFix;
+  return { fix: window.EzohataGroupedOrderBalanceFix, observers, window };
 }
 
 function numericText(value) {
@@ -105,7 +122,7 @@ test("grouped adjacent same-client rows are zeroed only when group balance nets 
     ]),
   ]);
 
-  const fix = loadFix(document);
+  const { fix } = loadFix(document);
   assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 7);
   assert.equal(firstBalance.textContent, "0,0000");
   assert.equal(secondBalance.textContent, "0,0000");
@@ -133,7 +150,7 @@ test("grouped balance fix does not hide truly underpaid groups", () => {
     ]),
   ]);
 
-  const fix = loadFix(document);
+  const { fix } = loadFix(document);
   assert.equal(fix.normalizeGroupedOrderBalanceTables(document), 2);
   assert.equal(firstBalance.textContent, "-10,0000");
   assert.equal(secondBalance.textContent, "-50,0000");
@@ -181,7 +198,7 @@ test("movement table metadata rows and split payments normalize like the live gr
     ]),
   ]);
 
-  const fix = loadFix(document);
+  const { fix } = loadFix(document);
   assert.ok(fix.normalizeGroupedOrderBalanceTables(document) > 0);
   assert.equal(numericText(innaFirstBalance.textContent), 0);
   assert.equal(numericText(innaSecondBalance.textContent), 0);
@@ -203,4 +220,98 @@ test("grouped balance fix script is loaded after live fixes and before main", ()
   assert.ok(mainIndex !== -1, "main.js is loaded");
   assert.ok(liveFixIndex < groupedFixIndex, "grouped fix loads after live fixes");
   assert.ok(groupedFixIndex < mainIndex, "grouped fix loads before app boot");
+});
+
+test("installer observes tabPanels without characterData mutations", () => {
+  const tabPanels = new TestElement("div");
+  const document = createDocument([], {
+    readyState: "complete",
+    elementsById: { tabPanels },
+  });
+
+  const { observers } = loadFix(document);
+
+  assert.equal(observers.length, 1);
+  assert.equal(observers[0].observeTarget, tabPanels);
+  assert.equal(observers[0].observeOptions.childList, true);
+  assert.equal(observers[0].observeOptions.subtree, true);
+  assert.equal(Object.hasOwn(observers[0].observeOptions, "characterData"), false);
+});
+
+test("rapid observer callbacks are debounced into one normalization pass", () => {
+  const balance = cell("td", "99,0000");
+  const tabPanels = new TestElement("div");
+  tabPanels.append(table([
+    row([
+      cell("th", "NUMBER"),
+      cell("th", "DATE"),
+      cell("th", "CLIENT"),
+      cell("th", "ACCRUED +3%"),
+      cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+      cell("th", "BALANCE"),
+    ]),
+    row([cell("td", "18149"), cell("td", "14.05.2026"), cell("td", "Инна Устименко"), cell("td", "50"), cell("td", "40"), balance]),
+    row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "50"), cell("td", "40"), cell("td", "99,0000")]),
+  ]));
+  const rafCallbacks = [];
+  const document = createDocument([], {
+    readyState: "complete",
+    elementsById: { tabPanels },
+  });
+
+  const { observers } = loadFix(document, {
+    requestAnimationFrame(callback) {
+      rafCallbacks.push(callback);
+    },
+  });
+  assert.equal(balance.textContent, "-10,0000");
+
+  balance.textContent = "99,0000";
+  observers[0].callback();
+  observers[0].callback();
+  observers[0].callback();
+
+  assert.equal(rafCallbacks.length, 1);
+  assert.equal(balance.textContent, "99,0000");
+  rafCallbacks[0]();
+  assert.equal(balance.textContent, "-10,0000");
+});
+
+test("installer normalizes tabPanels only, not the full document", () => {
+  const outsideBalance = cell("td", "99,0000");
+  const insideBalance = cell("td", "99,0000");
+  const outsideTable = table([
+    row([
+      cell("th", "NUMBER"),
+      cell("th", "DATE"),
+      cell("th", "CLIENT"),
+      cell("th", "ACCRUED +3%"),
+      cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+      cell("th", "BALANCE"),
+    ]),
+    row([cell("td", "18148"), cell("td", "14.05.2026"), cell("td", "Outside"), cell("td", "50"), cell("td", "40"), outsideBalance]),
+    row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "50"), cell("td", "40"), cell("td", "99,0000")]),
+  ]);
+  const tabPanels = new TestElement("div");
+  tabPanels.append(table([
+    row([
+      cell("th", "NUMBER"),
+      cell("th", "DATE"),
+      cell("th", "CLIENT"),
+      cell("th", "ACCRUED +3%"),
+      cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+      cell("th", "BALANCE"),
+    ]),
+    row([cell("td", "18149"), cell("td", "14.05.2026"), cell("td", "Inside"), cell("td", "50"), cell("td", "40"), insideBalance]),
+    row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "50"), cell("td", "40"), cell("td", "99,0000")]),
+  ]));
+  const document = createDocument([outsideTable, tabPanels], {
+    readyState: "complete",
+    elementsById: { tabPanels },
+  });
+
+  loadFix(document);
+
+  assert.equal(outsideBalance.textContent, "99,0000");
+  assert.equal(insideBalance.textContent, "-10,0000");
 });
