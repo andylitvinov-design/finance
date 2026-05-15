@@ -1,0 +1,35 @@
+name: Verify Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Wait for Vercel production alias
+        run: sleep 90
+
+      - name: Verify production serves the pushed commit
+        run: npm run verify:production -- ${{ github.sha }}
+
+      - name: Deploy mismatch diagnosis
+        if: failure()
+        run: |
+          echo "::error::Production verification failed. The Vercel production alias is not proving that it serves this main commit, or one of the required JSON smoke endpoints is unhealthy."
+          echo "Expected commit: ${{ github.sha }}"
+          echo "Check the workflow log above for /api/status and /api/audit-snapshot method/status/content-type/body excerpts."
+          echo "If /api/status shows an older commitSha, Vercel auto-deploy is stale or still pending."
+          echo "If /api/audit-snapshot returns HTML/plain text/non-JSON, the production route/runtime is failing before JSON output."
