@@ -63,4 +63,5 @@ test("period balance reconciliation API reports planned source gap without faili
   assert.equal(snapshot.period_balance_reconciliation.summary.planned_source_status, "needs_verification");
   assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "carried_forward_conditional");
   assert.match(snapshot.warnings.join("\n"), /planned income\/expense source/);
+  assert.match(snapshot.warnings.join("\n"), /movementValues order-plan rows and manual finance planned expense rows server-side/);
 });

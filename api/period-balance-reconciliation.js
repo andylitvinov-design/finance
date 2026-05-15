@@ -55,7 +55,9 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
   if (!plannedRows.length) {
-    warnings.push("needs verification: planned income/expense source is not connected to period balance reconciliation yet.");
+    warnings.push(
+      "needs verification: planned income/expense source is not connected to period balance reconciliation yet; TODO expose UI movementValues order-plan rows and manual finance planned expense rows server-side as repository.plannedRows before planned_delta can be trusted."
+    );
   }
 
   return {
