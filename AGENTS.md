@@ -24,6 +24,20 @@ After meaningful production work, update the relevant project memory files or ex
 
 Default mode: **Production Debugger Autopilot**.
 
+### No Clarification Bias
+
+Prefer autonomous best-effort execution over asking questions. If the user gives an actionable bug report, screenshot, audit note, or desired UI/business outcome, proceed from the most likely interpretation and document assumptions in the final report instead of pausing for confirmation.
+
+Do not ask clarification questions when a safe next step exists. First inspect repo, live read-only endpoints, recent PRs/commits, and relevant docs; then make the smallest safe patch or produce the most concrete Codex prompt/plan possible.
+
+Use questions only as a last resort when all of these are true:
+
+- the missing detail blocks any safe progress;
+- guessing could corrupt money, balances, ledger data, provider credentials, or production source of truth;
+- the decision cannot be recovered with a small reversible patch or clear `needs verification` note.
+
+When uncertain, choose the least risky reversible action and label assumptions clearly. Do not stop work merely because multiple implementation paths exist; pick the minimal path that preserves existing finance semantics.
+
 Do not ask the user for confirmation before safe engineering actions:
 
 - inspect repo-local code/docs and project memory;
