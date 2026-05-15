@@ -2,18 +2,36 @@
   const BINANCE_API_PATH = "./api/binance-transactions";
   const PROVIDER = "binance";
 
+  function getState() {
+    try {
+      return typeof state !== "undefined" ? state : root.state;
+    } catch (_error) {
+      return root.state;
+    }
+  }
+
+  function getElements() {
+    try {
+      return typeof elements !== "undefined" ? elements : root.elements;
+    } catch (_error) {
+      return root.elements;
+    }
+  }
+
   function hasRequiredGlobals() {
+    const appState = getState();
+    const appElements = getElements();
     return typeof root.renderExpenseAccountingBlock === "function" &&
       typeof root.normalizeIncomingSheetDateValue === "function" &&
       typeof root.normalizeExpenseAccountingEntry === "function" &&
       typeof root.renderTabs === "function" &&
       typeof root.setExpenseAccountingStatus === "function" &&
-      root.state &&
-      root.elements;
+      appState &&
+      appElements;
   }
 
   function isLoading() {
-    const expense = root.state?.expenseAccounting || {};
+    const expense = getState()?.expenseAccounting || {};
     return Boolean(
       expense.loading ||
       expense.paypalLoading ||
@@ -41,15 +59,17 @@
   }
 
   async function loadBinanceExpenseStatement() {
-    const startDate = root.normalizeIncomingSheetDateValue(root.elements.startDate.value);
-    const endDate = root.normalizeIncomingSheetDateValue(root.elements.endDate.value);
+    const appState = getState();
+    const appElements = getElements();
+    const startDate = root.normalizeIncomingSheetDateValue(appElements.startDate.value);
+    const endDate = root.normalizeIncomingSheetDateValue(appElements.endDate.value);
     if (!startDate || !endDate) {
       root.setExpenseAccountingStatus("Выберите период для Binance-выписки.", true);
       root.renderTabs();
       return;
     }
 
-    root.state.expenseAccounting.binanceLoading = true;
+    appState.expenseAccounting.binanceLoading = true;
     root.setExpenseAccountingStatus("Запрашиваю Binance-выписку за выбранный период...", false);
     root.renderTabs();
     try {
@@ -63,15 +83,15 @@
         throw new Error(payload?.error || `Binance вернул ошибку (${response.status}).`);
       }
       const entries = (payload.entries || []).map((entry, index) => root.normalizeExpenseAccountingEntry(entry, index));
-      root.state.expenseAccounting.entries = [
-        ...(root.state.expenseAccounting.entries || []).filter((entry) => entry.source !== PROVIDER),
+      appState.expenseAccounting.entries = [
+        ...(appState.expenseAccounting.entries || []).filter((entry) => entry.source !== PROVIDER),
         ...entries
       ];
-      root.state.expenseAccounting.binanceSummary = typeof root.hasProviderSummaryData === "function" && root.hasProviderSummaryData(payload.summary)
+      appState.expenseAccounting.binanceSummary = typeof root.hasProviderSummaryData === "function" && root.hasProviderSummaryData(payload.summary)
         ? payload.summary
         : (typeof root.buildProviderExpenseSummary === "function" ? root.buildProviderExpenseSummary(entries) : payload.summary || null);
-      root.state.expenseAccounting.warnings = payload.warnings || [];
-      root.state.expenseAccounting.resultTab = typeof root.getExpenseAccountingDirectionCounts === "function" && root.getExpenseAccountingDirectionCounts().spent
+      appState.expenseAccounting.warnings = payload.warnings || [];
+      appState.expenseAccounting.resultTab = typeof root.getExpenseAccountingDirectionCounts === "function" && root.getExpenseAccountingDirectionCounts().spent
         ? "spent"
         : "received";
       const statusParts = [];
@@ -88,7 +108,7 @@
     } catch (error) {
       root.setExpenseAccountingStatus(error.message || "Не удалось загрузить Binance-выписку.", true);
     } finally {
-      root.state.expenseAccounting.binanceLoading = false;
+      appState.expenseAccounting.binanceLoading = false;
       root.renderTabs();
     }
   }
@@ -98,7 +118,7 @@
     button.type = "button";
     button.className = "secondary";
     button.dataset.provider = PROVIDER;
-    button.textContent = root.state?.expenseAccounting?.binanceLoading ? "Загружаю Binance..." : "Подтянуть Binance";
+    button.textContent = getState()?.expenseAccounting?.binanceLoading ? "Загружаю Binance..." : "Подтянуть Binance";
     button.disabled = isLoading();
     button.addEventListener("click", loadBinanceExpenseStatement);
     return button;
