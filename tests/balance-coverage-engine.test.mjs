@@ -47,6 +47,10 @@ test("balance coverage reports a fully reconciled account-currency row", () => {
     difference: 0,
     status: "ok",
     balance_source: "manual",
+    diagnosis: "Сверено: opening_balance + inflow - outflow equals provider_reported_balance.",
+    fix_action: "Действий не требуется.",
+    fix_priority: 0,
+    formula: "opening_balance 1000 + inflow 206 - outflow 0 = computed_closing_balance 1206 ; provider_reported_balance 1206 ; difference 0",
   });
 });
 
@@ -66,7 +70,35 @@ test("balance coverage surfaces missing provider balance", () => {
   assert.equal(result.summary.fully_reconciled_accounts, 0);
   assert.equal(result.accounts[0].has_closing_balance, false);
   assert.equal(result.accounts[0].balance_source, "missing");
+  assert.match(result.accounts[0].diagnosis, /Нет фактического остатка/);
+  assert.match(result.accounts[0].fix_action, /Добавить фактический остаток закрытия/);
+  assert.equal(result.accounts[0].fix_priority, 4);
+  assert.match(result.accounts[0].formula, /provider_reported_balance missing/);
   assert.equal(result.actionable_accounts[0].status, "missing_provider_balance");
+});
+
+test("balance coverage diagnoses missing opening balance without inventing amount", () => {
+  const result = buildBalanceCoverage({
+    rows: [
+      dailyRow({
+        opening_balance: null,
+        closing_balance: null,
+        provider_reported_balance: 1206,
+        difference: null,
+        status: "missing_opening_balance",
+      }),
+    ],
+    summary: { excluded_missing_amount_net_rows: 0 },
+  });
+
+  assert.equal(result.summary.missing_opening_balance, 1);
+  assert.equal(result.accounts[0].status, "missing_opening_balance");
+  assert.equal(result.accounts[0].opening_balance, null);
+  assert.equal(result.accounts[0].computed_closing_balance, null);
+  assert.match(result.accounts[0].diagnosis, /Нет начального остатка/);
+  assert.match(result.accounts[0].fix_action, /сумму взять из провайдера/);
+  assert.equal(result.accounts[0].fix_priority, 3);
+  assert.match(result.accounts[0].formula, /opening_balance missing/);
 });
 
 test("balance coverage prioritizes mismatch before missing balances", () => {

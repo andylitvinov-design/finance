@@ -234,6 +234,7 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
     },
     balance_fixes: {
       missing_amount_net_rows: [],
+      missing_opening_balance_rows: [],
       missing_ostatki_rows: [],
       copyable_ostatki_rows: "",
     },
@@ -481,9 +482,11 @@ function buildBalanceFixes(operations, balanceCoverage) {
     .filter((row) => !String(row?.ledgerV2?.amount_net ?? row?.amountNet ?? row?.amount_net ?? "").trim())
     .map(buildMissingAmountNetFixRow)
     .filter(Boolean);
+  const missingOpeningBalanceRows = buildMissingOpeningBalanceFixRows(balanceCoverage);
   const missingOstatkiRows = buildMissingOstatkiFixRows(balanceCoverage);
   return {
     missing_amount_net_rows: missingAmountNetRows,
+    missing_opening_balance_rows: missingOpeningBalanceRows,
     missing_ostatki_rows: missingOstatkiRows,
     copyable_ostatki_rows: buildCopyableOstatkiRows(missingOstatkiRows),
   };
@@ -547,6 +550,25 @@ function buildMissingOstatkiFixRows(balanceCoverage) {
     }))
     .sort((left, right) => {
       if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
+      if (left.channel !== right.channel) return String(left.channel || "").localeCompare(String(right.channel || ""));
+      return String(left.currency || "").localeCompare(String(right.currency || ""));
+    });
+}
+
+function buildMissingOpeningBalanceFixRows(balanceCoverage) {
+  return (balanceCoverage?.accounts || [])
+    .filter((row) => row?.status === "missing_opening_balance")
+    .map((row) => ({
+      required_date: previousDate(row.date),
+      movement_date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      amount: null,
+      diagnosis: row.diagnosis,
+      action: "Add a factual opening balance row to Остатки before the movement date; amount must come from provider/manual statement.",
+    }))
+    .sort((left, right) => {
+      if (left.required_date !== right.required_date) return String(left.required_date || "").localeCompare(String(right.required_date || ""));
       if (left.channel !== right.channel) return String(left.channel || "").localeCompare(String(right.channel || ""));
       return String(left.currency || "").localeCompare(String(right.currency || ""));
     });
@@ -735,6 +757,15 @@ function normalizeDate(value) {
     return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
   }
   return "";
+}
+
+function previousDate(value) {
+  const date = normalizeDate(value);
+  if (!date) return "";
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function lastDayOfMonth(period) {
