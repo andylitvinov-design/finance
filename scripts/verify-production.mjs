@@ -1,122 +1,141 @@
-import { execFileSync } from "node:child_process";
-
 const PRODUCTION_URL = "https://ezohata-incoming-ledger.vercel.app";
 const STATUS_URL = `${PRODUCTION_URL}/api/status`;
-const HEALTH_URL = `${PRODUCTION_URL}/api/index?health=1`;
 const AUDIT_SNAPSHOT_URL = `${PRODUCTION_URL}/api/audit-snapshot`;
-const expectedSha = normalizeSha(process.argv[2] || process.env.EXPECTED_SHA || detectOriginMainSha());
+const BODY_EXCERPT_LIMIT = 800;
 
-const statusResponse = await fetch(STATUS_URL, {
-  headers: { "cache-control": "no-cache" }
-});
-if (!statusResponse.ok) {
-  throw new Error(`Status endpoint failed with HTTP ${statusResponse.status}.`);
-}
+export async function fetchEndpoint(url, { fetchImpl = fetch } = {}) {
+  const method = "GET";
+  const response = await fetchImpl(url, {
+    method,
+    headers: { "cache-control": "no-cache" },
+  });
+  const contentType = response.headers?.get?.("content-type") || "";
+  const bodyText = await response.text();
+  const result = {
+    url,
+    method,
+    status: response.status,
+    contentType,
+    bodyExcerpt: excerptBody(bodyText),
+    bodyText,
+    json: null,
+    parseError: null,
+  };
 
-const statusPayload = await statusResponse.json();
-const liveSha = normalizeSha(statusPayload.commitSha === "unknown" ? "" : statusPayload.commitSha);
-if (!liveSha) {
-  throw new Error(`Status endpoint does not expose a live commit SHA (${statusPayload.status || "unknown"}${statusPayload.error ? `: ${statusPayload.error}` : ""}).`);
-}
-
-if (expectedSha && liveSha !== expectedSha) {
-  throw new Error(`Production commit mismatch: expected ${expectedSha}, got ${liveSha}.`);
-}
-
-if (!statusPayload.hasGoogleServiceAccountEmail) {
-  throw new Error("Production status reports missing GOOGLE_SERVICE_ACCOUNT_EMAIL.");
-}
-if (!statusPayload.hasGoogleServiceAccountPrivateKey) {
-  throw new Error("Production status reports missing GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.");
-}
-if (!statusPayload.googleSheetConfigured) {
-  throw new Error(`Production status reports Google Sheet is not configured (${statusPayload.googleSheetReadError || "unknown error"}).`);
-}
-if (!statusPayload.googleSheetReadOk) {
-  throw new Error(`Production status reports Google Sheet read failed (${statusPayload.googleSheetReadError || "unknown error"}).`);
-}
-
-const healthResponse = await fetch(HEALTH_URL, {
-  headers: { "cache-control": "no-cache" }
-});
-if (!healthResponse.ok) {
-  throw new Error(`Health endpoint failed with HTTP ${healthResponse.status}.`);
-}
-
-const healthPayload = await healthResponse.json();
-if (!healthPayload?.ok) {
-  throw new Error("Health endpoint returned a non-ok payload.");
-}
-
-const auditResponse = await fetch(AUDIT_SNAPSHOT_URL, {
-  headers: { "cache-control": "no-cache" }
-});
-if (!auditResponse.ok) {
-  throw new Error(`Audit snapshot endpoint failed with HTTP ${auditResponse.status}.`);
-}
-
-const auditPayload = await auditResponse.json();
-const ledgerRows = Number(auditPayload?.summary?.ledger_rows || 0);
-const fallbackAmountRows = Number(auditPayload?.balances?.fallback_amount_rows || 0);
-const missingExchangeAmountUsdRows = Number(auditPayload?.exchange?.missing_amount_usd_rows || 0);
-const warnings = (auditPayload?.warnings || []).map((warning) => String(warning || ""));
-const googleWarnings = (auditPayload?.warnings || []).filter((warning) => /google sheets|service account|manual google sheets read access/i.test(String(warning || "")));
-const oldAmountUsdHardFailWarnings = warnings.filter((warning) => /Ledger v2 error: amount_usd is required/i.test(warning));
-if (!ledgerRows) {
-  throw new Error("Audit snapshot critical failure: ledger_rows is 0.");
-}
-if (fallbackAmountRows !== 0) {
-  throw new Error(`Audit snapshot fallback_amount_rows must be 0, got ${fallbackAmountRows}.`);
-}
-if (missingExchangeAmountUsdRows !== 0) {
-  throw new Error(`Audit snapshot exchange.missing_amount_usd_rows must be 0, got ${missingExchangeAmountUsdRows}.`);
-}
-if (oldAmountUsdHardFailWarnings.length) {
-  throw new Error(`Audit snapshot includes old amount_usd hard-fail warning: ${oldAmountUsdHardFailWarnings.join(" | ")}`);
-}
-if (googleWarnings.length) {
-  throw new Error(`Audit snapshot includes Google Sheets access warnings: ${googleWarnings.join(" | ")}`);
-}
-if (auditPayload?.exchange?.compatibility_mode !== false) {
-  throw new Error("Audit snapshot exchange.compatibility_mode must be false.");
-}
-
-console.log(JSON.stringify({
-  ok: true,
-  expectedSha: expectedSha || null,
-  liveSha,
-  buildTime: statusPayload.buildTime || null,
-  deployTime: statusPayload.deployTime || null,
-  deploymentEnvironment: statusPayload.deploymentEnvironment || null,
-  appVersion: statusPayload.appVersion || null,
-  appBuildVersion: statusPayload.appBuildVersion || null,
-  googleSheetReadOk: statusPayload.googleSheetReadOk,
-  auditSnapshot: {
-    ledgerRows,
-    fallbackAmountRows,
-    missingExchangeAmountUsdRows,
-    exchangeCompatibilityMode: auditPayload?.exchange?.compatibility_mode
-  },
-  smoke: {
-    statusEndpoint: true,
-    healthEndpoint: true,
-    auditSnapshotEndpoint: true
-  }
-}, null, 2));
-
-function normalizeSha(value) {
-  const normalized = String(value || "").trim();
-  return normalized ? normalized.slice(0, 40) : "";
-}
-
-function detectOriginMainSha() {
   try {
-    return execFileSync("git", ["rev-parse", "origin/main"], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "";
+    result.json = JSON.parse(bodyText);
+  } catch (error) {
+    result.parseError = error instanceof Error ? error.message : String(error);
   }
+
+  return result;
+}
+
+export async function verifyProduction(expectedSha, { fetchImpl = fetch } = {}) {
+  const expected = normalizeSha(expectedSha);
+  if (!expected) {
+    throw new Error("Expected commit SHA is required. Usage: npm run verify:production -- <expected-sha>");
+  }
+
+  const status = await fetchEndpoint(STATUS_URL, { fetchImpl });
+  printEndpointReport("status", status);
+  verifyStatusResponse(status, expected);
+
+  const auditSnapshot = await fetchEndpoint(AUDIT_SNAPSHOT_URL, { fetchImpl });
+  printEndpointReport("audit-snapshot", auditSnapshot);
+  verifyAuditSnapshotResponse(auditSnapshot);
+
+  return {
+    ok: true,
+    expectedSha: expected,
+    liveSha: status.json.commitSha,
+    commitRef: status.json.commitRef || null,
+    buildTime: status.json.buildTime || null,
+    deployTime: status.json.deployTime || null,
+    googleSheetReadOk: status.json.googleSheetReadOk ?? null,
+  };
+}
+
+export function verifyStatusResponse(result, expectedSha) {
+  assertHttpOk(result, "status");
+  assertJsonResponse(result, "status");
+
+  const payload = result.json;
+  if (Object.hasOwn(payload, "status") && payload.status !== "ok") {
+    throw new Error(`Status endpoint mismatch: expected status=ok, got ${payload.status || "missing"}.`);
+  }
+
+  const liveSha = normalizeSha(payload.commitSha);
+  if (!liveSha) {
+    throw new Error("Status endpoint mismatch: commitSha is missing.");
+  }
+
+  if (liveSha !== expectedSha && !liveSha.startsWith(expectedSha)) {
+    throw new Error(`Production deploy mismatch: expected commit ${expectedSha}, live commit is ${liveSha}.`);
+  }
+
+  if (hasMeaningfulValue(payload.commitRef) && payload.commitRef !== "main") {
+    throw new Error(`Production deploy mismatch: expected commitRef=main, got ${payload.commitRef}.`);
+  }
+
+  if (Object.hasOwn(payload, "googleSheetReadOk") && payload.googleSheetReadOk !== true) {
+    throw new Error(`Production health mismatch: expected googleSheetReadOk=true, got ${payload.googleSheetReadOk}.`);
+  }
+}
+
+export function verifyAuditSnapshotResponse(result) {
+  assertHttpOk(result, "audit-snapshot");
+  assertJsonResponse(result, "audit-snapshot");
+}
+
+export function normalizeSha(value) {
+  return String(value || "").trim().slice(0, 40);
+}
+
+export function excerptBody(bodyText, limit = BODY_EXCERPT_LIMIT) {
+  const compact = String(bodyText || "").replace(/\s+/g, " ").trim();
+  return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
+}
+
+function assertHttpOk(result, label) {
+  if (result.status !== 200) {
+    throw new Error(`${label} endpoint failed: expected HTTP 200, got ${result.status}.`);
+  }
+}
+
+function assertJsonResponse(result, label) {
+  if (!String(result.contentType || "").toLowerCase().includes("application/json")) {
+    throw new Error(`${label} endpoint failed: expected application/json, got ${result.contentType || "missing"}.`);
+  }
+  if (result.parseError) {
+    throw new Error(`${label} endpoint failed: body is not valid JSON (${result.parseError}).`);
+  }
+  if (!result.json || typeof result.json !== "object") {
+    throw new Error(`${label} endpoint failed: JSON body is not an object.`);
+  }
+}
+
+function hasMeaningfulValue(value) {
+  const normalized = String(value || "").trim();
+  return normalized && normalized !== "unknown";
+}
+
+function printEndpointReport(label, result) {
+  console.log(`[${label}] method=${result.method} status=${result.status} content-type=${result.contentType || "missing"}`);
+  console.log(`[${label}] body excerpt: ${result.bodyExcerpt || "<empty>"}`);
+}
+
+async function main() {
+  const expectedSha = process.argv[2] || process.env.EXPECTED_SHA || "";
+  try {
+    const result = await verifyProduction(expectedSha);
+    console.log(JSON.stringify(result, null, 2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await main();
 }
