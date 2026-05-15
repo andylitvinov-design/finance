@@ -20,7 +20,9 @@ function buildGenericImportContext() {
             "пейпал дол",
             "пейпал евр",
             "приват 24-грн",
-            "БАНК КАНАДА cad"
+            "БАНК КАНАДА cad",
+            "Бинанс spot",
+            "binance save"
           ]
         }
       },
@@ -238,6 +240,43 @@ test("generic Wise statement stays needs_review when no exact Wise channel exist
   assert.equal(result.entries[0].channel, "");
   assert.equal(result.entries[0].review_status, "needs_review");
   assert.match(result.entries[0].rawMetadata, /Wise source\/target amount requires provider-specific review/);
+});
+
+test("generic Binance CSV maps stablecoin spot rows as file-import fallback", () => {
+  const context = buildGenericImportContext();
+  const result = plain(context.parseGenericStatementCsv([
+    "Date(UTC),Operation,Coin,Amount,Status,TxID",
+    "2026-05-01 12:00:00,Deposit,USDT,100.50,Completed,abc123",
+    "2026-05-02 12:00:00,Withdraw,USDC,-25.00,Completed,def456"
+  ].join("\n"), {
+    source: "csv_import",
+    fileName: "binance-transaction-history.csv",
+    normalizedFileName: "binance-transaction-history"
+  }));
+
+  assert.equal(result.providerDetection.providerHint, "binance");
+  assert.equal(result.entries.length, 2);
+  assert.deepEqual(result.entries.map((entry) => entry.channel), ["Бинанс spot", "Бинанс spot"]);
+  assert.deepEqual(result.entries.map((entry) => entry.currency), ["USD", "USD"]);
+  assert.deepEqual(result.entries.map((entry) => entry.review_status), ["", ""]);
+  assert.match(result.entries[0].rawMetadata, /provider=binance/);
+});
+
+test("generic Binance CSV keeps non-USD crypto rows in review instead of forcing balance semantics", () => {
+  const context = buildGenericImportContext();
+  const result = plain(context.parseGenericStatementCsv([
+    "Date(UTC),Operation,Coin,Amount,Status",
+    "2026-05-01 12:00:00,Deposit,BTC,0.01,Completed"
+  ].join("\n"), {
+    source: "csv_import",
+    fileName: "binance-export.csv",
+    normalizedFileName: "binance-export"
+  }));
+
+  assert.equal(result.providerDetection.providerHint, "binance");
+  assert.equal(result.entries[0].currency, "BTC");
+  assert.equal(result.entries[0].channel, "");
+  assert.equal(result.entries[0].review_status, "needs_review");
 });
 
 test("unknown USD statement does not infer PayPal or Wise from currency alone", () => {
