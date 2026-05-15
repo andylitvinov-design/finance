@@ -1072,7 +1072,8 @@ function getExpenseAnalysisChannelSummary() {
       ? calculateTransferBalance(ledgerRows, selectedPeriod)
       : { transferIn: 0, transferOut: 0, transferBalance: 0 },
     ownerOrderBaseUsd: topMetrics.totalOrders,
-    ownerOrderShare30Pct: topMetrics.ownerOrderShare30Pct
+    ownerOrderShare30Pct: topMetrics.ownerOrderShare30Pct,
+    period: selectedPeriod
   });
 }
 
