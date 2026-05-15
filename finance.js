@@ -982,7 +982,8 @@ function buildExpenseAnalysisChannelSummary({
   usdRateLookup = { byChannel: {}, byCurrency: {} },
   transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 },
   ownerOrderBaseUsd = "",
-  ownerOrderShare30Pct = ""
+  ownerOrderShare30Pct = "",
+  period = {}
 } = {}) {
   const rows = [[
     "канал",
@@ -1003,7 +1004,7 @@ function buildExpenseAnalysisChannelSummary({
   const expenseTotals = { plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
   const incomeCountTotals = { plan: 0, auto: 0, manual: 0, screenshot: 0 };
   const movementStats = calculateMovementChannelStats(movementValues || []);
-  const ledgerIncomeCounts = buildLedgerIncomeCountSummaryByChannel(ledgerRows || []);
+  const ledgerIncomeCounts = buildLedgerIncomeCountSummaryByChannel(ledgerRows || [], period);
 
   MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
     const channelRows = (manualRows || []).filter((row) => row?.channel === channel);
@@ -1473,7 +1474,53 @@ function getExpenseAnalysisPlannedIncomeCount(rawCount, ordersPlanUsd) {
   return roundExpenseAnalysisAmount(ordersPlanUsd) > 0 ? 1 : 0;
 }
 
-function buildLedgerIncomeCountSummaryByChannel(rows = []) {
+function normalizeExpenseAnalysisIncomeCountDate(value) {
+  if (typeof normalizeIncomingSheetDateValue === "function") return normalizeIncomingSheetDateValue(value);
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const isoTimestamp = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoTimestamp) return isoTimestamp[1];
+  const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  return raw;
+}
+
+function getExpenseAnalysisIncomeRowDate(row = {}, rawRow = {}) {
+  return normalizeExpenseAnalysisIncomeCountDate(
+    row?.date ||
+    row?.operationDate ||
+    row?.operation_date ||
+    row?.transactionDate ||
+    row?.transaction_date ||
+    row?.postedDate ||
+    row?.posted_date ||
+    row?.createdAt ||
+    row?.created_at ||
+    rawRow?.date ||
+    rawRow?.operationDate ||
+    rawRow?.operation_date ||
+    rawRow?.transactionDate ||
+    rawRow?.transaction_date ||
+    rawRow?.postedDate ||
+    rawRow?.posted_date ||
+    rawRow?.createdAt ||
+    rawRow?.created_at ||
+    ""
+  );
+}
+
+function isExpenseAnalysisIncomeRowInPeriod(row = {}, rawRow = {}, period = {}) {
+  const startDate = normalizeExpenseAnalysisIncomeCountDate(period?.startDate || period?.from || "");
+  const endDate = normalizeExpenseAnalysisIncomeCountDate(period?.endDate || period?.to || "");
+  if (!startDate && !endDate) return true;
+  const rowDate = getExpenseAnalysisIncomeRowDate(row, rawRow);
+  if (!rowDate) return false;
+  if (startDate && rowDate < startDate) return false;
+  if (endDate && rowDate > endDate) return false;
+  return true;
+}
+
+function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
   const empty = () => Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const summary = {
     autoByChannel: empty(),
@@ -1482,6 +1529,7 @@ function buildLedgerIncomeCountSummaryByChannel(rows = []) {
   };
   (rows || []).forEach((rawRow) => {
     const row = rawRow?.ledgerV2 || rawRow || {};
+    if (!isExpenseAnalysisIncomeRowInPeriod(row, rawRow, period)) return;
     const operation = normalizeExpenseAnalysisIncomeOperation(row?.operation || row?.legacy_operation || rawRow?.operation || rawRow?.legacy_operation);
     const category = normalizeExpenseAnalysisIncomeOperation(row?.category || rawRow?.category || row?.legacy_category || rawRow?.legacy_category);
     if (!operation && !category) return;

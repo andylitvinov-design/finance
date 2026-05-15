@@ -130,6 +130,9 @@ function createApiLedgerRealIncomeContext() {
 function extractExpenseAnalysisIncomeCountHelpers() {
   return [
     "getExpenseAnalysisPlannedIncomeCount",
+    "normalizeExpenseAnalysisIncomeCountDate",
+    "getExpenseAnalysisIncomeRowDate",
+    "isExpenseAnalysisIncomeRowInPeriod",
     "buildLedgerIncomeCountSummaryByChannel",
     "normalizeExpenseAnalysisIncomeOperation",
     "normalizeExpenseAnalysisIncomeSource",
@@ -939,6 +942,9 @@ test("expense analysis summary derives provider real income and expense from led
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
     `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeCountDate")}\n` +
+    `${extractFunction(financeJs, "getExpenseAnalysisIncomeRowDate")}\n` +
+    `${extractFunction(financeJs, "isExpenseAnalysisIncomeRowInPeriod")}\n` +
     `${extractFunction(financeJs, "buildLedgerIncomeCountSummaryByChannel")}\n` +
     `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeOperation")}\n` +
     `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeSource")}\n` +
@@ -1798,6 +1804,147 @@ test("buildExpenseAnalysisChannelSummary appends income counters by source group
   assert.deepEqual(wise.slice(-4), ["1", "2", "1", "1"]);
   assert.deepEqual(mono.slice(-4), ["0", "0", "1", "2"]);
   assert.deepEqual(total.slice(-4), ["2", "3", "3", "5"]);
+});
+
+function createIncomeCountPeriodContext(channels = ["Яндекс руб", "трансервайз дол"]) {
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: channels,
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    normalizeIncomingSheetDateValue(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (iso) return iso[1];
+      const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      return display ? `${display[3]}-${display[2]}-${display[1]}` : raw;
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      return ({
+        "yoomoney": "Яндекс руб",
+        "яндекс руб": "Яндекс руб",
+        "wise": "трансервайз дол",
+        "wise usd": "трансервайз дол",
+        "transferwise": "трансервайз дол",
+        "трансервайз дол": "трансервайз дол",
+      })[normalized] || String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractExpenseAnalysisIncomeCountHelpers() +
+    "this.buildLedgerIncomeCountSummaryByChannel = buildLedgerIncomeCountSummaryByChannel;",
+    context
+  );
+  return context;
+}
+
+test("buildLedgerIncomeCountSummaryByChannel excludes out-of-range YooMoney income rows", () => {
+  const context = createIncomeCountPeriodContext(["Яндекс руб"]);
+  const rows = Array.from({ length: 9 }, (_, index) => ({
+    date: index < 4 ? `2026-05-${String(index + 1).padStart(2, "0")}` : `2026-04-${String(index + 1).padStart(2, "0")}`,
+    operation: "income",
+    source: "yoomoney",
+    toChannel: "yoomoney",
+  }));
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-01",
+    endDate: "2026-05-31",
+  }));
+
+  assert.equal(summary.autoByChannel["Яндекс руб"], 4);
+});
+
+test("buildLedgerIncomeCountSummaryByChannel excludes out-of-range Wise income rows", () => {
+  const context = createIncomeCountPeriodContext(["трансервайз дол"]);
+  const rows = [
+    { date: "2026-05-05", operation: "income", source: "wise", toChannel: "wise usd" },
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd" },
+    { date: "2026-06-01", operation: "income", source: "wise", toChannel: "wise usd" },
+  ];
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-01",
+    endDate: "2026-05-31",
+  }));
+
+  assert.equal(summary.autoByChannel["трансервайз дол"], 2);
+});
+
+test("buildLedgerIncomeCountSummaryByChannel includes boundary dates only", () => {
+  const context = createIncomeCountPeriodContext(["Яндекс руб"]);
+  const rows = [
+    { date: "2026-04-30", operation: "income", source: "yoomoney", toChannel: "yoomoney" },
+    { date: "2026-05-01", operation: "income", source: "yoomoney", toChannel: "yoomoney" },
+    { date: "2026-05-31", operation: "income", source: "yoomoney", toChannel: "yoomoney" },
+    { date: "2026-06-01", operation: "income", source: "yoomoney", toChannel: "yoomoney" },
+  ];
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-01",
+    endDate: "2026-05-31",
+  }));
+
+  assert.equal(summary.autoByChannel["Яндекс руб"], 2);
+});
+
+test("buildExpenseAnalysisChannelSummary passes selected period into income counters", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: { "Яндекс руб": 400 },
+      accruedPlusCountByChannel: { "Яндекс руб": 4 }
+    }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const numeric = Number(String(value ?? "").replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").slice(0, 10);
+    },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim().toLowerCase() === "yoomoney" ? "Яндекс руб" : String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const rows = Array.from({ length: 9 }, (_, index) => ({
+    date: index < 4 ? `2026-05-${String(index + 1).padStart(2, "0")}` : `2026-04-${String(index + 1).padStart(2, "0")}`,
+    operation: "income",
+    source: "yoomoney",
+    toChannel: "yoomoney",
+  }));
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    ledgerRows: rows,
+    period: { startDate: "2026-05-01", endDate: "2026-05-31" },
+  }));
+
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "4");
 });
 
 test("buildLedgerRealIncomeSummaryByChannel maps MCP YooMoney income into Яндекс руб", () => {
