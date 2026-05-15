@@ -933,6 +933,32 @@ function getManualFinancePlannedExpenseUsdNumber(row, rateLookup = { byChannel: 
   );
 }
 
+function normalizeExpenseAnalysisProviderExpenseBreakdown(breakdown, fallbackTotal = 0) {
+  if (breakdown && typeof breakdown === "object" && !Array.isArray(breakdown)) {
+    const total = roundExpenseAnalysisAmount(breakdown.total);
+    const business = roundExpenseAnalysisAmount(
+      breakdown.business !== undefined ? breakdown.business : total
+    );
+    return {
+      total,
+      business,
+      personal: roundExpenseAnalysisAmount(breakdown.personal),
+      excludedTransferExchange: roundExpenseAnalysisAmount(breakdown.excludedTransferExchange),
+      byCategory: breakdown.byCategory || {},
+      bySubcategory: breakdown.bySubcategory || {}
+    };
+  }
+  const total = roundExpenseAnalysisAmount(fallbackTotal);
+  return {
+    total,
+    business: total,
+    personal: 0,
+    excludedTransferExchange: 0,
+    byCategory: {},
+    bySubcategory: {}
+  };
+}
+
 function buildExpenseAnalysisProviderRows(providerSummary = {}, manualRows = [], movementValues = [], channelByCurrency = {}) {
   const output = [];
   const manualLookup = Object.fromEntries(
@@ -979,10 +1005,12 @@ function buildExpenseAnalysisChannelSummary({
   ledgerRows = [],
   realIncomeSummaryByChannel = {},
   providerExpenseByChannel = {},
+  providerExpenseBreakdownByChannel = {},
   usdRateLookup = { byChannel: {}, byCurrency: {} },
   transferBalance = { transferIn: 0, transferOut: 0, transferBalance: 0 },
   ownerOrderBaseUsd = "",
-  ownerOrderShare30Pct = ""
+  ownerOrderShare30Pct = "",
+  period = {}
 } = {}) {
   const rows = [[
     "канал",
@@ -992,7 +1020,10 @@ function buildExpenseAnalysisChannelSummary({
     "пришло реально",
     "разница",
     "потрачено план",
-    "потрачено реал",
+    "потрачено реал бизнес",
+    "потрачено реал всего",
+    "личные расходы",
+    "transfer/exchange excluded",
     "разница",
     "план приходов, шт",
     "авто/MCP приходов, шт",
@@ -1003,7 +1034,7 @@ function buildExpenseAnalysisChannelSummary({
   const expenseTotals = { plannedUsd: 0, realUsd: 0, differenceUsd: 0 };
   const incomeCountTotals = { plan: 0, auto: 0, manual: 0, screenshot: 0 };
   const movementStats = calculateMovementChannelStats(movementValues || []);
-  const ledgerIncomeCounts = buildLedgerIncomeCountSummaryByChannel(ledgerRows || []);
+  const ledgerIncomeCounts = buildLedgerIncomeCountSummaryByChannel(ledgerRows || [], period);
 
   MANUAL_FINANCE_MONEY_CHANNELS.forEach((channel) => {
     const channelRows = (manualRows || []).filter((row) => row?.channel === channel);
@@ -1016,7 +1047,11 @@ function buildExpenseAnalysisChannelSummary({
     const realIncomeUsd = roundExpenseAnalysisAmount(realIncomeSummaryByChannel?.[channel]?.realNetUsd);
     const incomeDifferenceUsd = roundExpenseAnalysisAmount(plannedIncomeUsd - realIncomeUsd);
     const plannedExpenseUsd = roundExpenseAnalysisAmount(getManualFinancePlannedExpenseUsdNumber(manualRow, usdRateLookup));
-    const realExpenseUsd = roundExpenseAnalysisAmount(providerExpenseByChannel?.[channel]);
+    const expenseBreakdown = normalizeExpenseAnalysisProviderExpenseBreakdown(
+      providerExpenseBreakdownByChannel?.[channel],
+      providerExpenseByChannel?.[channel]
+    );
+    const realExpenseUsd = expenseBreakdown.business;
     const expenseDifferenceUsd = roundExpenseAnalysisAmount(plannedExpenseUsd - realExpenseUsd);
     const planIncomeCount = getExpenseAnalysisPlannedIncomeCount(
       movementStats.accruedPlusCountByChannel?.[channel],
@@ -1035,6 +1070,9 @@ function buildExpenseAnalysisChannelSummary({
       formatSheetNumber(incomeDifferenceUsd),
       formatSheetNumber(plannedExpenseUsd),
       formatSheetNumber(realExpenseUsd),
+      formatSheetNumber(expenseBreakdown.total),
+      formatSheetNumber(expenseBreakdown.personal),
+      formatSheetNumber(expenseBreakdown.excludedTransferExchange),
       formatSheetNumber(expenseDifferenceUsd),
       String(planIncomeCount),
       String(autoIncomeCount),
@@ -1074,6 +1112,9 @@ function buildExpenseAnalysisChannelSummary({
       formatSheetNumber(0),
       formatSheetNumber(0),
       formatSheetNumber(0),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
+      formatSheetNumber(0),
       "0",
       "0",
       "0",
@@ -1090,6 +1131,16 @@ function buildExpenseAnalysisChannelSummary({
   const nextOwnerOrderShare30Pct = hasOwnerOrderShare
     ? roundExpenseAnalysisAmount(parsedOwnerOrderShare30Pct)
     : roundExpenseAnalysisAmount(incomeTotals.ordersPlanUsd * 0.3);
+  const providerExpenseBreakdownTotals = Object.values(providerExpenseBreakdownByChannel || {}).reduce((totals, breakdown) => {
+    const normalized = normalizeExpenseAnalysisProviderExpenseBreakdown(breakdown);
+    totals.total += normalized.total;
+    totals.personal += normalized.personal;
+    totals.excludedTransferExchange += normalized.excludedTransferExchange;
+    return totals;
+  }, { total: 0, personal: 0, excludedTransferExchange: 0 });
+  const realExpenseTotalUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.total || expenseTotals.realUsd);
+  const personalExpenseUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.personal);
+  const excludedTransferExchangeUsd = roundExpenseAnalysisAmount(providerExpenseBreakdownTotals.excludedTransferExchange);
 
   rows.push([
     MANUAL_FINANCE_TOTAL_LABEL,
@@ -1100,6 +1151,9 @@ function buildExpenseAnalysisChannelSummary({
     formatSheetNumber(incomeTotals.differenceUsd),
     formatSheetNumber(expenseTotals.plannedUsd),
     formatSheetNumber(expenseTotals.realUsd),
+    formatSheetNumber(realExpenseTotalUsd),
+    formatSheetNumber(personalExpenseUsd),
+    formatSheetNumber(excludedTransferExchangeUsd),
     formatSheetNumber(expenseTotals.differenceUsd),
     String(incomeCountTotals.plan),
     String(incomeCountTotals.auto),
@@ -1119,6 +1173,9 @@ function buildExpenseAnalysisChannelSummary({
     expenseTotals: {
       plannedUsd: roundExpenseAnalysisAmount(expenseTotals.plannedUsd),
       realUsd: roundExpenseAnalysisAmount(expenseTotals.realUsd),
+      realTotalUsd: realExpenseTotalUsd,
+      personalUsd: personalExpenseUsd,
+      excludedTransferExchangeUsd,
       differenceUsd: roundExpenseAnalysisAmount(expenseTotals.differenceUsd)
     },
     incomeCountTotals: {
@@ -1126,6 +1183,11 @@ function buildExpenseAnalysisChannelSummary({
       auto: incomeCountTotals.auto,
       manual: incomeCountTotals.manual,
       screenshot: incomeCountTotals.screenshot
+    },
+    incomeCountDiagnostics: {
+      rawRowsByChannel: ledgerIncomeCounts.rawRowsByChannel || {},
+      dedupedEventsByChannel: ledgerIncomeCounts.dedupedEventsByChannel || {},
+      duplicateRowsByChannel: ledgerIncomeCounts.duplicateRowsByChannel || {}
     },
     transferBalance: {
       transferIn: roundExpenseAnalysisAmount(transferBalance.transferIn),
@@ -1473,26 +1535,151 @@ function getExpenseAnalysisPlannedIncomeCount(rawCount, ordersPlanUsd) {
   return roundExpenseAnalysisAmount(ordersPlanUsd) > 0 ? 1 : 0;
 }
 
-function buildLedgerIncomeCountSummaryByChannel(rows = []) {
+function normalizeExpenseAnalysisIncomeCountDate(value) {
+  if (typeof normalizeIncomingSheetDateValue === "function") return normalizeIncomingSheetDateValue(value);
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const isoTimestamp = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoTimestamp) return isoTimestamp[1];
+  const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (display) return `${display[3]}-${display[2]}-${display[1]}`;
+  return raw;
+}
+
+function getExpenseAnalysisIncomeRowDate(row = {}, rawRow = {}) {
+  return normalizeExpenseAnalysisIncomeCountDate(
+    row?.date ||
+    row?.operationDate ||
+    row?.operation_date ||
+    row?.transactionDate ||
+    row?.transaction_date ||
+    row?.postedDate ||
+    row?.posted_date ||
+    row?.createdAt ||
+    row?.created_at ||
+    rawRow?.date ||
+    rawRow?.operationDate ||
+    rawRow?.operation_date ||
+    rawRow?.transactionDate ||
+    rawRow?.transaction_date ||
+    rawRow?.postedDate ||
+    rawRow?.posted_date ||
+    rawRow?.createdAt ||
+    rawRow?.created_at ||
+    ""
+  );
+}
+
+function isExpenseAnalysisIncomeRowInPeriod(row = {}, rawRow = {}, period = {}) {
+  const startDate = normalizeExpenseAnalysisIncomeCountDate(period?.startDate || period?.from || "");
+  const endDate = normalizeExpenseAnalysisIncomeCountDate(period?.endDate || period?.to || "");
+  if (!startDate && !endDate) return true;
+  const rowDate = getExpenseAnalysisIncomeRowDate(row, rawRow);
+  if (!rowDate) return false;
+  if (startDate && rowDate < startDate) return false;
+  if (endDate && rowDate > endDate) return false;
+  return true;
+}
+
+function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
   const empty = () => Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const summary = {
     autoByChannel: empty(),
     manualByChannel: empty(),
-    screenshotByChannel: empty()
+    screenshotByChannel: empty(),
+    rawRowsByChannel: empty(),
+    dedupedEventsByChannel: empty(),
+    duplicateRowsByChannel: empty()
   };
+  const events = new Set();
   (rows || []).forEach((rawRow) => {
     const row = rawRow?.ledgerV2 || rawRow || {};
+    if (!isExpenseAnalysisIncomeRowInPeriod(row, rawRow, period)) return;
     const operation = normalizeExpenseAnalysisIncomeOperation(row?.operation || row?.legacy_operation || rawRow?.operation || rawRow?.legacy_operation);
     const category = normalizeExpenseAnalysisIncomeOperation(row?.category || rawRow?.category || row?.legacy_category || rawRow?.legacy_category);
     if (!operation && !category) return;
     const channel = canonicalManualFinanceChannel(row?.to_channel || row?.toChannel || rawRow?.to_channel || rawRow?.toChannel || "");
     if (!channel || !Object.prototype.hasOwnProperty.call(summary.autoByChannel, channel)) return;
     const source = normalizeExpenseAnalysisIncomeSource(row?.source || rawRow?.source || rawRow?.displaySource || "");
-    if (isExpenseAnalysisAutoIncomeSource(source)) summary.autoByChannel[channel] += 1;
-    else if (isExpenseAnalysisManualIncomeSource(source)) summary.manualByChannel[channel] += 1;
-    else if (isExpenseAnalysisScreenshotIncomeSource(source)) summary.screenshotByChannel[channel] += 1;
+    let bucket = "";
+    if (isExpenseAnalysisAutoIncomeSource(source)) bucket = "auto";
+    else if (isExpenseAnalysisManualIncomeSource(source)) bucket = "manual";
+    else if (isExpenseAnalysisScreenshotIncomeSource(source)) bucket = "screenshot";
+    if (!bucket) return;
+    summary.rawRowsByChannel[channel] += 1;
+    const eventKey = buildLedgerIncomeEventDedupeKey(row, rawRow, channel);
+    if (events.has(eventKey)) {
+      summary.duplicateRowsByChannel[channel] += 1;
+      return;
+    }
+    events.add(eventKey);
+    summary.dedupedEventsByChannel[channel] += 1;
+    if (bucket === "auto") summary.autoByChannel[channel] += 1;
+    else if (bucket === "manual") summary.manualByChannel[channel] += 1;
+    else if (bucket === "screenshot") summary.screenshotByChannel[channel] += 1;
   });
   return summary;
+}
+
+function buildLedgerIncomeEventDedupeKey(row = {}, rawRow = {}, channel = "") {
+  const sourceTransactionId = normalizeExpenseAnalysisIncomeEventKeyPart(
+    row?.sourceTransactionId ||
+    rawRow?.sourceTransactionId ||
+    row?.externalId ||
+    rawRow?.externalId ||
+    row?.external_id ||
+    rawRow?.external_id ||
+    ""
+  );
+  if (sourceTransactionId) return `source:${sourceTransactionId}`;
+  const rawSourceId = normalizeExpenseAnalysisIncomeEventKeyPart(
+    row?.raw_source_id ||
+    rawRow?.raw_source_id ||
+    row?.rawSourceId ||
+    rawRow?.rawSourceId ||
+    ""
+  );
+  if (rawSourceId) return `raw:${rawSourceId}`;
+  const date = getExpenseAnalysisIncomeRowDate(row, rawRow);
+  const currency = normalizeExpenseAnalysisIncomeEventKeyPart(row?.currency || rawRow?.currency || "");
+  const amount = normalizeExpenseAnalysisIncomeEventAmount(
+    row?.amount_net ??
+    rawRow?.amount_net ??
+    row?.amountNet ??
+    rawRow?.amountNet ??
+    row?.netAmount ??
+    rawRow?.netAmount ??
+    row?.amount ??
+    rawRow?.amount
+  );
+  const text = normalizeLookupText(
+    row?.comment ||
+    rawRow?.comment ||
+    row?.counterparty ||
+    rawRow?.counterparty ||
+    row?.description ||
+    rawRow?.description ||
+    row?.organization ||
+    rawRow?.organization ||
+    ""
+  );
+  return [
+    "fallback",
+    normalizeExpenseAnalysisIncomeEventKeyPart(channel),
+    date,
+    currency,
+    amount,
+    text
+  ].join("|");
+}
+
+function normalizeExpenseAnalysisIncomeEventKeyPart(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeExpenseAnalysisIncomeEventAmount(value) {
+  const numeric = parseLooseNumber(value);
+  return Number.isFinite(numeric) ? String(Math.round(Math.abs(numeric) * 10000) / 10000) : "";
 }
 
 function normalizeExpenseAnalysisIncomeOperation(value) {

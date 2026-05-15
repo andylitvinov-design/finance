@@ -867,7 +867,9 @@ function renderExpenseAnalysisChannelBlock(summary) {
   cards.appendChild(renderExpenseSummaryCard("пришло реально", `${formatSheetNumber(summary.incomeTotals.realUsd)} USD`));
   cards.appendChild(renderExpenseSummaryCard("30% заказов", `${formatSheetNumber(summary.ownerOrderShare30Pct || 0)} USD`));
   cards.appendChild(renderExpenseSummaryCard("потрачено план", `${formatSheetNumber(summary.expenseTotals.plannedUsd)} USD`));
-  cards.appendChild(renderExpenseSummaryCard("потрачено реал", `${formatSheetNumber(summary.expenseTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("потрачено реал бизнес", `${formatSheetNumber(summary.expenseTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("потрачено реал всего", `${formatSheetNumber(summary.expenseTotals.realTotalUsd ?? summary.expenseTotals.realUsd)} USD`));
+  cards.appendChild(renderExpenseSummaryCard("личные расходы", `${formatSheetNumber(summary.expenseTotals.personalUsd || 0)} USD`));
   cards.appendChild(renderExpenseSummaryCard("баланс переводов", `${formatSheetNumber(summary.transferBalance?.transferBalance || 0)} USD`));
   block.appendChild(cards);
   const wrap = document.createElement("div");
@@ -1067,12 +1069,14 @@ function getExpenseAnalysisChannelSummary() {
     ledgerRows,
     realIncomeSummaryByChannel,
     providerExpenseByChannel: getExpenseAnalysisProviderExpenseByChannel(usdRateLookup, selectedPeriod),
+    providerExpenseBreakdownByChannel: getExpenseAnalysisProviderExpenseBreakdownByChannel(usdRateLookup, selectedPeriod),
     usdRateLookup,
     transferBalance: typeof calculateTransferBalance === "function"
       ? calculateTransferBalance(ledgerRows, selectedPeriod)
       : { transferIn: 0, transferOut: 0, transferBalance: 0 },
     ownerOrderBaseUsd: topMetrics.totalOrders,
-    ownerOrderShare30Pct: topMetrics.ownerOrderShare30Pct
+    ownerOrderShare30Pct: topMetrics.ownerOrderShare30Pct,
+    period: selectedPeriod
   });
 }
 
@@ -1291,16 +1295,64 @@ function getProviderEntryExpenseAmountUsd(entry) {
 }
 
 function buildLedgerProviderExpenseByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
-  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
-  (rows || []).forEach((row) => {
-    if (!isLedgerProviderExpenseRowInPeriod(row, options)) return;
-    const channel = getLedgerExpenseChannel(row);
-    if (!channel) return;
-    totals[channel] += getLedgerFactAmountUsd(row, usdRateLookup);
-  });
+  const totals = Object.fromEntries(
+    Object.entries(buildLedgerProviderExpenseBreakdownByChannel(rows, usdRateLookup, options))
+      .map(([channel, breakdown]) => [channel, breakdown.total])
+  );
   return Object.fromEntries(
     Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
   );
+}
+
+function buildLedgerProviderExpenseBreakdownByChannel(rows, usdRateLookup = { byChannel: {}, byCurrency: {} }, options = {}) {
+  const emptyBreakdown = () => ({
+    total: 0,
+    business: 0,
+    personal: 0,
+    byCategory: {},
+    bySubcategory: {},
+    excludedTransferExchange: 0
+  });
+  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, emptyBreakdown()]));
+  (rows || []).forEach((row) => {
+    if (!isLedgerProviderExpenseRowInPeriod(row, options)) return;
+    const operation = getNormalizedLedgerFactOperation(row);
+    const isExcludedTransferExchange = typeof isTransferOrExchangeRow === "function"
+      ? isTransferOrExchangeRow(row)
+      : ["exchange_out", "partner_transfer", "transfer_out"].includes(operation);
+    const channel = isExcludedTransferExchange
+      ? canonicalManualFinanceChannel(row?.fromChannel ?? row?.from_channel)
+      : getLedgerExpenseChannel(row);
+    if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
+    const amountUsd = getLedgerFactAmountUsd(row, usdRateLookup);
+    if (isExcludedTransferExchange) {
+      totals[channel].excludedTransferExchange += amountUsd;
+      return;
+    }
+    if (!["expense", "business_expense", "personal_expense"].includes(operation)) return;
+    const category = String(row?.category || row?.ledgerV2?.category || "").trim() || "uncategorized";
+    const subcategory = String(row?.subcategory || row?.ledgerV2?.subcategory || "").trim() || "";
+    const isPersonal = operation === "personal_expense" || ["flat", "house", "food", "fun", "study", "travel", "extra"].includes(category);
+    totals[channel].total += amountUsd;
+    if (isPersonal) {
+      totals[channel].personal += amountUsd;
+    } else {
+      totals[channel].business += amountUsd;
+    }
+    totals[channel].byCategory[category] = (totals[channel].byCategory[category] || 0) + amountUsd;
+    if (subcategory) totals[channel].bySubcategory[subcategory] = (totals[channel].bySubcategory[subcategory] || 0) + amountUsd;
+  });
+  return Object.fromEntries(Object.entries(totals).map(([channel, breakdown]) => [
+    channel,
+    {
+      total: roundProviderSummaryAmount(breakdown.total),
+      business: roundProviderSummaryAmount(breakdown.business),
+      personal: roundProviderSummaryAmount(breakdown.personal),
+      byCategory: Object.fromEntries(Object.entries(breakdown.byCategory).map(([key, amount]) => [key, roundProviderSummaryAmount(amount)])),
+      bySubcategory: Object.fromEntries(Object.entries(breakdown.bySubcategory).map(([key, amount]) => [key, roundProviderSummaryAmount(amount)])),
+      excludedTransferExchange: roundProviderSummaryAmount(breakdown.excludedTransferExchange)
+    }
+  ]));
 }
 
 function getExpenseAnalysisProviderExpenseByChannel(rateLookup, selectedPeriod = {}) {
@@ -1337,6 +1389,52 @@ function getExpenseAnalysisProviderExpenseByChannel(rateLookup, selectedPeriod =
   return Object.fromEntries(
     Object.entries(totals).map(([channel, amount]) => [channel, roundProviderSummaryAmount(amount)])
   );
+}
+
+function getExpenseAnalysisProviderExpenseBreakdownByChannel(rateLookup, selectedPeriod = {}) {
+  const ledgerRows = getExpenseAnalysisLedgerRows();
+  if (ledgerRows.length) return buildLedgerProviderExpenseBreakdownByChannel(ledgerRows, rateLookup, selectedPeriod);
+
+  const totals = Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, {
+    total: 0,
+    business: 0,
+    personal: 0,
+    byCategory: {},
+    bySubcategory: {},
+    excludedTransferExchange: 0
+  }]));
+  const addTotal = (channel, amount) => {
+    if (!channel || !Object.prototype.hasOwnProperty.call(totals, channel)) return;
+    totals[channel].total += amount;
+    totals[channel].business += amount;
+  };
+  (state.expenseAccounting.entries || []).forEach((entry) => {
+    if (!entry?.channel || !["expense", "exchange"].includes(entry.direction)) return;
+    const channel = canonicalManualFinanceChannel(entry.channel);
+    addTotal(channel, getProviderEntryExpenseAmountUsd(entry));
+  });
+  if (!(state.expenseAccounting.entries || []).length) {
+    [
+      [getActivePayPalSummary(), { USD: "пейпал дол", EUR: "пейпал евр", CAD: "пейпал сad" }],
+      [getActiveWiseSummary(), { USD: "трансервайз дол", EUR: "трансервайз евро" }],
+      [getActiveYooMoneySummary(), { RUB: "Яндекс руб" }],
+      [getActiveMonobankSummary(), { UAH: "монобанк грн" }],
+      [getActivePrivatBankSummary(), { USD: "приват 24-дол", EUR: "приват 24-евро", UAH: "приват 24-грн" }]
+    ].forEach(([summary, channelByCurrency]) => {
+      Object.entries(summary?.totalsByCurrency || {}).forEach(([currency, currencyTotals]) => {
+        const channel = channelByCurrency[String(currency || "").trim().toUpperCase()];
+        addTotal(channel, parseLooseNumber(currencyTotals?.expense) + parseLooseNumber(currencyTotals?.exchange));
+      });
+    });
+  }
+  return Object.fromEntries(Object.entries(totals).map(([channel, breakdown]) => [
+    channel,
+    {
+      ...breakdown,
+      total: roundProviderSummaryAmount(breakdown.total),
+      business: roundProviderSummaryAmount(breakdown.business)
+    }
+  ]));
 }
 
 function renderProviderMonthlyStatement(titleText, summary) {

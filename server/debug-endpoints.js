@@ -123,7 +123,8 @@ export async function buildDebugUiState(options = {}) {
     finance_analysis: {
       source: "server_derived_ledger_operations",
       planned: buildPlannedMovementSummary(movementLikeRows),
-      actual_income: groupRowsByChannel(incomeRows),
+      actual_income: groupRowsByChannel(incomeRows, { incomeEvents: true }),
+      income_diagnostics: buildIncomeEventDiagnostics(incomeRows, movementLikeRows),
       actual_income_rows: includeRows ? incomeRows.map(safeLedgerRow) : undefined,
       warnings: movementLikeRows.length
         ? []
@@ -132,6 +133,7 @@ export async function buildDebugUiState(options = {}) {
     expense_analysis: {
       source: "server_derived_ledger_operations",
       real_expense: groupRowsByChannel(expenseRows),
+      real_expense_breakdown: buildExpenseBreakdownByChannel(expenseRows, [...transferRows, ...exchangeRows].filter(isOutflowRow)),
       transfer_outflows: groupRowsByChannel([...transferRows, ...exchangeRows].filter(isOutflowRow)),
       real_expense_rows: includeRows ? expenseRows.map(safeLedgerRow) : undefined,
     },
@@ -262,8 +264,9 @@ function emptyBreakdown() {
   return [];
 }
 
-function groupRowsByChannel(rows) {
+function groupRowsByChannel(rows, options = {}) {
   const grouped = new Map();
+  const incomeEvents = new Set();
   for (const row of rows || []) {
     const channel = getRowChannel(row);
     if (!channel) continue;
@@ -280,6 +283,15 @@ function groupRowsByChannel(rows) {
       sources: {},
     };
     current.rows += 1;
+    if (options.incomeEvents) {
+      const eventKey = buildIncomeEventDedupeKey(row, channel);
+      if (incomeEvents.has(eventKey)) {
+        current.duplicate_income_rows = (current.duplicate_income_rows || 0) + 1;
+      } else {
+        incomeEvents.add(eventKey);
+        current.deduped_income_events_count = (current.deduped_income_events_count || 0) + 1;
+      }
+    }
     if (amountUsd !== null) {
       current.amount_usd_signed_sum += amountUsd;
       current.amount_usd_abs_sum += Math.abs(amountUsd);
@@ -301,6 +313,117 @@ function groupRowsByChannel(rows) {
       amount_usd_abs_sum: round(row.amount_usd_abs_sum),
       amount_net_abs_sum: round(row.amount_net_abs_sum),
     }));
+}
+
+function buildExpenseBreakdownByChannel(expenseRows, excludedRows = []) {
+  const grouped = new Map();
+  for (const row of expenseRows || []) {
+    const channel = getRowChannel(row);
+    if (!channel) continue;
+    const operation = String(row?.ledgerV2?.operation || row?.operation || "").trim();
+    const category = sanitizeText(row?.ledgerV2?.category || row?.category || "").slice(0, 80) || "uncategorized";
+    const subcategory = sanitizeText(row?.ledgerV2?.subcategory || row?.subcategory || "").slice(0, 80);
+    const amountUsd = Math.abs(parseNumber(getLedgerValue(row, "amount_usd")) || 0);
+    const current = grouped.get(channel) || {
+      channel,
+      total: 0,
+      business: 0,
+      personal: 0,
+      byCategory: {},
+      bySubcategory: {},
+      excluded_transfer_exchange: 0,
+    };
+    current.total += amountUsd;
+    if (operation === "personal_expense" || ["flat", "house", "food", "fun", "study", "travel", "extra"].includes(category)) {
+      current.personal += amountUsd;
+    } else {
+      current.business += amountUsd;
+    }
+    current.byCategory[category] = (current.byCategory[category] || 0) + amountUsd;
+    if (subcategory) current.bySubcategory[subcategory] = (current.bySubcategory[subcategory] || 0) + amountUsd;
+    grouped.set(channel, current);
+  }
+  for (const row of excludedRows || []) {
+    const channel = getRowChannel(row);
+    if (!channel) continue;
+    const amountUsd = Math.abs(parseNumber(getLedgerValue(row, "amount_usd")) || 0);
+    const current = grouped.get(channel) || {
+      channel,
+      total: 0,
+      business: 0,
+      personal: 0,
+      byCategory: {},
+      bySubcategory: {},
+      excluded_transfer_exchange: 0,
+    };
+    current.excluded_transfer_exchange += amountUsd;
+    grouped.set(channel, current);
+  }
+  return Array.from(grouped.values())
+    .sort((left, right) => left.channel.localeCompare(right.channel))
+    .map((row) => ({
+      ...row,
+      total: round(row.total),
+      business: round(row.business),
+      personal: round(row.personal),
+      byCategory: roundObject(row.byCategory),
+      bySubcategory: roundObject(row.bySubcategory),
+      excluded_transfer_exchange: round(row.excluded_transfer_exchange),
+    }));
+}
+
+function roundObject(values = {}) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, round(value)]));
+}
+
+function buildIncomeEventDiagnostics(incomeRows, movementRows) {
+  const grouped = groupRowsByChannel(incomeRows, { incomeEvents: true });
+  const matchedPlannedByChannel = Object.fromEntries(
+    buildPlannedMovementSummary(movementRows).map((row) => [row.channel, row.rows])
+  );
+  return grouped.map((row) => ({
+    channel: row.channel,
+    ledger_income_rows_count: row.rows,
+    deduped_income_events_count: row.deduped_income_events_count || 0,
+    duplicate_income_rows_count: row.duplicate_income_rows || 0,
+    matched_planned_payment_count: matchedPlannedByChannel[row.channel] || 0,
+    unmatched_income_rows_count: Math.max(0, row.rows - (matchedPlannedByChannel[row.channel] || 0)),
+  }));
+}
+
+function buildIncomeEventDedupeKey(row = {}, channel = "") {
+  const sourceTransactionId = normalizeEventKeyPart(
+    row?.sourceTransactionId ||
+    row?.ledgerV2?.external_id ||
+    row?.externalId ||
+    row?.external_id ||
+    ""
+  );
+  if (sourceTransactionId) return `source:${sourceTransactionId}`;
+  const rawSourceId = normalizeEventKeyPart(
+    row?.ledgerV2?.raw_source_id ||
+    row?.rawSourceId ||
+    row?.raw_source_id ||
+    ""
+  );
+  if (rawSourceId) return `raw:${rawSourceId}`;
+  return [
+    "fallback",
+    normalizeEventKeyPart(channel),
+    normalizeRowDate(row),
+    normalizeEventKeyPart(row?.ledgerV2?.currency || row?.currency || ""),
+    normalizeEventAmount(row?.ledgerV2?.amount_net ?? row?.amountNet ?? row?.amount_net ?? row?.netAmount ?? row?.amount),
+    normalizeHeader(row?.ledgerV2?.comment || row?.comment || row?.counterparty || row?.description || row?.organization || ""),
+  ].join("|");
+}
+
+function normalizeEventKeyPart(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeEventAmount(value) {
+  const numeric = parseNumber(value);
+  return numeric === null ? "" : String(round(Math.abs(numeric)));
 }
 
 function safeLedgerRow(row, index = 0) {
@@ -356,6 +479,14 @@ function filterRowsByPeriod(rows, periodFilter) {
 
 function parsePeriodFilter(query = {}) {
   const period = String(query.period || "").trim();
+  const range = period.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+  if (range) {
+    return {
+      from: range[1],
+      to: range[2],
+      period: { from: range[1], to: range[2] },
+    };
+  }
   if (/^\d{4}-\d{2}$/.test(period)) {
     return {
       from: `${period}-01`,

@@ -224,6 +224,13 @@ test("audit snapshot accepts dashboard startDate/endDate aliases and DD/MM/YYYY 
   assert.equal(excluded.summary.ledger_rows, 0);
 });
 
+test("audit snapshot accepts explicit period date ranges", async () => {
+  const response = await buildFixtureSnapshot({ period: "2026-05-02..2026-05-09" });
+
+  assert.deepEqual(response.period, { from: "2026-05-02", to: "2026-05-09" });
+  assert.equal(response.summary.ledger_rows, 6);
+});
+
 test("audit snapshot does not expose secret-looking fields or values", async () => {
   const response = await buildFixtureSnapshot({ includeRows: "1" });
   const serialized = JSON.stringify(response).toLowerCase();
