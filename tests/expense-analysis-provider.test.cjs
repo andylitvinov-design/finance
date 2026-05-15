@@ -134,6 +134,9 @@ function extractExpenseAnalysisIncomeCountHelpers() {
     "getExpenseAnalysisIncomeRowDate",
     "isExpenseAnalysisIncomeRowInPeriod",
     "buildLedgerIncomeCountSummaryByChannel",
+    "buildLedgerIncomeEventDedupeKey",
+    "normalizeExpenseAnalysisIncomeEventKeyPart",
+    "normalizeExpenseAnalysisIncomeEventAmount",
     "normalizeExpenseAnalysisIncomeOperation",
     "normalizeExpenseAnalysisIncomeSource",
     "isExpenseAnalysisAutoIncomeSource",
@@ -941,16 +944,7 @@ test("expense analysis summary derives provider real income and expense from led
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
-    `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
-    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeCountDate")}\n` +
-    `${extractFunction(financeJs, "getExpenseAnalysisIncomeRowDate")}\n` +
-    `${extractFunction(financeJs, "isExpenseAnalysisIncomeRowInPeriod")}\n` +
-    `${extractFunction(financeJs, "buildLedgerIncomeCountSummaryByChannel")}\n` +
-    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeOperation")}\n` +
-    `${extractFunction(financeJs, "normalizeExpenseAnalysisIncomeSource")}\n` +
-    `${extractFunction(financeJs, "isExpenseAnalysisAutoIncomeSource")}\n` +
-    `${extractFunction(financeJs, "isExpenseAnalysisManualIncomeSource")}\n` +
-    `${extractFunction(financeJs, "isExpenseAnalysisScreenshotIncomeSource")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
     `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
     `${extractFunction(uiJs, "getExpenseOperationsRows")}\n` +
     `${extractFunction(uiJs, "getExpenseAnalysisLedgerRows")}\n` +
@@ -1779,17 +1773,17 @@ test("buildExpenseAnalysisChannelSummary appends income counters by source group
     realIncomeSummaryByChannel: {},
     providerExpenseByChannel: {},
     ledgerRows: [
-      { operation: "income", source: "wise", toChannel: "wise usd", amountUsd: "100", currency: "USD" },
-      { operation: "servicein", source: "provider", to_channel: "paypal usd", amount_usd: "25", currency: "USD" },
-      { operation: "ezoin", source: "mcp", to_channel: "wise", amount_usd: "50", currency: "USD" },
-      { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "10", currency: "USD" },
-      { operation: "income", source: "fact", toChannel: "wise", amountUsd: "20", currency: "USD" },
-      { operation: "income", source: "migration", toChannel: "monobank", amountUsd: "30", currency: "USD" },
-      { operation: "income", source: "ocr", toChannel: "paypal usd", amountUsd: "40", currency: "USD" },
-      { operation: "income", source: "photo", toChannel: "wise", amountUsd: "50", currency: "USD" },
-      { operation: "income", source: "screenshot", toChannel: "monobank", amountUsd: "60", currency: "USD" },
-      { operation: "income", source: "image", toChannel: "monobank", amountUsd: "70", currency: "USD" },
-      { operation: "income", source: "browser_ocr", toChannel: "paypal usd", amountUsd: "80", currency: "USD" },
+      { operation: "income", source: "wise", toChannel: "wise usd", amountUsd: "100", currency: "USD", raw_source_id: "wise:1" },
+      { operation: "servicein", source: "provider", to_channel: "paypal usd", amount_usd: "25", currency: "USD", raw_source_id: "provider:1" },
+      { operation: "ezoin", source: "mcp", to_channel: "wise", amount_usd: "50", currency: "USD", raw_source_id: "mcp:1" },
+      { operation: "income", source: "manual", toChannel: "paypal usd", amountUsd: "10", currency: "USD", raw_source_id: "manual:1" },
+      { operation: "income", source: "fact", toChannel: "wise", amountUsd: "20", currency: "USD", raw_source_id: "fact:1" },
+      { operation: "income", source: "migration", toChannel: "monobank", amountUsd: "30", currency: "USD", raw_source_id: "migration:1" },
+      { operation: "income", source: "ocr", toChannel: "paypal usd", amountUsd: "40", currency: "USD", raw_source_id: "ocr:1" },
+      { operation: "income", source: "photo", toChannel: "wise", amountUsd: "50", currency: "USD", raw_source_id: "photo:1" },
+      { operation: "income", source: "screenshot", toChannel: "monobank", amountUsd: "60", currency: "USD", raw_source_id: "screenshot:1" },
+      { operation: "income", source: "image", toChannel: "monobank", amountUsd: "70", currency: "USD", raw_source_id: "image:1" },
+      { operation: "income", source: "browser_ocr", toChannel: "paypal usd", amountUsd: "80", currency: "USD", raw_source_id: "browser_ocr:1" },
       { operation: "business_expense", source: "wise", fromChannel: "wise", amountUsd: "90", currency: "USD" },
       { operation: "exchange_out", source: "mcp", fromChannel: "paypal usd", amountUsd: "-12", currency: "USD" },
     ],
@@ -1819,6 +1813,10 @@ function createIncomeCountPeriodContext(channels = ["Яндекс руб", "тр
       if (iso) return iso[1];
       const display = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
       return display ? `${display[3]}-${display[2]}-${display[1]}` : raw;
+    },
+    parseLooseNumber(value) {
+      const numeric = Number(String(value ?? "").replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
     },
     canonicalManualFinanceChannel(value) {
       const normalized = String(value || "").trim().toLowerCase();
@@ -1891,7 +1889,120 @@ test("buildLedgerIncomeCountSummaryByChannel includes boundary dates only", () =
   assert.equal(summary.autoByChannel["Яндекс руб"], 2);
 });
 
+test("buildLedgerIncomeCountSummaryByChannel dedupes duplicate sourceTransactionId income rows", () => {
+  const context = createIncomeCountPeriodContext(["Яндекс руб"]);
+  const rows = [
+    { date: "2026-05-05", operation: "income", source: "yoomoney", toChannel: "yoomoney", sourceTransactionId: "YM-1", amount_net: "100" },
+    { date: "2026-05-05", operation: "income", source: "yoomoney", toChannel: "yoomoney", sourceTransactionId: "YM-1", amount_net: "100" },
+  ];
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-05",
+    endDate: "2026-05-11",
+  }));
+
+  assert.equal(summary.autoByChannel["Яндекс руб"], 1);
+  assert.equal(summary.rawRowsByChannel["Яндекс руб"], 2);
+  assert.equal(summary.dedupedEventsByChannel["Яндекс руб"], 1);
+  assert.equal(summary.duplicateRowsByChannel["Яндекс руб"], 1);
+});
+
+test("buildLedgerIncomeCountSummaryByChannel dedupes fallback provider rows without raw ids", () => {
+  const context = createIncomeCountPeriodContext(["трансервайз дол"]);
+  const rows = [
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd", currency: "USD", amount_net: "107.30", comment: "Client A" },
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd", currency: "USD", amount_net: "107.30", comment: "Client A" },
+  ];
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-05",
+    endDate: "2026-05-11",
+  }));
+
+  assert.equal(summary.autoByChannel["трансервайз дол"], 1);
+  assert.equal(summary.rawRowsByChannel["трансервайз дол"], 2);
+  assert.equal(summary.dedupedEventsByChannel["трансервайз дол"], 1);
+});
+
+test("buildLedgerIncomeCountSummaryByChannel keeps same-day distinct income events", () => {
+  const context = createIncomeCountPeriodContext(["трансервайз дол"]);
+  const rows = [
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd", currency: "USD", amount_net: "107.30", comment: "Client A" },
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd", currency: "USD", amount_net: "206.00", comment: "Client A" },
+    { date: "2026-05-08", operation: "income", source: "wise", toChannel: "wise usd", currency: "USD", amount_net: "107.30", raw_source_id: "wise:income-2" },
+  ];
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel(rows, {
+    startDate: "2026-05-05",
+    endDate: "2026-05-11",
+  }));
+
+  assert.equal(summary.autoByChannel["трансервайз дол"], 3);
+  assert.equal(summary.rawRowsByChannel["трансервайз дол"], 3);
+  assert.equal(summary.dedupedEventsByChannel["трансервайз дол"], 3);
+});
+
 test("buildExpenseAnalysisChannelSummary passes selected period into income counters", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
+    calculateMovementChannelStats: () => ({
+      accruedPlusByChannel: { "Яндекс руб": 400 },
+      accruedPlusCountByChannel: { "Яндекс руб": 4 }
+    }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const numeric = Number(String(value ?? "").replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[^0-9a-zа-я]+/g, " ").replace(/\s+/g, " ").trim();
+    },
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").slice(0, 10);
+    },
+    parseLooseNumber(value) {
+      const numeric = Number(String(value ?? "").replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim().toLowerCase() === "yoomoney" ? "Яндекс руб" : String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    extractExpenseAnalysisIncomeCountHelpers() +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const rows = Array.from({ length: 9 }, (_, index) => ({
+    date: index < 4 ? `2026-05-${String(index + 1).padStart(2, "0")}` : `2026-04-${String(index + 1).padStart(2, "0")}`,
+    operation: "income",
+    source: "yoomoney",
+    toChannel: "yoomoney",
+  }));
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    ledgerRows: rows,
+    period: { startDate: "2026-05-01", endDate: "2026-05-31" },
+  }));
+
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "4");
+});
+
+test("buildExpenseAnalysisChannelSummary dedupes count diagnostics without changing amount totals", () => {
   const context = {
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",
     MANUAL_FINANCE_MONEY_CHANNELS: ["Яндекс руб"],
@@ -1932,19 +2043,19 @@ test("buildExpenseAnalysisChannelSummary passes selected period into income coun
     context
   );
 
-  const rows = Array.from({ length: 9 }, (_, index) => ({
-    date: index < 4 ? `2026-05-${String(index + 1).padStart(2, "0")}` : `2026-04-${String(index + 1).padStart(2, "0")}`,
-    operation: "income",
-    source: "yoomoney",
-    toChannel: "yoomoney",
-  }));
-
   const summary = plain(context.buildExpenseAnalysisChannelSummary({
-    ledgerRows: rows,
-    period: { startDate: "2026-05-01", endDate: "2026-05-31" },
+    ledgerRows: [
+      { date: "2026-05-05", operation: "income", source: "yoomoney", toChannel: "yoomoney", sourceTransactionId: "YM-1", amount_net: "100" },
+      { date: "2026-05-05", operation: "income", source: "yoomoney", toChannel: "yoomoney", sourceTransactionId: "YM-1", amount_net: "100" },
+    ],
+    realIncomeSummaryByChannel: { "Яндекс руб": { realNetUsd: 200 } },
+    period: { startDate: "2026-05-05", endDate: "2026-05-11" },
   }));
 
-  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "4");
+  assert.equal(summary.rows.find((row) => row[0] === "Яндекс руб")[10], "1");
+  assert.equal(summary.incomeTotals.realUsd, 200);
+  assert.deepEqual(summary.incomeCountDiagnostics.rawRowsByChannel, { "Яндекс руб": 2 });
+  assert.deepEqual(summary.incomeCountDiagnostics.dedupedEventsByChannel, { "Яндекс руб": 1 });
 });
 
 test("buildLedgerRealIncomeSummaryByChannel maps MCP YooMoney income into Яндекс руб", () => {

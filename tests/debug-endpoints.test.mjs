@@ -230,11 +230,58 @@ test("debug UI state returns aggregate-only payload without row token", async ()
     assert.equal(payload.top_metrics.payable_usd, -213.86);
     assert.equal(payload.finance_analysis.actual_income[0].channel, "пейпал дол");
     assert.equal(payload.finance_analysis.actual_income[0].amount_usd_signed_sum, 311.06);
+    assert.equal(payload.finance_analysis.actual_income[0].deduped_income_events_count, 1);
+    assert.deepEqual(payload.finance_analysis.income_diagnostics[0], {
+      channel: "пейпал дол",
+      ledger_income_rows_count: 1,
+      deduped_income_events_count: 1,
+      duplicate_income_rows_count: 0,
+      matched_planned_payment_count: 1,
+      unmatched_income_rows_count: 0,
+    });
     assert.equal(payload.expense_analysis.real_expense[0].channel, "трансервайз дол");
     assert.equal(payload.transfer_analysis.transfers[0].channel, "трансервайз дол");
   } finally {
     restoreEnv(envBackup);
   }
+});
+
+test("debug UI state accepts explicit period range and reports raw versus deduped income events", async () => {
+  const fixture = repositoryFixture();
+  fixture.operations.push({
+    date: "2026-05-02",
+    operation: "income",
+    toChannel: "пейпал дол",
+    amount: "324",
+    amountUsd: "311.06",
+    amountNet: "311.06",
+    source: "paypal",
+    sourceTransactionId: "PAYPAL-1234567890",
+    ledgerV2: {
+      date: "2026-05-02",
+      operation: "income",
+      to_channel: "пейпал дол",
+      amount: "324",
+      currency: "USD",
+      amount_usd: "311.06",
+      amount_net: "311.06",
+      balance_amount: 311.06,
+      source: "paypal",
+      raw_source_id: "PAYPAL-RAW-1",
+    }
+  });
+
+  const payload = await buildDebugUiState({
+    query: { period: "2026-05-01..2026-05-31" },
+    repositoryLoader: async () => fixture
+  });
+
+  assert.deepEqual(payload.period, { from: "2026-05-01", to: "2026-05-31" });
+  assert.equal(payload.finance_analysis.actual_income[0].rows, 2);
+  assert.equal(payload.finance_analysis.actual_income[0].deduped_income_events_count, 1);
+  assert.equal(payload.finance_analysis.actual_income[0].duplicate_income_rows, 1);
+  assert.equal(payload.finance_analysis.income_diagnostics[0].ledger_income_rows_count, 2);
+  assert.equal(payload.finance_analysis.income_diagnostics[0].deduped_income_events_count, 1);
 });
 
 test("debug UI state can expose safe sanitized rows with configured token", async () => {
