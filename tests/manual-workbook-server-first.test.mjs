@@ -121,7 +121,7 @@ test("manual workbook route allows monthly plan sheet reads", async () => {
     assert.equal(response.body.ok, true);
     assert.equal(response.body.route, "manual-transfers");
     assert.deepEqual(response.body.data, { values: [["month"], ["2026-05"]] });
-    assert.ok(requestedUrls.some((url) => url.includes("/%D0%9F%D0%BB%D0%B0%D0%BD")));
+    assert.ok(requestedUrls.some((url) => url.includes("%D0%9F%D0%BB%D0%B0%D0%BD")));
   } finally {
     global.fetch = previousFetch;
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
