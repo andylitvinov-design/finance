@@ -70,10 +70,11 @@ function buildFinanceContext() {
       return raw ? raw.replace(".", ",") : "";
     },
     inferManualFinanceChannelCurrency(channel) {
+      if (/сad|cad/i.test(String(channel || ""))) return "CAD";
       return /евр|eur/i.test(String(channel || "")) ? "EUR" : "USD";
     },
     getManualFinanceChannels() {
-      return ["Налично -я-евр", "нал-мам-дол", "трансервайз дол"];
+      return ["Налично -я-евр", "нал-мам-дол", "пейпал сad", "трансервайз дол"];
     },
     parseLooseNumber(value) {
       const raw = String(value ?? "").trim().replace(/\s/g, "").replace(",", ".");
@@ -196,6 +197,7 @@ test("balance snapshot editor expands every configured channel as target-date in
   assert.deepEqual(rows.map((row) => [row.date, row.channel, row.currency, row.amount]), [
     ["2026-05-15", "Налично -я-евр", "EUR", ""],
     ["2026-05-15", "нал-мам-дол", "USD", ""],
+    ["2026-05-15", "пейпал сad", "CAD", ""],
     ["2026-05-15", "трансервайз дол", "USD", "120,45"],
   ]);
 });
