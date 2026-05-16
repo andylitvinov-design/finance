@@ -393,6 +393,47 @@ test("audit snapshot does not count PayPal net as exact when fee is missing", as
   assert.match(response.warnings.join("\n"), /PayPal warning: missing fee for TXN-NOFEE/);
 });
 
+test("audit snapshot classifies missing PayPal amount_net as provider-permission incomplete", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          toChannel: "пейпал евр",
+          amount: "36",
+          amountUsd: "41.76",
+          amountGross: "36",
+          amountFee: "",
+          amountNet: "",
+          source: "paypal",
+          rawSourceId: "paypal:missing-net",
+          ledgerV2: {
+            operation: "income",
+            to_channel: "пейпал евр",
+            amount: "36",
+            amount_usd: "41.76",
+            amount_gross: "36",
+            amount_fee: "",
+            amount_net: "",
+            source: "paypal",
+            external_id: "paypal:missing-net",
+          },
+        }),
+      ],
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.balances.missing_amount_net_rows, 1);
+  assert.equal(response.balances.excluded_missing_amount_net_rows, 1);
+  assert.match(response.warnings.join("\n"), /needs provider permission: 1 PayPal row/);
+  assert.doesNotMatch(response.warnings.join("\n"), /1 row\(s\) have empty amount_net; balance was not calculated/);
+  assert.equal(response.balance_fixes.missing_amount_net_rows[0].recommended_amount_net, null);
+  assert.match(response.balance_fixes.missing_amount_net_rows[0].reason, /PayPal fee\/net is unavailable/);
+});
+
 test("audit snapshot counts unknown source rows in balance when amount_net is valid", async () => {
   const response = await buildAuditSnapshot({
     repositoryLoader: async () => ({

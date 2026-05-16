@@ -261,11 +261,18 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
                   ["2026-04-25 00:00:00", "income", "", "пейпал дол", "369", "USD", "369", "369", "", "369", "serviceIncome", "", "in", "income", "manual", "ledger-5", "", "", ""],
                   ["2026-04-25 00:00:00", "income", "", "трансервайз дол", "1210.25", "USD", "1210.25", "1210.25", "", "", "serviceIncome", "", "in", "wise fact income", "wise", "ledger-wise-income", "", "", ""],
                   ["2026-04-26 00:00:00", "expense", "Яндекс руб", "", "1000", "RUB", "11.82", "1000", "", "1000", "food", "", "out", "meal", "photo", "ledger-6", "", "", ""],
-                  ["2026-04-27 00:00:00", "business_expense", "Яндекс руб", "", "85956", "RUB", "942", "85956", "", "85956", "business", "", "out", "rub expense", "mcp", "ledger-7", "", "", ""],
-                ],
-              },
-              {
-                range: "'Расходы'!A1:Z10",
+	                  ["2026-04-27 00:00:00", "business_expense", "Яндекс руб", "", "85956", "RUB", "942", "85956", "", "85956", "business", "", "out", "rub expense", "mcp", "ledger-7", "", "", ""],
+	                ],
+	              },
+	              {
+	                range: "'План'!A1:D10",
+	                values: [
+	                  ["month", "orders_income_plan_usd", "services_income_plan_usd", "business_expense_plan_usd"],
+	                  ["2026-04", "1000", "250", "300"],
+	                ],
+	              },
+	              {
+	                range: "'Расходы'!A1:Z10",
                 values: [
                   ["дата", "категория", "Яндекс руб"],
                   ["2026-04-24", "business", "999999"],
@@ -301,8 +308,14 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
 	    assert.equal(repository.views.excluded_missing_amount_net_rows, 1);
     assert.equal(repository.operations[5].source, "wise");
     assert.equal(repository.operations[6].source, "photo");
-    assert.equal(repository.operations[7].amountUsd, "942");
-    assert.deepEqual(repository.balances, [
+	    assert.equal(repository.operations[7].amountUsd, "942");
+	    assert.equal(repository.monthlyPlanRows.length, 1);
+	    assert.deepEqual(repository.plannedRows, [
+	      { date: "2026-04-01", channel: "План: заказы", currency: "USD", amount: 1000, operation: "income", source: "monthly_plan" },
+	      { date: "2026-04-01", channel: "План: услуги", currency: "USD", amount: 250, operation: "income", source: "monthly_plan" },
+	      { date: "2026-04-01", channel: "План: бизнес расходы", currency: "USD", amount: 300, operation: "expense", source: "monthly_plan" },
+	    ]);
+	    assert.deepEqual(repository.balances, [
       {
         date: "2026-04-23",
         channel: "трансервайз дол",

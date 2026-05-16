@@ -48,7 +48,7 @@ export function buildPeriodBalanceReconciliation({
     warnings.push("needs verification: planned balance movement source is unavailable; planned_delta is 0 until planned rows are connected.");
   }
   if (real.missing_amount_net_rows) {
-    warnings.push(`Ledger v2 error: ${real.missing_amount_net_rows} row(s) have empty amount_net; real balance reconciliation is incomplete.`);
+    warnings.push(formatMissingAmountNetWarning(real.missing_amount_net_rows, real.paypal_missing_amount_net_rows));
   }
 
   return {
@@ -142,6 +142,7 @@ function buildAccountRow({ key, real, planned, balanceIndex, from, to }) {
 function buildRealMovementIndex(operations, period) {
   const byKey = new Map();
   let missingAmountNetRows = 0;
+  let paypalMissingAmountNetRows = 0;
 
   for (const row of operations || []) {
     const date = normalizeDate(row?.date ?? row?.ledgerV2?.date);
@@ -158,6 +159,7 @@ function buildRealMovementIndex(operations, period) {
     const current = byKey.get(key) || emptyMovement();
     if (!hasAmountNet) {
       missingAmountNetRows += 1;
+      if (isPayPalAmountNetPermissionRow(row)) paypalMissingAmountNetRows += 1;
       current.missing_amount_net_rows += 1;
       byKey.set(key, current);
       continue;
@@ -170,7 +172,36 @@ function buildRealMovementIndex(operations, period) {
     byKey.set(key, current);
   }
 
-  return { byKey, missing_amount_net_rows: missingAmountNetRows };
+  return {
+    byKey,
+    missing_amount_net_rows: missingAmountNetRows,
+    paypal_missing_amount_net_rows: paypalMissingAmountNetRows,
+  };
+}
+
+function formatMissingAmountNetWarning(missingRows, paypalRows) {
+  if (missingRows && missingRows === paypalRows) {
+    return `Ledger v2 needs provider permission: ${missingRows} PayPal row(s) have empty amount_net/fee; real balance reconciliation is incomplete.`;
+  }
+  return `Ledger v2 error: ${missingRows} row(s) have empty amount_net; real balance reconciliation is incomplete.`;
+}
+
+function isPayPalAmountNetPermissionRow(row) {
+  const ledger = row?.ledgerV2 || {};
+  const source = normalizeText(row?.source || ledger.source || "");
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || ledger.external_id || "").trim();
+  const channel = normalizeText([row?.fromChannel, row?.toChannel, row?.from_channel, row?.to_channel, ledger.from_channel, ledger.to_channel].filter(Boolean).join(" "));
+  return source.includes("paypal") || /^paypal[:_-]/i.test(rawSourceId) || /пейпал|paypal/.test(channel);
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildPlannedMovementIndex(plannedRows, period) {

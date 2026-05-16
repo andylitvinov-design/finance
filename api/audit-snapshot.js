@@ -465,7 +465,7 @@ function buildBalances(operations) {
   }
 
   if (missingAmountNetRows) {
-    warnings.push(`Ledger v2 error: ${missingAmountNetRows} row(s) have empty amount_net; balance was not calculated.`);
+    warnings.push(formatMissingAmountNetWarning(operations, "balance was not calculated."));
   }
 
   return {
@@ -529,9 +529,20 @@ function buildMissingAmountNetFixRow(row) {
         ""
     ).trim(),
     recommended_amount_net: recommendedAmountNet,
-    reason: "amount_net is empty, so the row is excluded from balance reconciliation.",
+    reason: paypal
+      ? "PayPal fee/net is unavailable, so amount_net is intentionally empty and the row is excluded from balance reconciliation."
+      : "amount_net is empty, so the row is excluded from balance reconciliation.",
     action,
   };
+}
+
+function formatMissingAmountNetWarning(operations, suffix) {
+  const missing = (operations || []).filter((row) => !String(row?.ledgerV2?.amount_net ?? row?.amountNet ?? row?.amount_net ?? "").trim());
+  const paypalRows = missing.filter(isPayPalRow);
+  if (missing.length && paypalRows.length === missing.length) {
+    return `Ledger v2 needs provider permission: ${missing.length} PayPal row(s) have empty amount_net/fee; ${suffix}`;
+  }
+  return `Ledger v2 error: ${missing.length} row(s) have empty amount_net; ${suffix}`;
 }
 
 function isSimpleAmountNetSource(source) {
