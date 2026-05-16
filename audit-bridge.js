@@ -2,9 +2,9 @@
   "use strict";
 
   const SNAPSHOT_URL = "/api/audit-snapshot";
-  const DEFAULT_DEBUGGER_URL = "https://chatgpt.com/";
+  const DEFAULT_DEBUGGER_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
   const DEFAULT_LIVE_URL = "https://ezohata-incoming-ledger.vercel.app/";
-  const SUCCESS_MESSAGE = "Prompt copied. Открыл EzoHata Debugger / ChatGPT.";
+  const SUCCESS_MESSAGE = "Prompt copied. Открыл EzoHata Auditor.";
 
   function normalizeUrl(value, fallback) {
     const raw = String(value || "").trim();
