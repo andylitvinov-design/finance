@@ -12,6 +12,7 @@ export function buildPeriodBalanceReconciliation({
   operations = [],
   balanceRows = [],
   plannedRows = [],
+  plannedSourceStatus = "",
   period = {},
 } = {}) {
   const from = normalizeDate(period.from);
@@ -43,8 +44,10 @@ export function buildPeriodBalanceReconciliation({
   const summary = buildSummary(rows, {
     missingAmountNetRows: real.missing_amount_net_rows,
     plannedRows: planned.rows,
+    plannedSourceStatus,
   });
-  if (!planned.rows && rows.length) {
+  const planSourceUnavailable = !planned.rows && plannedSourceStatus !== "available";
+  if (planSourceUnavailable && rows.length) {
     warnings.push("needs verification: planned balance movement source is unavailable; planned_delta is 0 until planned rows are connected.");
   }
   if (real.missing_amount_net_rows) {
@@ -53,7 +56,7 @@ export function buildPeriodBalanceReconciliation({
 
   return {
     period: { from: from || "needs verification", to: to || "needs verification" },
-    planned_source_status: planned.rows ? "ok" : "needs_verification",
+    planned_source_status: planned.rows ? "ok" : (plannedSourceStatus === "available" ? "available_empty" : "needs_verification"),
     real_source: "ledger.amount_net/balance_amount",
     summary,
     by_currency: byCurrency,
@@ -330,7 +333,7 @@ function buildCurrencyRows(rows) {
     .sort((left, right) => left.currency.localeCompare(right.currency));
 }
 
-function buildSummary(rows, { missingAmountNetRows, plannedRows }) {
+function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceStatus }) {
   const statusCounts = {};
   for (const row of rows || []) statusCounts[row.status] = (statusCounts[row.status] || 0) + 1;
   const failed = (statusCounts[STATUS.MISMATCH] || 0) + Number(missingAmountNetRows || 0);
@@ -344,7 +347,7 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows }) {
     currencies_checked: new Set((rows || []).map((row) => row.currency)).size,
     channels_checked: new Set((rows || []).map((row) => row.channel)).size,
     planned_rows: Number(plannedRows || 0),
-    planned_source_status: plannedRows ? "ok" : "needs_verification",
+    planned_source_status: plannedRows ? "ok" : (plannedSourceStatus === "available" ? "available_empty" : "needs_verification"),
     missing_amount_net_rows: Number(missingAmountNetRows || 0),
     status_counts: {
       [STATUS.OK]: statusCounts[STATUS.OK] || 0,

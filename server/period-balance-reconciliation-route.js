@@ -39,6 +39,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
         operations: [],
         balanceRows: [],
         plannedRows: [],
+        plannedSourceStatus: "needs_verification",
         period,
       }),
       warnings: unique(warnings),
@@ -46,15 +47,17 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   }
 
   const plannedRows = resolvePlannedRows(repository);
+  const plannedSourceStatus = resolvePlannedSourceStatus(repository, plannedRows);
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
     balanceRows: repository.balances || [],
     plannedRows,
+    plannedSourceStatus,
     period,
   });
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
-  if (!plannedRows.length) {
+  if (!plannedRows.length && plannedSourceStatus !== "available") {
     warnings.push(
       "needs verification: planned income/expense source is not connected to period balance reconciliation yet; TODO expose UI movementValues order-plan rows and manual finance planned expense rows server-side as repository.plannedRows before planned_delta can be trusted."
     );
@@ -83,6 +86,11 @@ function resolvePlannedRows(repository) {
     if (Array.isArray(rows) && rows.length) return rows;
   }
   return [];
+}
+
+function resolvePlannedSourceStatus(repository, plannedRows) {
+  if (Array.isArray(plannedRows) && plannedRows.length) return "ok";
+  return repository?.plannedSourceStatus === "available" ? "available" : "needs_verification";
 }
 
 async function loadRepository(repositoryLoader = loadManualRepositoryFromGoogleSheets) {

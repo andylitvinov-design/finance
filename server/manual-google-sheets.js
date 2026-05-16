@@ -119,7 +119,8 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     const ledgerValues = valuesBySheet[LEDGER_SHEET_NAME] || [];
     const ledgerRepository = ledgerValues.length ? parseExpenseRepository(ledgerValues, rateLookup) : buildEmptyLedgerRepository();
     const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || [], rateLookup);
-    const monthlyPlanRows = parseMonthlyPlanRows(valuesBySheet[PLAN_SHEET_NAME] || []);
+    const planValues = valuesBySheet[PLAN_SHEET_NAME] || [];
+    const monthlyPlanRows = parseMonthlyPlanRows(planValues);
     const legacyHasRows = legacyRepository.schema === "legacy-expense-grid" && legacyRepository.expenseRows.length > 0;
     const warnings = [...transferWarnings];
     if (!ledgerRepository.operations.length && legacyHasRows) {
@@ -133,6 +134,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       monthlyPlanRows,
       plannedRows: buildPlannedRowsFromMonthlyPlan(monthlyPlanRows),
+      plannedSourceStatus: planValues.length ? "available" : "needs_verification",
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
       warnings: [...(ledgerRepository.warnings || []), ...warnings],
