@@ -2289,6 +2289,37 @@ function normalizeManualFinanceBalanceRows(rows = [], options = {}) {
   });
 }
 
+function ensureManualFinanceBalanceInputRows() {
+  const data = state.manualFinance.data;
+  if (!data) return [];
+  const targetDate = normalizeIncomingSheetDateValue(data.periodEnd || elements.endDate.value);
+  const existingRows = normalizeManualFinanceBalanceRows(data.balanceRows || [], { defaultDate: targetDate });
+  const currentByChannelCurrency = new Map();
+  const extraRows = [];
+  existingRows.forEach((row) => {
+    const key = `${row.channel}|${row.currency}`;
+    if (row.date === targetDate && row.channel && row.currency && !currentByChannelCurrency.has(key)) {
+      currentByChannelCurrency.set(key, row);
+    } else {
+      extraRows.push(row);
+    }
+  });
+  const inputRows = getManualFinanceChannels().map((channel) => {
+    const currency = inferManualFinanceChannelCurrency(channel);
+    return currentByChannelCurrency.get(`${channel}|${currency}`) || {
+      date: targetDate,
+      channel,
+      amount: "",
+      currency,
+      rate: "",
+      usdAmount: "",
+      comment: ""
+    };
+  });
+  data.balanceRows = normalizeManualFinanceBalanceRows([...inputRows, ...extraRows], { defaultDate: targetDate });
+  return data.balanceRows;
+}
+
 function isManualFinanceCashChannel(channel) {
   return /cash|нал|налично/i.test(String(channel || ""));
 }
