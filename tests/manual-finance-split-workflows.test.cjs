@@ -134,6 +134,7 @@ function buildFinanceContext() {
   vm.runInContext(
       `${extractFunction(financeJs, "normalizeManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "ensureManualFinanceBalanceInputRows")}\n` +
+      `${extractFunction(financeJs, "buildManualFinanceActiveBalancePairs")}\n` +
       `${extractFunction(financeJs, "isManualFinanceCashChannel")}\n` +
       `${extractFunction(financeJs, "getManualFinanceCashChannels")}\n` +
       `${extractFunction(financeJs, "normalizeManualFinanceCashRows")}\n` +
@@ -145,6 +146,7 @@ function buildFinanceContext() {
       `${extractFunction(financeJs, "saveManualFinanceSheet")}\n` +
       "this.normalizeManualFinanceBalanceRows = normalizeManualFinanceBalanceRows;\n" +
       "this.ensureManualFinanceBalanceInputRows = ensureManualFinanceBalanceInputRows;\n" +
+      "this.buildManualFinanceActiveBalancePairs = buildManualFinanceActiveBalancePairs;\n" +
       "this.normalizeManualFinanceCashRows = normalizeManualFinanceCashRows;\n" +
       "this.buildManualFinanceCashEntries = buildManualFinanceCashEntries;\n" +
       "this.saveManualFinanceSheet = saveManualFinanceSheet;",
@@ -187,6 +189,10 @@ test("balance snapshot editor expands every configured channel as target-date in
     balanceRows: [
       { date: "2026-05-15", channel: "трансервайз дол", amount: "120.45", currency: "USD", comment: "actual" },
     ],
+    ledgerRows: [
+      { date: "2026-05-10", operation: "income", toChannel: "приват-фоп", currency: "UAH" },
+      { date: "2026-05-11", operation: "exchange_in", toChannel: "Бинанс spot", currency: "USDT" },
+    ],
     cashRows: [],
     moneyRows: [],
     transferRows: [],
@@ -199,6 +205,8 @@ test("balance snapshot editor expands every configured channel as target-date in
     ["2026-05-15", "нал-мам-дол", "USD", ""],
     ["2026-05-15", "пейпал сad", "CAD", ""],
     ["2026-05-15", "трансервайз дол", "USD", "120,45"],
+    ["2026-05-15", "приват-фоп", "UAH", ""],
+    ["2026-05-15", "Бинанс spot", "USDT", ""],
   ]);
 });
 

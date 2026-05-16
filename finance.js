@@ -2304,9 +2304,9 @@ function ensureManualFinanceBalanceInputRows() {
       extraRows.push(row);
     }
   });
-  const inputRows = getManualFinanceChannels().map((channel) => {
-    const currency = inferManualFinanceChannelCurrency(channel);
-    return currentByChannelCurrency.get(`${channel}|${currency}`) || {
+  const activePairs = buildManualFinanceActiveBalancePairs(data.ledgerRows || []);
+  const inputRows = activePairs.map(({ channel, currency }) => (
+    currentByChannelCurrency.get(`${channel}|${currency}`) || {
       date: targetDate,
       channel,
       amount: "",
@@ -2314,10 +2314,35 @@ function ensureManualFinanceBalanceInputRows() {
       rate: "",
       usdAmount: "",
       comment: ""
-    };
-  });
+    }
+  ));
   data.balanceRows = normalizeManualFinanceBalanceRows([...inputRows, ...extraRows], { defaultDate: targetDate });
   return data.balanceRows;
+}
+
+function buildManualFinanceActiveBalancePairs(ledgerRows = []) {
+  const pairs = new Map();
+  const addPair = (channel, currency) => {
+    const normalizedChannel = canonicalManualFinanceChannel(channel);
+    const normalizedCurrency = String(currency || inferManualFinanceChannelCurrency(normalizedChannel)).trim().toUpperCase();
+    if (!normalizedChannel || !normalizedCurrency) return;
+    const key = `${normalizedChannel}|${normalizedCurrency}`;
+    if (!pairs.has(key)) pairs.set(key, { channel: normalizedChannel, currency: normalizedCurrency });
+  };
+  getManualFinanceChannels().forEach((channel) => addPair(channel, inferManualFinanceChannelCurrency(channel)));
+  (ledgerRows || []).forEach((row) => {
+    const operation = String(row?.operation || row?.ledgerV2?.operation || "").trim();
+    const currency = String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase();
+    const fromChannel = row?.fromChannel || row?.from_channel || row?.ledgerV2?.from_channel || "";
+    const toChannel = row?.toChannel || row?.to_channel || row?.ledgerV2?.to_channel || "";
+    if (operation === "income" || operation === "exchange_in") addPair(toChannel, currency);
+    else if (operation === "expense" || operation === "business_expense" || operation === "personal_expense" || operation === "exchange_out") addPair(fromChannel, currency);
+    else if (operation === "transfer" || operation === "partner_transfer") {
+      addPair(fromChannel, currency);
+      addPair(toChannel, currency);
+    }
+  });
+  return Array.from(pairs.values());
 }
 
 function isManualFinanceCashChannel(channel) {
