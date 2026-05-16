@@ -1574,6 +1574,81 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
   ]);
 });
 
+test("buildExpenseAnalysisChannelSummary keeps TransferWise business expense comparison separate from personal and transfer rows", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол"],
+    calculateMovementChannelStats: () => ({ accruedPlusByChannel: {}, accruedPlusCountByChannel: {} }),
+    buildLedgerIncomeCountSummaryByChannel: () => ({ autoByChannel: {}, manualByChannel: {}, screenshotByChannel: {} }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [{ channel: "трансервайз дол", totalUsd: "609.73" }],
+    providerExpenseByChannel: {
+      "трансервайз дол": 801.8,
+    },
+    providerExpenseBreakdownByChannel: {
+      "трансервайз дол": {
+        total: 801.8,
+        business: 640.25,
+        personal: 161.55,
+        excludedTransferExchange: 415,
+        byCategory: {
+          business: 640.25,
+          house: 150.67,
+          food: 10.88,
+        },
+      },
+    },
+    usdRateLookup: {},
+  }));
+
+  assert.deepEqual(summary.rows[1], [
+    "трансервайз дол",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "609,7300",
+    "640,2500",
+    "801,8000",
+    "161,5500",
+    "415,0000",
+    "-30,5200",
+    "0",
+    "0",
+    "0",
+    "0",
+  ]);
+});
+
 test("expense analysis order base can use the same selected-period total as top metrics", () => {
   const context = {
     MANUAL_FINANCE_TOTAL_LABEL: "Итого",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import statusHandler from "../api/status.js";
 import indexHandler from "../api/index.js";
-import { buildDebugUiState } from "../server/debug-endpoints.js";
+import { buildDebugUiState, buildExpensePlanReconciliationByChannel } from "../server/debug-endpoints.js";
 
 function createResponseRecorder() {
   return {
@@ -317,6 +317,142 @@ test("debug UI state accepts explicit period range and reports raw versus dedupe
   assert.equal(payload.finance_analysis.actual_income[0].duplicate_income_rows, 1);
   assert.equal(payload.finance_analysis.income_diagnostics[0].ledger_income_rows_count, 2);
   assert.equal(payload.finance_analysis.income_diagnostics[0].deduped_income_events_count, 1);
+});
+
+test("debug UI state explains TransferWise expense delta with plan reconciliation", async () => {
+  const fixture = {
+    ok: true,
+    schema: "ledger-v2-compatible",
+    legacyExpenseRows: [
+      {
+        date: "2026-05-15",
+        category: "totalUsd",
+        amounts: {
+          "трансервайз дол": "609.73",
+        },
+      },
+    ],
+    operations: [
+      {
+        date: "2026-05-03",
+        operation: "expense",
+        fromChannel: "трансервайз дол",
+        amountUsd: "-640.25",
+        amountNet: "640.25",
+        source: "wise",
+        ledgerV2: {
+          date: "2026-05-03",
+          operation: "expense",
+          from_channel: "трансервайз дол",
+          amount_usd: "-640.25",
+          amount_net: "640.25",
+          balance_amount: -640.25,
+          source: "wise",
+          category: "business",
+        },
+      },
+      {
+        date: "2026-05-04",
+        operation: "expense",
+        fromChannel: "трансервайз дол",
+        amountUsd: "-150.67",
+        amountNet: "150.67",
+        source: "wise",
+        ledgerV2: {
+          date: "2026-05-04",
+          operation: "expense",
+          from_channel: "трансервайз дол",
+          amount_usd: "-150.67",
+          amount_net: "150.67",
+          balance_amount: -150.67,
+          source: "wise",
+          category: "house",
+        },
+      },
+      {
+        date: "2026-05-05",
+        operation: "expense",
+        fromChannel: "трансервайз дол",
+        amountUsd: "-10.88",
+        amountNet: "10.88",
+        source: "wise",
+        ledgerV2: {
+          date: "2026-05-05",
+          operation: "expense",
+          from_channel: "трансервайз дол",
+          amount_usd: "-10.88",
+          amount_net: "10.88",
+          balance_amount: -10.88,
+          source: "wise",
+          category: "food",
+        },
+      },
+      {
+        date: "2026-05-06",
+        operation: "exchange",
+        fromChannel: "трансервайз дол",
+        amountUsd: "-415",
+        amountNet: "415",
+        source: "wise",
+        ledgerV2: {
+          date: "2026-05-06",
+          operation: "exchange",
+          from_channel: "трансервайз дол",
+          amount_usd: "-415",
+          amount_net: "415",
+          balance_amount: -415,
+          source: "wise",
+        },
+      },
+    ],
+    warnings: [],
+  };
+
+  const payload = await buildDebugUiState({
+    query: { from: "2026-05-01", to: "2026-05-15" },
+    repositoryLoader: async () => fixture,
+  });
+
+  const breakdown = payload.expense_analysis.real_expense_breakdown.find((row) => row.channel === "трансервайз дол");
+  assert.equal(breakdown.total, 801.8);
+  assert.equal(breakdown.business, 640.25);
+  assert.equal(breakdown.personal, 161.55);
+  assert.deepEqual(breakdown.byCategory, {
+    business: 640.25,
+    house: 150.67,
+    food: 10.88,
+  });
+  assert.equal(breakdown.excluded_transfer_exchange, 415);
+
+  const reconciliation = payload.expense_analysis.reconciliation_by_channel.find((row) => row.channel === "трансервайз дол");
+  assert.equal(reconciliation.planned_expense_usd, 609.73);
+  assert.equal(reconciliation.business_real_expense_usd, 640.25);
+  assert.equal(reconciliation.total_real_expense_usd, 801.8);
+  assert.equal(reconciliation.personal_expense_usd, 161.55);
+  assert.equal(reconciliation.excluded_transfer_exchange_usd, 415);
+  assert.equal(reconciliation.delta_usd, 30.52);
+  assert.equal(reconciliation.unexplained_delta, 0);
+  assert.equal(reconciliation.rounding_delta, 0);
+  assert.equal(reconciliation.status, "business_over_plan");
+  assert.match(reconciliation.warnings.join("\n"), /No stable row-level join key/);
+  assert.equal(reconciliation.business_real_rows, undefined);
+});
+
+test("expense reconciliation warns when arithmetic leaves unexplained delta above one cent", () => {
+  const reconciliation = buildExpensePlanReconciliationByChannel({
+    planRows: [{ channel: "пейпал дол", totalUsd: "100" }],
+    breakdownRows: [{
+      channel: "пейпал дол",
+      total: 130,
+      business: 120,
+      personal: 5,
+      excluded_transfer_exchange: 0,
+    }],
+  }).find((row) => row.channel === "пейпал дол");
+
+  assert.equal(reconciliation.unexplained_delta, 5);
+  assert.equal(reconciliation.status, "unexplained");
+  assert.match(reconciliation.warnings.join("\n"), /unexplained delta above 0.01/);
 });
 
 test("debug UI state can expose safe sanitized rows with configured token", async () => {

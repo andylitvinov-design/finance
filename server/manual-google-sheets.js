@@ -127,6 +127,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
       ...ledgerRepository,
+      legacyExpenseRows: legacyRepository.expenseRows || [],
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
