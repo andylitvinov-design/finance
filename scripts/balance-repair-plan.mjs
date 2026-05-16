@@ -205,7 +205,7 @@ function compareRepairActions(left, right) {
   if (left.priority !== right.priority) return left.priority - right.priority;
   if ((left.date || "") !== (right.date || "")) return String(left.date || "").localeCompare(String(right.date || ""));
   if ((left.channel || "") !== (right.channel || "")) return String(left.channel || "").localeCompare(String(right.channel || ""));
-  return String(left.currency || "").localeCompare(String(currency || ""));
+  return String(left.currency || "").localeCompare(String(right.currency || ""));
 }
 
 function formatCell(value) {
