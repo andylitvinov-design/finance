@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_AUDIT_URL = "https://ezohata-incoming-ledger.vercel.app/api/audit-snapshot";
 
@@ -18,6 +18,7 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       severity: "critical",
       problem: "missing_amount_net",
       date: row.date || "",
+      movement_date: "",
       channel: row.channel || "",
       currency: row.currency || "",
       difference: null,
@@ -26,6 +27,7 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       raw_source_id: row.raw_source_id || "",
       diagnosis: row.reason || "amount_net is empty, so the row is excluded from balance reconciliation.",
       action: row.action || "Fill amount_net after verifying provider net amount.",
+      formula: "",
       verification_required: row.recommended_amount_net === null,
       safe_to_apply: row.recommended_amount_net !== null,
     });
@@ -37,11 +39,14 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       severity: "critical",
       problem: "balance_mismatch",
       date: row.date || "",
+      movement_date: "",
       channel: row.channel || "",
       currency: row.currency || "",
       difference: row.difference ?? null,
       amount: row.provider_reported_balance ?? null,
+      recommended_amount_net: null,
       computed_closing_balance: row.computed_closing_balance ?? null,
+      raw_source_id: "",
       diagnosis: row.diagnosis || "Computed closing balance differs from Остатки.",
       action: row.fix_action || "Check Ledger movement, amount_net, provider statement, and Остатки row.",
       formula: row.formula || "",
@@ -61,8 +66,11 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       currency: row.currency || "",
       difference: null,
       amount: null,
+      recommended_amount_net: null,
+      raw_source_id: "",
       diagnosis: row.diagnosis || "Opening Остатки snapshot is missing before movement date.",
       action: row.action || "Add factual opening balance from provider/manual statement.",
+      formula: "",
       verification_required: true,
       safe_to_apply: false,
     });
@@ -74,13 +82,17 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       severity: "medium",
       problem: "missing_provider_balance",
       date: row.date || "",
+      movement_date: "",
       channel: row.channel || "",
       currency: row.currency || "",
       difference: null,
       amount: row.computed_closing_balance ?? null,
+      recommended_amount_net: null,
       computed_closing_balance: row.computed_closing_balance ?? null,
+      raw_source_id: "",
       diagnosis: "No factual closing Остатки row exists for this date/channel/currency.",
       action: "Verify provider closing balance; if it matches computed_closing_balance, add this row to Остатки.",
+      formula: "",
       verification_required: true,
       safe_to_apply: false,
     });
@@ -145,36 +157,31 @@ export function buildBalanceRepairPlanText(plan = {}) {
     lines.push("", "Copyable Остатки rows after provider verification:", plan.copyable_ostatki_rows);
   }
 
-  if (plan.tsv) {
-    lines.push("", "Repair TSV:", plan.tsv);
-  }
-
-  for (const warning of plan.warnings || []) {
-    lines.push(`WARNING: ${warning}`);
-  }
-
+  if (plan.tsv) lines.push("", "Repair TSV:", plan.tsv);
+  for (const warning of plan.warnings || []) lines.push(`WARNING: ${warning}`);
   return lines.join("\n");
 }
 
 function buildRepairTsv(actions = []) {
   if (!actions.length) return "";
+  const header = [
+    "priority",
+    "severity",
+    "problem",
+    "date",
+    "movement_date",
+    "channel",
+    "currency",
+    "difference",
+    "amount",
+    "recommended_amount_net",
+    "raw_source_id",
+    "verification_required",
+    "safe_to_apply",
+    "action",
+  ];
   return [
-    [
-      "priority",
-      "severity",
-      "problem",
-      "date",
-      "movement_date",
-      "channel",
-      "currency",
-      "difference",
-      "amount",
-      "recommended_amount_net",
-      "raw_source_id",
-      "verification_required",
-      "safe_to_apply",
-      "action",
-    ].join("\t"),
+    header.join("\t"),
     ...actions.map((row) => [
       row.priority,
       row.severity,
@@ -229,9 +236,7 @@ function parseArgs(argv = []) {
 }
 
 async function loadSnapshot(args) {
-  if (args.snapshotFile) {
-    return JSON.parse(await readFile(args.snapshotFile, "utf8"));
-  }
+  if (args.snapshotFile) return JSON.parse(await readFile(args.snapshotFile, "utf8"));
   const response = await fetch(buildAuditUrl(args), { headers: { Accept: "application/json" } });
   const text = await response.text();
   let payload;
@@ -254,7 +259,7 @@ export async function main(argv = process.argv.slice(2)) {
   else console.log(buildBalanceRepairPlanText(plan));
 }
 
-const isCli = process.argv[1] && import.meta.url === pathToFileURL(fileURLToPath(process.argv[1])).href;
+const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) {
   main().catch((error) => {
     console.error(error?.stack || error?.message || String(error));
