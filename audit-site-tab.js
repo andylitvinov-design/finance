@@ -2,12 +2,25 @@
   "use strict";
 
   const AUDIT_TAB_ID = "audit";
+  const AUDIT_TAB_LABEL = "Аудит";
 
   function createNode(tag, className, textContent) {
     const node = document.createElement(tag);
     if (className) node.className = className;
     if (textContent !== undefined) node.textContent = textContent;
     return node;
+  }
+
+  function ensureAuditTabConfig(config) {
+    if (!config || !Array.isArray(config.tabs)) return config;
+    if (config.tabs.some((tab) => tab?.id === AUDIT_TAB_ID)) return config;
+    return {
+      ...config,
+      tabs: [
+        ...config.tabs,
+        { id: AUDIT_TAB_ID, label: AUDIT_TAB_LABEL, clientOnly: true },
+      ],
+    };
   }
 
   function getAuditBridgeApi() {
@@ -127,6 +140,8 @@
 
   const api = {
     AUDIT_TAB_ID,
+    AUDIT_TAB_LABEL,
+    ensureAuditTabConfig,
     installAuditTabRenderer,
     renderAuditDebuggerBlock,
   };
