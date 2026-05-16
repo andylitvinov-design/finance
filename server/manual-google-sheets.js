@@ -25,6 +25,7 @@ const LEDGER_SHEET_NAME = "Ledger";
 export const MANUAL_LEDGER_SHEET_NAME = LEDGER_SHEET_NAME;
 export const SHEETS_API_BASE_URL = SHEETS_API_BASE;
 const BALANCE_SHEET_NAME = "Остатки";
+const PLAN_SHEET_NAME = "План";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
 const NORMALIZED_OPERATION_HEADERS = [
@@ -107,7 +108,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     const accessToken = await requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl });
     const valuesBySheet = await batchGetSheetValues({
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      sheetNames: [LEDGER_SHEET_NAME, EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
+      sheetNames: [LEDGER_SHEET_NAME, EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, PLAN_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
       accessToken,
       fetchImpl,
     });
@@ -118,6 +119,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     const ledgerValues = valuesBySheet[LEDGER_SHEET_NAME] || [];
     const ledgerRepository = ledgerValues.length ? parseExpenseRepository(ledgerValues, rateLookup) : buildEmptyLedgerRepository();
     const legacyRepository = parseExpenseRepository(valuesBySheet[EXPENSE_SHEET_NAME] || [], rateLookup);
+    const monthlyPlanRows = parseMonthlyPlanRows(valuesBySheet[PLAN_SHEET_NAME] || []);
     const legacyHasRows = legacyRepository.schema === "legacy-expense-grid" && legacyRepository.expenseRows.length > 0;
     const warnings = [...transferWarnings];
     if (!ledgerRepository.operations.length && legacyHasRows) {
@@ -129,6 +131,8 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       ...ledgerRepository,
       legacyExpenseRows: legacyRepository.expenseRows || [],
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
+      monthlyPlanRows,
+      plannedRows: buildPlannedRowsFromMonthlyPlan(monthlyPlanRows),
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
       warnings: [...(ledgerRepository.warnings || []), ...warnings],
@@ -394,6 +398,62 @@ function parseLegacyExpenseRows(values) {
     .filter((row) => row.date && row.category && Object.values(row.amounts).some((value) => String(value || "").trim()));
 }
 
+function parseMonthlyPlanRows(values) {
+  const rowsWithValues = (values || []).filter((row) => (row || []).some((cell) => String(cell || "").trim()));
+  const headerIndex = rowsWithValues.findIndex((row) => (row || []).some((cell) => normalizeCell(cell) === "month" || normalizeCell(cell) === "месяц"));
+  if (headerIndex === -1) return [];
+  const header = rowsWithValues[headerIndex] || [];
+  const rows = rowsWithValues.slice(headerIndex + 1);
+  const indexes = {
+    month: findHeaderIndex(header, ["month", "месяц", "period_month", "period"]),
+    ordersIncomePlanUsd: findHeaderIndex(header, ["orders_income_plan_usd", "доход от заказов", "заказы план", "orders plan"]),
+    servicesIncomePlanUsd: findHeaderIndex(header, ["services_income_plan_usd", "доход от услуг", "услуги план", "service plan"]),
+    businessExpensePlanUsd: findHeaderIndex(header, ["business_expense_plan_usd", "расходы на бизнес", "business expense plan", "business plan"]),
+  };
+  if (indexes.month === -1) return [];
+  return rows
+    .map((row) => ({
+      month: normalizeMonth(row[indexes.month]),
+      ordersIncomePlanUsd: indexes.ordersIncomePlanUsd === -1 ? "" : String(row[indexes.ordersIncomePlanUsd] || "").trim(),
+      servicesIncomePlanUsd: indexes.servicesIncomePlanUsd === -1 ? "" : String(row[indexes.servicesIncomePlanUsd] || "").trim(),
+      businessExpensePlanUsd: indexes.businessExpensePlanUsd === -1 ? "" : String(row[indexes.businessExpensePlanUsd] || "").trim(),
+    }))
+    .filter((row) => row.month && (
+      parseNumberString(row.ordersIncomePlanUsd) ||
+      parseNumberString(row.servicesIncomePlanUsd) ||
+      parseNumberString(row.businessExpensePlanUsd)
+    ));
+}
+
+function buildPlannedRowsFromMonthlyPlan(rows) {
+  const plannedRows = [];
+  for (const row of rows || []) {
+    const date = `${row.month}-01`;
+    const orders = parseNumberString(row.ordersIncomePlanUsd);
+    const services = parseNumberString(row.servicesIncomePlanUsd);
+    const business = parseNumberString(row.businessExpensePlanUsd);
+    if (orders) {
+      plannedRows.push({ date, channel: "План: заказы", currency: "USD", amount: orders, operation: "income", source: "monthly_plan" });
+    }
+    if (services) {
+      plannedRows.push({ date, channel: "План: услуги", currency: "USD", amount: services, operation: "income", source: "monthly_plan" });
+    }
+    if (business) {
+      plannedRows.push({ date, channel: "План: бизнес расходы", currency: "USD", amount: business, operation: "expense", source: "monthly_plan" });
+    }
+  }
+  return plannedRows;
+}
+
+function normalizeMonth(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.slice(0, 7);
+  const match = raw.match(/^(\d{1,2})[./](\d{4})$/);
+  if (match) return `${match[2]}-${String(match[1]).padStart(2, "0")}`;
+  return "";
+}
+
 function parseNormalizedOperationRows(values, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const { header, rows } = splitHeaderRows(values);
   if (!looksLikeNormalizedOperationsHeader(header)) return null;
@@ -503,13 +563,29 @@ function buildLedgerV2RepositoryWarnings(operations, values) {
   }
   const fallbackCount = countMissingAmountNetRows(operations);
   if (fallbackCount) {
-    warnings.push(`Ledger v2 error: ${fallbackCount} row(s) have empty amount_net; balance was not calculated.`);
+    warnings.push(formatMissingAmountNetWarning(operations, "balance was not calculated."));
   }
   const exchangeMissingUsd = (operations || []).filter(isExchangeMissingAmountUsdRow).length;
   if (exchangeMissingUsd) {
     warnings.push(`Ledger v2 warning: ${exchangeMissingUsd} exchange row(s) have empty amount_usd; USD exchange totals skipped for those rows.`);
   }
   return warnings;
+}
+
+function formatMissingAmountNetWarning(operations, suffix) {
+  const missing = (operations || []).filter((row) => !String(row?.ledgerV2?.amount_net ?? row?.amountNet ?? row?.amount_net ?? "").trim());
+  const paypalRows = missing.filter(isPayPalAmountNetPermissionRow);
+  if (missing.length && paypalRows.length === missing.length) {
+    return `Ledger v2 needs provider permission: ${missing.length} PayPal row(s) have empty amount_net/fee; ${suffix}`;
+  }
+  return `Ledger v2 error: ${missing.length} row(s) have empty amount_net; ${suffix}`;
+}
+
+function isPayPalAmountNetPermissionRow(row) {
+  const source = normalizeLookupText(row?.source || row?.ledgerV2?.source || "");
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || row?.ledgerV2?.external_id || "").trim();
+  const channel = normalizeLookupText([row?.fromChannel, row?.toChannel, row?.ledgerV2?.from_channel, row?.ledgerV2?.to_channel].filter(Boolean).join(" "));
+  return source.includes("paypal") || /^paypal[:_-]/i.test(rawSourceId) || /пейпал|paypal/.test(channel);
 }
 
 function looksLikeNormalizedOperationsHeader(header) {

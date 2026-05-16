@@ -43,6 +43,7 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].planned_delta, 400);
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].real_delta, 300);
   assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].plan_vs_real_delta, -100);
+  assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 
 test("period balance reconciliation API reports planned source gap without failing real balance", async () => {
@@ -64,4 +65,42 @@ test("period balance reconciliation API reports planned source gap without faili
   assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "carried_forward_conditional");
   assert.match(snapshot.warnings.join("\n"), /planned income\/expense source/);
   assert.match(snapshot.warnings.join("\n"), /movementValues order-plan rows and manual finance planned expense rows server-side/);
+});
+
+test("period balance reconciliation classifies PayPal missing amount_net as provider-permission incomplete", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-15" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        {
+          date: "2026-05-11",
+          toChannel: "пейпал евр",
+          currency: "EUR",
+          amountNet: "",
+          source: "paypal",
+          rawSourceId: "paypal:missing-net",
+          ledgerV2: {
+            date: "2026-05-11",
+            operation: "income",
+            to_channel: "пейпал евр",
+            currency: "EUR",
+            amount_net: "",
+            source: "paypal",
+            external_id: "paypal:missing-net",
+          },
+        },
+      ],
+      plannedRows: [
+        { date: "2026-05-11", channel: "пейпал евр", currency: "EUR", amount: 36, operation: "income" },
+      ],
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.period_balance_reconciliation.summary.missing_amount_net_rows, 1);
+  assert.match(snapshot.warnings.join("\n"), /needs provider permission: 1 PayPal row/);
+  assert.doesNotMatch(snapshot.warnings.join("\n"), /1 row\(s\) have empty amount_net; real balance reconciliation is incomplete/);
 });
