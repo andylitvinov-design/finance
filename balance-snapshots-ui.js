@@ -36,7 +36,7 @@
     var header = el("div", "tab-header");
     var titleWrap = el("div");
     titleWrap.appendChild(el("h3", "", "Инвентарь остатков"));
-    titleWrap.appendChild(el("div", "tab-note", "Какие даты и каналы уже есть в листе Остатки. Суммы не показываются."));
+    titleWrap.appendChild(el("div", "tab-note", "Все строки листа Остатки за выбранный период раскрыты сразу: дата, канал, валюта и сумма."));
     header.appendChild(titleWrap);
     section.appendChild(header);
 
@@ -50,11 +50,38 @@
     section.appendChild(cards);
     section.appendChild(el("div", "finance-status", recommendation(data)));
 
-    var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];
-    if (!pairs.length) {
+    var rows = Array.isArray(data.rows) ? data.rows : [];
+    if (!rows.length) {
       section.appendChild(el("div", "empty", "За выбранный период нет валидных строк Остатки."));
       return section;
     }
+
+    section.appendChild(renderRowsTable(rows));
+    var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];
+    if (pairs.length) section.appendChild(renderCoverageTable(pairs));
+    return section;
+  }
+
+  function renderRowsTable(rows) {
+    var wrap = el("div", "table-wrap balance-snapshots-table-wrap");
+    var table = el("table");
+    var tbody = el("tbody");
+    var head = el("tr");
+    ["Дата", "Канал", "Валюта", "Факт остаток"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    tbody.appendChild(head);
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      [row.date || "—", row.channel || "—", row.currency || "—", formatAmount(row.amount)].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function renderCoverageTable(pairs) {
+    var section = el("div", "balance-snapshots-coverage-block");
+    section.appendChild(el("div", "tab-note", "Покрытие по каналам/валютам"));
     var wrap = el("div", "table-wrap balance-snapshots-table-wrap");
     var table = el("table");
     var tbody = el("tbody");
@@ -70,6 +97,13 @@
     wrap.appendChild(table);
     section.appendChild(wrap);
     return section;
+  }
+
+  function formatAmount(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return String(Math.round(numeric * 10000) / 10000);
   }
 
   function install() {
@@ -90,6 +124,6 @@
     return true;
   }
 
-  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory };
+  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory, formatAmount: formatAmount };
   install();
 })();
