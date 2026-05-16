@@ -158,6 +158,23 @@
     return true;
   }
 
+  function bindAuditLauncherButton() {
+    const launcher = root.document?.getElementById?.("auditLauncherButton");
+    if (!launcher || launcher.__ezohataAuditLauncherBound) return Boolean(launcher);
+    launcher.__ezohataAuditLauncherBound = true;
+    launcher.addEventListener("click", () => {
+      const appState = getState();
+      if (appState) appState.activeTab = AUDIT_TAB_ID;
+      if (typeof root.renderTabs === "function") {
+        root.renderTabs();
+      } else {
+        markOnlyAuditActive();
+        renderAuditTabPanel();
+      }
+    });
+    return true;
+  }
+
   function installAuditTabRenderer() {
     const originalRenderTabs = root.renderTabs;
     if (typeof originalRenderTabs !== "function") return false;
@@ -185,7 +202,9 @@
 
   function ensureAuditTabVisible() {
     installAuditTabRenderer();
-    return appendAuditTabButton();
+    const tabVisible = appendAuditTabButton();
+    const launcherBound = bindAuditLauncherButton();
+    return tabVisible || launcherBound;
   }
 
   function startAuditTabRetries() {
@@ -203,6 +222,7 @@
     AUDIT_TAB_ID,
     AUDIT_TAB_LABEL,
     appendAuditTabButton,
+    bindAuditLauncherButton,
     ensureAuditTabVisible,
     installAuditTabRenderer,
     renderAuditDebuggerBlock,

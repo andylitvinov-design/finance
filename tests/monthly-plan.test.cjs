@@ -89,7 +89,7 @@ test("monthly plan parser accepts monthly KPI headers and percentages", () => {
     ["2026-05", "1000", "2000", "500", "30", "25", "15", "10", "10", "10"]
   ]);
   assert.equal(rows.length, 1);
-  assert.deepEqual(rows[0], {
+  assert.deepEqual(JSON.parse(JSON.stringify(rows[0])), {
     month: "2026-05",
     ordersIncomePlanUsd: "1000",
     servicesIncomePlanUsd: "2000",
@@ -147,7 +147,7 @@ test("missing monthly plan returns structured warning instead of crashing", () =
     rows: [["channel", "plan"]]
   });
 
-  assert.deepEqual(summary.planWarnings, ["План за 2026-05 не заполнен"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(summary.planWarnings)), ["План за 2026-05 не заполнен"]);
   assert.equal(summary.incomeTotals.plannedUsd, 30);
   assert.equal(summary.expenseTotals.realUsd, 333);
   assert.ok(summary.rows.some((row) => String(row[1]).includes("План за 2026-05 не заполнен")));

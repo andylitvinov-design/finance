@@ -131,11 +131,16 @@ function resetModule() {
 
 function setupDom() {
   resetModule();
+  const nodesById = {};
   global.document = {
+    getElementById(id) {
+      return nodesById[id] || null;
+    },
     createElement(tagName) {
       return new FakeNode(tagName);
     },
   };
+  global.document.nodesById = nodesById;
   global.elements = {
     tabs: new FakeNode("div"),
     tabPanels: new FakeNode("div"),
@@ -180,6 +185,24 @@ test("audit site tab is appended as UI-only tab without mutating data tab config
   assert.equal(auditButton.textContent, "Аудит");
   assert.equal(global.state.config.tabs, originalTabs);
   assert.deepEqual(global.state.config.tabs, [{ id: "movement", label: "Движение средства" }]);
+
+  resetModule();
+});
+
+test("static audit launcher button click renders audit panel without mutating data tab config", () => {
+  setupDom();
+  const launcher = new FakeNode("button");
+  global.document.nodesById.auditLauncherButton = launcher;
+  const originalTabs = global.state.config.tabs;
+
+  require("../audit-site-tab.js");
+  launcher.click();
+
+  assert.equal(global.state.activeTab, "audit");
+  assert.equal(global.state.config.tabs, originalTabs);
+  assert.equal(global.state.config.tabs.length, 1);
+  assert.equal(global.elements.tabPanels.children.length, 1);
+  assert.equal(global.elements.tabPanels.children[0].className, "tab-panel active");
 
   resetModule();
 });
