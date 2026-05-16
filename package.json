@@ -10,7 +10,8 @@
     "release-guard": "bash scripts/release-guard.sh",
     "preflight:production": "node scripts/production-debug-preflight.mjs",
     "verify:production": "node scripts/verify-production.mjs",
-    "verify:live": "node scripts/verify-production.mjs"
+    "verify:live": "node scripts/verify-production.mjs",
+    "balance:repair-plan": "node scripts/balance-repair-plan.mjs"
   },
   "engines": {
     "node": ">=20"

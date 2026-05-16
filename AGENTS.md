@@ -49,6 +49,16 @@ Do not ask the user for confirmation before safe engineering actions:
 - run tests/build/release guard;
 - commit, push a working branch, and open/update a PR when repository access allows it.
 
+### Self-Run Checks Before Delegation
+
+Run available verification yourself before delegating checks to Codex. Do not default to prompts like "Codex should run checks" when this session or local environment can run read-only/live checks, repo inspections, tests, build, or release guard.
+
+When you cannot run a check yourself, state the exact blocker, for example: no local checkout, no shell, missing dependency, no browser runner, no write permission, or tool access unavailable. Then provide the smallest concrete fallback.
+
+Codex prompts must ask for implementation work, not only verification. A good Codex prompt should include the intended code/data-report change, target files, failing layer to prove first, regression tests to add or update, commands to run, and live verification. Avoid using Codex as a substitute for work the assistant could already perform directly.
+
+If using Codex after partial assistant work, include what was already checked, what was already changed, what remains unverified, and the exact expected patch or data-repair output. Codex should continue from that state, not restart with generic investigation.
+
 Stop and ask before risky actions:
 
 - changing, exposing, requesting, or storing secrets/env values;
