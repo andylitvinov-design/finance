@@ -36,12 +36,12 @@
     var header = el("div", "tab-header");
     var titleWrap = el("div");
     titleWrap.appendChild(el("h3", "", "Инвентарь остатков"));
-    titleWrap.appendChild(el("div", "tab-note", "Все строки листа Остатки за выбранный период раскрыты сразу: дата, канал, валюта и сумма."));
+    titleWrap.appendChild(el("div", "tab-note", "Активные каналы раскрыты отдельными строками для ввода остатков за целевую дату."));
     header.appendChild(titleWrap);
     section.appendChild(header);
 
     var cards = el("div", "metrics balance-snapshots-summary");
-    [["Дат", data.dates?.length || 0], ["Последняя", latestDate(data)], ["Канал/валюта", data.by_channel_currency?.length || 0], ["Валидных", data.valid_rows || 0], ["Неполных", data.incomplete_rows || 0]].forEach(function (item) {
+    [["Дат", data.dates?.length || 0], ["Целевая", inputTargetDate(data)], ["К вводу", countNeedsInput(data.input_rows)], ["Канал/валюта", data.by_channel_currency?.length || 0], ["Валидных", data.valid_rows || 0]].forEach(function (item) {
       var card = el("div", "metric");
       card.appendChild(el("div", "metric-label", item[0]));
       card.appendChild(el("div", "metric-value", item[1]));
@@ -50,16 +50,52 @@
     section.appendChild(cards);
     section.appendChild(el("div", "finance-status", recommendation(data)));
 
-    var rows = Array.isArray(data.rows) ? data.rows : [];
-    if (!rows.length) {
-      section.appendChild(el("div", "empty", "За выбранный период нет валидных строк Остатки."));
-      return section;
+    var inputRows = Array.isArray(data.input_rows) ? data.input_rows : [];
+    if (inputRows.length) {
+      section.appendChild(renderInputRowsTable(inputRows));
+    } else {
+      section.appendChild(el("div", "empty", "Нет активных каналов для ввода остатков."));
     }
 
-    section.appendChild(renderRowsTable(rows));
+    var rows = Array.isArray(data.rows) ? data.rows : [];
+    if (rows.length) section.appendChild(renderRowsTable(rows));
+    if (!rows.length && !inputRows.length) return section;
+
     var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];
     if (pairs.length) section.appendChild(renderCoverageTable(pairs));
     return section;
+  }
+
+  function inputTargetDate(data) {
+    var rows = Array.isArray(data?.input_rows) ? data.input_rows : [];
+    return rows[0]?.date || latestDate(data);
+  }
+
+  function countNeedsInput(rows) {
+    return (Array.isArray(rows) ? rows : []).filter(function (row) { return row.needs_input; }).length;
+  }
+
+  function renderInputRowsTable(rows) {
+    var wrap = el("div", "table-wrap balance-snapshots-table-wrap");
+    var table = el("table");
+    var tbody = el("tbody");
+    var head = el("tr");
+    ["Date", "Channel", "Currency", "Balance", "Status"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    tbody.appendChild(head);
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      [
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        formatAmount(row.existing_amount ?? row.amount),
+        row.needs_input ? "needs input" : "already entered",
+      ].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
   }
 
   function renderRowsTable(rows) {

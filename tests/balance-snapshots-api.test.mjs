@@ -103,6 +103,69 @@ test("balance snapshots API applies period filter and exposes detailed rows", as
   assert.ok(snapshot.warnings.some((warning) => warning.includes("Остатки row(s) are incomplete")));
 });
 
+test("balance snapshots API returns input rows for active ledger channels missing Остатки rows", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-15" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-15", channel: "wise usd", currency: "USD", amount: "1300" },
+      ],
+      operations: [
+        {
+          date: "2026-05-10",
+          operation: "income",
+          toChannel: "wise usd",
+          currency: "USD",
+          ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "wise usd", currency: "USD" },
+        },
+        {
+          date: "2026-05-11",
+          operation: "expense",
+          fromChannel: "paypal eur",
+          currency: "EUR",
+          ledgerV2: { date: "2026-05-11", operation: "expense", from_channel: "paypal eur", currency: "EUR" },
+        },
+      ],
+      warnings: [],
+    }),
+  });
+
+  const inputRows = snapshot.balance_snapshots.input_rows;
+  assert.ok(inputRows.some((row) =>
+    row.date === "2026-05-15"
+    && row.channel === "wise usd"
+    && row.currency === "USD"
+    && row.existing_amount === 1300
+    && row.needs_input === false
+    && row.status === "already_entered"
+  ));
+  assert.ok(inputRows.some((row) =>
+    row.date === "2026-05-15"
+    && row.channel === "paypal eur"
+    && row.currency === "EUR"
+    && row.existing_amount === null
+    && row.needs_input === true
+    && row.status === "needs_input"
+  ));
+});
+
+test("balance snapshots input rows use selected to date as target date", () => {
+  const summary = buildBalanceSnapshotsSummary(
+    [{ date: "2026-05-14", channel: "wise usd", currency: "USD", amount: "1200" }],
+    { from: "2026-05-01", to: "2026-05-31" },
+    {
+      operations: [
+        { ledgerV2: { date: "2026-05-20", operation: "income", to_channel: "wise usd", currency: "USD" } },
+      ],
+    }
+  );
+
+  assert.ok(summary.input_rows.length > 0);
+  assert.ok(summary.input_rows.every((row) => row.date === "2026-05-31"));
+  assert.ok(summary.input_rows.some((row) => row.channel === "wise usd" && row.needs_input === true));
+});
+
 test("balance snapshots API returns safe empty snapshot when repository access fails", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { period: "2026-05" },

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
@@ -41,7 +44,7 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
     return emptySnapshot({ generatedAt, period: periodFilter.period, warnings, auditChecks });
   }
 
-  const balanceSnapshots = buildBalanceSnapshotsSummary(repository.balances || [], periodFilter);
+  const balanceSnapshots = buildBalanceSnapshotsSummary(repository.balances || [], periodFilter, repository);
   auditChecks.push(
     {
       name: "manual_google_sheets_access",
@@ -95,12 +98,13 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
   };
 }
 
-export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}) {
+export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}, repository = {}) {
   const normalizedRows = (balanceRows || []).map(normalizeBalanceSnapshotRow);
   const filteredRows = normalizedRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
   const validRows = filteredRows.filter((row) => row.valid);
   const invalidRows = filteredRows.filter((row) => !row.valid);
   const dates = unique(validRows.map((row) => row.date)).sort();
+  const targetDate = resolveInputTargetDate(periodFilter, validRows);
 
   return {
     total_rows: filteredRows.length,
@@ -108,6 +112,11 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     incomplete_rows: invalidRows.length,
     dates,
     rows: buildDetailedRows(validRows),
+    input_rows: buildInputRows({
+      targetDate,
+      balanceRows: normalizedRows.filter((row) => row.valid),
+      operations: repository.operations || [],
+    }),
     by_date: buildByDate(validRows),
     by_channel_currency: buildByChannelCurrency(validRows),
     missing_date_rows: invalidRows.filter((row) => row.missing.date).length,
@@ -130,6 +139,7 @@ function emptyBalanceSnapshotsSummary() {
     incomplete_rows: 0,
     dates: [],
     rows: [],
+    input_rows: [],
     by_date: [],
     by_channel_currency: [],
     missing_date_rows: 0,
@@ -138,6 +148,96 @@ function emptyBalanceSnapshotsSummary() {
     missing_amount_rows: 0,
     incomplete_preview: [],
   };
+}
+
+function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) {
+  if (!targetDate) return [];
+  const activePairs = new Map();
+  for (const channel of loadConfiguredChannels()) {
+    const currency = inferCurrencyFromChannel(channel);
+    if (currency) addActivePair(activePairs, { channel, currency });
+  }
+  for (const row of balanceRows || []) {
+    addActivePair(activePairs, row);
+  }
+  for (const operation of operations || []) {
+    for (const pair of getOperationChannelCurrencyPairs(operation)) {
+      addActivePair(activePairs, pair);
+    }
+  }
+
+  const existingByKey = new Map();
+  for (const row of balanceRows || []) {
+    if (row.date === targetDate) existingByKey.set(makeKey(row.channel, row.currency), row);
+  }
+
+  return Array.from(activePairs.values())
+    .sort(compareChannelCurrency)
+    .map((pair) => {
+      const existing = existingByKey.get(makeKey(pair.channel, pair.currency));
+      const existingAmount = existing ? existing.amount : null;
+      return {
+        date: targetDate,
+        channel: pair.channel,
+        currency: pair.currency,
+        existing_amount: existingAmount,
+        amount: existingAmount,
+        needs_input: existingAmount === null,
+        status: existingAmount === null ? "needs_input" : "already_entered",
+      };
+    });
+}
+
+function getOperationChannelCurrencyPairs(operation) {
+  const ledger = operation?.ledgerV2 || {};
+  const currency = String(ledger.currency || operation?.currency || "").trim().toUpperCase();
+  if (!currency) return [];
+  const operationName = String(ledger.operation || operation?.operation || "").trim().toLowerCase();
+  const from = String(ledger.from_channel || operation?.fromChannel || operation?.from_channel || "").trim();
+  const to = String(ledger.to_channel || operation?.toChannel || operation?.to_channel || "").trim();
+  const fallback = String(operation?.channel || operation?.accountName || operation?.account || "").trim();
+  if (operationName === "income") return [{ channel: to || fallback, currency }];
+  if (["expense", "business_expense", "personal_expense"].includes(operationName)) return [{ channel: from || fallback, currency }];
+  if (operationName === "exchange_in") return [{ channel: to || fallback, currency }];
+  if (operationName === "exchange_out") return [{ channel: from || fallback, currency }];
+  if (operationName === "transfer" || operationName === "partner_transfer") {
+    return [from, to].filter(Boolean).map((channel) => ({ channel, currency }));
+  }
+  return [fallback || from || to].filter(Boolean).map((channel) => ({ channel, currency }));
+}
+
+function addActivePair(map, pair) {
+  const channel = String(pair?.channel || "").trim();
+  const currency = String(pair?.currency || "").trim().toUpperCase();
+  if (!channel || !currency) return;
+  const key = makeKey(channel, currency);
+  if (!map.has(key)) map.set(key, { channel, currency });
+}
+
+function resolveInputTargetDate(periodFilter = {}, rows = []) {
+  if (periodFilter.to) return periodFilter.to;
+  const dates = unique((rows || []).map((row) => row.date)).sort();
+  return dates.at(-1) || "";
+}
+
+function loadConfiguredChannels() {
+  try {
+    const configPath = path.join(process.cwd(), "sheet-config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    return Array.isArray(config?.manualFinance?.channels) ? config.manualFinance.channels : [];
+  } catch {
+    return [];
+  }
+}
+
+function inferCurrencyFromChannel(channel) {
+  const normalized = String(channel || "").toLowerCase();
+  if (/\b(cad|сad)\b|канад/.test(normalized)) return "CAD";
+  if (/\b(eur|euro)\b|евр|евро/.test(normalized)) return "EUR";
+  if (/\b(uah)\b|грн/.test(normalized)) return "UAH";
+  if (/\b(rub)\b|руб|яндекс/.test(normalized)) return "RUB";
+  if (/\b(usd|usdt|usdc)\b|дол|dol|spot|save|binance|wise/.test(normalized)) return "USD";
+  return "";
 }
 
 function normalizeBalanceSnapshotRow(row) {
@@ -232,6 +332,11 @@ function buildByChannelCurrency(rows) {
       if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
       return left.currency.localeCompare(right.currency);
     });
+}
+
+function compareChannelCurrency(left, right) {
+  if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+  return left.currency.localeCompare(right.currency);
 }
 
 function isBalanceRowInPeriod(row, periodFilter = {}) {
