@@ -1,5 +1,6 @@
 {
   "outputDirectory": ".",
+  "regions": ["fra1"],
   "rewrites": [
     {
       "source": "/api/balance-snapshots",
@@ -20,6 +21,10 @@
     {
       "source": "/api/debug-ui-state",
       "destination": "/api/index?action=debugUiState"
+    },
+    {
+      "source": "/api/period-balance-reconciliation",
+      "destination": "/api/index?action=periodBalanceReconciliation"
     },
     {
       "source": "/api/manual-finance",

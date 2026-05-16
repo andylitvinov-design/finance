@@ -131,9 +131,23 @@ async function loadDashboardData() {
   try {
     state.data = await loadDashboardDataDirect(startDate, endDate);
     if (hasConfiguredManualFinanceEndpoint()) {
-      await syncManualFinanceForCurrentPeriod();
-      await syncManualTransfersForCurrentRange(startDate, endDate);
-      await syncManualOrdersForCurrentRange(startDate, endDate);
+      const manualResults = await Promise.allSettled([
+        syncManualFinanceForCurrentPeriod(),
+        syncManualTransfersForCurrentRange(startDate, endDate),
+        syncManualOrdersForCurrentRange(startDate, endDate)
+      ]);
+      manualResults.forEach((result, index) => {
+        if (result.status !== "rejected") return;
+        const message = result.reason?.message || "Manual workbook block failed.";
+        console.warn("Manual workbook block failed.", result.reason);
+        if (index === 0 && typeof setManualFinanceStatus === "function") {
+          setManualFinanceStatus(message, true);
+        } else if (index === 1 && typeof setManualTransfersStatus === "function") {
+          setManualTransfersStatus(message, true);
+        } else if (index === 2 && typeof setManualOrdersStatus === "function") {
+          setManualOrdersStatus(message, true);
+        }
+      });
     } else {
       state.manualFinance.data = null;
       state.manualTransfers.data = null;

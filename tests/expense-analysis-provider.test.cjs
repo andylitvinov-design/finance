@@ -114,6 +114,8 @@ function createApiLedgerRealIncomeContext() {
     `${extractFunction(apiIndex, "summarizeDirectMovementRealIncomeByChannel")}\n` +
     `${extractFunction(apiIndex, "summarizeRealIncomeByChannel")}\n` +
     `${extractFunction(apiIndex, "getRealIncomeSummaryTotalsFromSummary")}\n` +
+    `${extractFunction(apiIndex, "normalizeLedgerProviderIncomeClassifier")}\n` +
+    `${extractFunction(apiIndex, "isLedgerProviderNonIncomeRow")}\n` +
     `${extractFunction(apiIndex, "isLedgerProviderIncomeSource")}\n` +
     `${extractFunction(apiIndex, "getNormalizedLedgerFactOperation")}\n` +
     `${extractFunction(apiIndex, "getLedgerIncomeChannel")}\n` +
@@ -133,6 +135,9 @@ function extractExpenseAnalysisIncomeCountHelpers() {
     "normalizeExpenseAnalysisIncomeCountDate",
     "getExpenseAnalysisIncomeRowDate",
     "isExpenseAnalysisIncomeRowInPeriod",
+    "normalizeExpenseAnalysisIncomeDirection",
+    "getExpenseAnalysisIncomeRowText",
+    "isExpenseAnalysisProviderNonIncomeRow",
     "buildLedgerIncomeCountSummaryByChannel",
     "buildLedgerIncomeEventDedupeKey",
     "normalizeExpenseAnalysisIncomeEventKeyPart",
@@ -144,6 +149,139 @@ function extractExpenseAnalysisIncomeCountHelpers() {
     "isExpenseAnalysisScreenshotIncomeSource",
   ].map((name) => extractFunction(financeJs, name)).join("\n") + "\n";
 }
+
+test("income count excludes provider card/refund/fee rows while keeping proven provider income", () => {
+  const context = {
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол", "Яндекс руб", "пейпал дол"],
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    roundExpenseAnalysisAmount(value) {
+      return Math.round((Number(value) || 0) * 10000) / 10000;
+    },
+    normalizeLookupText(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^0-9a-zа-я]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    },
+    canonicalManualFinanceChannel(value) {
+      const normalized = context.normalizeLookupText(value);
+      if (["wise usd", "transferwise usd", "трансервайз дол"].includes(normalized)) return "трансервайз дол";
+      if (["yoomoney", "yandex rub", "яндекс руб"].includes(normalized)) return "Яндекс руб";
+      if (["paypal usd", "пейпал дол"].includes(normalized)) return "пейпал дол";
+      return String(value || "").trim();
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractExpenseAnalysisIncomeCountHelpers() +
+    "this.buildLedgerIncomeCountSummaryByChannel = buildLedgerIncomeCountSummaryByChannel;",
+    context
+  );
+
+  const summary = plain(context.buildLedgerIncomeCountSummaryByChannel([
+    {
+      date: "2026-05-08",
+      operation: "income",
+      category: "servicein",
+      direction: "out",
+      toChannel: "wise usd",
+      amount: "4.40",
+      amountUsd: "4.40",
+      amountNet: "4.40",
+      source: "wise",
+      rawSourceId: "CARD-3766611855",
+      comment: "Card transaction at Bolt",
+    },
+    {
+      date: "2026-05-08",
+      operation: "income",
+      category: "servicein",
+      direction: "in",
+      toChannel: "wise usd",
+      amount: "206",
+      amountUsd: "206",
+      amountNet: "206",
+      source: "wise",
+      rawSourceId: "WISE-INCOMING-1",
+      comment: "Client transfer",
+    },
+    {
+      date: "2026-05-09",
+      operation: "income",
+      category: "servicein",
+      direction: "expense",
+      toChannel: "yoomoney",
+      amount: "500",
+      amountUsd: "5",
+      amountNet: "500",
+      source: "yoomoney",
+      rawSourceId: "YM-OUT-1",
+    },
+    {
+      date: "2026-05-09",
+      operation: "income",
+      category: "servicein",
+      direction: "in",
+      toChannel: "yoomoney",
+      amount: "431.82",
+      amountUsd: "5.1",
+      amountNet: "431.82",
+      source: "yoomoney",
+      rawSourceId: "YM-IN-1",
+    },
+    {
+      date: "2026-05-10",
+      operation: "income",
+      category: "servicein",
+      direction: "refund",
+      toChannel: "paypal usd",
+      amount: "12",
+      amountUsd: "12",
+      amountNet: "12",
+      source: "paypal",
+      rawSourceId: "PAYPAL-REFUND-1",
+      entryKind: "refund",
+    },
+    {
+      date: "2026-05-10",
+      operation: "income",
+      category: "servicein",
+      direction: "fee",
+      toChannel: "paypal usd",
+      amount: "1",
+      amountUsd: "1",
+      amountNet: "1",
+      source: "paypal",
+      rawSourceId: "PAYPAL-FEE-1",
+      entryKind: "fee",
+    },
+    {
+      date: "2026-05-10",
+      operation: "income",
+      category: "servicein",
+      direction: "in",
+      toChannel: "paypal usd",
+      amount: "113.87",
+      amountUsd: "113.87",
+      amountNet: "113.87",
+      source: "paypal",
+      rawSourceId: "PAYPAL-IN-1",
+    },
+  ], { startDate: "2026-05-05", endDate: "2026-05-11" }));
+
+  assert.equal(summary.autoByChannel["трансервайз дол"], 1);
+  assert.equal(summary.autoByChannel["Яндекс руб"], 1);
+  assert.equal(summary.autoByChannel["пейпал дол"], 1);
+  assert.equal(summary.rawRowsByChannel["трансервайз дол"], 1);
+});
 
 function createMissingPaymentsContext() {
   const channels = ["пейпал дол", "пейпал евр", "пейпал сad", "трансервайз дол", "трансервайз евро", "монобанк грн"];
@@ -630,6 +768,8 @@ function loadLedgerAnalysisHelpers(context) {
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "normalizeLedgerProviderIncomeClassifier")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderNonIncomeRow")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
@@ -912,6 +1052,8 @@ test("expense analysis summary keeps API Wise real income 978.5 when Ledger fall
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "normalizeLedgerProviderIncomeClassifier")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderNonIncomeRow")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
@@ -1031,6 +1173,8 @@ test("expense analysis summary derives provider real income and expense from led
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "normalizeLedgerProviderIncomeClassifier")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderNonIncomeRow")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
@@ -1397,6 +1541,8 @@ test("expense analysis falls back to existing summaries when Ledger is empty", (
     `${extractFunction(uiJs, "isExpenseAnalysisKnownChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerIncomeChannel")}\n` +
     `${extractFunction(uiJs, "isLedgerProviderIncomeSource")}\n` +
+    `${extractFunction(uiJs, "normalizeLedgerProviderIncomeClassifier")}\n` +
+    `${extractFunction(uiJs, "isLedgerProviderNonIncomeRow")}\n` +
     `${extractFunction(uiJs, "getLedgerExpenseChannel")}\n` +
     `${extractFunction(uiJs, "buildLedgerRealIncomeSummaryByChannel")}\n` +
     `${extractFunction(uiJs, "getLedgerProviderExpenseRowDate")}\n` +
@@ -1571,6 +1717,81 @@ test("buildExpenseAnalysisChannelSummary restores full channel reconciliation ta
     ["пейпал дол", "350,0000", "360,5000", "710,5000", "311,0600", "399,4400", "30,0000", "120,5000", "120,5000", "0,0000", "0,0000", "-90,5000", "1", "0", "0", "0"],
     ["пейпал евр", "0,0000", "222,7500", "222,7500", "222,7500", "0,0000", "32,5000", "80,2500", "80,2500", "0,0000", "0,0000", "-47,7500", "0", "0", "0", "0"],
     ["Итого", "350,0000", "583,2500", "933,2500", "533,8100", "399,4400", "62,5000", "200,7500", "200,7500", "0,0000", "0,0000", "-138,2500", "1", "0", "0", "0"],
+  ]);
+});
+
+test("buildExpenseAnalysisChannelSummary keeps TransferWise business expense comparison separate from personal and transfer rows", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_FINANCE_MONEY_CHANNELS: ["трансервайз дол"],
+    calculateMovementChannelStats: () => ({ accruedPlusByChannel: {}, accruedPlusCountByChannel: {} }),
+    buildLedgerIncomeCountSummaryByChannel: () => ({ autoByChannel: {}, manualByChannel: {}, screenshotByChannel: {} }),
+    sumManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    getManualFinanceFieldUsdNumber() {
+      return 0;
+    },
+    parseLooseNumber(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return 0;
+      const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+      const numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : 0;
+    },
+    formatSheetNumber(value, digits = 4) {
+      return Number(value || 0).toFixed(digits).replace(".", ",");
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(financeJs, "roundExpenseAnalysisAmount")}\n` +
+    `${extractFunction(financeJs, "getExpenseAnalysisPlannedIncomeCount")}\n` +
+    `${extractFunction(financeJs, "getManualFinancePlannedExpenseUsdNumber")}\n` +
+    `${extractFunction(financeJs, "normalizeExpenseAnalysisProviderExpenseBreakdown")}\n` +
+    `${extractFunction(financeJs, "buildExpenseAnalysisChannelSummary")}\n` +
+    "this.buildExpenseAnalysisChannelSummary = buildExpenseAnalysisChannelSummary;",
+    context
+  );
+
+  const summary = plain(context.buildExpenseAnalysisChannelSummary({
+    manualRows: [{ channel: "трансервайз дол", totalUsd: "609.73" }],
+    providerExpenseByChannel: {
+      "трансервайз дол": 801.8,
+    },
+    providerExpenseBreakdownByChannel: {
+      "трансервайз дол": {
+        total: 801.8,
+        business: 640.25,
+        personal: 161.55,
+        excludedTransferExchange: 415,
+        byCategory: {
+          business: 640.25,
+          house: 150.67,
+          food: 10.88,
+        },
+      },
+    },
+    usdRateLookup: {},
+  }));
+
+  assert.deepEqual(summary.rows[1], [
+    "трансервайз дол",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "0,0000",
+    "609,7300",
+    "640,2500",
+    "801,8000",
+    "161,5500",
+    "415,0000",
+    "-30,5200",
+    "0",
+    "0",
+    "0",
+    "0",
   ]);
 });
 

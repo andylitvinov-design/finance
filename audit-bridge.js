@@ -2,20 +2,60 @@
   "use strict";
 
   const SNAPSHOT_URL = "/api/audit-snapshot";
-  const CHATGPT_URL = "https://chat.openai.com/";
-  const SUCCESS_MESSAGE = "Prompt copied. Вставь в Agent-Auditor";
+  const DEFAULT_DEBUGGER_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
+  const DEFAULT_LIVE_URL = "https://ezohata-incoming-ledger.vercel.app/";
+  const SUCCESS_MESSAGE = "Prompt copied. Открыл EzoHata Auditor.";
 
-  function buildAuditPrompt(snapshot) {
+  function normalizeUrl(value, fallback) {
+    const raw = String(value || "").trim();
+    if (!raw) return fallback;
+    try {
+      return new URL(raw).toString();
+    } catch {
+      return fallback;
+    }
+  }
+
+  function getDebuggerUrl(options = {}) {
+    return normalizeUrl(
+      options.debuggerUrl || root.EZOHATA_AUDIT_DEBUGGER_URL || DEFAULT_DEBUGGER_URL,
+      DEFAULT_DEBUGGER_URL
+    );
+  }
+
+  function getLiveUrl(options = {}) {
+    const currentOrigin = root.location?.origin && root.location.origin !== "null"
+      ? `${root.location.origin}/`
+      : "";
+    return normalizeUrl(options.liveUrl || currentOrigin || DEFAULT_LIVE_URL, DEFAULT_LIVE_URL);
+  }
+
+  function buildAuditPrompt(snapshot, options = {}) {
+    const liveUrl = getLiveUrl(options);
     return [
-      "Сделай аудит ezohata-incoming-ledger по snapshot.",
+      "EzoHata Debugger task.",
+      "First prove the failing layer before patching.",
+      "Use this audit snapshot as the primary source. Do not ask me to copy anything else unless live verification fails.",
       "",
-      "Проверь:",
-      "- balance",
+      `Live URL: ${liveUrl}`,
+      `Snapshot endpoint: ${SNAPSHOT_URL}`,
+      "Repo: andylitvinov-design/finance",
+      "",
+      "Required checks:",
+      "- failing layer: UI → API route → provider/import → normalization → ledger save → balance → analytics",
+      "- balance and amount_net invariant",
       "- fallback_amount_rows",
-      "- PayPal gross/net",
-      "- exchange amount_usd",
-      "- source unknown",
-      "- warnings",
+      "- PayPal gross/net/fee completeness",
+      "- exchange amount_usd completeness",
+      "- source unknown rows",
+      "- warnings and provider transport errors",
+      "",
+      "Output format:",
+      "1. Root cause / failing layer",
+      "2. Evidence for / against",
+      "3. Severity table",
+      "4. Minimal safe fix plan or Codex prompt",
+      "5. Live verification checklist",
       "",
       "Snapshot:",
       JSON.stringify(snapshot, null, 2),
@@ -49,12 +89,15 @@
     openWindow,
     setStatus,
     showFallback,
+    debuggerUrl,
+    promptOptions = {},
   }) {
     let prompt = "";
+    const resolvedDebuggerUrl = getDebuggerUrl({ debuggerUrl });
 
     async function loadPrompt() {
       const snapshot = await fetchAuditSnapshot(fetchImpl);
-      prompt = buildAuditPrompt(snapshot);
+      prompt = buildAuditPrompt(snapshot, promptOptions);
       return prompt;
     }
 
@@ -82,9 +125,9 @@
         setStatus("Clipboard unavailable. Скопируй prompt вручную.", true);
         return result;
       }
-      openWindow(CHATGPT_URL);
+      openWindow(resolvedDebuggerUrl);
       setStatus(SUCCESS_MESSAGE);
-      return result;
+      return { ...result, debuggerUrl: resolvedDebuggerUrl };
     }
 
     async function copyCurrentPrompt() {
@@ -103,6 +146,7 @@
       copyCurrentPrompt,
       loadPrompt,
       getPrompt: () => prompt,
+      getDebuggerUrl: () => resolvedDebuggerUrl,
     };
   }
 
@@ -143,6 +187,7 @@
       },
       setStatus,
       showFallback,
+      debuggerUrl: root.EZOHATA_AUDIT_DEBUGGER_URL,
     });
 
     async function handleAction(action) {
@@ -171,6 +216,8 @@
     createAuditBridge,
     fetchAuditSnapshot,
     getAuditSnapshotUrl,
+    getDebuggerUrl,
+    getLiveUrl,
     initAuditBridge,
   };
 

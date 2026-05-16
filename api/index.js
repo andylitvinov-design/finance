@@ -4,6 +4,7 @@ import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
+import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
   buildPayPalProviderWarning,
@@ -23,6 +24,7 @@ import PaymentChannelReference from "../payment-channel-reference.js";
 const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
+const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -148,6 +150,10 @@ export default async function handler(request, response) {
   const debugAction = String(request.query?.action || "").trim();
   if (debugAction === BINANCE_TRANSACTIONS_ACTION) {
     return await binanceTransactionsHandler(request, response);
+  }
+
+  if (debugAction === PERIOD_BALANCE_RECONCILIATION_ACTION) {
+    return await periodBalanceReconciliationHandler(request, response);
   }
 
   if (isDebugAction(debugAction)) {
@@ -988,6 +994,7 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
     if (startDate && date < startDate) continue;
     if (endDate && date > endDate) continue;
     if (!isLedgerProviderIncomeSource(row)) continue;
+    if (isLedgerProviderNonIncomeRow(row)) continue;
 
     const operation = getNormalizedLedgerFactOperation(row);
     if (!["income", "servicein", "ezoin"].includes(operation)) continue;
@@ -1015,6 +1022,47 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
       differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
     }];
   }));
+}
+
+function normalizeLedgerProviderIncomeClassifier(value) {
+  return normalizeLookupText(value).replace(/\s+/g, "_");
+}
+
+function isLedgerProviderNonIncomeRow(row = {}) {
+  const direction = normalizeLedgerProviderIncomeClassifier(row?.direction || row?.ledgerV2?.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeLedgerProviderIncomeClassifier(
+    row?.entryKind ||
+    row?.operationType ||
+    row?.operation_type ||
+    row?.transactionType ||
+    row?.transaction_type ||
+    row?.transferType ||
+    row?.ledgerV2?.operation_type ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+  const source = String(row?.source || row?.provider || row?.providerSource || row?.displaySource || row?.ledgerV2?.source || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || row?.ledgerV2?.raw_source_id || "")
+    .trim()
+    .toLowerCase();
+  const text = normalizeLookupText([
+    row?.comment,
+    row?.description,
+    row?.organization,
+    row?.counterparty,
+    row?.transactionSubject,
+    row?.transferType,
+    row?.ledgerV2?.comment
+  ].filter(Boolean).join(" "));
+  if ((source === "wise" || source === "transferwise" || rawSourceId.startsWith("card-")) &&
+    (rawSourceId.startsWith("card-") || kind === "card" || /\bcard (transaction|payment)\b/.test(text))) {
+    return true;
+  }
+  return false;
 }
 
 function isLedgerProviderIncomeSource(row) {

@@ -102,13 +102,18 @@ export async function buildDebugUiState(options = {}) {
   const allOperations = Array.isArray(repository.operations) ? repository.operations : [];
   const operations = filterRowsByPeriod(allOperations, periodFilter);
   const resolvedPeriod = resolvePeriod(periodFilter, operations);
-  const incomeRows = operations.filter((row) => getOperation(row) === "income");
+  const incomeRows = operations.filter((row) => getOperation(row) === "income" && !isProviderNonIncomeRow(row));
   const expenseRows = operations.filter((row) => getOperation(row) === "expense");
   const transferRows = operations.filter((row) => getOperation(row) === "transfer");
   const exchangeRows = operations.filter((row) => getOperation(row) === "exchange");
   const movementLikeRows = getMovementLikeRows(repository, periodFilter);
   const topMetricInputs = buildTopMetricInputs(movementLikeRows, operations);
   const includeRows = includeRowsRequested && rowAccess.authorized;
+  const expenseBreakdownByChannel = buildExpenseBreakdownByChannel(
+    expenseRows,
+    [...transferRows, ...exchangeRows].filter(isOutflowRow)
+  );
+  const expensePlanRows = getExpensePlanRows(repository);
 
   return {
     ok: true,
@@ -133,7 +138,13 @@ export async function buildDebugUiState(options = {}) {
     expense_analysis: {
       source: "server_derived_ledger_operations",
       real_expense: groupRowsByChannel(expenseRows),
-      real_expense_breakdown: buildExpenseBreakdownByChannel(expenseRows, [...transferRows, ...exchangeRows].filter(isOutflowRow)),
+      real_expense_breakdown: expenseBreakdownByChannel,
+      reconciliation_by_channel: buildExpensePlanReconciliationByChannel({
+        planRows: expensePlanRows,
+        expenseRows,
+        breakdownRows: expenseBreakdownByChannel,
+        includeRows,
+      }),
       transfer_outflows: groupRowsByChannel([...transferRows, ...exchangeRows].filter(isOutflowRow)),
       real_expense_rows: includeRows ? expenseRows.map(safeLedgerRow) : undefined,
     },
@@ -233,7 +244,7 @@ function buildTopMetricInputs(movementRows, operations) {
     };
   }
   const incomeUsd = operations
-    .filter((row) => getOperation(row) === "income")
+    .filter((row) => getOperation(row) === "income" && !isProviderNonIncomeRow(row))
     .reduce((sum, row) => sum + Math.max(0, parseNumber(getLedgerValue(row, "amount_usd")) || 0), 0);
   return {
     source: "ledger_income_fallback",
@@ -370,6 +381,213 @@ function buildExpenseBreakdownByChannel(expenseRows, excludedRows = []) {
       bySubcategory: roundObject(row.bySubcategory),
       excluded_transfer_exchange: round(row.excluded_transfer_exchange),
     }));
+}
+
+export function buildExpensePlanReconciliationByChannel({
+  planRows = [],
+  expenseRows = [],
+  breakdownRows = [],
+  includeRows = false,
+} = {}) {
+  const planByChannel = buildExpensePlanByChannel(planRows, includeRows);
+  const breakdownByChannel = new Map((breakdownRows || []).map((row) => [row.channel, row]));
+  const businessRowsByChannel = includeRows ? groupBusinessExpenseRowsByChannel(expenseRows) : new Map();
+  const channels = new Set([
+    ...planByChannel.keys(),
+    ...breakdownByChannel.keys(),
+  ]);
+
+  return Array.from(channels)
+    .sort((left, right) => left.localeCompare(right))
+    .map((channel) => {
+      const plan = planByChannel.get(channel) || {
+        planned_expense_usd: 0,
+        plan_sources: [],
+        plan_rows: undefined,
+        warnings: [],
+      };
+      const breakdown = breakdownByChannel.get(channel) || {};
+      const plannedExpenseUsd = round(plan.planned_expense_usd);
+      const businessRealExpenseUsd = round(breakdown.business);
+      const totalRealExpenseUsd = round(breakdown.total);
+      const personalExpenseUsd = round(breakdown.personal);
+      const excludedTransferExchangeUsd = round(breakdown.excluded_transfer_exchange);
+      const deltaUsd = round(businessRealExpenseUsd - plannedExpenseUsd);
+      const roundingDelta = round(totalRealExpenseUsd - businessRealExpenseUsd - personalExpenseUsd);
+      const unexplainedDelta = Math.abs(roundingDelta) > 0.01 ? Math.abs(roundingDelta) : 0;
+      const warnings = [...(plan.warnings || [])];
+      if (unexplainedDelta > 0.01) {
+        warnings.push("Expense reconciliation has unexplained delta above 0.01.");
+      }
+      return stripUndefined({
+        channel,
+        planned_expense_usd: plannedExpenseUsd,
+        business_real_expense_usd: businessRealExpenseUsd,
+        total_real_expense_usd: totalRealExpenseUsd,
+        personal_expense_usd: personalExpenseUsd,
+        excluded_transfer_exchange_usd: excludedTransferExchangeUsd,
+        delta_usd: deltaUsd,
+        status: getExpenseReconciliationStatus({ deltaUsd, unexplainedDelta, plannedExpenseUsd }),
+        plan_sources: plan.plan_sources,
+        plan_rows: includeRows ? plan.plan_rows : undefined,
+        business_real_rows: includeRows ? (businessRowsByChannel.get(channel) || []) : undefined,
+        rounding_delta: roundingDelta,
+        unexplained_delta: round(unexplainedDelta),
+        warnings,
+      });
+    });
+}
+
+function getExpenseReconciliationStatus({ deltaUsd, unexplainedDelta, plannedExpenseUsd }) {
+  if (unexplainedDelta > 0.01 || plannedExpenseUsd === 0) return "unexplained";
+  if (deltaUsd > 0.01) return "business_over_plan";
+  if (deltaUsd < -0.01) return "under_plan";
+  return "matched";
+}
+
+function getExpensePlanRows(repository = {}) {
+  if (Array.isArray(repository.manualFinanceRows)) return repository.manualFinanceRows;
+  if (Array.isArray(repository.moneyRows)) return repository.moneyRows;
+  if (Array.isArray(repository.legacyExpenseRows)) return repository.legacyExpenseRows;
+  return [];
+}
+
+function buildExpensePlanByChannel(planRows, includeRows) {
+  if (looksLikeLegacyExpenseRows(planRows)) return buildLegacyExpensePlanByChannel(planRows, includeRows);
+  return buildManualMoneyExpensePlanByChannel(planRows, includeRows);
+}
+
+function looksLikeLegacyExpenseRows(rows) {
+  return (rows || []).some((row) => row && typeof row === "object" && row.amounts && typeof row.amounts === "object");
+}
+
+function buildManualMoneyExpensePlanByChannel(rows, includeRows) {
+  const grouped = new Map();
+  for (const row of rows || []) {
+    const channel = normalizeChannel(row?.channel);
+    if (!channel || normalizeHeader(channel) === normalizeHeader("Итого")) continue;
+    const totalUsdRaw = getByAliases(row, ["totalUsd", "total_usd", "TOTAL USD", "Итого USD"]);
+    const hasAggregateTotalUsd = String(totalUsdRaw ?? "").trim() !== "";
+    const planned = hasAggregateTotalUsd
+      ? parseNumber(totalUsdRaw)
+      : sumPlanRowExpenseFields(row);
+    if (planned === null) continue;
+    const current = grouped.get(channel) || createEmptyExpensePlan(channel);
+    current.planned_expense_usd += planned;
+    current.plan_sources.push({
+      type: hasAggregateTotalUsd ? "aggregate_totalUsd" : "category_sum",
+      amount_usd: round(planned),
+      categories: hasAggregateTotalUsd ? ["totalUsd"] : ["business", "flat", "food", "fun", "study", "travel"],
+    });
+    if (hasAggregateTotalUsd) {
+      current.warnings.push("No stable row-level join key: manual plan is aggregate totalUsd.");
+    }
+    if (includeRows) current.plan_rows.push(safePlanRow(row, planned));
+    grouped.set(channel, current);
+  }
+  return finalizeExpensePlanMap(grouped);
+}
+
+function buildLegacyExpensePlanByChannel(rows, includeRows) {
+  const aggregateRows = [];
+  const categoryRows = [];
+  for (const row of rows || []) {
+    if (isAggregatePlanCategory(row?.category)) aggregateRows.push(row);
+    else if (isBusinessPlanCategory(row?.category)) categoryRows.push(row);
+  }
+  const sourceRows = aggregateRows.length ? aggregateRows : categoryRows;
+  const grouped = new Map();
+  for (const row of sourceRows) {
+    for (const [channel, rawAmount] of Object.entries(row.amounts || {})) {
+      const normalizedChannel = normalizeChannel(channel);
+      const amount = parseNumber(rawAmount);
+      if (!normalizedChannel || amount === null) continue;
+      const current = grouped.get(normalizedChannel) || createEmptyExpensePlan(normalizedChannel);
+      current.planned_expense_usd += amount;
+      current.plan_sources.push({
+        type: aggregateRows.length ? "aggregate_totalUsd" : "category_sum",
+        category: sanitizeText(row.category).slice(0, 80),
+        amount_usd: round(amount),
+      });
+      if (aggregateRows.length) {
+        current.warnings.push("No stable row-level join key: manual plan is aggregate totalUsd.");
+      }
+      if (includeRows) current.plan_rows.push(safePlanRow(row, amount, normalizedChannel));
+      grouped.set(normalizedChannel, current);
+    }
+  }
+  return finalizeExpensePlanMap(grouped);
+}
+
+function createEmptyExpensePlan(channel) {
+  return {
+    channel,
+    planned_expense_usd: 0,
+    plan_sources: [],
+    plan_rows: [],
+    warnings: [],
+  };
+}
+
+function finalizeExpensePlanMap(grouped) {
+  for (const value of grouped.values()) {
+    value.planned_expense_usd = round(value.planned_expense_usd);
+    value.plan_sources = value.plan_sources.map((source) => ({
+      ...source,
+      amount_usd: round(source.amount_usd),
+    }));
+    value.warnings = unique(value.warnings);
+  }
+  return grouped;
+}
+
+function sumPlanRowExpenseFields(row) {
+  const values = ["business", "flat", "house", "food", "fun", "study", "travel", "travelFun"]
+    .map((key) => parseNumber(row?.[key]))
+    .filter((value) => value !== null);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function isAggregatePlanCategory(category) {
+  const normalized = normalizeHeader(category);
+  return ["totalusd", "итогоusd", "totalus", "итоговusd", "total", "итого", "итог"].includes(normalized);
+}
+
+function isBusinessPlanCategory(category) {
+  return ["business", "flat", "house", "food", "fun", "study", "travel", "travelfun"]
+    .includes(normalizeHeader(category));
+}
+
+function groupBusinessExpenseRowsByChannel(rows) {
+  const grouped = new Map();
+  for (const row of rows || []) {
+    const channel = getRowChannel(row);
+    if (!channel || isPersonalExpenseRow(row)) continue;
+    const current = grouped.get(channel) || [];
+    current.push(safeLedgerRow(row, current.length));
+    grouped.set(channel, current);
+  }
+  return grouped;
+}
+
+function isPersonalExpenseRow(row) {
+  const operation = String(row?.ledgerV2?.operation || row?.operation || "").trim();
+  const category = sanitizeText(row?.ledgerV2?.category || row?.category || "");
+  return operation === "personal_expense" || ["flat", "house", "food", "fun", "study", "travel", "extra"].includes(category);
+}
+
+function safePlanRow(row, amountUsd, channel = row?.channel) {
+  return stripUndefined({
+    date: normalizeRowDate(row),
+    channel: normalizeChannel(channel),
+    category: sanitizeText(row?.category || "").slice(0, 80) || undefined,
+    amount_usd: round(amountUsd),
+  });
+}
+
+function stripUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 function roundObject(values = {}) {
@@ -644,6 +862,45 @@ function isOutflowRow(row) {
   return getDirection(row) === "out" || getOperation(row) === "expense";
 }
 
+function normalizeProviderClassifier(value) {
+  return normalizeHeader(value).replace(/\s+/g, "_");
+}
+
+function isProviderNonIncomeRow(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const direction = normalizeProviderClassifier(ledger.direction || row.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeProviderClassifier(
+    row.entryKind ||
+    row.operationType ||
+    row.operation_type ||
+    row.transactionType ||
+    row.transaction_type ||
+    row.transferType ||
+    ledger.operation_type ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+  const source = normalizeSource(row);
+  const rawSourceId = String(ledger.raw_source_id || row.rawSourceId || row.raw_source_id || row.sourceTransactionId || row.externalId || row.external_id || "")
+    .trim()
+    .toLowerCase();
+  const text = normalizeHeader([
+    ledger.comment,
+    row.comment,
+    row.description,
+    row.organization,
+    row.counterparty,
+    row.transactionSubject,
+    row.transferType
+  ].filter(Boolean).join(" "));
+  if ((source === "wise" || source === "transferwise" || rawSourceId.startsWith("card-")) &&
+    (rawSourceId.startsWith("card-") || kind === "card" || text.includes("cardtransaction") || text.includes("cardpayment"))) {
+    return true;
+  }
+  return false;
+}
+
 function getRowChannel(row) {
   const ledger = row?.ledgerV2 || {};
   const direction = getDirection(row);
@@ -748,7 +1005,8 @@ function countBy(rows, iteratee) {
 }
 
 function round(value) {
-  return Math.round((Number(value) || 0) * 10000) / 10000;
+  const rounded = Math.round((Number(value) || 0) * 10000) / 10000;
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 function unique(values) {
