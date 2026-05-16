@@ -310,6 +310,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     assert.equal(repository.operations[6].source, "photo");
 	    assert.equal(repository.operations[7].amountUsd, "942");
 	    assert.equal(repository.monthlyPlanRows.length, 1);
+	    assert.equal(repository.plannedSourceStatus, "available");
 	    assert.deepEqual(repository.plannedRows, [
 	      { date: "2026-04-01", channel: "План: заказы", currency: "USD", amount: 1000, operation: "income", source: "monthly_plan" },
 	      { date: "2026-04-01", channel: "План: услуги", currency: "USD", amount: 250, operation: "income", source: "monthly_plan" },

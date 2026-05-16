@@ -67,6 +67,47 @@ test("period balance reconciliation API reports planned source gap without faili
   assert.match(snapshot.warnings.join("\n"), /movementValues order-plan rows and manual finance planned expense rows server-side/);
 });
 
+test("period balance reconciliation reports available empty planned source without source-unavailable warning", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-15" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.period_balance_reconciliation.summary.planned_rows, 0);
+  assert.equal(snapshot.period_balance_reconciliation.summary.planned_source_status, "available_empty");
+  assert.doesNotMatch(snapshot.warnings.join("\n"), /planned balance movement source is unavailable/);
+  assert.doesNotMatch(snapshot.warnings.join("\n"), /planned income\/expense source is not connected/);
+});
+
+test("period balance reconciliation treats monthly plan source from repository as available even when amount cells are blank", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-04-01", to: "2026-04-30" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      monthlyPlanRows: [],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.period_balance_reconciliation.planned_source_status, "available_empty");
+  assert.doesNotMatch(snapshot.warnings.join("\n"), /source is unavailable|source is not connected/);
+});
+
 test("period balance reconciliation classifies PayPal missing amount_net as provider-permission incomplete", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
