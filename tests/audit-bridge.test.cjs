@@ -10,6 +10,8 @@ const {
   getLiveUrl,
 } = require("../audit-bridge.js");
 
+const EZOHATA_AUDITOR_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
+
 test("buildAuditPrompt pretty-prints snapshot JSON with debugger checklist", () => {
   const snapshot = {
     ok: true,
@@ -31,7 +33,7 @@ test("buildAuditPrompt pretty-prints snapshot JSON with debugger checklist", () 
 });
 
 test("debugger and live URLs fall back to safe defaults", () => {
-  assert.equal(getDebuggerUrl({ debuggerUrl: "not a url" }), "https://chatgpt.com/");
+  assert.equal(getDebuggerUrl({ debuggerUrl: "not a url" }), EZOHATA_AUDITOR_URL);
   assert.equal(getLiveUrl({ liveUrl: "not a url" }), "https://ezohata-incoming-ledger.vercel.app/");
   assert.equal(getDebuggerUrl({ debuggerUrl: "https://chatgpt.com/g/ezo-debugger/" }), "https://chatgpt.com/g/ezo-debugger/");
 });
@@ -90,6 +92,34 @@ test("runAudit copies prompt and opens configured debugger URL", async () => {
   assert.equal(writes.length, 1);
   assert.match(writes[0], /^EzoHata Debugger task\./);
   assert.match(writes[0], /Snapshot:\n/);
+});
+
+test("runAudit opens EzoHata Auditor by default", async () => {
+  const opened = [];
+  const bridge = createAuditBridge({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { ok: true, warnings: [] };
+      },
+    }),
+    clipboard: {
+      async writeText() {},
+    },
+    openWindow(url) {
+      opened.push(url);
+    },
+    setStatus() {},
+    showFallback() {
+      throw new Error("fallback should not be shown");
+    },
+  });
+
+  const result = await bridge.runAudit();
+
+  assert.equal(result.copied, true);
+  assert.equal(result.debuggerUrl, EZOHATA_AUDITOR_URL);
+  assert.deepEqual(opened, [EZOHATA_AUDITOR_URL]);
 });
 
 test("clipboard failure exposes fallback prompt without opening debugger", async () => {
