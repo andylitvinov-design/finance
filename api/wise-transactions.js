@@ -151,7 +151,9 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   const details = transaction?.details || {};
   const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
   const reference = String(transaction?.referenceNumber || "").trim();
-  const direction = String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense";
+  const direction = isWiseCardTransaction(transaction)
+    ? "expense"
+    : (String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense");
   const counterparty = buildWiseCounterparty(transaction, direction);
   return {
     id: `wise-${reference || balance?.balanceId || balance?.id || index}`,
@@ -170,6 +172,14 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     feeAmount: Math.abs(fee.value) || null,
     feeCurrency: fee.currency || ""
   };
+}
+
+function isWiseCardTransaction(transaction = {}) {
+  const details = transaction?.details || {};
+  const type = String(details.type || transaction?.type || "").trim().toUpperCase();
+  const reference = String(transaction?.referenceNumber || "").trim().toUpperCase();
+  const description = String(details.description || "").trim().toLowerCase();
+  return type === "CARD" || reference.startsWith("CARD-") || /\bcard (transaction|payment)\b/.test(description);
 }
 
 export function summarizeWiseStatementEntries(entries = []) {
