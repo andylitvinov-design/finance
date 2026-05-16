@@ -14,6 +14,8 @@ export function buildBalanceCoverage(dailyBalanceResult = {}) {
   return {
     accounts,
     actionable_accounts: buildActionableAccounts(accounts),
+    mismatch_rows: buildDiagnosticRows(accounts, STATUS.MISMATCH),
+    missing_provider_balance_rows: buildDiagnosticRows(accounts, STATUS.MISSING_PROVIDER),
     summary,
   };
 }
@@ -133,6 +135,41 @@ function buildActionableAccounts(accounts) {
     .filter((account) => account.status && account.status !== STATUS.OK)
     .sort(compareActionableRows)
     .slice(0, 10);
+}
+
+function buildDiagnosticRows(accounts, status) {
+  return (accounts || [])
+    .filter((account) => account.status === status)
+    .sort(compareActionableRows)
+    .map(buildDiagnosticRow);
+}
+
+function buildDiagnosticRow(account) {
+  return {
+    date: account.date,
+    channel: account.channel,
+    currency: account.currency,
+    opening_balance: account.opening_balance,
+    inflow: account.inflow,
+    outflow: account.outflow,
+    net_change: account.net_change,
+    computed_closing_balance: account.computed_closing_balance,
+    provider_reported_balance: account.provider_reported_balance,
+    difference: account.difference,
+    formula: account.formula,
+    diagnosis: account.diagnosis,
+    action: buildDiagnosticAction(account),
+  };
+}
+
+function buildDiagnosticAction(account) {
+  if (account.status === STATUS.MISSING_PROVIDER) {
+    return "Add factual provider/manual closing balance to Остатки; do not invent provider balance from computed_closing_balance.";
+  }
+  if (account.status === STATUS.MISMATCH) {
+    return "Verify Ledger movement amount_net/balance_amount and factual Остатки row before changing data.";
+  }
+  return account.fix_action;
 }
 
 function normalizeStatus(value) {
