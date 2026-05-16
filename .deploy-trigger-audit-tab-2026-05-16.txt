@@ -1,0 +1,5 @@
+Deploy trigger for dashboard Audit tab.
+
+Reason: source-of-truth main already contains audit-bridge.js, audit-site-tab.js, and index.html script includes, but production screenshot still shows the stale dashboard without the Audit tab.
+
+This file has no runtime effect and exists only to trigger a fresh Vercel deployment from main.
