@@ -3,6 +3,8 @@
 
   const AUDIT_TAB_ID = "audit";
   const AUDIT_TAB_LABEL = "Аудит";
+  const RETRY_LIMIT = 40;
+  const RETRY_DELAY_MS = 250;
 
   function getState() {
     return typeof state !== "undefined" ? state : root.state;
@@ -21,21 +23,18 @@
 
   function getAuditBridgeApi() {
     const api = root.AuditBridge;
-    if (!api?.createAuditBridge) {
-      throw new Error("Audit bridge is unavailable.");
-    }
+    if (!api?.createAuditBridge) throw new Error("Audit bridge is unavailable.");
     return api;
   }
 
   function renderAuditDebuggerBlock() {
     const block = createNode("div", "audit-tab-block");
-
     const header = createNode("div", "tab-header");
     const titleWrap = createNode("div");
     titleWrap.innerHTML = [
       "<div>",
-      "<h2>Аудит / EzoHata Debugger</h2>",
-      "<div class=\"tab-note\">Кнопка берёт свежий <code>/api/audit-snapshot</code>, собирает Debugger prompt, копирует его в буфер и открывает новый чат ChatGPT / EzoHata Debugger.</div>",
+      "<h2>Аудит / EzoHata Auditor</h2>",
+      "<div class=\"tab-note\">Кнопка берёт свежий <code>/api/audit-snapshot</code>, копирует prompt и открывает EzoHata Auditor.</div>",
       "</div>",
     ].join("");
     header.appendChild(titleWrap);
@@ -45,31 +44,27 @@
     const controls = createNode("div", "controls audit-controls");
     const actions = createNode("div", "actions audit-actions");
     const runButton = createNode("button", "primary", "Запустить аудит");
-    runButton.type = "button";
     const copyButton = createNode("button", "secondary", "Скопировать prompt");
+    runButton.type = "button";
     copyButton.type = "button";
     actions.append(runButton, copyButton);
-    controls.appendChild(actions);
 
     const status = createNode("div", "status", "Готово. Нажми «Запустить аудит».");
     status.setAttribute("aria-live", "polite");
-    controls.appendChild(status);
+    controls.append(actions, status);
     panel.appendChild(controls);
 
     const fallback = createNode("div", "field audit-fallback");
     fallback.hidden = true;
-    const label = createNode("label", "", "Prompt");
     const textarea = createNode("textarea", "");
     textarea.readOnly = true;
     const fallbackActions = createNode("div", "actions audit-fallback-actions");
     const selectButton = createNode("button", "secondary", "Выделить всё");
     selectButton.type = "button";
     fallbackActions.appendChild(selectButton);
-    fallback.append(label, textarea, fallbackActions);
+    fallback.append(createNode("label", "", "Prompt"), textarea, fallbackActions);
     panel.appendChild(fallback);
-
-    const note = createNode("p", "tab-note", "Ограничение браузера: сайт может скопировать текст и открыть ChatGPT, но не может сам вставить prompt в чужое окно. После открытия нового чата нажми Cmd/Ctrl+V, если текст не вставился автоматически.");
-    panel.appendChild(note);
+    panel.appendChild(createNode("p", "tab-note", "Если текст не вставился автоматически, нажми Cmd/Ctrl+V в новом чате."));
     block.appendChild(panel);
 
     function setStatus(message, isError = false) {
@@ -92,9 +87,7 @@
     const bridge = getAuditBridgeApi().createAuditBridge({
       fetchImpl: root.fetch?.bind(root),
       clipboard: root.navigator?.clipboard,
-      openWindow(url) {
-        root.open(url, "_blank", "noopener");
-      },
+      openWindow(url) { root.open(url, "_blank", "noopener"); },
       setStatus,
       showFallback,
       debuggerUrl: root.EZOHATA_AUDIT_DEBUGGER_URL,
@@ -117,7 +110,6 @@
       textarea.focus();
       textarea.select();
     });
-
     return block;
   }
 
@@ -131,11 +123,18 @@
     return true;
   }
 
+  function markOnlyAuditActive() {
+    const appElements = getElements();
+    appElements?.tabs?.querySelectorAll?.(".tab.active").forEach((button) => button.classList.remove("active"));
+    appElements?.tabs?.querySelector?.(`[data-tab-id="${AUDIT_TAB_ID}"]`)?.classList.add("active");
+  }
+
   function appendAuditTabButton() {
     const appState = getState();
     const appElements = getElements();
     if (!appElements?.tabs) return false;
-    const selector = `[data-tab-id=\"${AUDIT_TAB_ID}\"]`;
+
+    const selector = `[data-tab-id="${AUDIT_TAB_ID}"]`;
     const existing = appElements.tabs.querySelector?.(selector);
     if (existing) {
       existing.classList.toggle("active", appState?.activeTab === AUDIT_TAB_ID);
@@ -148,7 +147,12 @@
     button.addEventListener("click", () => {
       const nextState = getState();
       if (nextState) nextState.activeTab = AUDIT_TAB_ID;
-      root.renderTabs();
+      if (typeof root.renderTabs === "function") {
+        root.renderTabs();
+      } else {
+        markOnlyAuditActive();
+        renderAuditTabPanel();
+      }
     });
     appElements.tabs.appendChild(button);
     return true;
@@ -161,7 +165,6 @@
 
     root.renderTabs = function renderTabsWithAudit() {
       const appState = getState();
-      const appElements = getElements();
       const shouldShowAudit = appState?.activeTab === AUDIT_TAB_ID;
       if (shouldShowAudit) {
         const fallbackTab = appState?.config?.tabs?.[0]?.id || "movement";
@@ -169,13 +172,10 @@
         originalRenderTabs.call(this);
         appState.activeTab = AUDIT_TAB_ID;
         appendAuditTabButton();
-        appElements?.tabs?.querySelectorAll?.(".tab.active").forEach((button) => button.classList.remove("active"));
-        const auditButton = appElements?.tabs?.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`);
-        auditButton?.classList.add("active");
+        markOnlyAuditActive();
         renderAuditTabPanel();
         return;
       }
-
       originalRenderTabs.call(this);
       appendAuditTabButton();
     };
@@ -183,18 +183,38 @@
     return true;
   }
 
+  function ensureAuditTabVisible() {
+    installAuditTabRenderer();
+    return appendAuditTabButton();
+  }
+
+  function startAuditTabRetries() {
+    let attempts = 0;
+    const tick = () => {
+      attempts += 1;
+      const visible = ensureAuditTabVisible();
+      if (visible || attempts >= RETRY_LIMIT) return;
+      root.setTimeout(tick, RETRY_DELAY_MS);
+    };
+    tick();
+  }
+
   const api = {
     AUDIT_TAB_ID,
     AUDIT_TAB_LABEL,
     appendAuditTabButton,
+    ensureAuditTabVisible,
     installAuditTabRenderer,
     renderAuditDebuggerBlock,
     renderAuditTabPanel,
+    startAuditTabRetries,
   };
 
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = api;
-  }
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.EzohataAuditSiteTab = api;
-  installAuditTabRenderer();
+
+  startAuditTabRetries();
+  if (root.document?.readyState === "loading") {
+    root.document.addEventListener("DOMContentLoaded", startAuditTabRetries);
+  }
 })(typeof globalThis !== "undefined" ? globalThis : window);
