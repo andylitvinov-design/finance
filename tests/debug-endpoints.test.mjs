@@ -326,7 +326,7 @@ test("debug UI state explains TransferWise expense delta with plan reconciliatio
     legacyExpenseRows: [
       {
         date: "2026-05-15",
-        category: "totalUsd",
+        category: "total",
         amounts: {
           "трансервайз дол": "609.73",
         },
