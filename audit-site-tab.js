@@ -135,7 +135,12 @@
     const appState = getState();
     const appElements = getElements();
     if (!appElements?.tabs) return false;
-    if (appElements.tabs.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`)) return true;
+    const selector = `[data-tab-id=\"${AUDIT_TAB_ID}\"]`;
+    const existing = appElements.tabs.querySelector?.(selector);
+    if (existing) {
+      existing.classList.toggle("active", appState?.activeTab === AUDIT_TAB_ID);
+      return true;
+    }
 
     const button = createNode("button", "tab" + (appState?.activeTab === AUDIT_TAB_ID ? " active" : ""), AUDIT_TAB_LABEL);
     button.type = "button";
@@ -164,6 +169,7 @@
         originalRenderTabs.call(this);
         appState.activeTab = AUDIT_TAB_ID;
         appendAuditTabButton();
+        appElements?.tabs?.querySelectorAll?.(".tab.active").forEach((button) => button.classList.remove("active"));
         const auditButton = appElements?.tabs?.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`);
         auditButton?.classList.add("active");
         renderAuditTabPanel();
