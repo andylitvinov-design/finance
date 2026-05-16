@@ -182,6 +182,7 @@ export function signBinanceQuery(queryString, apiSecret) {
 export function normalizeBinanceDeposit(deposit = {}, index = 0) {
   const amount = parseBinanceAmount(deposit.amount);
   const currency = normalizeBinanceCurrency(deposit.coin || deposit.asset);
+  const needsReview = !isUsdLikeCurrency(currency);
   const id = firstNonEmpty(deposit.id, deposit.txId, deposit.tranId, `${currency}-${dateFromBinanceTime(deposit.completeTime || deposit.insertTime)}-${index}`);
   const date = dateFromBinanceTime(deposit.completeTime || deposit.insertTime);
   const status = String(deposit.status ?? "").trim();
@@ -195,7 +196,7 @@ export function normalizeBinanceDeposit(deposit = {}, index = 0) {
   return {
     id: `binance-deposit-${id}`,
     date,
-    channel: getBinanceChannel(deposit),
+    channel: needsReview ? "" : getBinanceChannel(deposit),
     direction: "income",
     currency,
     localAmount: amount,
@@ -210,7 +211,10 @@ export function normalizeBinanceDeposit(deposit = {}, index = 0) {
     source: "binance",
     sourceTransactionId: String(id),
     suggestedCategory: "serviceIncome",
-    needsVerification: !isUsdLikeCurrency(currency),
+    needsVerification: needsReview,
+    reviewStatus: needsReview ? "needs_review" : "",
+    review_status: needsReview ? "needs_review" : "",
+    preserveBlankChannel: needsReview,
     raw: deposit
   };
 }
@@ -219,6 +223,7 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
   const amount = parseBinanceAmount(withdrawal.amount);
   const feeAmount = parseBinanceAmount(withdrawal.transactionFee || withdrawal.fee);
   const currency = normalizeBinanceCurrency(withdrawal.coin || withdrawal.asset);
+  const needsReview = !isUsdLikeCurrency(currency);
   const id = firstNonEmpty(withdrawal.id, withdrawal.applyId, withdrawal.txId, `${currency}-${dateFromBinanceTime(withdrawal.completeTime || withdrawal.applyTime)}-${index}`);
   const date = dateFromBinanceTime(withdrawal.completeTime || withdrawal.applyTime);
   const netAmount = Math.max(0, amount - feeAmount);
@@ -232,7 +237,7 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
   return {
     id: `binance-withdrawal-${id}`,
     date,
-    channel: getBinanceChannel(withdrawal),
+    channel: needsReview ? "" : getBinanceChannel(withdrawal),
     direction: "out",
     currency,
     localAmount: amount,
@@ -247,7 +252,10 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
     source: "binance",
     sourceTransactionId: String(id),
     suggestedCategory: "exchange",
-    needsVerification: !isUsdLikeCurrency(currency),
+    needsVerification: needsReview,
+    reviewStatus: needsReview ? "needs_review" : "",
+    review_status: needsReview ? "needs_review" : "",
+    preserveBlankChannel: needsReview,
     raw: withdrawal
   };
 }

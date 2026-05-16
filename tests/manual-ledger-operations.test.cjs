@@ -558,6 +558,29 @@ test("duplicate generic file income is skipped and import sources are preserved"
   assert.equal(saved.skipped_count, 0);
 });
 
+test("non-USD Binance review rows are not converted into Ledger balance rows", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-01",
+      channel: "",
+      localAmount: 0.01,
+      currency: "BTC",
+      usdAmount: null,
+      category: "serviceIncome",
+      direction: "income",
+      source: "binance",
+      sourceTransactionId: "dep-btc-1",
+      externalId: "dep-btc-1",
+      reviewStatus: "needs_review",
+      review_status: "needs_review",
+      description: "Binance BTC deposit"
+    }
+  ]));
+
+  assert.deepEqual(rows, []);
+});
+
 test("normalizeManualLedgerRowsForSave reports added duplicate and skipped counts", () => {
   const context = buildLedgerTestContext();
   const saved = plain(context.normalizeManualLedgerRowsForSave([

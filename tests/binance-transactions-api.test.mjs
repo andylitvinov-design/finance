@@ -140,6 +140,29 @@ test("Binance API error and non-JSON response become structured warnings", async
   assert.match(result.warnings.join("\n"), /non-JSON response/);
 });
 
+test("Binance API ok with empty history returns structured success without warnings", async () => {
+  const result = await fetchBinanceStatementEntries({
+    startDate: "2026-05-01",
+    endDate: "2026-05-02",
+    apiKey: "api-key",
+    apiSecret: "api-secret",
+    baseUrl: "https://binance.example",
+    now: () => 1710000000000,
+    fetchImpl: async (url) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/v3/account") {
+        return { ok: true, status: 200, async text() { return JSON.stringify({ balances: [] }); } };
+      }
+      return { ok: true, status: 200, async text() { return JSON.stringify([]); } };
+    }
+  });
+
+  assert.equal(result.transactionCount, 0);
+  assert.deepEqual(result.entries, []);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok" });
+});
+
 test("Binance deposit response normalizes to spot income with positive net USD", () => {
   const entry = normalizeBinanceDeposit({
     id: "dep-1",
@@ -164,6 +187,28 @@ test("Binance deposit response normalizes to spot income with positive net USD",
   assert.equal(entry.realNetUsd, 125.5);
   assert.equal(entry.feeAmount, 0);
   assert.equal(entry.needsVerification, false);
+});
+
+test("Binance non-USD crypto deposits are marked for review without a saveable channel", () => {
+  const entry = normalizeBinanceDeposit({
+    id: "dep-btc-1",
+    amount: "0.01",
+    coin: "BTC",
+    network: "BTC",
+    status: 1,
+    completeTime: 1777608060000,
+    txId: "0xbtcdeposit"
+  });
+
+  assert.equal(entry.sourceTransactionId, "dep-btc-1");
+  assert.equal(entry.direction, "income");
+  assert.equal(entry.currency, "BTC");
+  assert.equal(entry.realNetUsd, null);
+  assert.equal(entry.channel, "");
+  assert.equal(entry.needsVerification, true);
+  assert.equal(entry.review_status, "needs_review");
+  assert.equal(entry.reviewStatus, "needs_review");
+  assert.equal(entry.preserveBlankChannel, true);
 });
 
 test("Binance withdrawal response normalizes to out direction and is excluded from real income", () => {
@@ -233,7 +278,9 @@ test("fetchBinanceStatementEntries reads account, deposits, and withdrawals endp
   assert.equal(result.transactionCount, 2);
   assert.equal(result.entries.length, 2);
   assert.equal(result.entries[0].source, "binance");
+  assert.equal(result.entries[0].sourceTransactionId, "dep-1");
   assert.equal(result.entries[0].direction, "income");
+  assert.equal(result.entries[1].sourceTransactionId, "wd-1");
   assert.equal(result.entries[1].direction, "out");
   assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok" });
 });
