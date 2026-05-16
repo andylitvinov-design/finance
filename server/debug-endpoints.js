@@ -551,7 +551,7 @@ function sumPlanRowExpenseFields(row) {
 
 function isAggregatePlanCategory(category) {
   const normalized = normalizeHeader(category);
-  return ["totalusd", "итогоusd", "totalus", "итоговusd"].includes(normalized);
+  return ["totalusd", "итогоusd", "totalus", "итоговusd", "total", "итого", "итог"].includes(normalized);
 }
 
 function isBusinessPlanCategory(category) {
