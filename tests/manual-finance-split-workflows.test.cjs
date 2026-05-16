@@ -251,3 +251,9 @@ test("fact UI has separate inner tabs for balances and cash", () => {
   assert.match(uiJs, /Date", "Channel", "Currency", "Balance", "Status/);
   assert.match(uiJs, /ensureManualFinanceBalanceInputRows/);
 });
+
+test("fact tab opens the selected period instead of forcing today", () => {
+  const source = extractFunction(uiJs, "openManualFinanceToday");
+  assert.doesNotMatch(source, /setToday\(\)/);
+  assert.match(source, /loadManualFinanceSheet\(elements\.startDate\.value, elements\.endDate\.value, true\)/);
+});
