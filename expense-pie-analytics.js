@@ -30,6 +30,12 @@
     "#8f5138"
   ];
 
+  const EXPENSE_PLAN_TARGETS_USD = {
+    incomeMonth: 10000,
+    expenseMonth: 2000,
+    profitMonth: 2500
+  };
+
   function getExpensePieState() {
     if (typeof state !== "undefined") return state;
     return root.state;
@@ -157,6 +163,105 @@
     return String(Math.round((Number(value) || 0) * 100) / 100);
   }
 
+  function parseExpensePlanNumber(value) {
+    const parser = typeof parseLooseNumber === "function" ? parseLooseNumber : root.parseLooseNumber;
+    if (typeof parser === "function") return parser(value);
+    const normalized = String(value ?? "").replace(/\s+/g, "").replace(",", ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function normalizeExpensePlanDate(value) {
+    const raw = String(value || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const date = raw ? new Date(raw) : null;
+    if (!date || Number.isNaN(date.getTime())) return "";
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function getExpensePlanSelectedEndDate(options = {}) {
+    const explicit = normalizeExpensePlanDate(options.endDate || "");
+    if (explicit) return explicit;
+    const appElements = typeof elements !== "undefined" ? elements : root.elements;
+    return normalizeExpensePlanDate(appElements?.endDate?.value || "") || normalizeExpensePlanDate(new Date().toISOString().slice(0, 10));
+  }
+
+  function getExpensePlanDaysInMonth(dateString) {
+    const date = normalizeExpensePlanDate(dateString);
+    const match = date.match(/^(\d{4})-(\d{2})-\d{2}$/);
+    if (!match) return 30;
+    return new Date(Number(match[1]), Number(match[2]), 0).getDate();
+  }
+
+  function getExpensePlanWeeklyTarget(monthlyTarget, dateString) {
+    const daysInMonth = getExpensePlanDaysInMonth(dateString);
+    return daysInMonth > 0 ? (Number(monthlyTarget || 0) * 7) / daysInMonth : Number(monthlyTarget || 0) / 4;
+  }
+
+  function getExpensePlanActuals(options = {}) {
+    let summary = options.channelSummary || null;
+    if (!summary) {
+      const getSummary = typeof getExpenseAnalysisChannelSummary === "function"
+        ? getExpenseAnalysisChannelSummary
+        : root.getExpenseAnalysisChannelSummary;
+      if (typeof getSummary === "function") {
+        try {
+          summary = getSummary();
+        } catch {
+          summary = null;
+        }
+      }
+    }
+    const realIncomeWeekUsd = parseExpensePlanNumber(summary?.incomeTotals?.realUsd);
+    const realExpenseWeekUsd = parseExpensePlanNumber(
+      summary?.expenseTotals?.realTotalUsd ?? summary?.expenseTotals?.realUsd
+    );
+    return {
+      realIncomeWeekUsd,
+      realExpenseWeekUsd,
+      realProfitWeekUsd: realIncomeWeekUsd - realExpenseWeekUsd
+    };
+  }
+
+  function buildExpensePlanDashboardGroups(options = {}) {
+    const endDate = getExpensePlanSelectedEndDate(options);
+    const actuals = options.actuals || getExpensePlanActuals(options);
+    const weeklyExpensePlan = getExpensePlanWeeklyTarget(EXPENSE_PLAN_TARGETS_USD.expenseMonth, endDate);
+    const weeklyProfitPlan = getExpensePlanWeeklyTarget(EXPENSE_PLAN_TARGETS_USD.profitMonth, endDate);
+    return [
+      {
+        id: "income",
+        title: "Приход по заказам",
+        rows: [
+          { label: "План приход на месяц", value: EXPENSE_PLAN_TARGETS_USD.incomeMonth, kind: "plan-month" },
+          { label: "Реальный приход за неделю", value: actuals.realIncomeWeekUsd, kind: "actual-week" }
+        ]
+      },
+      {
+        id: "expense",
+        title: "Расход",
+        rows: [
+          { label: "План на месяц", value: EXPENSE_PLAN_TARGETS_USD.expenseMonth, kind: "plan-month" },
+          { label: "План на неделю", value: weeklyExpensePlan, kind: "plan-week" },
+          { label: "Реальный расход за неделю", value: actuals.realExpenseWeekUsd, kind: "actual-week" }
+        ]
+      },
+      {
+        id: "profit",
+        title: "Прибыль 2500 уе",
+        rows: [
+          { label: "План на месяц", value: EXPENSE_PLAN_TARGETS_USD.profitMonth, kind: "plan-month" },
+          { label: "План на неделю", value: weeklyProfitPlan, kind: "plan-week" },
+          { label: "Реальная на неделю", value: actuals.realProfitWeekUsd, kind: "actual-week" }
+        ]
+      }
+    ];
+  }
+
+  function formatExpensePlanUsd(value) {
+    return `${formatExpensePieNumber(value)} USD`;
+  }
+
   function buildExpensePieGradient(segments) {
     if (!segments.length) return "#e7ded2";
     let cursor = 0;
@@ -251,25 +356,74 @@
     return section;
   }
 
-  function installExpensePieAnalytics() {
+  function renderExpensePlanDashboard() {
+    const groups = buildExpensePlanDashboardGroups();
+    const section = document.createElement("div");
+    section.className = "analytics-section expense-plan-section";
+
+    const title = document.createElement("div");
+    title.className = "tab-note expense-pie-title";
+    title.style.marginBottom = "10px";
+    title.style.fontWeight = "700";
+    title.textContent = "План / факт: приход, расход, прибыль";
+    section.appendChild(title);
+
+    const note = document.createElement("div");
+    note.className = "config-note";
+    note.style.marginBottom = "12px";
+    note.textContent = "Недельный план считается как месячный план × 7 / дней в месяце выбранного периода.";
+    section.appendChild(note);
+
+    const grid = document.createElement("div");
+    grid.className = "expense-summary-grid expense-plan-grid";
+    groups.forEach((group) => {
+      const card = document.createElement("div");
+      card.className = `expense-summary-card expense-plan-card expense-plan-card-${group.id}`;
+      const heading = document.createElement("div");
+      heading.className = "expense-summary-label expense-plan-title";
+      heading.textContent = group.title;
+      card.appendChild(heading);
+
+      group.rows.forEach((row) => {
+        const line = document.createElement("div");
+        line.className = `expense-plan-line ${row.kind}`;
+        const label = document.createElement("span");
+        label.className = "expense-plan-label";
+        label.textContent = row.label;
+        const value = document.createElement("strong");
+        value.className = "expense-plan-value";
+        value.textContent = formatExpensePlanUsd(row.value);
+        line.appendChild(label);
+        line.appendChild(value);
+        card.appendChild(line);
+      });
+      grid.appendChild(card);
+    });
+    section.appendChild(grid);
+    return section;
+  }
+
+  function installExpensePlanDashboardIntoAnalysis() {
     const currentRenderExpenseFinancialAnalysis = typeof renderExpenseFinancialAnalysis === "function"
       ? renderExpenseFinancialAnalysis
       : root.renderExpenseFinancialAnalysis;
     if (typeof currentRenderExpenseFinancialAnalysis !== "function") return false;
-    if (currentRenderExpenseFinancialAnalysis.__expensePieAnalyticsInstalled) return true;
+    if (currentRenderExpenseFinancialAnalysis.__expensePlanDashboardInstalled) return true;
     const originalRenderExpenseFinancialAnalysis = currentRenderExpenseFinancialAnalysis;
-    const patchedRenderExpenseFinancialAnalysis = function renderExpenseFinancialAnalysisWithPie() {
+    const patchedRenderExpenseFinancialAnalysis = function renderExpenseFinancialAnalysisWithPlanDashboard() {
       const block = originalRenderExpenseFinancialAnalysis.apply(this, arguments);
-      const pie = renderExpensePieAnalytics();
+      const dashboard = renderExpensePlanDashboard();
       const summaryGrid = block.querySelector(".expense-summary-grid");
       if (summaryGrid?.parentNode) {
-        summaryGrid.parentNode.insertBefore(pie, summaryGrid.nextSibling);
+        summaryGrid.parentNode.insertBefore(dashboard, summaryGrid.nextSibling);
+      } else if (typeof block.prepend === "function") {
+        block.prepend(dashboard);
       } else {
-        block.appendChild(pie);
+        block.appendChild(dashboard);
       }
       return block;
     };
-    patchedRenderExpenseFinancialAnalysis.__expensePieAnalyticsInstalled = true;
+    patchedRenderExpenseFinancialAnalysis.__expensePlanDashboardInstalled = true;
     if (typeof renderExpenseFinancialAnalysis === "function") {
       renderExpenseFinancialAnalysis = patchedRenderExpenseFinancialAnalysis;
     }
@@ -277,12 +431,56 @@
     return true;
   }
 
+  function installExpensePieIntoExpenseList() {
+    const currentRenderExpenseAccountingBlock = typeof renderExpenseAccountingBlock === "function"
+      ? renderExpenseAccountingBlock
+      : root.renderExpenseAccountingBlock;
+    if (typeof currentRenderExpenseAccountingBlock !== "function") return false;
+    if (currentRenderExpenseAccountingBlock.__expensePieListInstalled) return true;
+    const originalRenderExpenseAccountingBlock = currentRenderExpenseAccountingBlock;
+    const patchedRenderExpenseAccountingBlock = function renderExpenseAccountingBlockWithPieInList() {
+      const block = originalRenderExpenseAccountingBlock.apply(this, arguments);
+      const appState = getExpensePieState();
+      const expenseState = appState?.expenseAccounting || {};
+      if (expenseState.activeSubtab !== "list" || expenseState.resultTab === "received") return block;
+      const pie = renderExpensePieAnalytics();
+      const resultTabs = block.querySelector(".expense-result-tabs");
+      const feed = block.querySelector(".expense-feed");
+      if (feed?.parentNode) {
+        feed.parentNode.insertBefore(pie, feed);
+      } else if (resultTabs?.parentNode) {
+        resultTabs.parentNode.insertBefore(pie, resultTabs.nextSibling);
+      } else {
+        block.appendChild(pie);
+      }
+      return block;
+    };
+    patchedRenderExpenseAccountingBlock.__expensePieListInstalled = true;
+    if (typeof renderExpenseAccountingBlock === "function") {
+      renderExpenseAccountingBlock = patchedRenderExpenseAccountingBlock;
+    }
+    root.renderExpenseAccountingBlock = patchedRenderExpenseAccountingBlock;
+    return true;
+  }
+
+  function installExpensePieAnalytics() {
+    const analysisInstalled = installExpensePlanDashboardIntoAnalysis();
+    const listInstalled = installExpensePieIntoExpenseList();
+    return Boolean(analysisInstalled || listInstalled);
+  }
+
   root.ExpensePieAnalytics = {
     buildExpensePieSegments,
+    buildExpensePlanDashboardGroups,
     getExpensePieContributionRows,
     getExpensePieCategoryUsd,
+    getExpensePlanActuals,
+    getExpensePlanWeeklyTarget,
     installExpensePieAnalytics,
-    renderExpensePieAnalytics
+    installExpensePieIntoExpenseList,
+    installExpensePlanDashboardIntoAnalysis,
+    renderExpensePieAnalytics,
+    renderExpensePlanDashboard
   };
 
   if (typeof module === "object" && module.exports) {

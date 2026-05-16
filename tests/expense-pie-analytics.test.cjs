@@ -2,11 +2,15 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 global.state = {
-  expenseAccounting: { expensePieMode: "direction" },
+  expenseAccounting: { activeSubtab: "list", resultTab: "spent", expensePieMode: "direction" },
   aggregatedManualRange: { transferRows: [] },
   manualTransfers: { data: { transferRows: [] } },
   manualFinance: { data: { transferRows: [] } },
   data: { tabs: { movement: { values: [] } } }
+};
+global.elements = {
+  startDate: { value: "2026-05-10" },
+  endDate: { value: "2026-05-16" }
 };
 global.MANUAL_FINANCE_TOTAL_LABEL = "Итого";
 global.MANUAL_EXPENSE_ACCOUNTING_CATEGORIES = ["business", "flat", "food", "fun", "travel", "study", "exchange"];
@@ -17,6 +21,11 @@ global.getManualFinanceFieldUsdNumber = (row, key, rateLookup) => {
   const channel = String(row.channel || "");
   const rate = /руб/i.test(channel) ? rateLookup.byCurrency.RUB : 1;
   return amount * rate;
+};
+global.formatSheetNumber = (value) => String(Math.round((Number(value) || 0) * 10000) / 10000);
+global.parseLooseNumber = (value) => {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const analytics = require("../expense-pie-analytics.js");
@@ -33,6 +42,14 @@ function createTestElement(tagName) {
       this.children.push(child);
       return child;
     },
+    append(...items) {
+      items.forEach((item) => this.appendChild(item));
+    },
+    prepend(child) {
+      child.parentNode = this;
+      this.children.unshift(child);
+      return child;
+    },
     insertBefore(child, nextChild) {
       child.parentNode = this;
       const index = this.children.indexOf(nextChild);
@@ -43,8 +60,15 @@ function createTestElement(tagName) {
     setAttribute() {},
     addEventListener() {},
     querySelector(selector) {
-      if (selector !== ".expense-summary-grid") return null;
-      return this.children.find((child) => child.className === "expense-summary-grid") || null;
+      const className = selector.startsWith(".") ? selector.slice(1) : selector;
+      const stack = [...this.children];
+      while (stack.length) {
+        const node = stack.shift();
+        const classes = String(node.className || "").split(/\s+/);
+        if (classes.includes(className)) return node;
+        stack.push(...(node.children || []));
+      }
+      return null;
     }
   };
 }
@@ -127,11 +151,49 @@ test("expense pie contribution rows drop non-positive category cells before grou
   ]);
 });
 
-test("installs into the active expense financial analysis renderer", () => {
+test("builds plan dashboard with fixed monthly targets and weekly prorated plans", () => {
+  const groups = analytics.buildExpensePlanDashboardGroups({
+    endDate: "2026-05-16",
+    actuals: {
+      realIncomeWeekUsd: 3100,
+      realExpenseWeekUsd: 600,
+      realProfitWeekUsd: 2500
+    }
+  });
+  const income = groups.find((group) => group.id === "income");
+  const expense = groups.find((group) => group.id === "expense");
+  const profit = groups.find((group) => group.id === "profit");
+
+  assert.equal(income.rows.find((row) => row.kind === "plan-month").value, 10000);
+  assert.equal(expense.rows.find((row) => row.kind === "plan-month").value, 2000);
+  assert.equal(profit.rows.find((row) => row.kind === "plan-month").value, 2500);
+  assert.equal(
+    Number(expense.rows.find((row) => row.kind === "plan-week").value.toFixed(4)),
+    Number(((2000 * 7) / 31).toFixed(4))
+  );
+  assert.equal(
+    Number(profit.rows.find((row) => row.kind === "plan-week").value.toFixed(4)),
+    Number(((2500 * 7) / 31).toFixed(4))
+  );
+});
+
+test("plan dashboard real profit uses real weekly income minus real weekly expense", () => {
+  global.getExpenseAnalysisChannelSummary = () => ({
+    incomeTotals: { realUsd: 1800 },
+    expenseTotals: { realTotalUsd: 450 }
+  });
+
+  const groups = analytics.buildExpensePlanDashboardGroups({ endDate: "2026-05-16" });
+  const profit = groups.find((group) => group.id === "profit");
+  assert.equal(profit.rows.find((row) => row.kind === "actual-week").value, 1350);
+});
+
+test("analysis renderer gets the new plan dashboard instead of the old expense pie", () => {
   global.document = { createElement: createTestElement };
-  global.getCurrentAnalyticsManualRows = () => [
-    { channel: "PayPal USD", business: 25, flat: 0, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 }
-  ];
+  global.getExpenseAnalysisChannelSummary = () => ({
+    incomeTotals: { realUsd: 2000 },
+    expenseTotals: { realTotalUsd: 700 }
+  });
   global.renderExpenseFinancialAnalysis = () => {
     const block = createTestElement("div");
     const cards = createTestElement("div");
@@ -140,10 +202,36 @@ test("installs into the active expense financial analysis renderer", () => {
     return block;
   };
 
-  assert.equal(analytics.installExpensePieAnalytics(), true);
+  assert.equal(analytics.installExpensePlanDashboardIntoAnalysis(), true);
   const block = global.renderExpenseFinancialAnalysis();
   assert.deepEqual(
     block.children.map((child) => child.className),
-    ["expense-summary-grid", "analytics-section expense-pie-section"]
+    ["expense-summary-grid", "analytics-section expense-plan-section"]
+  );
+});
+
+test("expense pie is inserted into the expense list spent view", () => {
+  global.document = { createElement: createTestElement };
+  global.getCurrentAnalyticsManualRows = () => [
+    { channel: "PayPal USD", business: 25, flat: 0, food: 0, fun: 0, travel: 0, study: 0, exchange: 0 }
+  ];
+  global.state.expenseAccounting.activeSubtab = "list";
+  global.state.expenseAccounting.resultTab = "spent";
+  global.renderExpenseAccountingBlock = () => {
+    const block = createTestElement("div");
+    const tabs = createTestElement("div");
+    tabs.className = "expense-result-tabs";
+    const feed = createTestElement("div");
+    feed.className = "expense-feed";
+    block.appendChild(tabs);
+    block.appendChild(feed);
+    return block;
+  };
+
+  assert.equal(analytics.installExpensePieIntoExpenseList(), true);
+  const block = global.renderExpenseAccountingBlock();
+  assert.deepEqual(
+    block.children.map((child) => child.className),
+    ["expense-result-tabs", "analytics-section expense-pie-section", "expense-feed"]
   );
 });
