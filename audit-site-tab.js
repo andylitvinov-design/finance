@@ -4,6 +4,14 @@
   const AUDIT_TAB_ID = "audit";
   const AUDIT_TAB_LABEL = "Аудит";
 
+  function getState() {
+    return typeof state !== "undefined" ? state : root.state;
+  }
+
+  function getElements() {
+    return typeof elements !== "undefined" ? elements : root.elements;
+  }
+
   function createNode(tag, className, textContent) {
     const node = root.document.createElement(tag);
     if (className) node.className = className;
@@ -114,26 +122,30 @@
   }
 
   function renderAuditTabPanel() {
-    if (!root.elements?.tabPanels) return false;
-    root.elements.tabPanels.innerHTML = "";
+    const appElements = getElements();
+    if (!appElements?.tabPanels) return false;
+    appElements.tabPanels.innerHTML = "";
     const panel = createNode("section", "tab-panel active");
     panel.appendChild(renderAuditDebuggerBlock());
-    root.elements.tabPanels.appendChild(panel);
+    appElements.tabPanels.appendChild(panel);
     return true;
   }
 
   function appendAuditTabButton() {
-    if (!root.elements?.tabs) return false;
-    if (root.elements.tabs.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`)) return true;
+    const appState = getState();
+    const appElements = getElements();
+    if (!appElements?.tabs) return false;
+    if (appElements.tabs.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`)) return true;
 
-    const button = createNode("button", "tab" + (root.state?.activeTab === AUDIT_TAB_ID ? " active" : ""), AUDIT_TAB_LABEL);
+    const button = createNode("button", "tab" + (appState?.activeTab === AUDIT_TAB_ID ? " active" : ""), AUDIT_TAB_LABEL);
     button.type = "button";
     button.dataset.tabId = AUDIT_TAB_ID;
     button.addEventListener("click", () => {
-      if (root.state) root.state.activeTab = AUDIT_TAB_ID;
+      const nextState = getState();
+      if (nextState) nextState.activeTab = AUDIT_TAB_ID;
       root.renderTabs();
     });
-    root.elements.tabs.appendChild(button);
+    appElements.tabs.appendChild(button);
     return true;
   }
 
@@ -143,14 +155,16 @@
     if (root.__ezohataAuditTabInstalled) return true;
 
     root.renderTabs = function renderTabsWithAudit() {
-      const shouldShowAudit = root.state?.activeTab === AUDIT_TAB_ID;
+      const appState = getState();
+      const appElements = getElements();
+      const shouldShowAudit = appState?.activeTab === AUDIT_TAB_ID;
       if (shouldShowAudit) {
-        const fallbackTab = root.state?.config?.tabs?.[0]?.id || "movement";
-        root.state.activeTab = fallbackTab;
+        const fallbackTab = appState?.config?.tabs?.[0]?.id || "movement";
+        appState.activeTab = fallbackTab;
         originalRenderTabs.call(this);
-        root.state.activeTab = AUDIT_TAB_ID;
+        appState.activeTab = AUDIT_TAB_ID;
         appendAuditTabButton();
-        const auditButton = root.elements?.tabs?.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`);
+        const auditButton = appElements?.tabs?.querySelector?.(`[data-tab-id=\"${AUDIT_TAB_ID}\"]`);
         auditButton?.classList.add("active");
         renderAuditTabPanel();
         return;
