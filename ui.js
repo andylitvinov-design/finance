@@ -4539,22 +4539,21 @@ function renderManualFinanceBalanceEditor() {
   const table = document.createElement("table");
   const body = document.createElement("tbody");
   const header = document.createElement("tr");
-  ["дата", "канал / счет", "валюта", "actual_balance", "курс", "сумма_usd", "комментарий"].forEach((label) => {
+  ["Date", "Channel", "Currency", "Balance", "Status", "курс", "сумма_usd", "комментарий"].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
     header.appendChild(th);
   });
   body.appendChild(header);
 
-  const rows = state.manualFinance.data?.balanceRows?.length
-    ? state.manualFinance.data.balanceRows
-    : [{ date: state.manualFinance.data?.periodEnd || elements.endDate.value, channel: "", amount: "", currency: "", rate: "", usdAmount: "", comment: "" }];
+  const rows = ensureManualFinanceBalanceInputRows();
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
     appendManualFinanceInputCell(tr, row.date || "", "date", (value) => updateManualFinanceBalanceValue(rowIndex, "date", value));
     appendManualFinanceSelectCell(tr, row.channel || "", getManualFinanceChannels(), (value) => updateManualFinanceBalanceValue(rowIndex, "channel", value));
     appendManualFinanceInputCell(tr, row.currency || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "currency", value));
     appendManualFinanceInputCell(tr, row.amount || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "amount", value));
+    appendManualFinanceReadonlyCell(tr, row.amount ? "already entered" : "needs input");
     appendManualFinanceReadonlyCell(tr, row.rate || "");
     appendManualFinanceReadonlyCell(tr, row.usdAmount || "");
     appendManualFinanceInputCell(tr, row.comment || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "comment", value));

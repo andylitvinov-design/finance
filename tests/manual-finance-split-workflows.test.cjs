@@ -131,7 +131,8 @@ function buildFinanceContext() {
   };
   vm.createContext(context);
   vm.runInContext(
-    `${extractFunction(financeJs, "normalizeManualFinanceBalanceRows")}\n` +
+      `${extractFunction(financeJs, "normalizeManualFinanceBalanceRows")}\n` +
+      `${extractFunction(financeJs, "ensureManualFinanceBalanceInputRows")}\n` +
       `${extractFunction(financeJs, "isManualFinanceCashChannel")}\n` +
       `${extractFunction(financeJs, "getManualFinanceCashChannels")}\n` +
       `${extractFunction(financeJs, "normalizeManualFinanceCashRows")}\n` +
@@ -142,6 +143,7 @@ function buildFinanceContext() {
       `${extractFunction(financeJs, "saveManualFinanceCashRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceSheet")}\n` +
       "this.normalizeManualFinanceBalanceRows = normalizeManualFinanceBalanceRows;\n" +
+      "this.ensureManualFinanceBalanceInputRows = ensureManualFinanceBalanceInputRows;\n" +
       "this.normalizeManualFinanceCashRows = normalizeManualFinanceCashRows;\n" +
       "this.buildManualFinanceCashEntries = buildManualFinanceCashEntries;\n" +
       "this.saveManualFinanceSheet = saveManualFinanceSheet;",
@@ -174,6 +176,28 @@ test("saving balance snapshot uses Остатки writer and does not call legac
   assert.equal(context.savedCashEntries, undefined);
   assert.equal(context.legacyFactSaveCalled, undefined);
   assert.match(context.lastStatus.message, /Остатки/);
+});
+
+test("balance snapshot editor expands every configured channel as target-date input rows", () => {
+  const context = buildFinanceContext();
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-14",
+    periodEnd: "2026-05-15",
+    balanceRows: [
+      { date: "2026-05-15", channel: "трансервайз дол", amount: "120.45", currency: "USD", comment: "actual" },
+    ],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  const rows = plain(context.ensureManualFinanceBalanceInputRows());
+
+  assert.deepEqual(rows.map((row) => [row.date, row.channel, row.currency, row.amount]), [
+    ["2026-05-15", "Налично -я-евр", "EUR", ""],
+    ["2026-05-15", "нал-мам-дол", "USD", ""],
+    ["2026-05-15", "трансервайз дол", "USD", "120,45"],
+  ]);
 });
 
 test("cash income maps to manual Ledger entry with cash toChannel semantics", () => {
@@ -214,4 +238,6 @@ test("fact UI has separate inner tabs for balances and cash", () => {
   assert.match(uiJs, /Наличные/);
   assert.match(uiJs, /renderManualFinanceBalanceEditor/);
   assert.match(uiJs, /renderManualFinanceCashEditor/);
+  assert.match(uiJs, /Date", "Channel", "Currency", "Balance", "Status/);
+  assert.match(uiJs, /ensureManualFinanceBalanceInputRows/);
 });
