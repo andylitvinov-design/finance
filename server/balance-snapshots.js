@@ -107,6 +107,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     valid_rows: validRows.length,
     incomplete_rows: invalidRows.length,
     dates,
+    rows: buildDetailedRows(validRows),
     by_date: buildByDate(validRows),
     by_channel_currency: buildByChannelCurrency(validRows),
     missing_date_rows: invalidRows.filter((row) => row.missing.date).length,
@@ -128,6 +129,7 @@ function emptyBalanceSnapshotsSummary() {
     valid_rows: 0,
     incomplete_rows: 0,
     dates: [],
+    rows: [],
     by_date: [],
     by_channel_currency: [],
     missing_date_rows: 0,
@@ -162,6 +164,21 @@ function normalizeBalanceSnapshotRow(row) {
     missing,
     reason,
   };
+}
+
+function buildDetailedRows(rows) {
+  return (rows || [])
+    .map((row) => ({
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      amount: row.amount,
+    }))
+    .sort((left, right) => {
+      if (left.date !== right.date) return left.date.localeCompare(right.date);
+      if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+      return left.currency.localeCompare(right.currency);
+    });
 }
 
 function buildByDate(rows) {
