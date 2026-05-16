@@ -373,6 +373,32 @@ tr:nth-child(even) td { background: #fffcf7; }
 }
 .analysis-table-wrap table { min-width: 640px; }
 .balance-reconciliation-table-wrap table { min-width: 920px; }
+.period-balance-reconciliation-section {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.period-balance-total-summary {
+  display: grid;
+  gap: 10px;
+}
+.period-balance-total-wrap table,
+.period-balance-table-wrap table {
+  min-width: 720px;
+}
+.period-balance-total-wrap th,
+.period-balance-total-wrap td,
+.period-balance-table-wrap th,
+.period-balance-table-wrap td {
+  padding: 8px 10px;
+  font-size: 12px;
+  vertical-align: top;
+}
+.period-balance-total-wrap table tr > :first-child {
+  min-width: 220px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .balance-reconciliation-table-wrap table tr > :first-child {
   min-width: 150px;
   white-space: normal;
