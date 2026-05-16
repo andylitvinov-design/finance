@@ -62,7 +62,6 @@ async function handleTabClick(tabId) {
 // ============================================================
 
 async function openManualFinanceToday() {
-  setToday();
   state.activeTab = "manualFinance";
   setManualFinanceStatus("Server access active — Google browser OAuth not required.", false);
   renderTabs();
