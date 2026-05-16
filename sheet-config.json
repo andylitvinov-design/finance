@@ -47,6 +47,7 @@
     "expensesSheetName": "Расходы",
     "ledgerSheetName": "Ledger",
     "commissionsSheetName": "Комиссии",
+    "planSheetName": "План",
     "channels": [
       "Яндекс руб",
       "пейпал дол",
