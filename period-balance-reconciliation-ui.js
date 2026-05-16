@@ -9,22 +9,22 @@
   const BLOCK_TITLE = "Сверка баланса за период";
 
   function installPeriodBalanceReconciliationUi(globalRoot = root) {
-    const original = globalRoot.renderExpenseFinancialAnalysis;
+    const original = globalRoot.renderAnalyticsSections;
     if (typeof original !== "function" || original.__periodBalanceReconciliationWrapped) return false;
 
-    function wrappedRenderExpenseFinancialAnalysis() {
-      const block = original.apply(this, arguments);
+    function wrappedRenderAnalyticsSections(container) {
+      const result = original.apply(this, arguments);
       try {
         const placeholder = renderPlaceholder(globalRoot.document);
-        block.appendChild(placeholder);
+        container.appendChild(placeholder);
         loadAndRender(globalRoot, placeholder);
       } catch (error) {
-        // Additive UI extension must never break the existing finance analysis screen.
+        // Additive UI extension must never break the existing analytics screen.
       }
-      return block;
+      return result;
     }
-    wrappedRenderExpenseFinancialAnalysis.__periodBalanceReconciliationWrapped = true;
-    globalRoot.renderExpenseFinancialAnalysis = wrappedRenderExpenseFinancialAnalysis;
+    wrappedRenderAnalyticsSections.__periodBalanceReconciliationWrapped = true;
+    globalRoot.renderAnalyticsSections = wrappedRenderAnalyticsSections;
     return true;
   }
 
@@ -84,7 +84,7 @@
       return section;
     }
 
-    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}));
+    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, reconciliation));
     section.appendChild(renderCurrencyTable(doc, reconciliation.by_currency || []));
     section.appendChild(renderPositionTable(doc, reconciliation.by_channel_currency || []));
 
@@ -126,13 +126,14 @@
     return section;
   }
 
-  function renderSummary(doc, summary, period) {
+  function renderSummary(doc, summary, period, reconciliation) {
     const block = doc.createElement("div");
     const status = doc.createElement("div");
     status.className = summary.status === "failed" ? "finance-status error" : "finance-status";
     const label = summary.status === "ok" ? "OK" : summary.status === "failed" ? "НЕ ОК" : "Проверить";
     status.textContent = `${label} (${period.from || "?"} - ${period.to || "?"}): позиций ${Number(summary.positions_checked || 0)}, валют ${Number(summary.currencies_checked || 0)}, planned source: ${summary.planned_source_status || "needs_verification"}.`;
     block.appendChild(status);
+    block.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const cards = doc.createElement("div");
     cards.className = "metrics period-balance-summary";
@@ -157,6 +158,74 @@
     });
     block.appendChild(cards);
     return block;
+  }
+
+  function renderTopTotals(doc, reconciliation) {
+    const byCurrency = Array.isArray(reconciliation.by_currency) ? reconciliation.by_currency : [];
+    const byPosition = Array.isArray(reconciliation.by_channel_currency) ? reconciliation.by_channel_currency : [];
+    const currencies = getSummaryCurrencies(byCurrency, byPosition);
+    const block = doc.createElement("div");
+    block.className = "period-balance-total-summary";
+    const title = doc.createElement("div");
+    title.className = "tab-note";
+    title.textContent = "Итоги по всем каналам (валюты не смешиваются)";
+    block.appendChild(title);
+    if (!currencies.length) {
+      const empty = doc.createElement("div");
+      empty.className = "config-note";
+      empty.textContent = "Нет валютных итогов для выбранного периода.";
+      block.appendChild(empty);
+      return block;
+    }
+
+    const openingTotals = sumPositionFieldByCurrency(byPosition, "opening_balance");
+    const closingTotals = sumPositionFieldByCurrency(byPosition, "factual_closing_balance");
+    const currencyTotals = indexRowsByCurrency(byCurrency);
+    const rows = [
+      ["Полная сумма остатков на начало периода", (currency) => openingTotals.get(currency)],
+      ["Полная сумма остатков на конец периода", (currency) => closingTotals.get(currency)],
+      ["Плановая сумма приходов", (currency) => currencyTotals.get(currency)?.planned_inflow],
+      ["Плановая сумма расходов", (currency) => currencyTotals.get(currency)?.planned_outflow],
+      ["Плановый рост", (currency) => currencyTotals.get(currency)?.planned_delta],
+      ["Фактический рост", (currency) => currencyTotals.get(currency)?.real_delta],
+    ];
+    const tableRows = [
+      ["Показатель", ...currencies],
+      ...rows.map(([label, getter]) => [label, ...currencies.map((currency) => formatNumber(getter(currency)))]),
+    ];
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap period-balance-table-wrap period-balance-total-wrap";
+    wrap.appendChild(renderTable(doc, tableRows));
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function getSummaryCurrencies(byCurrency, byPosition) {
+    return Array.from(new Set([
+      ...byCurrency.map((row) => String(row?.currency || "").trim().toUpperCase()).filter(Boolean),
+      ...byPosition.map((row) => String(row?.currency || "").trim().toUpperCase()).filter(Boolean),
+    ])).sort((left, right) => left.localeCompare(right));
+  }
+
+  function indexRowsByCurrency(rows) {
+    const result = new Map();
+    (rows || []).forEach((row) => {
+      const currency = String(row?.currency || "").trim().toUpperCase();
+      if (currency) result.set(currency, row);
+    });
+    return result;
+  }
+
+  function sumPositionFieldByCurrency(rows, field) {
+    const result = new Map();
+    (rows || []).forEach((row) => {
+      const currency = String(row?.currency || "").trim().toUpperCase();
+      if (!currency) return;
+      const numeric = parseNumeric(row?.[field]);
+      if (numeric === null) return;
+      result.set(currency, (result.get(currency) || 0) + numeric);
+    });
+    return result;
   }
 
   function renderCurrencyTable(doc, rows) {
@@ -247,6 +316,12 @@
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return String(value);
     return String(Math.round(numeric * 10000) / 10000);
+  }
+
+  function parseNumeric(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
   }
 
   function escapeHtml(value) {
