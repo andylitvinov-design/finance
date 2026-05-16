@@ -26,6 +26,9 @@ const snapshot = {
         channel: "трансервайз дол",
         currency: "USD",
         status: "mismatch",
+        opening_balance: 2217.41,
+        inflow: 0,
+        outflow: 52.79,
         difference: -138.59,
         computed_closing_balance: 2164.62,
         provider_reported_balance: 2026.03,
@@ -82,9 +85,15 @@ test("balance repair plan orders blocking fixes before missing Остатки ro
     "missing_provider_balance",
   ]);
   assert.equal(plan.actions[0].safe_to_apply, true);
+  assert.equal(plan.actions[0].operation, "expense");
   assert.equal(plan.actions[1].safe_to_apply, false);
+  assert.equal(plan.actions[1].opening_balance, 2217.41);
+  assert.equal(plan.actions[1].inflow, 0);
+  assert.equal(plan.actions[1].outflow, 52.79);
+  assert.equal(plan.actions[1].provider_reported_balance, 2026.03);
   assert.equal(plan.actions[3].verification_required, true);
-  assert.match(plan.tsv, /priority\tseverity\tproblem/);
+  assert.match(plan.tsv, /priority\tseverity\tproblem\tdate\tmovement_date\toperation/);
+  assert.match(plan.tsv, /opening_balance\tinflow\toutflow\tcomputed_closing_balance\tprovider_reported_balance/);
   assert.match(plan.copyable_ostatki_rows, /монобанк грн/);
 });
 
