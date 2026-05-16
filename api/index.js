@@ -994,6 +994,7 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
     if (startDate && date < startDate) continue;
     if (endDate && date > endDate) continue;
     if (!isLedgerProviderIncomeSource(row)) continue;
+    if (isLedgerProviderNonIncomeRow(row)) continue;
 
     const operation = getNormalizedLedgerFactOperation(row);
     if (!["income", "servicein", "ezoin"].includes(operation)) continue;
@@ -1021,6 +1022,47 @@ function buildLedgerRealIncomeSummaryByChannel(operations = [], movementValues =
       differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
     }];
   }));
+}
+
+function normalizeLedgerProviderIncomeClassifier(value) {
+  return normalizeLookupText(value).replace(/\s+/g, "_");
+}
+
+function isLedgerProviderNonIncomeRow(row = {}) {
+  const direction = normalizeLedgerProviderIncomeClassifier(row?.direction || row?.ledgerV2?.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeLedgerProviderIncomeClassifier(
+    row?.entryKind ||
+    row?.operationType ||
+    row?.operation_type ||
+    row?.transactionType ||
+    row?.transaction_type ||
+    row?.transferType ||
+    row?.ledgerV2?.operation_type ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+  const source = String(row?.source || row?.provider || row?.providerSource || row?.displaySource || row?.ledgerV2?.source || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || row?.ledgerV2?.raw_source_id || "")
+    .trim()
+    .toLowerCase();
+  const text = normalizeLookupText([
+    row?.comment,
+    row?.description,
+    row?.organization,
+    row?.counterparty,
+    row?.transactionSubject,
+    row?.transferType,
+    row?.ledgerV2?.comment
+  ].filter(Boolean).join(" "));
+  if ((source === "wise" || source === "transferwise" || rawSourceId.startsWith("card-")) &&
+    (rawSourceId.startsWith("card-") || kind === "card" || /\bcard (transaction|payment)\b/.test(text))) {
+    return true;
+  }
+  return false;
 }
 
 function isLedgerProviderIncomeSource(row) {

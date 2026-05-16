@@ -102,7 +102,7 @@ export async function buildDebugUiState(options = {}) {
   const allOperations = Array.isArray(repository.operations) ? repository.operations : [];
   const operations = filterRowsByPeriod(allOperations, periodFilter);
   const resolvedPeriod = resolvePeriod(periodFilter, operations);
-  const incomeRows = operations.filter((row) => getOperation(row) === "income");
+  const incomeRows = operations.filter((row) => getOperation(row) === "income" && !isProviderNonIncomeRow(row));
   const expenseRows = operations.filter((row) => getOperation(row) === "expense");
   const transferRows = operations.filter((row) => getOperation(row) === "transfer");
   const exchangeRows = operations.filter((row) => getOperation(row) === "exchange");
@@ -244,7 +244,7 @@ function buildTopMetricInputs(movementRows, operations) {
     };
   }
   const incomeUsd = operations
-    .filter((row) => getOperation(row) === "income")
+    .filter((row) => getOperation(row) === "income" && !isProviderNonIncomeRow(row))
     .reduce((sum, row) => sum + Math.max(0, parseNumber(getLedgerValue(row, "amount_usd")) || 0), 0);
   return {
     source: "ledger_income_fallback",
@@ -860,6 +860,45 @@ function getDirection(row) {
 
 function isOutflowRow(row) {
   return getDirection(row) === "out" || getOperation(row) === "expense";
+}
+
+function normalizeProviderClassifier(value) {
+  return normalizeHeader(value).replace(/\s+/g, "_");
+}
+
+function isProviderNonIncomeRow(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const direction = normalizeProviderClassifier(ledger.direction || row.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeProviderClassifier(
+    row.entryKind ||
+    row.operationType ||
+    row.operation_type ||
+    row.transactionType ||
+    row.transaction_type ||
+    row.transferType ||
+    ledger.operation_type ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+  const source = normalizeSource(row);
+  const rawSourceId = String(ledger.raw_source_id || row.rawSourceId || row.raw_source_id || row.sourceTransactionId || row.externalId || row.external_id || "")
+    .trim()
+    .toLowerCase();
+  const text = normalizeHeader([
+    ledger.comment,
+    row.comment,
+    row.description,
+    row.organization,
+    row.counterparty,
+    row.transactionSubject,
+    row.transferType
+  ].filter(Boolean).join(" "));
+  if ((source === "wise" || source === "transferwise" || rawSourceId.startsWith("card-")) &&
+    (rawSourceId.startsWith("card-") || kind === "card" || text.includes("cardtransaction") || text.includes("cardpayment"))) {
+    return true;
+  }
+  return false;
 }
 
 function getRowChannel(row) {

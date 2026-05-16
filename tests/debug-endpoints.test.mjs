@@ -319,6 +319,113 @@ test("debug UI state accepts explicit period range and reports raw versus dedupe
   assert.equal(payload.finance_analysis.income_diagnostics[0].deduped_income_events_count, 1);
 });
 
+test("debug UI state excludes provider card/refund/fee rows from income diagnostics", async () => {
+  const fixture = repositoryFixture();
+  fixture.operations.push(
+    {
+      date: "2026-05-08",
+      operation: "income",
+      toChannel: "трансервайз дол",
+      amount: "4.40",
+      amountUsd: "4.40",
+      amountNet: "4.40",
+      source: "wise",
+      rawSourceId: "CARD-3766611855",
+      comment: "Card transaction at Bolt",
+      ledgerV2: {
+        date: "2026-05-08",
+        operation: "income",
+        to_channel: "трансервайз дол",
+        amount: "4.40",
+        currency: "USD",
+        amount_usd: "4.40",
+        amount_net: "4.40",
+        balance_amount: 4.40,
+        source: "wise",
+        raw_source_id: "CARD-3766611855",
+        comment: "Card transaction at Bolt",
+      }
+    },
+    {
+      date: "2026-05-08",
+      operation: "income",
+      toChannel: "трансервайз дол",
+      amount: "206",
+      amountUsd: "206",
+      amountNet: "206",
+      source: "wise",
+      rawSourceId: "WISE-INCOMING-1",
+      ledgerV2: {
+        date: "2026-05-08",
+        operation: "income",
+        direction: "in",
+        to_channel: "трансервайз дол",
+        amount: "206",
+        currency: "USD",
+        amount_usd: "206",
+        amount_net: "206",
+        balance_amount: 206,
+        source: "wise",
+        raw_source_id: "WISE-INCOMING-1",
+      }
+    },
+    {
+      date: "2026-05-08",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "12",
+      amountUsd: "12",
+      amountNet: "12",
+      source: "paypal",
+      entryKind: "refund",
+      ledgerV2: {
+        date: "2026-05-08",
+        operation: "income",
+        to_channel: "пейпал дол",
+        amount: "12",
+        currency: "USD",
+        amount_usd: "12",
+        amount_net: "12",
+        balance_amount: 12,
+        source: "paypal",
+      }
+    },
+    {
+      date: "2026-05-08",
+      operation: "income",
+      toChannel: "пейпал дол",
+      amount: "113.87",
+      amountUsd: "113.87",
+      amountNet: "113.87",
+      source: "paypal",
+      ledgerV2: {
+        date: "2026-05-08",
+        operation: "income",
+        direction: "in",
+        to_channel: "пейпал дол",
+        amount: "113.87",
+        currency: "USD",
+        amount_usd: "113.87",
+        amount_net: "113.87",
+        balance_amount: 113.87,
+        source: "paypal",
+      }
+    }
+  );
+
+  const payload = await buildDebugUiState({
+    query: { period: "2026-05-05..2026-05-11" },
+    repositoryLoader: async () => fixture
+  });
+
+  const wise = payload.finance_analysis.actual_income.find((row) => row.channel === "трансервайз дол");
+  const paypal = payload.finance_analysis.actual_income.find((row) => row.channel === "пейпал дол");
+  assert.equal(wise.rows, 1);
+  assert.equal(wise.amount_usd_signed_sum, 206);
+  assert.equal(paypal.rows, 1);
+  assert.equal(paypal.amount_usd_signed_sum, 113.87);
+});
+
 test("debug UI state explains TransferWise expense delta with plan reconciliation", async () => {
   const fixture = {
     ok: true,

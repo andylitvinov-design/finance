@@ -1581,6 +1581,77 @@ function isExpenseAnalysisIncomeRowInPeriod(row = {}, rawRow = {}, period = {}) 
   return true;
 }
 
+function normalizeExpenseAnalysisIncomeDirection(value) {
+  return normalizeLookupText(value).replace(/\s+/g, "_");
+}
+
+function getExpenseAnalysisIncomeRowText(row = {}, rawRow = {}) {
+  return normalizeLookupText([
+    row?.comment,
+    rawRow?.comment,
+    row?.description,
+    rawRow?.description,
+    row?.organization,
+    rawRow?.organization,
+    row?.counterparty,
+    rawRow?.counterparty,
+    row?.transactionSubject,
+    rawRow?.transactionSubject,
+    row?.transferType,
+    rawRow?.transferType,
+    row?.operationType,
+    rawRow?.operationType,
+    row?.entryKind,
+    rawRow?.entryKind
+  ].filter(Boolean).join(" "));
+}
+
+function isExpenseAnalysisProviderNonIncomeRow(row = {}, rawRow = {}) {
+  const direction = normalizeExpenseAnalysisIncomeDirection(row?.direction || rawRow?.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeExpenseAnalysisIncomeDirection(
+    row?.entryKind ||
+    rawRow?.entryKind ||
+    row?.operationType ||
+    rawRow?.operationType ||
+    row?.operation_type ||
+    rawRow?.operation_type ||
+    row?.transactionType ||
+    rawRow?.transactionType ||
+    row?.transaction_type ||
+    rawRow?.transaction_type ||
+    row?.transferType ||
+    rawRow?.transferType ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+
+  const source = normalizeExpenseAnalysisIncomeSource(row?.source || rawRow?.source || rawRow?.displaySource || "");
+  const rawSourceId = normalizeExpenseAnalysisIncomeEventKeyPart(
+    row?.raw_source_id ||
+    rawRow?.raw_source_id ||
+    row?.rawSourceId ||
+    rawRow?.rawSourceId ||
+    row?.sourceTransactionId ||
+    rawRow?.sourceTransactionId ||
+    row?.externalId ||
+    rawRow?.externalId ||
+    row?.external_id ||
+    rawRow?.external_id ||
+    ""
+  );
+  const text = getExpenseAnalysisIncomeRowText(row, rawRow);
+  if (["wise", "transferwise"].includes(source) || rawSourceId.startsWith("card-")) {
+    if (rawSourceId.startsWith("card-") || kind === "card" || /\bcard (transaction|payment)\b/.test(text)) return true;
+  }
+
+  const amountUsd = parseLooseNumber(row?.amount_usd ?? rawRow?.amount_usd ?? row?.amountUsd ?? rawRow?.amountUsd ?? "");
+  const amountNet = parseLooseNumber(row?.amount_net ?? rawRow?.amount_net ?? row?.amountNet ?? rawRow?.amountNet ?? row?.netAmount ?? rawRow?.netAmount ?? "");
+  const amount = parseLooseNumber(row?.amount ?? rawRow?.amount ?? "");
+  if (amountUsd < 0 || (!amountUsd && amountNet < 0) || (!amountUsd && !amountNet && amount < 0)) return true;
+  return false;
+}
+
 function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
   const empty = () => Object.fromEntries(MANUAL_FINANCE_MONEY_CHANNELS.map((channel) => [channel, 0]));
   const summary = {
@@ -1598,6 +1669,7 @@ function buildLedgerIncomeCountSummaryByChannel(rows = [], period = {}) {
     const operation = normalizeExpenseAnalysisIncomeOperation(row?.operation || row?.legacy_operation || rawRow?.operation || rawRow?.legacy_operation);
     const category = normalizeExpenseAnalysisIncomeOperation(row?.category || rawRow?.category || row?.legacy_category || rawRow?.legacy_category);
     if (!operation && !category) return;
+    if (isExpenseAnalysisProviderNonIncomeRow(row, rawRow)) return;
     const channel = canonicalManualFinanceChannel(row?.to_channel || row?.toChannel || rawRow?.to_channel || rawRow?.toChannel || "");
     if (!channel || !Object.prototype.hasOwnProperty.call(summary.autoByChannel, channel)) return;
     const source = normalizeExpenseAnalysisIncomeSource(row?.source || rawRow?.source || rawRow?.displaySource || "");

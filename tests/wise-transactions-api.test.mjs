@@ -43,6 +43,28 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.description, "Card payment to Vendor");
 });
 
+test("normalizeWiseTransaction treats CARD transactions as expense before amount normalization", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "CREDIT",
+      date: "2026-05-08T12:00:00.000Z",
+      referenceNumber: "CARD-3766611855",
+      amount: { value: "4.40", currency: "USD" },
+      details: {
+        description: "Card transaction at Bolt",
+        type: "CARD"
+      }
+    },
+    { id: "balance-1", currency: "USD" },
+    "profile-1"
+  );
+
+  assert.equal(entry.sourceTransactionId, "CARD-3766611855");
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.suggestedCategory, "business");
+  assert.equal(entry.localAmount, 4.4);
+});
+
 test("normalizeWiseTransaction falls back to description when merchant name is not extractable", () => {
   const entry = normalizeWiseTransaction(
     {

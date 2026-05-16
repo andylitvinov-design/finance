@@ -1214,6 +1214,42 @@ function isLedgerProviderIncomeSource(row) {
   return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
 }
 
+function normalizeLedgerProviderIncomeClassifier(value) {
+  return normalizeLookupText(value).replace(/\s+/g, "_");
+}
+
+function isLedgerProviderNonIncomeRow(row = {}) {
+  const direction = normalizeLedgerProviderIncomeClassifier(row?.direction || row?.ledgerV2?.direction || "");
+  if (["out", "expense", "debit", "fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(direction)) return true;
+  const kind = normalizeLedgerProviderIncomeClassifier(
+    row?.entryKind ||
+    row?.operationType ||
+    row?.operation_type ||
+    row?.transactionType ||
+    row?.transaction_type ||
+    row?.transferType ||
+    row?.ledgerV2?.operation_type ||
+    ""
+  );
+  if (["fee", "refund", "hold", "held", "reversal", "chargeback", "exchange"].includes(kind)) return true;
+  const source = String(row?.source || row?.displaySource || row?.ledgerV2?.source || "").trim().toLowerCase();
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || row?.ledgerV2?.raw_source_id || "").trim().toLowerCase();
+  const text = normalizeLookupText([
+    row?.comment,
+    row?.description,
+    row?.organization,
+    row?.counterparty,
+    row?.transactionSubject,
+    row?.transferType,
+    row?.ledgerV2?.comment
+  ].filter(Boolean).join(" "));
+  if ((source === "wise" || source === "transferwise" || rawSourceId.startsWith("card-")) &&
+    (rawSourceId.startsWith("card-") || kind === "card" || /\bcard (transaction|payment)\b/.test(text))) {
+    return true;
+  }
+  return false;
+}
+
 function getLedgerExpenseChannel(row) {
   if (typeof isTransferOrExchangeRow === "function" && isTransferOrExchangeRow(row)) return "";
   const operation = getNormalizedLedgerFactOperation(row);
@@ -1258,6 +1294,7 @@ function buildLedgerRealIncomeSummaryByChannel(rows, usdRateLookup = { byChannel
     if (startDate && date < startDate) return;
     if (endDate && date > endDate) return;
     if (!isLedgerProviderIncomeSource(row)) return;
+    if (isLedgerProviderNonIncomeRow(row)) return;
     const channel = getLedgerIncomeChannel(row);
     if (!channel) return;
     const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
