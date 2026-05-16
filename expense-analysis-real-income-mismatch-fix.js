@@ -51,16 +51,17 @@
     return typeof getLedgerIncomeChannel === "function" ? getLedgerIncomeChannel(row) : "";
   }
 
+  function ensureMetaChannel(meta, channel) {
+    if (!meta[channel]) {
+      meta[channel] = { explicitUsdRows: 0, rateDerivedRows: 0 };
+    }
+    return meta[channel];
+  }
+
   function buildLedgerRealIncomeDerivationMeta(rows = [], period = {}) {
     const startDate = getIsoDate(period?.startDate || "");
     const endDate = getIsoDate(period?.endDate || "");
-    const channels = Array.isArray(window.MANUAL_FINANCE_MONEY_CHANNELS)
-      ? window.MANUAL_FINANCE_MONEY_CHANNELS
-      : [];
-    const meta = Object.fromEntries(channels.map((channel) => [channel, {
-      explicitUsdRows: 0,
-      rateDerivedRows: 0,
-    }]));
+    const meta = {};
 
     (rows || []).forEach((row) => {
       const date = getIsoDate(row?.date || "");
@@ -71,13 +72,14 @@
       if (isKnownProviderNonIncome(row)) return;
       if (!["income", "servicein", "ezoin"].includes(getOperation(row))) return;
       const channel = getIncomeChannel(row);
-      if (!channel || !meta[channel]) return;
+      if (!channel) return;
+      const channelMeta = ensureMetaChannel(meta, channel);
       const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
       const hasExplicitUsd = amountUsdRaw && Math.abs(getNumber(amountUsdRaw)) > 0;
       if (hasExplicitUsd) {
-        meta[channel].explicitUsdRows += 1;
+        channelMeta.explicitUsdRows += 1;
       } else {
-        meta[channel].rateDerivedRows += 1;
+        channelMeta.rateDerivedRows += 1;
       }
     });
     return meta;
