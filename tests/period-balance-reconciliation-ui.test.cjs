@@ -163,15 +163,15 @@ test("period balance renders channel balances before secondary currency totals",
 
   const channelRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
   assert.equal(channelRows.length, 7);
-  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "ОЖИДАЕМЫЙ ОСТАТОК", "ФАКТ ОСТАТОК НА КОНЕЦ", "РАЗНИЦА", "СТАТУС"]);
+  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ИСТОЧНИК", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(channelRows[1][0], "wise usd");
-  assert.equal(channelRows[1][7], "OK");
+  assert.equal(channelRows[1][8], "OK");
   assert.equal(channelRows[2][0], "paypal eur");
   assert.equal(channelRows[3][0], "mono uah");
-  assert.equal(channelRows[3][7], "Реальное расхождение");
-  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "240", "0", "Итого по валюте"]);
-  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "-25", "75", "70", "-5", "Итого по валюте"]);
-  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "125", "1125", "1125", "0", "Итого по валюте"]);
+  assert.equal(channelRows[3][8], "Реальное расхождение");
+  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "240", "—", "0", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "-25", "75", "70", "—", "-5", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "125", "1125", "1125", "—", "0", "Итого по валюте", "—"]);
   assert.match(block.textContent, /Сводка по валютам, справочно/);
   assert.doesNotMatch(block.textContent, /Итоги по валютам/);
   assert.doesNotMatch(block.textContent, /Итоги по всем каналам/);
@@ -198,7 +198,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: 2704.25,
         real_delta: -1628,
         computed_real_closing_balance: 1076.25,
+        manual_provider_closing_balance: 1070.48,
         factual_closing_balance: 1070.48,
+        fact_source: "manual",
         real_difference: -5.77,
         status: "mismatch",
       },
@@ -208,7 +210,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: 100,
         real_delta: 0,
         computed_real_closing_balance: 100,
+        manual_provider_closing_balance: 100,
         factual_closing_balance: 100,
+        fact_source: "manual",
         real_difference: 0,
         status: "ok",
       },
@@ -218,7 +222,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: 14033,
         real_delta: 0,
         computed_real_closing_balance: 14033,
+        manual_provider_closing_balance: null,
         factual_closing_balance: null,
+        fact_source: "missing",
         real_difference: null,
         status: "missing_provider_balance",
       },
@@ -228,7 +234,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: 10107.92,
         real_delta: 0,
         computed_real_closing_balance: 10107.92,
+        manual_provider_closing_balance: null,
         factual_closing_balance: 7351,
+        fact_source: "carried_forward",
         real_difference: -2756.92,
         status: "carried_forward_conditional",
       },
@@ -238,7 +246,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: null,
         real_delta: 103,
         computed_real_closing_balance: null,
+        manual_provider_closing_balance: null,
         factual_closing_balance: null,
+        fact_source: "missing",
         real_difference: null,
         status: "missing_opening_balance",
       },
@@ -248,7 +258,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
         opening_balance: -349.14,
         real_delta: -392.75,
         computed_real_closing_balance: -741.89,
+        manual_provider_closing_balance: null,
         factual_closing_balance: null,
+        fact_source: "missing",
         real_difference: null,
         missing_amount_net_rows: 1,
         status: "missing_amount_net",
@@ -272,9 +284,9 @@ test("period balance main table uses payment channel rows and preserves mismatch
   ["ИТОГО CAD", "ИТОГО EUR", "ИТОГО RUB", "ИТОГО UAH", "ИТОГО USD", "ИТОГО USDT"].forEach((label) => {
     assert.ok(rowLabels.includes(label), `${label} total row must render when currency is present`);
   });
-  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 8), ["USD", "2704.25", "-1628", "1076.25", "1070.48", "-5.77", "Реальное расхождение"]);
-  assert.equal(rows.find((row) => row[0] === "пейпал евр")[7], "Нет amount_net");
-  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[7], "Нет стартового остатка");
+  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 9), ["USD", "2704.25", "-1628", "1076.25", "1070.48", "manual", "-5.77", "Реальное расхождение"]);
+  assert.equal(rows.find((row) => row[0] === "пейпал евр")[8], "Нет amount_net");
+  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[8], "Нет стартового остатка");
 });
 
 test("period balance analytics UI does not render raw daily snapshot inventory", () => {
@@ -374,7 +386,7 @@ test("period balance UI shows missing provider balance as blocked, not OK", () =
   assert.match(text, /Нет фактического остатка на дату/);
   assert.match(text, /Добавить фактический остаток на дату окончания периода/);
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.equal(positionRows[1][7], "Нет фактического остатка на дату");
+  assert.equal(positionRows[1][8], "Нет фактического остатка на дату");
 });
 
 test("period balance UI keeps existing factual values visible when summary failed", () => {
@@ -398,7 +410,9 @@ test("period balance UI keeps existing factual values visible when summary faile
         opening_balance: 1000,
         real_delta: 76.25,
         computed_real_closing_balance: 1076.25,
+        manual_provider_closing_balance: 1070.48,
         factual_closing_balance: 1070.48,
+        fact_source: "manual",
         real_difference: -5.77,
         closing_balance_source: "exact",
         status: "mismatch",
@@ -421,7 +435,8 @@ test("period balance UI keeps existing factual values visible when summary faile
 
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   assert.equal(positionRows[1][5], "1070.48");
-  assert.equal(positionRows[1][6], "-5.77");
+  assert.equal(positionRows[1][6], "manual");
+  assert.equal(positionRows[1][7], "-5.77");
   assert.equal(positionRows[2][5], "—");
 });
 
@@ -467,13 +482,14 @@ test("period balance UI separates expected closing from factual end balance", ()
   const wise = rows.find((row) => row[0] === "wise usd");
   const cash = rows.find((row) => row[0] === "cash usd");
 
-  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "ОЖИДАЕМЫЙ ОСТАТОК", "ФАКТ ОСТАТОК НА КОНЕЦ", "РАЗНИЦА", "СТАТУС"]);
+  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ИСТОЧНИК", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(wise[4], "1100");
   assert.equal(wise[5], "—");
-  assert.equal(wise[6], "—");
+  assert.equal(wise[6], "missing");
   assert.equal(cash[4], "50");
-  assert.equal(cash[5], "50");
-  assert.equal(cash[6], "0");
+  assert.equal(cash[5], "—");
+  assert.equal(cash[6], "carried_forward");
+  assert.equal(cash[7], "0");
 });
 
 test("period balance API failure renders non-blocking Analytics error", async () => {
@@ -540,7 +556,9 @@ function buildSnapshot(overrides = {}) {
       planned_closing_balance: 1150,
       real_delta: 125,
       computed_real_closing_balance: 1125,
+      manual_provider_closing_balance: 1125,
       factual_closing_balance: 1125,
+      fact_source: "manual",
       real_difference: 0,
       closing_balance_source: "exact",
       status: "ok",
@@ -553,7 +571,9 @@ function buildSnapshot(overrides = {}) {
       planned_closing_balance: 240,
       real_delta: 40,
       computed_real_closing_balance: 240,
+      manual_provider_closing_balance: 240,
       factual_closing_balance: 240,
+      fact_source: "manual",
       real_difference: 0,
       closing_balance_source: "exact",
       status: "ok",
@@ -566,7 +586,9 @@ function buildSnapshot(overrides = {}) {
       planned_closing_balance: 100,
       real_delta: -25,
       computed_real_closing_balance: 75,
+      manual_provider_closing_balance: 70,
       factual_closing_balance: 70,
+      fact_source: "manual",
       real_difference: -5,
       closing_balance_source: "exact",
       status: "mismatch",

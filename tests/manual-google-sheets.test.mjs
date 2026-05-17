@@ -17,7 +17,7 @@ function jsonResponse(payload, init = {}) {
   };
 }
 
-test("appendManualOstatkiRows appends only new Остатки rows and skips duplicate date channel currency", async () => {
+test("appendManualOstatkiRows updates existing Остатки rows by normalized date channel currency", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
@@ -27,7 +27,7 @@ test("appendManualOstatkiRows appends only new Остатки rows and skips dup
     const fetchCalls = [];
     const result = await appendManualOstatkiRows({
       rows: [
-        { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 1000 },
+        { date: "2026-05-17", channel: "Wise", currency: "usd", amount: 1070.48, comment: "manual fact" },
         { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351, comment: "carried" },
       ],
       fetchImpl: async (url, options = {}) => {
@@ -46,19 +46,26 @@ test("appendManualOstatkiRows appends only new Остатки rows and skips dup
             }],
           });
         }
-        if (String(url).includes(":append")) {
+        if (String(url).includes("/values/") && options.method === "PUT") {
           const body = JSON.parse(options.body);
-          assert.deepEqual(body.values, [["2026-05-17", "БАНК КАНАДА cad", "7351", "CAD", "", "", "carried"]]);
-          return jsonResponse({ updates: { updatedRange: "'Остатки'!A3:G3" } });
+          assert.deepEqual(body.values, [
+            ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+            ["2026-05-17", "трансервайз дол", "1070,48", "USD", "", "", "manual fact"],
+            ["2026-05-17", "БАНК КАНАДА cad", "7351", "CAD", "", "", "carried"],
+          ]);
+          return jsonResponse({ updatedRange: "'Остатки'!A1:G3" });
         }
         throw new Error(`Unexpected fetch: ${url}`);
       },
     });
 
     assert.equal(result.appendRowCount, 1);
+    assert.equal(result.updated.length, 1);
+    assert.equal(result.updated[0].channel, "трансервайз дол");
     assert.equal(result.appended[0].channel, "БАНК КАНАДА cad");
-    assert.equal(result.skipped[0].reason, "duplicate_date_channel_currency");
-    assert.equal(fetchCalls.filter((call) => call.url.includes(":append")).length, 1);
+    assert.deepEqual(result.skipped, []);
+    assert.equal(fetchCalls.filter((call) => call.url.includes(":append")).length, 0);
+    assert.equal(fetchCalls.filter((call) => call.options.method === "PUT").length, 1);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;

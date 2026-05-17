@@ -75,6 +75,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
 
   const openingSnapshot = balanceIndex.findOpening(key, from);
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
+  const nearestManualProviderFact = balanceIndex.findNearest(key, to);
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
   const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
   const lastObservedClosingSnapshot = closingSnapshot || balanceIndex.findLatestBeforeOrOn(key, to);
@@ -150,12 +151,24 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     calculated_closing_balance: calculatedClosing,
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
+    manual_provider_closing_balance_date: closingSnapshot?.date || null,
+    manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
     carried_forward_balance: roundedCarriedForwardClosing,
+    carried_forward_lookup_key: lastObservedClosingSnapshot
+      ? makeLookupKey({ date: lastObservedClosingSnapshot.date, channel, currency })
+      : null,
     displayed_fact_balance: roundedDisplayedFactClosing,
     factual_closing_balance: roundedDisplayedFactClosing,
     factual_closing_balance_date: closingSnapshot?.date || (canCarryForwardClosing ? lastObservedClosingSnapshot.date : null),
     closing_balance_source: closingSource,
     fact_source: factSource,
+    missing_fact_reason: buildMissingFactReason({
+      closingSnapshot,
+      nearestManualProviderFact,
+      to,
+    }),
+    nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
+    nearest_manual_provider_fact_amount: nearestManualProviderFact?.amount ?? null,
     last_observed_closing_balance: lastObservedClosingSnapshot?.amount ?? null,
     last_observed_closing_balance_date: lastObservedClosingSnapshot?.date || null,
     last_observed_closing_balance_source: lastObservedClosingSnapshot ? (closingSnapshot ? "exact" : "stale") : "missing",
@@ -175,6 +188,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
       realOutflow,
       lastObservedClosingSnapshot,
       closingSnapshot,
+      nearestManualProviderFact,
+      to,
     }),
     repair_template: buildRepairTemplate({
       status,
@@ -201,6 +216,23 @@ function resolveFactSource({ closingSnapshot, canCarryForwardClosing }) {
   if (closingSnapshot) return getBalanceFactSource(closingSnapshot);
   if (canCarryForwardClosing) return "carried_forward";
   return "missing";
+}
+
+function makeLookupKey({ date, channel, currency }) {
+  return [
+    normalizeDate(date),
+    String(channel || "").trim(),
+    String(currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to }) {
+  if (closingSnapshot) return null;
+  if (!to) return "exact manual/provider fact is missing for the selected period end.";
+  if (nearestManualProviderFact?.date) {
+    return `manual/provider fact exists for ${nearestManualProviderFact.date}, but period end is ${to}; exact date fact is missing.`;
+  }
+  return `manual/provider fact is missing for period end ${to}.`;
 }
 
 function getBalanceFactSource(row) {
@@ -371,6 +403,21 @@ function buildBalanceIndex(balanceRows) {
       if (!to) return rows.at(-1) || null;
       return rows.filter((row) => row.date <= to).at(-1) || null;
     },
+    findNearest(key, to) {
+      const rows = byKey.get(key) || [];
+      if (!rows.length) return null;
+      if (!to) return rows.at(-1) || null;
+      const exact = rows.find((row) => row.date === to);
+      if (exact) return exact;
+      const before = rows.filter((row) => row.date < to).at(-1);
+      const after = rows.find((row) => row.date > to);
+      if (!before) return after || null;
+      if (!after) return before;
+      const targetDate = new Date(`${to}T00:00:00Z`);
+      const beforeDistance = Math.abs(targetDate - new Date(`${before.date}T00:00:00Z`));
+      const afterDistance = Math.abs(new Date(`${after.date}T00:00:00Z`) - targetDate);
+      return afterDistance < beforeDistance ? after : before;
+    },
     keysBeforePeriod(from) {
       if (!from) return Array.from(byKey.keys());
       return Array.from(byKey.entries())
@@ -495,6 +542,8 @@ function buildDiagnostics({
   realOutflow,
   lastObservedClosingSnapshot,
   closingSnapshot,
+  nearestManualProviderFact,
+  to,
 }) {
   const categories = [];
   if (status === STATUS.NO_DATA) {
@@ -502,6 +551,8 @@ function buildDiagnostics({
       categories,
       has_exact_provider_balance: Boolean(closingSnapshot),
       last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
+      nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
+      missing_fact_reason: buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to }),
       needs_provider_balance_on_target_date: false,
       has_movement: false,
       true_mismatch: false,
@@ -517,6 +568,8 @@ function buildDiagnostics({
     categories: Array.from(new Set(categories)),
     has_exact_provider_balance: Boolean(closingSnapshot),
     last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
+    nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
+    missing_fact_reason: buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to }),
     needs_provider_balance_on_target_date: status === STATUS.MISSING_PROVIDER,
     has_movement: Boolean(realInflow || realOutflow || missingAmountNetRows),
     true_mismatch: status === STATUS.MISMATCH && displayedFactClosing !== null && realDifference !== null,
