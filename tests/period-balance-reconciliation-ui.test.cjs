@@ -228,6 +228,17 @@ class TestElement {
     children.forEach((child) => this.appendChild(child));
   }
 
+  insertBefore(child, reference) {
+    child.parentElement = this;
+    const index = this.children.indexOf(reference);
+    if (index === -1) {
+      this.children.push(child);
+    } else {
+      this.children.splice(index, 0, child);
+    }
+    return child;
+  }
+
   replaceWith(replacement) {
     if (!this.parentElement) return;
     const siblings = this.parentElement.children;

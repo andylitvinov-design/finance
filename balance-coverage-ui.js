@@ -9,22 +9,22 @@
   const BLOCK_TITLE = "Сверка остатков по счетам";
 
   function installBalanceCoverageUi(globalRoot = root) {
-    const original = globalRoot.renderExpenseFinancialAnalysis;
+    const original = globalRoot.renderAnalyticsSections;
     if (typeof original !== "function" || original.__balanceCoverageWrapped) return false;
 
-    function wrappedRenderExpenseFinancialAnalysis() {
-      const block = original.apply(this, arguments);
+    function wrappedRenderAnalyticsSections(container) {
+      const result = original.apply(this, arguments);
       try {
         const coverageBlock = renderBalanceCoveragePlaceholder(globalRoot.document);
-        block.appendChild(coverageBlock);
+        container.appendChild(coverageBlock);
         loadAndRenderBalanceCoverage(globalRoot, coverageBlock);
       } catch (error) {
-        // UI extension must never break the existing finance analysis screen.
+        // UI extension must never break the existing analytics screen.
       }
-      return block;
+      return result;
     }
-    wrappedRenderExpenseFinancialAnalysis.__balanceCoverageWrapped = true;
-    globalRoot.renderExpenseFinancialAnalysis = wrappedRenderExpenseFinancialAnalysis;
+    wrappedRenderAnalyticsSections.__balanceCoverageWrapped = true;
+    globalRoot.renderAnalyticsSections = wrappedRenderAnalyticsSections;
     return true;
   }
 

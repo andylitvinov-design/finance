@@ -143,20 +143,20 @@
   }
 
   function install() {
-    if (typeof renderExpenseFinancialAnalysis !== "function" || renderExpenseFinancialAnalysis.__balanceSnapshotsWrapped) return false;
-    var original = renderExpenseFinancialAnalysis;
-    renderExpenseFinancialAnalysis = function () {
-      var block = original.apply(this, arguments);
+    if (typeof renderAnalyticsSections !== "function" || renderAnalyticsSections.__balanceSnapshotsWrapped) return false;
+    var original = renderAnalyticsSections;
+    renderAnalyticsSections = function (container) {
+      var result = original.apply(this, arguments);
       var placeholder = el("section", "finance-analysis-section balance-snapshots-section");
       placeholder.appendChild(el("div", "config-note", "Загружаю инвентарь остатков..."));
-      block.appendChild(placeholder);
+      container.appendChild(placeholder);
       fetch(selectedUrl(), { cache: "no-store" })
         .then(function (response) { return response.json(); })
         .then(function (payload) { placeholder.replaceWith(renderInventory(payload)); })
         .catch(function (error) { placeholder.replaceWith(el("div", "finance-status error", "Инвентарь остатков недоступен: " + String(error?.message || error))); });
-      return block;
+      return result;
     };
-    renderExpenseFinancialAnalysis.__balanceSnapshotsWrapped = true;
+    renderAnalyticsSections.__balanceSnapshotsWrapped = true;
     return true;
   }
 
