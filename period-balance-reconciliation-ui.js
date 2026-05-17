@@ -114,7 +114,7 @@
       ));
     }
 
-    section.appendChild(renderCurrencyTable(doc, reconciliation.by_currency || []));
+    section.appendChild(renderPaymentChannelBalanceTable(doc, reconciliation.by_channel_currency || []));
     section.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const warnings = snapshot?.warnings || reconciliation.warnings || [];
@@ -273,24 +273,128 @@
     return result;
   }
 
-  function renderCurrencyTable(doc, rows) {
+  function renderPaymentChannelBalanceTable(doc, positionRows) {
+    const result = buildPaymentChannelBalanceRows(positionRows);
     return renderSubsection(
       doc,
-      "Изменение баланса по валютам",
-      ["Валюта", "План приход", "План расход", "План изменение", "Реал приход", "Реал расход", "Реал изменение", "План-реал", "Реал разница", "Статус"],
-      rows.map((row) => [
-        row.currency || "—",
-        formatNumber(row.planned_inflow),
-        formatNumber(row.planned_outflow),
-        formatNumber(row.planned_delta),
-        formatNumber(row.real_inflow),
-        formatNumber(row.real_outflow),
-        formatNumber(row.real_delta),
-        formatNumber(row.plan_vs_real_delta),
-        formatNumber(row.real_difference),
-        getStatusLabel(row.status),
+      "Остатки по каналам оплаты",
+      ["Канал", ...result.currencies, "Total USD", "Status / Warnings"],
+      result.rows.map((row) => [
+        row.channel,
+        ...result.currencies.map((currency) => formatNumber(row.balances[currency])),
+        formatNumber(row.totalUsd),
+        row.statusWarnings || "—",
       ])
     );
+  }
+
+  function buildPaymentChannelBalanceRows(positionRows) {
+    const rowsByChannel = new Map();
+    const currencySet = new Set();
+    (positionRows || []).forEach((row) => {
+      const channel = String(row?.channel || "").trim();
+      const currency = String(row?.currency || "").trim().toUpperCase();
+      if (!channel || !currency) return;
+      const amount = resolveRealBalanceAmount(row);
+      const hasMovement = parseNumeric(row?.real_delta) !== null || parseNumeric(row?.real_inflow) !== null || parseNumeric(row?.real_outflow) !== null;
+      if (amount === null && !hasMovement && !row?.status) return;
+      currencySet.add(currency);
+      if (!rowsByChannel.has(channel)) {
+        rowsByChannel.set(channel, {
+          channel,
+          balances: {},
+          totalUsd: 0,
+          statusWarnings: [],
+        });
+      }
+      const target = rowsByChannel.get(channel);
+      if (amount !== null) {
+        target.balances[currency] = roundNumber((target.balances[currency] || 0) + amount);
+        target.totalUsd = roundNumber(target.totalUsd + convertBalanceToUsd(amount, currency));
+      }
+      const warning = buildPaymentChannelWarning(row);
+      if (warning) target.statusWarnings.push(warning);
+    });
+
+    const currencies = getPaymentChannelBalanceCurrencies(currencySet, rowsByChannel);
+    const rows = Array.from(rowsByChannel.values())
+      .filter((row) => currencies.some((currency) => row.balances[currency] !== undefined) || row.statusWarnings.length)
+      .sort((left, right) => left.channel.localeCompare(right.channel))
+      .map((row) => ({
+        ...row,
+        statusWarnings: uniqueStrings(row.statusWarnings).join(" | "),
+      }));
+    const totals = calculatePaymentChannelBalanceTotals(rows, currencies);
+    if (rows.length) rows.push(totals);
+    return { currencies, rows };
+  }
+
+  function calculatePaymentChannelBalanceTotals(rows, currencies) {
+    const balances = {};
+    (currencies || []).forEach((currency) => {
+      balances[currency] = roundNumber((rows || []).reduce((sum, row) => sum + (Number(row.balances?.[currency]) || 0), 0));
+    });
+    return {
+      channel: "ИТОГО",
+      balances,
+      totalUsd: roundNumber((rows || []).reduce((sum, row) => sum + (Number(row.totalUsd) || 0), 0)),
+      statusWarnings: "",
+    };
+  }
+
+  function getPaymentChannelBalanceCurrencies(currencySet, rowsByChannel) {
+    const preferred = ["CAD", "EUR", "RUB", "UAH", "USD", "USDT"];
+    const all = Array.from(currencySet || []);
+    const hasRealAmount = (currency) => Array.from((rowsByChannel || new Map()).values())
+      .some((row) => row.balances?.[currency] !== undefined);
+    return [
+      ...preferred.filter((currency) => all.includes(currency) && hasRealAmount(currency)),
+      ...all.filter((currency) => !preferred.includes(currency) && hasRealAmount(currency)).sort((left, right) => left.localeCompare(right)),
+    ];
+  }
+
+  function resolveRealBalanceAmount(row) {
+    const candidates = [
+      row?.factual_closing_balance,
+      row?.computed_real_closing_balance,
+      row?.opening_balance,
+    ];
+    for (const value of candidates) {
+      const numeric = parseNumeric(value);
+      if (numeric !== null) return numeric;
+    }
+    return null;
+  }
+
+  function buildPaymentChannelWarning(row) {
+    const parts = [];
+    const status = String(row?.status || "").trim();
+    if (status && status !== "ok") parts.push(getStatusLabel(status));
+    if (row?.missing_amount_net_rows) parts.push("Нет amount_net");
+    if (row?.fix_action) parts.push(row.fix_action);
+    return uniqueStrings(parts).join(": ");
+  }
+
+  function convertBalanceToUsd(amount, currency) {
+    const rate = {
+      USD: 1,
+      USDT: 1,
+      USDC: 1,
+      EUR: 1.16,
+      CAD: 0.74,
+      UAH: 1 / 43.86,
+      RUB: 1 / 84.5563,
+    }[String(currency || "").trim().toUpperCase()];
+    return Number.isFinite(rate) ? Number(amount) * rate : 0;
+  }
+
+  function uniqueStrings(values) {
+    return Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  }
+
+  function roundNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.round(numeric * 10000) / 10000 : 0;
   }
 
   function renderPositionTable(doc, rows) {
@@ -384,5 +488,7 @@
     renderPeriodBalanceBlock,
     getStatusLabel,
     formatNumber,
+    buildPaymentChannelBalanceRows,
+    calculatePaymentChannelBalanceTotals,
   };
 });
