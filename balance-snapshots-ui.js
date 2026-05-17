@@ -144,6 +144,7 @@
   }
 
   function install() {
+    if (!isDebugMode()) return false;
     if (typeof renderAnalyticsSections !== "function" || renderAnalyticsSections.__balanceSnapshotsWrapped) return false;
     var original = renderAnalyticsSections;
     renderAnalyticsSections = function (container) {
@@ -161,6 +162,17 @@
     return true;
   }
 
-  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory, formatAmount: formatAmount };
+  function isDebugMode() {
+    try {
+      var params = new URLSearchParams(String(window.location?.search || ""));
+      if (params.get("debugBalanceSnapshots") === "1") return true;
+      if (params.get("debug") === "balance-snapshots") return true;
+      return window.localStorage?.getItem("ezohata.debugBalanceSnapshots") === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory, formatAmount: formatAmount, isDebugMode: isDebugMode };
   install();
 })();

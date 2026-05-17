@@ -94,9 +94,16 @@ function textRows(table) {
   return table.querySelectorAll("tr").map((row) => row.querySelectorAll("th").concat(row.querySelectorAll("td")).map((cell) => cell.textContent));
 }
 
-function createContext() {
+function createContext(options = {}) {
   const context = {
-    window: {},
+    window: {
+      location: { search: options.debug ? "?debugBalanceSnapshots=1" : "" },
+      localStorage: {
+        getItem() {
+          return "";
+        },
+      },
+    },
     document: {
       scripts: [],
       createElement(tagName) {
@@ -139,8 +146,25 @@ function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-test("balance snapshots UI appends inventory to Analytics and leaves expense analysis unchanged", async () => {
+test("balance snapshots UI does not expose inventory in normal Analytics mode", async () => {
   const context = createContext();
+  const analyticsContainer = context.document.createElement("div");
+  context.fetch = async () => ({
+    json: async () => ({ ok: true, balance_snapshots: { dates: [], input_rows: [], rows: [], by_channel_currency: [] } }),
+  });
+
+  assert.equal(context.window.EzohataBalanceSnapshotsUi.install(), false);
+  vm.runInContext("window.EzohataBalanceSnapshotsUi.install()", context);
+  context.renderAnalyticsSections(analyticsContainer, []);
+  await flushPromises();
+
+  assert.equal(findByClass(analyticsContainer, "normal-analytics-section").length, 1);
+  assert.equal(findByClass(analyticsContainer, "balance-snapshots-section").length, 0);
+  assert.doesNotMatch(analyticsContainer.textContent, /Инвентарь остатков/);
+});
+
+test("balance snapshots UI appends inventory only in debug mode", async () => {
+  const context = createContext({ debug: true });
   const analyticsContainer = context.document.createElement("div");
   const expenseBlock = context.document.createElement("div");
   context.fetch = async () => ({
@@ -149,8 +173,8 @@ test("balance snapshots UI appends inventory to Analytics and leaves expense ana
   context.renderExpenseFinancialAnalysis = () => expenseBlock;
   const originalExpenseRenderer = context.renderExpenseFinancialAnalysis;
 
+  assert.equal(context.renderAnalyticsSections.__balanceSnapshotsWrapped, true);
   assert.equal(context.window.EzohataBalanceSnapshotsUi.install(), false);
-  vm.runInContext("window.EzohataBalanceSnapshotsUi.install()", context);
   context.renderAnalyticsSections(analyticsContainer, []);
   const renderedExpense = context.renderExpenseFinancialAnalysis();
   await flushPromises();
@@ -163,13 +187,12 @@ test("balance snapshots UI appends inventory to Analytics and leaves expense ana
 });
 
 test("balance snapshots API failure renders non-blocking Analytics error", async () => {
-  const context = createContext();
+  const context = createContext({ debug: true });
   const analyticsContainer = context.document.createElement("div");
   context.fetch = async () => {
     throw new Error("snapshots unavailable");
   };
 
-  vm.runInContext("window.EzohataBalanceSnapshotsUi.install()", context);
   context.renderAnalyticsSections(analyticsContainer, []);
   await flushPromises();
 
