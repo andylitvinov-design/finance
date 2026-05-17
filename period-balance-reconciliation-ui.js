@@ -301,12 +301,15 @@
         row.channel || "—",
         row.currency || "—",
         formatNumber(row.opening_fact_balance ?? row.opening_balance),
+        formatNumber(row.planned_delta),
+        formatNumber(row.planned_closing_balance),
         formatNumber(row.real_delta),
         formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatNumber(row.manual_provider_closing_balance),
         formatNumber(getCarriedForwardComparisonFact(row)),
         getFactSourceLabel(row.fact_source),
         formatNumber(row.real_difference),
+        formatNumber(row.plan_vs_real_delta),
         getStatusLabel(row.status),
         row.missing_fact_reason || row.diagnosis || "—",
       ]),
@@ -315,7 +318,7 @@
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ИСТОЧНИК ФАКТА", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
   }
@@ -333,20 +336,26 @@
       if (!totalsByCurrency.has(currency)) {
         totalsByCurrency.set(currency, {
           opening_balance: createTotalBucket(),
+          planned_delta: createTotalBucket(),
+          planned_closing_balance: createTotalBucket(),
           real_delta: createTotalBucket(),
           calculated_closing_balance: createTotalBucket(),
           manual_provider_closing_balance: createTotalBucket(),
           carried_forward_comparison_fact: createTotalBucket(),
           real_difference: createTotalBucket(),
+          plan_vs_real_delta: createTotalBucket(),
         });
       }
       const totals = totalsByCurrency.get(currency);
       addNumeric(totals, "opening_balance", row.opening_fact_balance ?? row.opening_balance);
+      addNumeric(totals, "planned_delta", row.planned_delta);
+      addNumeric(totals, "planned_closing_balance", row.planned_closing_balance);
       addNumeric(totals, "real_delta", row.real_delta);
       addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
       addNumeric(totals, "manual_provider_closing_balance", row.manual_provider_closing_balance);
       addNumeric(totals, "carried_forward_comparison_fact", getCarriedForwardComparisonFact(row));
       addNumeric(totals, "real_difference", row.real_difference);
+      addNumeric(totals, "plan_vs_real_delta", row.plan_vs_real_delta);
     });
     return Array.from(totalsByCurrency.entries())
       .sort(([left], [right]) => left.localeCompare(right))
@@ -354,12 +363,15 @@
         `ИТОГО ${currency}`,
         currency,
         formatTotalBucket(totals.opening_balance),
+        formatTotalBucket(totals.planned_delta),
+        formatTotalBucket(totals.planned_closing_balance),
         formatTotalBucket(totals.real_delta),
         formatTotalBucket(totals.calculated_closing_balance),
         formatTotalBucket(totals.manual_provider_closing_balance),
         formatTotalBucket(totals.carried_forward_comparison_fact),
         "—",
         formatTotalBucket(totals.real_difference),
+        formatTotalBucket(totals.plan_vs_real_delta),
         "Итого по валюте",
         "—",
       ]);
