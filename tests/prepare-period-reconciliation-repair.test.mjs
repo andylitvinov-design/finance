@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildRepairReport, parseArgs } from "../scripts/prepare-period-reconciliation-repair.mjs";
+import { applyRequestedRepairs, buildRepairReport, parseArgs } from "../scripts/prepare-period-reconciliation-repair.mjs";
 
 function operation(overrides = {}) {
   const row = {
@@ -95,6 +95,110 @@ test("missing provider balance generates blank template with expected closing hi
   assert.equal(row.amount, null);
   assert.equal(row.expected_closing_hint, 1100);
   assert.match(row.safe_fill, /blank until factual/);
+});
+
+test("carried-forward conditional row produces safe Остатки repair row for period end", () => {
+  const report = buildRepairReport({
+    options: parseArgs(["--from", "2026-05-01", "--to", "2026-05-17"]),
+    repository: {
+      operations: [],
+      balances: [
+        { date: "2026-04-30", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      ledgerValues: [],
+    },
+  });
+
+  assert.equal(report.dryRun, true);
+  assert.equal(report.ostatki_repair_rows.length, 1);
+  assert.deepEqual(report.ostatki_repair_rows[0], {
+    date: "2026-05-17",
+    channel: "БАНК КАНАДА cad",
+    currency: "CAD",
+    amount: 7351,
+    factual_closing_balance_date: "2026-05-01",
+    closing_balance_source: "carried_forward",
+    status: "carried_forward_conditional",
+    movement_rows: 0,
+    missing_amount_net_rows: 0,
+    action: "append_carried_forward_balance",
+    safe_fill: "eligible: no movement, no missing amount_net, carried forward from last observed Остатки",
+    comment: "carried_forward_conditional from 2026-05-01 via period reconciliation",
+  });
+});
+
+test("missing provider balance with movement requires manual provider fact and no auto amount", () => {
+  const report = buildRepairReport({
+    options: parseArgs(["--from", "2026-05-01", "--to", "2026-05-17"]),
+    repository: {
+      operations: [operation({
+        sheetRowNumber: 20,
+        date: "2026-05-02",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "100",
+        balanceAmount: 100,
+        source: "wise",
+        ledgerV2: { to_channel: "wise usd", currency: "USD", amount_net: "100", balance_amount: 100, source: "wise" },
+      })],
+      balances: [{ date: "2026-04-30", channel: "wise usd", currency: "USD", amount: "1000" }],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      ledgerValues: [],
+    },
+  });
+
+  const row = report.ostatki_repair_rows.find((item) => item.channel === "wise usd");
+  assert.equal(row.amount, null);
+  assert.equal(row.expected_closing_hint, 1100);
+  assert.equal(row.action, "manual_provider_fact_required");
+  assert.match(row.safe_fill, /нужен фактический баланс провайдера/);
+});
+
+test("apply is explicit and appends only eligible carried-forward Остатки rows", async () => {
+  const report = buildRepairReport({
+    options: parseArgs(["--from", "2026-05-01", "--to", "2026-05-17"]),
+    repository: {
+      operations: [operation({
+        sheetRowNumber: 20,
+        date: "2026-05-02",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "100",
+        balanceAmount: 100,
+        source: "wise",
+        ledgerV2: { to_channel: "wise usd", currency: "USD", amount_net: "100", balance_amount: 100, source: "wise" },
+      })],
+      balances: [
+        { date: "2026-04-30", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+        { date: "2026-04-30", channel: "wise usd", currency: "USD", amount: "1000" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      ledgerValues: [],
+    },
+  });
+  let appendCalls = 0;
+
+  assert.equal(report.dryRun, true);
+  const applied = await applyRequestedRepairs({
+    report,
+    appendOstatkiRowsImpl: async ({ rows }) => {
+      appendCalls += 1;
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].action, "append_carried_forward_balance");
+      assert.equal(rows[0].channel, "БАНК КАНАДА cad");
+      return { appended: rows, skipped: [], appendRowCount: rows.length };
+    },
+  });
+
+  assert.equal(appendCalls, 1);
+  assert.equal(applied.type, "ostatki_append");
+  assert.equal(applied.appendRowCount, 1);
 });
 
 test("Binance USDT missing opening generates template before first movement", () => {

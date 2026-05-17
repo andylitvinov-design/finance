@@ -92,12 +92,23 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const plannedClosing = opening === null ? null : round(opening + plannedDelta);
   let factualClosing = closingSnapshot?.amount ?? null;
   let closingSource = closingSnapshot ? "exact" : "missing";
+  const canCarryForwardClosing = !closingSnapshot
+    && !hasMovement
+    && !missingAmountNetRows
+    && computedRealClosing !== null
+    && lastObservedClosingSnapshot;
+  if (canCarryForwardClosing) {
+    factualClosing = lastObservedClosingSnapshot.amount;
+    closingSource = "carried_forward";
+  }
 
   let status = STATUS.OK;
   if (missingAmountNetRows) {
     status = STATUS.MISSING_AMOUNT_NET;
   } else if (opening === null && (hasMovement || hasPlan)) {
     status = STATUS.MISSING_OPENING;
+  } else if (canCarryForwardClosing) {
+    status = STATUS.CARRIED_FORWARD;
   } else if (factualClosing === null) {
     status = STATUS.MISSING_PROVIDER;
   } else if (computedRealClosing !== null && factualClosing !== null && Math.abs(round(factualClosing - computedRealClosing)) > 0.0001) {
@@ -124,7 +135,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     real_delta: realDelta,
     computed_real_closing_balance: computedRealClosing,
     factual_closing_balance: factualClosing === null ? null : round(factualClosing),
-    factual_closing_balance_date: closingSnapshot?.date || null,
+    factual_closing_balance_date: closingSnapshot?.date || (canCarryForwardClosing ? lastObservedClosingSnapshot.date : null),
     closing_balance_source: closingSource,
     last_observed_closing_balance: lastObservedClosingSnapshot?.amount ?? null,
     last_observed_closing_balance_date: lastObservedClosingSnapshot?.date || null,

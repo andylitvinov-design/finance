@@ -54,18 +54,22 @@ test("planned and real deltas are shown separately", () => {
   assert.equal(result.by_currency[0].planned_delta, 400);
 });
 
-test("missing exact target-date provider balance is blocked, not OK", () => {
+test("no movement and last observed balance carries forward as conditional fact", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [], balanceRows: balances(null) });
   const row = result.by_channel_currency[0];
-  assert.equal(result.summary.status, "blocked");
+  assert.equal(result.summary.status, "ok");
   assert.equal(result.summary.status_counts.ok, 0);
   assert.equal(result.summary.status_counts.mismatch, 0);
-  assert.equal(result.summary.status_counts.missing_provider_balance, 1);
-  assert.equal(row.status, "missing_provider_balance");
-  assert.equal(row.factual_closing_balance, null);
+  assert.equal(result.summary.status_counts.carried_forward_conditional, 1);
+  assert.equal(result.summary.status_counts.missing_provider_balance, 0);
+  assert.equal(row.status, "carried_forward_conditional");
+  assert.equal(row.factual_closing_balance, 1000);
+  assert.equal(row.factual_closing_balance_date, "2026-05-10");
+  assert.equal(row.closing_balance_source, "carried_forward");
+  assert.equal(row.real_difference, 0);
   assert.equal(row.last_observed_closing_balance, 1000);
   assert.equal(row.last_observed_closing_balance_date, "2026-05-10");
-  assert.match(row.fix_action, /остаток на дату окончания периода/);
+  assert.match(row.fix_action, /Проверить позже/);
 });
 
 test("missing exact target-date provider balance with movements is blocked, not mismatch", () => {
@@ -78,6 +82,16 @@ test("missing exact target-date provider balance with movements is blocked, not 
   assert.equal(row.status, "missing_provider_balance");
   assert.equal(row.factual_closing_balance, null);
   assert.match(row.diagnosis, /Нет фактического остатка на дату/);
+});
+
+test("exact closing balance remains authoritative over carried-forward fallback", () => {
+  const result = buildPeriodBalanceReconciliation({ period, operations: [], balanceRows: balances("1001") });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "mismatch");
+  assert.equal(row.factual_closing_balance, 1001);
+  assert.equal(row.factual_closing_balance_date, "2026-05-15");
+  assert.equal(row.closing_balance_source, "exact");
+  assert.equal(row.real_difference, 1);
 });
 
 test("mismatch shows factual minus computed real difference", () => {
