@@ -78,6 +78,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
   const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
   const lastObservedClosingSnapshot = closingSnapshot || balanceIndex.findLatestBeforeOrOn(key, to);
+  const nearestManualProviderSnapshot = balanceIndex.findNearest(key, to);
   const hasMovement = Boolean(real && (real.rows || real.inflow || real.outflow || real.missing_amount_net_rows));
   const hasPlan = Boolean(planned && (planned.rows || planned.inflow || planned.outflow));
   const opening = openingSnapshot?.amount ?? null;
@@ -132,6 +133,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const roundedManualProviderClosing = manualProviderClosing === null ? null : round(manualProviderClosing);
   const roundedCarriedForwardClosing = carriedForwardClosing === null ? null : round(carriedForwardClosing);
   const roundedDisplayedFactClosing = displayedFactClosing === null ? null : round(displayedFactClosing);
+  const missingFactReason = buildMissingFactReason({ to, closingSnapshot, nearestManualProviderSnapshot });
 
   const row = {
     channel,
@@ -150,12 +152,18 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     calculated_closing_balance: calculatedClosing,
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
+    manual_provider_closing_balance_date: closingSnapshot?.date || null,
     carried_forward_balance: roundedCarriedForwardClosing,
     displayed_fact_balance: roundedDisplayedFactClosing,
     factual_closing_balance: roundedDisplayedFactClosing,
     factual_closing_balance_date: closingSnapshot?.date || (canCarryForwardClosing ? lastObservedClosingSnapshot.date : null),
     closing_balance_source: closingSource,
     fact_source: factSource,
+    manual_provider_fact_lookup_key: buildLookupKey(to, channel, currency),
+    carried_forward_lookup_key: canCarryForwardClosing ? buildLookupKey(lastObservedClosingSnapshot.date, channel, currency) : null,
+    missing_fact_reason: missingFactReason,
+    nearest_manual_provider_fact_date: nearestManualProviderSnapshot?.date || null,
+    nearest_manual_provider_fact_amount: nearestManualProviderSnapshot ? round(nearestManualProviderSnapshot.amount) : null,
     last_observed_closing_balance: lastObservedClosingSnapshot?.amount ?? null,
     last_observed_closing_balance_date: lastObservedClosingSnapshot?.date || null,
     last_observed_closing_balance_source: lastObservedClosingSnapshot ? (closingSnapshot ? "exact" : "stale") : "missing",
@@ -371,6 +379,18 @@ function buildBalanceIndex(balanceRows) {
       if (!to) return rows.at(-1) || null;
       return rows.filter((row) => row.date <= to).at(-1) || null;
     },
+    findNearest(key, to) {
+      const rows = byKey.get(key) || [];
+      if (!rows.length) return null;
+      if (!to) return rows.at(-1) || null;
+      return rows
+        .slice()
+        .sort((left, right) => {
+          const distanceDiff = Math.abs(dateDistanceDays(left.date, to)) - Math.abs(dateDistanceDays(right.date, to));
+          if (distanceDiff) return distanceDiff;
+          return right.date.localeCompare(left.date);
+        })[0] || null;
+    },
     keysBeforePeriod(from) {
       if (!from) return Array.from(byKey.keys());
       return Array.from(byKey.entries())
@@ -479,6 +499,9 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.NO_DATA) return "Нет данных для сверки: нет начального остатка, движения, плана и факта.";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным.";
   if (row.status === STATUS.MISSING_OPENING) return "Нет начального Остатки перед периодом, но есть план/движение.";
+  if (row.missing_fact_reason === "manual_fact_date_mismatch") {
+    return `manual fact exists for ${row.nearest_manual_provider_fact_date}, but period end is ${String(row.manual_provider_fact_lookup_key || "").split("|")[0]}.`;
+  }
   if (row.status === STATUS.MISSING_PROVIDER) return "Нет фактического остатка на дату; сверка по этому счету заблокирована до ввода баланса провайдера.";
   if (row.status === STATUS.MISSING_CLOSING) return "Есть план/движение, но нет нового фактического Остатки за период.";
   if (row.status === STATUS.MISMATCH) return "Расхождение: фактический конечный остаток не равен реальному расчетному остатку.";
@@ -521,6 +544,13 @@ function buildDiagnostics({
     has_movement: Boolean(realInflow || realOutflow || missingAmountNetRows),
     true_mismatch: status === STATUS.MISMATCH && displayedFactClosing !== null && realDifference !== null,
   };
+}
+
+function buildMissingFactReason({ to, closingSnapshot, nearestManualProviderSnapshot }) {
+  if (closingSnapshot) return null;
+  if (!to) return "period_end_missing";
+  if (nearestManualProviderSnapshot?.date && nearestManualProviderSnapshot.date !== to) return "manual_fact_date_mismatch";
+  return "manual_provider_fact_missing";
 }
 
 function buildFixAction(row) {
@@ -637,6 +667,10 @@ function makeKey(channel, currency) {
   return `${channel}|${currency}`;
 }
 
+function buildLookupKey(date, channel, currency) {
+  return [date || "", channel || "", currency || ""].join("|");
+}
+
 function splitKey(key) {
   const [channel, currency] = String(key || "").split("|");
   return [channel || "", currency || ""];
@@ -660,6 +694,13 @@ function normalizeDate(value) {
   const displayMatch = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
   if (displayMatch) return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
   return "";
+}
+
+function dateDistanceDays(left, right) {
+  const leftTime = Date.parse(`${left}T00:00:00Z`);
+  const rightTime = Date.parse(`${right}T00:00:00Z`);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return Number.MAX_SAFE_INTEGER;
+  return Math.round((leftTime - rightTime) / 86400000);
 }
 
 function parseNumber(value) {

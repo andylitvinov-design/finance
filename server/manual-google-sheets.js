@@ -263,7 +263,7 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
     .map(normalizeOstatkiAppendCandidate)
     .filter((row) => row.date && row.channel && row.currency && row.amount !== null);
   if (!candidates.length) {
-    return { appended: [], skipped: [], appendRowCount: 0 };
+    return { appended: [], updated: [], skipped: [], appendRowCount: 0, updateRowCount: 0 };
   }
 
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
@@ -273,59 +273,122 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
     accessToken,
     fetchImpl,
   });
-  const existingKeys = new Set(parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []).map(buildOstatkiKey));
-  const appendRows = [];
+  const balanceValues = valuesBySheet[BALANCE_SHEET_NAME] || [];
+  const existingRowNumberByKey = buildOstatkiRowNumberByKey(balanceValues);
   const appended = [];
+  const updated = [];
   const skipped = [];
+  const appendRows = [];
+  const updateRequests = [];
 
   for (const row of candidates) {
     const key = buildOstatkiKey(row);
-    if (existingKeys.has(key)) {
-      skipped.push({ ...row, reason: "duplicate_date_channel_currency" });
-      continue;
+    const rowNumber = existingRowNumberByKey.get(key);
+    const values = buildOstatkiValueRow(row);
+    if (rowNumber) {
+      updateRequests.push({ rowNumber, values });
+      updated.push({ ...row, reason: "updated_date_channel_currency" });
+    } else {
+      appendRows.push(values);
+      appended.push(row);
     }
-    existingKeys.add(key);
-    appendRows.push([
-      row.date,
-      row.channel,
-      formatOstatkiAmount(row.amount),
-      row.currency,
-      "",
-      "",
-      row.comment,
-    ]);
-    appended.push(row);
-  }
-
-  if (!appendRows.length) {
-    return { appended, skipped, appendRowCount: 0 };
   }
 
   const escaped = BALANCE_SHEET_NAME.replace(/'/g, "''");
-  const range = encodeURIComponent(`'${escaped}'!A:G`);
-  const response = await fetchImpl(
-    `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ values: appendRows }),
+  const updatedRanges = [];
+  for (const request of updateRequests) {
+    const updateRange = encodeURIComponent(`'${escaped}'!A${request.rowNumber}:G${request.rowNumber}`);
+    const response = await fetchImpl(
+      `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${updateRange}?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        headers: buildSheetsJsonHeaders(accessToken),
+        body: JSON.stringify({ values: [request.values] }),
+      }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Sheets Остатки update failed with HTTP ${response.status}`);
     }
-  );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Sheets Остатки append failed with HTTP ${response.status}`);
+    updatedRanges.push(payload?.updatedRange || null);
+  }
+
+  let appendRange = null;
+  if (appendRows.length) {
+    const range = encodeURIComponent(`'${escaped}'!A:G`);
+    const response = await fetchImpl(
+      `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      {
+        method: "POST",
+        headers: buildSheetsJsonHeaders(accessToken),
+        body: JSON.stringify({ values: appendRows }),
+      }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Sheets Остатки append failed with HTTP ${response.status}`);
+    }
+    appendRange = payload?.updates?.updatedRange || null;
   }
 
   return {
     appended,
+    updated,
     skipped,
-    appendRowCount: appendRows.length,
-    updatedRange: payload?.updates?.updatedRange || null,
+    appendRowCount: appended.length,
+    updateRowCount: updated.length,
+    updatedRange: appendRange || updatedRanges.filter(Boolean).at(-1) || null,
+    updatedRanges: updatedRanges.filter(Boolean),
   };
+}
+
+function buildSheetsJsonHeaders(accessToken) {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+}
+
+function buildOstatkiValueRow(row) {
+  return [
+    row.date,
+    row.channel,
+    formatOstatkiAmount(row.amount),
+    row.currency,
+    "",
+    "",
+    row.comment,
+  ];
+}
+
+function buildOstatkiRowNumberByKey(values) {
+  const headerIndex = (values || []).findIndex((row) => {
+    const normalized = (row || []).map((cell) => normalizeCell(cell));
+    return normalized.includes("дата") || normalized.includes("date");
+  });
+  if (headerIndex === -1) return new Map();
+  const header = values[headerIndex] || [];
+  const dateIndex = findHeaderIndex(header, ["дата", "date"]);
+  const channelIndex = findHeaderIndex(header, ["канал", "account", "channel"]);
+  const amountIndex = findHeaderIndex(header, ["сумма", "amount"]);
+  const currencyIndex = findHeaderIndex(header, ["валюта", "currency"]);
+  const result = new Map();
+  if (dateIndex === -1 || channelIndex === -1 || amountIndex === -1) return result;
+  for (let index = headerIndex + 1; index < values.length; index += 1) {
+    const raw = values[index] || [];
+    if (!raw.some((cell) => String(cell || "").trim())) continue;
+    const rawChannel = String(raw[channelIndex] || "").trim();
+    const rawCurrency = currencyIndex === -1 ? "" : String(raw[currencyIndex] || "").trim();
+    const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
+    const currency = normalizeBalanceCurrency(rawCurrency, channel);
+    const amount = String(raw[amountIndex] || "").trim();
+    const row = { date: normalizeDate(raw[dateIndex]), channel, currency, amount };
+    if (!row.date || !row.channel || !row.currency || !row.amount) continue;
+    const key = buildOstatkiKey(row);
+    if (!result.has(key)) result.set(key, index + 1);
+  }
+  return result;
 }
 
 async function requestServiceAccountAccessToken({ clientEmail, privateKey, scope = SHEETS_SCOPE, fetchImpl }) {
@@ -934,20 +997,31 @@ function normalizeOstatkiAppendCandidate(row) {
   const rawAmount = String(row?.amount ?? "").trim();
   const currency = normalizeBalanceCurrency(row?.currency, rawChannel);
   const channel = normalizeBalanceChannel(rawChannel, currency);
-  const amount = rawAmount ? parseNumberString(rawAmount) : null;
+  const amount = parseStrictOstatkiNumber(rawAmount);
   return {
     date: normalizeDate(row?.date),
     channel,
     currency,
     amount: Number.isFinite(amount) ? amount : null,
-    comment: String(row?.comment || "period reconciliation carried forward").trim(),
+    comment: String(row?.comment || "").trim(),
   };
 }
 
 function formatOstatkiAmount(value) {
-  const numeric = Number(value);
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const numeric = typeof value === "number" ? value : parseStrictOstatkiNumber(raw);
   if (!Number.isFinite(numeric)) return "";
   return String(numeric).replace(".", ",");
+}
+
+function parseStrictOstatkiNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.+-]/g, "");
+  if (!normalized || normalized === "+" || normalized === "-" || normalized === "." || normalized === "+." || normalized === "-.") return null;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function buildOstatkiKey(row) {
