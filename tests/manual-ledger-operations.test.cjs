@@ -478,6 +478,33 @@ test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids"
   assert.equal(rows[0].rawSourceId, "wise:WISE-TXN-1");
 });
 
+test("buildLedgerRowsFromAccountingEntries keeps Wise expense net equal to balance debit when fee is informational", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-16",
+      channel: "wise usd",
+      localAmount: 142.71,
+      currency: "USD",
+      usdAmount: 142.71,
+      netAmount: 142.71,
+      feeAmount: 0.41,
+      category: "business",
+      direction: "expense",
+      source: "wise",
+      sourceTransactionId: "CARD-3800823225",
+      description: "Wise card expense"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "wise");
+  assert.equal(rows[0].amountGross, "142,7100");
+  assert.equal(rows[0].amountFee, "0,4100");
+  assert.equal(rows[0].amountNet, "142,7100");
+  assert.equal(rows[0].rawSourceId, "CARD-3800823225");
+});
+
 test("duplicate screenshot income is skipped and reported in save summary", () => {
   const context = buildLedgerTestContext();
   const entries = [
