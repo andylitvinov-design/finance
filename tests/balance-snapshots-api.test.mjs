@@ -136,6 +136,8 @@ test("balance snapshots API returns input rows for active ledger channels missin
     row.date === "2026-05-15"
     && row.channel === "wise usd"
     && row.currency === "USD"
+    && row.sheet === "Остатки"
+    && row.amount_required === true
     && row.existing_amount === 1300
     && row.needs_input === false
     && row.source === "existing_balance"
@@ -145,10 +147,57 @@ test("balance snapshots API returns input rows for active ledger channels missin
     row.date === "2026-05-15"
     && row.channel === "paypal eur"
     && row.currency === "EUR"
+    && row.sheet === "Остатки"
+    && row.amount_required === true
     && row.existing_amount === null
     && row.needs_input === true
     && row.source === "active_channel_missing_balance"
     && row.status === "needs_input"
+  ));
+  assert.equal(
+    inputRows.filter((row) => row.date === "2026-05-15" && row.channel === "wise usd" && row.currency === "USD").length,
+    1
+  );
+});
+
+test("balance snapshots reads Остатки rows and warns about Факт now rows missing in Остатки", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-17", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: "1070.48" },
+      ],
+      legacyExpenseRows: [
+        {
+          date: "2026-05-17",
+          category: "now",
+          amounts: {
+            "трансервайз дол": "1070.48",
+            "пейпал дол": "55",
+          },
+        },
+      ],
+      operations: [],
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_snapshots.rows, [
+    { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 1070.48 },
+  ]);
+  assert.ok(snapshot.warnings.includes("Остатки внесены во вкладку Факт, но сверка использует вкладку Остатки."));
+  assert.ok(snapshot.balance_snapshots.fact_balance_rows.some((row) =>
+    row.sheet === "Факт"
+    && row.expected_sheet === "Остатки"
+    && row.channel === "пейпал дол"
+    && row.currency === "USD"
+    && row.status === "missing_in_ostatki"
+  ));
+  assert.ok(snapshot.balance_snapshots.fact_balance_rows.some((row) =>
+    row.channel === "трансервайз дол"
+    && row.currency === "USD"
+    && row.status === "matched_ostatki"
   ));
 });
 

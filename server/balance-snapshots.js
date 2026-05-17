@@ -5,6 +5,10 @@ import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
+const BALANCE_SHEET_NAME = "Остатки";
+const FACT_SHEET_NAME = "Факт";
+const FACT_BALANCE_WARNING = "Остатки внесены во вкладку Факт, но сверка использует вкладку Остатки.";
+const BALANCE_TARGET_COLUMNS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -64,6 +68,9 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
   if (balanceSnapshots.incomplete_rows) {
     warnings.push(`needs verification: ${balanceSnapshots.incomplete_rows} Остатки row(s) are incomplete.`);
   }
+  if (balanceSnapshots.fact_balance_rows?.some((row) => row.status === "missing_in_ostatki")) {
+    warnings.push(FACT_BALANCE_WARNING);
+  }
 
   return {
     ok: true,
@@ -107,6 +114,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   const invalidRows = filteredRows.filter((row) => !row.valid);
   const dates = unique(validRows.map((row) => row.date)).sort();
   const targetDate = resolveInputTargetDate(periodFilter, validRows);
+  const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
   return {
     total_rows: filteredRows.length,
@@ -114,6 +122,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     incomplete_rows: invalidRows.length,
     dates,
     rows: buildDetailedRows(validRows),
+    fact_balance_rows: factBalanceRows,
     input_rows: buildInputRows({
       targetDate,
       balanceRows: normalizedRows.filter((row) => row.valid),
@@ -149,6 +158,7 @@ function emptyBalanceSnapshotsSummary() {
     missing_currency_rows: 0,
     missing_amount_rows: 0,
     incomplete_preview: [],
+    fact_balance_rows: [],
   };
 }
 
@@ -182,6 +192,9 @@ function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) 
         date: targetDate,
         channel: pair.channel,
         currency: pair.currency,
+        sheet: BALANCE_SHEET_NAME,
+        amount_required: true,
+        target_columns: BALANCE_TARGET_COLUMNS,
         existing_amount: existingAmount,
         amount: existingAmount,
         needs_input: existingAmount === null,
@@ -189,6 +202,43 @@ function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) 
         status: existingAmount === null ? "needs_input" : "already_entered",
       };
     });
+}
+
+function buildFactBalanceRows(repository = {}, periodFilter = {}, balanceRows = []) {
+  const rows = [];
+  for (const row of repository.legacyExpenseRows || []) {
+    if (normalizeFactCategory(row?.category) !== "now") continue;
+    const date = normalizeDate(row?.date);
+    if (!date || !isDateInPeriod(date, periodFilter)) continue;
+    for (const [channel, rawAmount] of Object.entries(row.amounts || {})) {
+      const amount = parseNumber(rawAmount);
+      if (!String(channel || "").trim() || amount === null) continue;
+      const currency = inferCurrencyFromChannel(channel);
+      if (!currency) continue;
+      const exists = balanceRows.some((balance) =>
+        balance.date === date
+        && makeKey(balance.channel, balance.currency) === makeKey(channel, currency)
+      );
+      rows.push({
+        date,
+        channel,
+        currency,
+        amount,
+        sheet: FACT_SHEET_NAME,
+        expected_sheet: BALANCE_SHEET_NAME,
+        status: exists ? "matched_ostatki" : "missing_in_ostatki",
+      });
+    }
+  }
+  return rows.sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+    return left.currency.localeCompare(right.currency);
+  });
+}
+
+function normalizeFactCategory(value) {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
 }
 
 function getOperationChannelCurrencyPairs(operation) {
@@ -345,8 +395,13 @@ function compareChannelCurrency(left, right) {
 function isBalanceRowInPeriod(row, periodFilter = {}) {
   if (!periodFilter.from && !periodFilter.to) return true;
   if (!row.date) return false;
-  if (periodFilter.from && row.date < periodFilter.from) return false;
-  if (periodFilter.to && row.date > periodFilter.to) return false;
+  return isDateInPeriod(row.date, periodFilter);
+}
+
+function isDateInPeriod(date, periodFilter = {}) {
+  if (!periodFilter.from && !periodFilter.to) return true;
+  if (periodFilter.from && date < periodFilter.from) return false;
+  if (periodFilter.to && date > periodFilter.to) return false;
   return true;
 }
 
