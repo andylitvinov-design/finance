@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
@@ -70,6 +71,7 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
     project: PROJECT_NAME,
     period: resolvePeriod(periodFilter, balanceSnapshots.dates),
     balance_snapshots: balanceSnapshots,
+    provider_current_balance_status: getProviderCurrentBalanceCapabilities(),
     warnings: unique([...(repository.warnings || []).map(toSafeWarning), ...warnings]),
     audit_checks: auditChecks,
   };

@@ -1,7 +1,17 @@
 {
   "outputDirectory": ".",
   "regions": ["fra1"],
+  "crons": [
+    {
+      "path": "/api/auto-balance-snapshots",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/api/auto-balance-snapshots",
+      "destination": "/api/index?action=autoBalanceSnapshots"
+    },
     {
       "source": "/api/balance-snapshots",
       "destination": "/api/index?action=balanceSnapshots"
