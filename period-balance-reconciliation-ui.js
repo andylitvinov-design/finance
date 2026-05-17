@@ -304,7 +304,8 @@
         formatNumber(row.real_delta),
         formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatNumber(row.manual_provider_closing_balance),
-        row.fact_source || "—",
+        formatNumber(getCarriedForwardComparisonFact(row)),
+        getFactSourceLabel(row.fact_source),
         formatNumber(row.real_difference),
         getStatusLabel(row.status),
         row.missing_fact_reason || row.diagnosis || "—",
@@ -314,9 +315,14 @@
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ИСТОЧНИК", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ИСТОЧНИК ФАКТА", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
+  }
+
+  function getCarriedForwardComparisonFact(row) {
+    if (String(row?.fact_source || "").trim() !== "carried_forward") return null;
+    return row.displayed_fact_balance ?? row.carried_forward_balance;
   }
 
   function buildChannelCurrencyTotalRows(rows) {
@@ -330,6 +336,7 @@
           real_delta: createTotalBucket(),
           calculated_closing_balance: createTotalBucket(),
           manual_provider_closing_balance: createTotalBucket(),
+          carried_forward_comparison_fact: createTotalBucket(),
           real_difference: createTotalBucket(),
         });
       }
@@ -338,6 +345,7 @@
       addNumeric(totals, "real_delta", row.real_delta);
       addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
       addNumeric(totals, "manual_provider_closing_balance", row.manual_provider_closing_balance);
+      addNumeric(totals, "carried_forward_comparison_fact", getCarriedForwardComparisonFact(row));
       addNumeric(totals, "real_difference", row.real_difference);
     });
     return Array.from(totalsByCurrency.entries())
@@ -349,6 +357,7 @@
         formatTotalBucket(totals.real_delta),
         formatTotalBucket(totals.calculated_closing_balance),
         formatTotalBucket(totals.manual_provider_closing_balance),
+        formatTotalBucket(totals.carried_forward_comparison_fact),
         "—",
         formatTotalBucket(totals.real_difference),
         "Итого по валюте",
@@ -414,6 +423,15 @@
     if (normalized === "missing_amount_net") return "Нет amount_net";
     if (normalized === "no_data") return "Нет данных";
     return "Проверить";
+  }
+
+  function getFactSourceLabel(source) {
+    const normalized = String(source || "").trim();
+    if (normalized === "manual") return "ручной";
+    if (normalized === "provider") return "провайдер";
+    if (normalized === "carried_forward") return "перенесён";
+    if (normalized === "missing") return "нет факта";
+    return normalized || "—";
   }
 
   function formatNumber(value) {
