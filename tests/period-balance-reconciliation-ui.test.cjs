@@ -163,15 +163,16 @@ test("period balance renders channel balances before secondary currency totals",
 
   const channelRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
   assert.equal(channelRows.length, 7);
-  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ИСТОЧНИК ФАКТА", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"]);
+  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(channelRows[1][0], "wise usd");
-  assert.equal(channelRows[1][9], "OK");
+  assert.deepEqual(channelRows[1], ["wise usd", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "ручной", "0", "-25", "OK", "—"]);
   assert.equal(channelRows[2][0], "paypal eur");
   assert.equal(channelRows[3][0], "mono uah");
-  assert.equal(channelRows[3][9], "Реальное расхождение");
-  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "240", "—", "—", "0", "Итого по валюте", "—"]);
-  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "-25", "75", "70", "—", "—", "-5", "Итого по валюте", "—"]);
-  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "125", "1125", "1125", "—", "—", "0", "Итого по валюте", "—"]);
+  assert.equal(channelRows[3][3], "0");
+  assert.equal(channelRows[3][12], "Реальное расхождение");
+  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "40", "240", "240", "—", "—", "0", "0", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "0", "100", "-25", "75", "70", "—", "—", "-5", "-25", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "—", "0", "-25", "Итого по валюте", "—"]);
   assert.match(block.textContent, /Сводка по валютам, справочно/);
   assert.doesNotMatch(block.textContent, /Итоги по валютам/);
   assert.doesNotMatch(block.textContent, /Итоги по всем каналам/);
@@ -196,42 +197,53 @@ test("period balance main table uses payment channel rows and preserves mismatch
         channel: "трансервайз дол",
         currency: "USD",
         opening_balance: 2704.25,
+        planned_delta: 0,
+        planned_closing_balance: 2704.25,
         real_delta: -1628,
         computed_real_closing_balance: 1076.25,
         manual_provider_closing_balance: 1070.48,
         factual_closing_balance: 1070.48,
         fact_source: "manual",
         real_difference: -5.77,
+        plan_vs_real_delta: -1628,
         status: "mismatch",
       },
       {
         channel: "Яндекс руб",
         currency: "RUB",
         opening_balance: 100,
+        planned_delta: 0,
+        planned_closing_balance: 100,
         real_delta: 0,
         computed_real_closing_balance: 100,
         manual_provider_closing_balance: 100,
         factual_closing_balance: 100,
         fact_source: "manual",
         real_difference: 0,
+        plan_vs_real_delta: 50,
         status: "ok",
       },
       {
         channel: "монобанк грн",
         currency: "UAH",
         opening_balance: 14033,
+        planned_delta: 0,
+        planned_closing_balance: 14033,
         real_delta: 0,
         computed_real_closing_balance: 14033,
         manual_provider_closing_balance: null,
         factual_closing_balance: null,
         fact_source: "missing",
         real_difference: null,
+        plan_vs_real_delta: 0,
         status: "missing_provider_balance",
       },
       {
         channel: "БАНК КАНАДА cad",
         currency: "CAD",
         opening_balance: 10107.92,
+        planned_delta: 0,
+        planned_closing_balance: 10107.92,
         real_delta: 0,
         computed_real_closing_balance: 10107.92,
         manual_provider_closing_balance: null,
@@ -240,30 +252,37 @@ test("period balance main table uses payment channel rows and preserves mismatch
         factual_closing_balance: 7351,
         fact_source: "carried_forward",
         real_difference: -2756.92,
+        plan_vs_real_delta: 0,
         status: "carried_forward_conditional",
       },
       {
         channel: "Бинанс spot",
         currency: "USDT",
         opening_balance: null,
+        planned_delta: 0,
+        planned_closing_balance: null,
         real_delta: 103,
         computed_real_closing_balance: null,
         manual_provider_closing_balance: null,
         factual_closing_balance: null,
         fact_source: "missing",
         real_difference: null,
+        plan_vs_real_delta: 103,
         status: "missing_opening_balance",
       },
       {
         channel: "пейпал евр",
         currency: "EUR",
         opening_balance: -349.14,
+        planned_delta: 0,
+        planned_closing_balance: -349.14,
         real_delta: -392.75,
         computed_real_closing_balance: -741.89,
         manual_provider_closing_balance: null,
         factual_closing_balance: null,
         fact_source: "missing",
         real_difference: null,
+        plan_vs_real_delta: -392.75,
         missing_amount_net_rows: 1,
         status: "missing_amount_net",
       },
@@ -286,10 +305,11 @@ test("period balance main table uses payment channel rows and preserves mismatch
   ["ИТОГО CAD", "ИТОГО EUR", "ИТОГО RUB", "ИТОГО UAH", "ИТОГО USD", "ИТОГО USDT"].forEach((label) => {
     assert.ok(rowLabels.includes(label), `${label} total row must render when currency is present`);
   });
-  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 10), ["USD", "2704.25", "-1628", "1076.25", "1070.48", "—", "ручной", "-5.77", "Реальное расхождение"]);
-  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad").slice(1, 10), ["CAD", "10107.92", "0", "10107.92", "—", "7351", "перенесён", "-2756.92", "Условно перенесено"]);
-  assert.equal(rows.find((row) => row[0] === "пейпал евр")[9], "Нет amount_net");
-  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[9], "Нет стартового остатка");
+  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 13), ["USD", "2704.25", "0", "2704.25", "-1628", "1076.25", "1070.48", "—", "ручной", "-5.77", "-1628", "Реальное расхождение"]);
+  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad").slice(1, 13), ["CAD", "10107.92", "0", "10107.92", "0", "10107.92", "—", "7351", "перенесён", "-2756.92", "0", "Условно перенесено"]);
+  assert.equal(rows.find((row) => row[0] === "Яндекс руб")[12], "OK");
+  assert.equal(rows.find((row) => row[0] === "пейпал евр")[12], "Нет amount_net");
+  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[12], "Нет стартового остатка");
 });
 
 test("period balance analytics UI does not render raw daily snapshot inventory", () => {
@@ -389,7 +409,7 @@ test("period balance UI shows missing provider balance as blocked, not OK", () =
   assert.match(text, /Нет фактического остатка на дату/);
   assert.match(text, /Добавить фактический остаток на дату окончания периода/);
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.equal(positionRows[1][9], "Нет фактического остатка на дату");
+  assert.equal(positionRows[1][12], "Нет фактического остатка на дату");
 });
 
 test("period balance UI keeps existing factual values visible when summary failed", () => {
@@ -437,11 +457,11 @@ test("period balance UI keeps existing factual values visible when summary faile
   }));
 
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.equal(positionRows[1][5], "1070.48");
-  assert.equal(positionRows[1][6], "—");
-  assert.equal(positionRows[1][7], "ручной");
-  assert.equal(positionRows[1][8], "-5.77");
-  assert.equal(positionRows[2][5], "—");
+  assert.equal(positionRows[1][7], "1070.48");
+  assert.equal(positionRows[1][8], "—");
+  assert.equal(positionRows[1][9], "ручной");
+  assert.equal(positionRows[1][10], "-5.77");
+  assert.equal(positionRows[2][7], "—");
 });
 
 test("period balance UI separates manual, carried-forward, and missing fact values", () => {
@@ -452,6 +472,8 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
         channel: "provider usd",
         currency: "USD",
         opening_fact_balance: 10,
+        planned_delta: 1,
+        planned_closing_balance: 11,
         real_delta: 2,
         calculated_closing_balance: 12,
         computed_real_closing_balance: 12,
@@ -461,12 +483,15 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
         factual_closing_balance: 11.5,
         fact_source: "provider",
         real_difference: -0.5,
+        plan_vs_real_delta: 1,
         status: "mismatch",
       },
       {
         channel: "wise usd",
         currency: "USD",
         opening_fact_balance: 1000,
+        planned_delta: 100,
+        planned_closing_balance: 1100,
         real_delta: 100,
         calculated_closing_balance: 1100,
         computed_real_closing_balance: 1100,
@@ -476,12 +501,15 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
         factual_closing_balance: null,
         fact_source: "missing",
         real_difference: null,
+        plan_vs_real_delta: 0,
         status: "missing_provider_balance",
       },
       {
         channel: "cash usd",
         currency: "USD",
         opening_fact_balance: 50,
+        planned_delta: 0,
+        planned_closing_balance: 50,
         real_delta: 0,
         calculated_closing_balance: 999,
         computed_real_closing_balance: 999,
@@ -491,6 +519,7 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
         factual_closing_balance: 50,
         fact_source: "carried_forward",
         real_difference: 0,
+        plan_vs_real_delta: 0,
         status: "carried_forward_conditional",
       },
     ],
@@ -502,21 +531,21 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   const wise = rows.find((row) => row[0] === "wise usd");
   const cash = rows.find((row) => row[0] === "cash usd");
 
-  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ИСТОЧНИК ФАКТА", "РАЗНИЦА", "СТАТУС", "ПРИЧИНА"]);
-  assert.equal(provider[5], "11.5");
-  assert.equal(provider[6], "—");
-  assert.equal(provider[7], "провайдер");
-  assert.equal(wise[4], "1100");
-  assert.equal(wise[5], "—");
-  assert.equal(wise[6], "—");
-  assert.equal(wise[7], "нет факта");
-  assert.equal(cash[4], "999");
-  assert.equal(cash[5], "—");
-  assert.equal(cash[6], "50");
-  assert.equal(cash[7], "перенесён");
-  assert.equal(cash[8], "0");
-  assert.notEqual(cash[5], "999");
-  assert.notEqual(cash[6], "999");
+  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
+  assert.equal(provider[7], "11.5");
+  assert.equal(provider[8], "—");
+  assert.equal(provider[9], "провайдер");
+  assert.equal(wise[6], "1100");
+  assert.equal(wise[7], "—");
+  assert.equal(wise[8], "—");
+  assert.equal(wise[9], "нет факта");
+  assert.equal(cash[6], "999");
+  assert.equal(cash[7], "—");
+  assert.equal(cash[8], "50");
+  assert.equal(cash[9], "перенесён");
+  assert.equal(cash[10], "0");
+  assert.notEqual(cash[7], "999");
+  assert.notEqual(cash[8], "999");
 });
 
 test("period balance API failure renders non-blocking Analytics error", async () => {
@@ -587,6 +616,7 @@ function buildSnapshot(overrides = {}) {
       factual_closing_balance: 1125,
       fact_source: "manual",
       real_difference: 0,
+      plan_vs_real_delta: -25,
       closing_balance_source: "exact",
       status: "ok",
     },
@@ -602,6 +632,7 @@ function buildSnapshot(overrides = {}) {
       factual_closing_balance: 240,
       fact_source: "manual",
       real_difference: 0,
+      plan_vs_real_delta: 0,
       closing_balance_source: "exact",
       status: "ok",
     },
@@ -617,6 +648,7 @@ function buildSnapshot(overrides = {}) {
       factual_closing_balance: 70,
       fact_source: "manual",
       real_difference: -5,
+      plan_vs_real_delta: -25,
       closing_balance_source: "exact",
       status: "mismatch",
       diagnosis: "Расхождение",
