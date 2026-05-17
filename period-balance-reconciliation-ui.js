@@ -16,7 +16,7 @@
       const result = original.apply(this, arguments);
       try {
         const placeholder = renderPlaceholder(globalRoot.document);
-        insertBeforeRemainingBalanceSections(container, placeholder);
+        prependToAnalyticsContainer(container, placeholder);
         loadAndRender(globalRoot, placeholder);
       } catch (error) {
         // Additive UI extension must never break the existing analytics screen.
@@ -39,14 +39,10 @@
     }
   }
 
-  function insertBeforeRemainingBalanceSections(container, node) {
+  function prependToAnalyticsContainer(container, node) {
     const children = Array.from(container.children || []);
-    const firstRemainingBalanceSection = children.find((child) => {
-      const className = String(child?.className || "");
-      return className.includes("balance-coverage-section") || className.includes("balance-snapshots-section");
-    });
-    if (firstRemainingBalanceSection && typeof container.insertBefore === "function") {
-      container.insertBefore(node, firstRemainingBalanceSection);
+    if (children[0] && typeof container.insertBefore === "function") {
+      container.insertBefore(node, children[0]);
       return;
     }
     container.appendChild(node);
@@ -97,8 +93,7 @@
       return section;
     }
 
-    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, reconciliation));
-    section.appendChild(renderCurrencyTable(doc, reconciliation.by_currency || []));
+    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, reconciliation.by_channel_currency || []));
     section.appendChild(renderPositionTable(doc, reconciliation.by_channel_currency || []));
 
     const actions = reconciliation.actionable_rows || [];
@@ -118,6 +113,9 @@
         ])
       ));
     }
+
+    section.appendChild(renderCurrencyTable(doc, reconciliation.by_currency || []));
+    section.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const warnings = snapshot?.warnings || reconciliation.warnings || [];
     if (warnings.length) {
@@ -139,24 +137,26 @@
     return section;
   }
 
-  function renderSummary(doc, summary, period, reconciliation) {
+  function renderSummary(doc, summary, period, positionRows) {
     const block = doc.createElement("div");
+    block.className = "period-balance-verdict";
     const status = doc.createElement("div");
-    status.className = summary.status === "failed" ? "finance-status error" : "finance-status";
-    const label = summary.status === "ok" ? "OK" : summary.status === "failed" ? "НЕ ОК" : "Проверить";
-    status.textContent = `${label} (${period.from || "?"} - ${period.to || "?"}): позиций ${Number(summary.positions_checked || 0)}, валют ${Number(summary.currencies_checked || 0)}, planned source: ${summary.planned_source_status || "needs_verification"}.`;
+    const counts = getDisplayStatusCounts(summary, positionRows);
+    const label = getFinalVerdict(summary, counts);
+    status.className = label === "НЕ ОК" ? "finance-status error" : "finance-status";
+    status.textContent = `ИТОГО: ${label} (${period.from || "?"} - ${period.to || "?"})`;
     block.appendChild(status);
-    block.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const cards = doc.createElement("div");
     cards.className = "metrics period-balance-summary";
     [
-      ["Позиции", summary.positions_checked],
-      ["Валюты", summary.currencies_checked],
-      ["Каналы", summary.channels_checked],
-      ["План строк", summary.planned_rows],
-      ["Без amount_net", summary.missing_amount_net_rows],
-      ["Условно перенесено", summary.status_counts?.carried_forward_conditional],
+      ["Период", `${period.from || "?"} - ${period.to || "?"}`],
+      ["Проверено позиций", counts.total],
+      ["OK позиций", counts.ok],
+      ["Расхождения", counts.mismatch],
+      ["Нет начального", counts.missing_opening_balance],
+      ["Нет конечного", counts.missing_closing_balance],
+      ["Нет amount_net", counts.missing_amount_net],
     ].forEach(([text, value]) => {
       const card = doc.createElement("div");
       card.className = "metric";
@@ -165,12 +165,40 @@
       labelNode.textContent = text;
       const valueNode = doc.createElement("div");
       valueNode.className = "metric-value";
-      valueNode.textContent = String(Number(value || 0));
+      valueNode.textContent = String(value ?? 0);
       card.append(labelNode, valueNode);
       cards.appendChild(card);
     });
     block.appendChild(cards);
     return block;
+  }
+
+  function getDisplayStatusCounts(summary, rows) {
+    const statusCounts = summary?.status_counts || {};
+    const rowsList = Array.isArray(rows) ? rows : [];
+    const derived = rowsList.reduce((result, row) => {
+      const status = String(row?.status || "needs_verification").trim() || "needs_verification";
+      result[status] = (result[status] || 0) + 1;
+      return result;
+    }, {});
+    return {
+      total: Number(summary?.positions_checked ?? rowsList.length ?? 0) || 0,
+      ok: Number(statusCounts.ok ?? derived.ok ?? 0) || 0,
+      mismatch: Number(statusCounts.mismatch ?? derived.mismatch ?? 0) || 0,
+      missing_opening_balance: Number(statusCounts.missing_opening_balance ?? derived.missing_opening_balance ?? 0) || 0,
+      missing_closing_balance: Number(statusCounts.missing_closing_balance ?? derived.missing_closing_balance ?? 0) || 0,
+      missing_amount_net: Number(statusCounts.missing_amount_net ?? summary?.missing_amount_net_rows ?? derived.missing_amount_net ?? 0) || 0,
+      needs_verification: Number(statusCounts.needs_verification ?? derived.needs_verification ?? 0) || 0,
+    };
+  }
+
+  function getFinalVerdict(summary, counts) {
+    const status = String(summary?.status || "").trim();
+    if (status === "ok") return "OK";
+    if (status === "failed") return "НЕ ОК";
+    if (counts.mismatch || counts.missing_opening_balance || counts.missing_closing_balance || counts.missing_amount_net) return "НЕ ОК";
+    if (counts.total && counts.ok === counts.total) return "OK";
+    return "Проверить";
   }
 
   function renderTopTotals(doc, reconciliation) {
@@ -181,7 +209,7 @@
     block.className = "period-balance-total-summary";
     const title = doc.createElement("div");
     title.className = "tab-note";
-    title.textContent = "Итоги по всем каналам (валюты не смешиваются)";
+    title.textContent = "Итоги по всем каналам";
     block.appendChild(title);
     if (!currencies.length) {
       const empty = doc.createElement("div");
@@ -265,19 +293,17 @@
     return renderSubsection(
       doc,
       "По счетам и валютам",
-      ["Счёт", "Валюта", "Было", "План Δ", "План должно", "Реал Δ", "Реал должно", "Факт", "Разница", "Источник факта", "Статус"],
+      ["Счёт", "Валюта", "Было", "Реал Δ", "Реал должно", "Факт", "Разница", "Статус", "Что сделать"],
       rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
         formatNumber(row.opening_balance),
-        formatNumber(row.planned_delta),
-        formatNumber(row.planned_closing_balance),
         formatNumber(row.real_delta),
         formatNumber(row.computed_real_closing_balance),
         formatNumber(row.factual_closing_balance),
         formatNumber(row.real_difference),
-        row.closing_balance_source || "—",
         getStatusLabel(row.status),
+        row.fix_action || "—",
       ])
     );
   }

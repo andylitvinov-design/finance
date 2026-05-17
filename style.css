@@ -376,11 +376,24 @@ tr:nth-child(even) td { background: #fffcf7; }
 .period-balance-reconciliation-section {
   display: grid;
   gap: 14px;
+  margin-top: 0;
+}
+.period-balance-reconciliation-section + .analytics-section,
+.period-balance-reconciliation-section + .finance-analysis-section {
   margin-top: 18px;
 }
 .period-balance-total-summary {
   display: grid;
   gap: 10px;
+}
+.period-balance-verdict {
+  display: grid;
+  gap: 12px;
+}
+.period-balance-table-wrap {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 .period-balance-total-wrap table,
 .period-balance-table-wrap table {
