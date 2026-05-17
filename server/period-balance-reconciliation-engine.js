@@ -2,6 +2,7 @@ const STATUS = {
   OK: "ok",
   MISMATCH: "mismatch",
   MISSING_OPENING: "missing_opening_balance",
+  MISSING_PROVIDER: "missing_provider_balance",
   MISSING_CLOSING: "missing_closing_balance",
   CARRIED_FORWARD: "carried_forward_conditional",
   MISSING_AMOUNT_NET: "missing_amount_net",
@@ -75,6 +76,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
   const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
+  const lastObservedClosingSnapshot = closingSnapshot || balanceIndex.findLatestBeforeOrOn(key, to);
   const hasMovement = Boolean(real && (real.rows || real.inflow || real.outflow || real.missing_amount_net_rows));
   const hasPlan = Boolean(planned && (planned.rows || planned.inflow || planned.outflow));
   const opening = openingSnapshot?.amount ?? null;
@@ -96,12 +98,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     status = STATUS.MISSING_AMOUNT_NET;
   } else if (opening === null && (hasMovement || hasPlan)) {
     status = STATUS.MISSING_OPENING;
-  } else if (factualClosing === null && !hasMovement && !hasPlan && opening !== null) {
-    factualClosing = opening;
-    closingSource = "carried_forward";
-    status = STATUS.CARRIED_FORWARD;
-  } else if (factualClosing === null && (hasMovement || hasPlan)) {
-    status = STATUS.MISSING_CLOSING;
+  } else if (factualClosing === null) {
+    status = STATUS.MISSING_PROVIDER;
   } else if (computedRealClosing !== null && factualClosing !== null && Math.abs(round(factualClosing - computedRealClosing)) > 0.0001) {
     status = STATUS.MISMATCH;
   }
@@ -128,12 +126,26 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     factual_closing_balance: factualClosing === null ? null : round(factualClosing),
     factual_closing_balance_date: closingSnapshot?.date || null,
     closing_balance_source: closingSource,
+    last_observed_closing_balance: lastObservedClosingSnapshot?.amount ?? null,
+    last_observed_closing_balance_date: lastObservedClosingSnapshot?.date || null,
+    last_observed_closing_balance_source: lastObservedClosingSnapshot ? (closingSnapshot ? "exact" : "stale") : "missing",
     real_difference: realDifference,
     plan_vs_real_delta: planVsRealDelta,
     movement_rows: Number(real?.rows || 0),
     planned_rows: Number(planned?.rows || 0),
     missing_amount_net_rows: missingAmountNetRows,
     status,
+    diagnostics: buildDiagnostics({
+      status,
+      missingAmountNetRows,
+      opening,
+      factualClosing,
+      realDifference,
+      realInflow,
+      realOutflow,
+      lastObservedClosingSnapshot,
+      closingSnapshot,
+    }),
   };
 
   return {
@@ -297,7 +309,13 @@ function buildBalanceIndex(balanceRows) {
     },
     findClosing(key, { from, to }) {
       const rows = byKey.get(key) || [];
-      return rows.filter((row) => (!from || row.date >= from) && (!to || row.date <= to)).at(-1) || null;
+      if (to) return rows.find((row) => row.date === to) || null;
+      return rows.filter((row) => (!from || row.date >= from)).at(-1) || null;
+    },
+    findLatestBeforeOrOn(key, to) {
+      const rows = byKey.get(key) || [];
+      if (!to) return rows.at(-1) || null;
+      return rows.filter((row) => row.date <= to).at(-1) || null;
     },
     keysBeforePeriod(from) {
       if (!from) return Array.from(byKey.keys());
@@ -360,13 +378,15 @@ function buildCurrencyRows(rows) {
 function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceStatus }) {
   const statusCounts = {};
   for (const row of rows || []) statusCounts[row.status] = (statusCounts[row.status] || 0) + 1;
-  const failed = (statusCounts[STATUS.MISMATCH] || 0) + Number(missingAmountNetRows || 0);
+  const failed = statusCounts[STATUS.MISMATCH] || 0;
   const incomplete = (statusCounts[STATUS.MISSING_OPENING] || 0)
+    + (statusCounts[STATUS.MISSING_PROVIDER] || 0)
     + (statusCounts[STATUS.MISSING_CLOSING] || 0)
+    + (statusCounts[STATUS.MISSING_AMOUNT_NET] || 0)
     + (statusCounts[STATUS.NEEDS_VERIFICATION] || 0);
 
   return {
-    status: failed ? "failed" : incomplete ? "needs_verification" : "ok",
+    status: failed ? "failed" : incomplete ? "blocked" : "ok",
     positions_checked: rows.length,
     currencies_checked: new Set((rows || []).map((row) => row.currency)).size,
     channels_checked: new Set((rows || []).map((row) => row.channel)).size,
@@ -376,12 +396,14 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
     status_counts: {
       [STATUS.OK]: statusCounts[STATUS.OK] || 0,
       [STATUS.MISMATCH]: statusCounts[STATUS.MISMATCH] || 0,
+      [STATUS.MISSING_PROVIDER]: statusCounts[STATUS.MISSING_PROVIDER] || 0,
       [STATUS.MISSING_OPENING]: statusCounts[STATUS.MISSING_OPENING] || 0,
       [STATUS.MISSING_CLOSING]: statusCounts[STATUS.MISSING_CLOSING] || 0,
       [STATUS.CARRIED_FORWARD]: statusCounts[STATUS.CARRIED_FORWARD] || 0,
       [STATUS.MISSING_AMOUNT_NET]: statusCounts[STATUS.MISSING_AMOUNT_NET] || 0,
       [STATUS.NEEDS_VERIFICATION]: statusCounts[STATUS.NEEDS_VERIFICATION] || 0,
     },
+    blocked: incomplete,
   };
 }
 
@@ -401,9 +423,38 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.CARRIED_FORWARD) return "Условно перенесено: за период нет движений и нет нового остатка, использован остаток прошлого периода.";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным.";
   if (row.status === STATUS.MISSING_OPENING) return "Нет начального Остатки перед периодом, но есть план/движение.";
+  if (row.status === STATUS.MISSING_PROVIDER) return "Нет фактического остатка на дату; сверка по этому счету заблокирована до ввода баланса провайдера.";
   if (row.status === STATUS.MISSING_CLOSING) return "Есть план/движение, но нет нового фактического Остатки за период.";
   if (row.status === STATUS.MISMATCH) return "Расхождение: фактический конечный остаток не равен реальному расчетному остатку.";
   return "Нужна проверка: не хватает данных для полной сверки периода.";
+}
+
+function buildDiagnostics({
+  status,
+  missingAmountNetRows,
+  opening,
+  factualClosing,
+  realDifference,
+  realInflow,
+  realOutflow,
+  lastObservedClosingSnapshot,
+  closingSnapshot,
+}) {
+  const categories = [];
+  if (status === STATUS.MISMATCH) {
+    categories.push("missing ledger movement", "fee/net mismatch", "sign/direction issue", "amount_net issue");
+  }
+  if (status === STATUS.MISSING_AMOUNT_NET || missingAmountNetRows) categories.push("amount_net issue");
+  if (status === STATUS.MISSING_OPENING || opening === null) categories.push("missing opening balance");
+  if (status === STATUS.MISSING_PROVIDER || factualClosing === null) categories.push("missing provider balance");
+  return {
+    categories: Array.from(new Set(categories)),
+    has_exact_provider_balance: Boolean(closingSnapshot),
+    last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
+    needs_provider_balance_on_target_date: status === STATUS.MISSING_PROVIDER,
+    has_movement: Boolean(realInflow || realOutflow || missingAmountNetRows),
+    true_mismatch: status === STATUS.MISMATCH && factualClosing !== null && realDifference !== null,
+  };
 }
 
 function buildFixAction(row) {
@@ -411,6 +462,7 @@ function buildFixAction(row) {
   if (row.status === STATUS.CARRIED_FORWARD) return "Проверить позже: добавить новый Остатки, если появится актуальный баланс.";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Заполнить amount_net у Ledger строк по этому счету/валюте.";
   if (row.status === STATUS.MISSING_OPENING) return "Добавить Остатки до начала периода по этому счету/валюте.";
+  if (row.status === STATUS.MISSING_PROVIDER) return "Добавить фактический остаток на дату окончания периода по этому счету/валюте.";
   if (row.status === STATUS.MISSING_CLOSING) return "Добавить фактический конечный Остатки за период по этому счету/валюте.";
   if (row.status === STATUS.MISMATCH) return "Проверить Ledger movements, amount_net и строку Остатки за период.";
   return "Проверить дату, счет, валюту и сумму в Ledger/Остатки.";
@@ -433,7 +485,8 @@ function getFixPriority(status) {
     [STATUS.MISSING_AMOUNT_NET]: 0,
     [STATUS.MISMATCH]: 1,
     [STATUS.MISSING_OPENING]: 2,
-    [STATUS.MISSING_CLOSING]: 3,
+    [STATUS.MISSING_PROVIDER]: 3,
+    [STATUS.MISSING_CLOSING]: 4,
     [STATUS.NEEDS_VERIFICATION]: 4,
     [STATUS.CARRIED_FORWARD]: 8,
     [STATUS.OK]: 9,
@@ -443,7 +496,7 @@ function getFixPriority(status) {
 
 function resolveCurrencyStatus(statusCounts) {
   if (statusCounts[STATUS.MISSING_AMOUNT_NET] || statusCounts[STATUS.MISMATCH]) return "failed";
-  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION]) return "needs_verification";
+  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION]) return "blocked";
   if (statusCounts[STATUS.CARRIED_FORWARD]) return STATUS.CARRIED_FORWARD;
   return STATUS.OK;
 }

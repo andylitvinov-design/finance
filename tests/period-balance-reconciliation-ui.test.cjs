@@ -141,7 +141,7 @@ test("period balance renders all position rows before currency summary tables", 
   assert.equal(positionRows[1][7], "OK");
   assert.equal(positionRows[2][0], "paypal eur");
   assert.equal(positionRows[3][0], "mono uah");
-  assert.equal(positionRows[3][7], "Расхождение");
+  assert.equal(positionRows[3][7], "Реальное расхождение");
 });
 
 test("period balance actionable rows still render under fix section only", () => {
@@ -153,6 +153,55 @@ test("period balance actionable rows still render under fix section only", () =>
   assert.equal(rows.length, 2);
   assert.equal(rows[1][0], "mono uah");
   assert.equal(rows[1][6], "Проверить Ledger movements");
+});
+
+test("period balance UI shows missing provider balance as blocked, not OK", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    summary: {
+      status: "blocked",
+      positions_checked: 1,
+      currencies_checked: 1,
+      channels_checked: 1,
+      planned_rows: 0,
+      planned_source_status: "available_empty",
+      missing_amount_net_rows: 0,
+      blocked: 1,
+      status_counts: { ok: 0, mismatch: 0, missing_provider_balance: 1 },
+    },
+    by_channel_currency: [
+      {
+        channel: "wise usd",
+        currency: "USD",
+        opening_balance: 1000,
+        real_delta: 100,
+        computed_real_closing_balance: 1100,
+        factual_closing_balance: null,
+        real_difference: null,
+        closing_balance_source: "missing",
+        status: "missing_provider_balance",
+        fix_action: "Добавить фактический остаток на дату окончания периода по этому счету/валюте.",
+      },
+    ],
+    actionable_rows: [
+      {
+        channel: "wise usd",
+        currency: "USD",
+        status: "missing_provider_balance",
+        real_difference: null,
+        plan_vs_real_delta: 100,
+        diagnosis: "Нет фактического остатка на дату; сверка заблокирована.",
+        fix_action: "Добавить фактический остаток на дату окончания периода по этому счету/валюте.",
+      },
+    ],
+  }));
+  const text = block.textContent;
+
+  assert.match(text, /Нет факта на дату/);
+  assert.match(text, /Нет фактического остатка на дату/);
+  assert.match(text, /Добавить фактический остаток на дату окончания периода/);
+  const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  assert.equal(positionRows[1][7], "Нет фактического остатка на дату");
 });
 
 test("period balance API failure renders non-blocking Analytics error", async () => {
@@ -190,28 +239,74 @@ function createOkFetch() {
   });
 }
 
-function buildSnapshot() {
+function buildSnapshot(overrides = {}) {
+  const summary = overrides.summary || {
+    status: "failed",
+    positions_checked: 3,
+    currencies_checked: 2,
+    channels_checked: 3,
+    planned_rows: 2,
+    planned_source_status: "ok",
+    missing_amount_net_rows: 1,
+    blocked: 0,
+    status_counts: {
+      ok: 2,
+      mismatch: 1,
+      missing_provider_balance: 0,
+      missing_opening_balance: 0,
+      missing_closing_balance: 0,
+      missing_amount_net: 1,
+      carried_forward_conditional: 0,
+    },
+  };
+  const byChannelCurrency = overrides.by_channel_currency || [
+    {
+      channel: "wise usd",
+      currency: "USD",
+      opening_balance: 1000,
+      planned_delta: 150,
+      planned_closing_balance: 1150,
+      real_delta: 125,
+      computed_real_closing_balance: 1125,
+      factual_closing_balance: 1125,
+      real_difference: 0,
+      closing_balance_source: "exact",
+      status: "ok",
+    },
+    {
+      channel: "paypal eur",
+      currency: "EUR",
+      opening_balance: 200,
+      planned_delta: 40,
+      planned_closing_balance: 240,
+      real_delta: 40,
+      computed_real_closing_balance: 240,
+      factual_closing_balance: 240,
+      real_difference: 0,
+      closing_balance_source: "exact",
+      status: "ok",
+    },
+    {
+      channel: "mono uah",
+      currency: "UAH",
+      opening_balance: 100,
+      planned_delta: 0,
+      planned_closing_balance: 100,
+      real_delta: -25,
+      computed_real_closing_balance: 75,
+      factual_closing_balance: 70,
+      real_difference: -5,
+      closing_balance_source: "exact",
+      status: "mismatch",
+      diagnosis: "Расхождение",
+      fix_action: "Проверить Ledger movements",
+    },
+  ];
   return {
     ok: true,
     period_balance_reconciliation: {
       period: { from: "2026-05-11", to: "2026-05-15" },
-      summary: {
-        status: "failed",
-        positions_checked: 3,
-        currencies_checked: 2,
-        channels_checked: 3,
-        planned_rows: 2,
-        planned_source_status: "ok",
-        missing_amount_net_rows: 1,
-        status_counts: {
-          ok: 2,
-          mismatch: 1,
-          missing_opening_balance: 0,
-          missing_closing_balance: 0,
-          missing_amount_net: 1,
-          carried_forward_conditional: 0,
-        },
-      },
+      summary,
       by_currency: [
         {
           currency: "USD",
@@ -238,50 +333,8 @@ function buildSnapshot() {
           status: "ok",
         },
       ],
-      by_channel_currency: [
-        {
-          channel: "wise usd",
-          currency: "USD",
-          opening_balance: 1000,
-          planned_delta: 150,
-          planned_closing_balance: 1150,
-          real_delta: 125,
-          computed_real_closing_balance: 1125,
-          factual_closing_balance: 1125,
-          real_difference: 0,
-          closing_balance_source: "exact",
-          status: "ok",
-        },
-        {
-          channel: "paypal eur",
-          currency: "EUR",
-          opening_balance: 200,
-          planned_delta: 40,
-          planned_closing_balance: 240,
-          real_delta: 40,
-          computed_real_closing_balance: 240,
-          factual_closing_balance: 240,
-          real_difference: 0,
-          closing_balance_source: "exact",
-          status: "ok",
-        },
-        {
-          channel: "mono uah",
-          currency: "UAH",
-          opening_balance: 100,
-          planned_delta: 0,
-          planned_closing_balance: 100,
-          real_delta: -25,
-          computed_real_closing_balance: 75,
-          factual_closing_balance: 70,
-          real_difference: -5,
-          closing_balance_source: "exact",
-          status: "mismatch",
-          diagnosis: "Расхождение",
-          fix_action: "Проверить Ledger movements",
-        },
-      ],
-      actionable_rows: [
+      by_channel_currency: byChannelCurrency,
+      actionable_rows: overrides.actionable_rows || [
         {
           channel: "mono uah",
           currency: "UAH",

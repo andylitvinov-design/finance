@@ -46,7 +46,7 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 
-test("period balance reconciliation API reports planned source gap without failing real balance", async () => {
+test("period balance reconciliation API reports planned source gap and missing exact provider balance", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
     repositoryLoader: async () => ({
@@ -60,9 +60,10 @@ test("period balance reconciliation API reports planned source gap without faili
     }),
   });
 
-  assert.equal(snapshot.period_balance_reconciliation.summary.status, "ok");
+  assert.equal(snapshot.period_balance_reconciliation.summary.status, "blocked");
   assert.equal(snapshot.period_balance_reconciliation.summary.planned_source_status, "needs_verification");
-  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "carried_forward_conditional");
+  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.missing_provider_balance, 1);
+  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "missing_provider_balance");
   assert.match(snapshot.warnings.join("\n"), /planned income\/expense source/);
   assert.match(snapshot.warnings.join("\n"), /movementValues order-plan rows and manual finance planned expense rows server-side/);
 });
