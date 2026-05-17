@@ -1397,11 +1397,10 @@ function replaceManualRowsForDateRange(existingRows, replacementRows, startDate,
 
 function mergeManualBalanceRows(existingRows = [], replacementRows = []) {
   const replacementKeys = new Set(
-    (replacementRows || []).map((row) => `${normalizeIncomingSheetDateValue(row?.date || "")}|${String(row?.channel || "").trim()}`)
+    (replacementRows || []).map((row) => makeManualBalanceRowKey(row))
   );
   const preserved = (existingRows || []).filter((row) => {
-    const key = `${normalizeIncomingSheetDateValue(row?.date || "")}|${String(row?.channel || "").trim()}`;
-    return !replacementKeys.has(key);
+    return !replacementKeys.has(makeManualBalanceRowKey(row));
   });
   return [...preserved, ...(replacementRows || [])].sort((a, b) => {
     const leftDate = normalizeIncomingSheetDateValue(a?.date || "");
@@ -1409,6 +1408,14 @@ function mergeManualBalanceRows(existingRows = [], replacementRows = []) {
     if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
     return String(a?.channel || "").localeCompare(String(b?.channel || ""));
   });
+}
+
+function makeManualBalanceRowKey(row = {}) {
+  return [
+    normalizeIncomingSheetDateValue(row?.date || ""),
+    String(row?.channel || "").trim(),
+    String(row?.currency || "").trim().toUpperCase()
+  ].join("|");
 }
 
 function mergeLatestNowEntries(primary = {}, fallback = {}) {

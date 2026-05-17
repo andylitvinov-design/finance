@@ -141,6 +141,7 @@ function buildFinanceContext() {
       `${extractFunction(financeJs, "buildManualFinanceCashRowsFromLedgerRows")}\n` +
       `${extractFunction(financeJs, "buildManualFinanceCashEntries")}\n` +
       `${extractFunction(financeJs, "formatManualFinanceStableIdPart")}\n` +
+      `${extractFunction(financeJs, "collectManualFinanceBalanceRowsFromEditor")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceCashRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceSheet")}\n` +
@@ -149,6 +150,7 @@ function buildFinanceContext() {
       "this.buildManualFinanceActiveBalancePairs = buildManualFinanceActiveBalancePairs;\n" +
       "this.normalizeManualFinanceCashRows = normalizeManualFinanceCashRows;\n" +
       "this.buildManualFinanceCashEntries = buildManualFinanceCashEntries;\n" +
+      "this.collectManualFinanceBalanceRowsFromEditor = collectManualFinanceBalanceRowsFromEditor;\n" +
       "this.saveManualFinanceSheet = saveManualFinanceSheet;",
     context
   );
@@ -179,6 +181,64 @@ test("saving balance snapshot uses Остатки writer and does not call legac
   assert.equal(context.savedCashEntries, undefined);
   assert.equal(context.legacyFactSaveCalled, undefined);
   assert.match(context.lastStatus.message, /Остатки/);
+});
+
+test("saving balance snapshot reads current editor DOM values before writing", async () => {
+  const context = buildFinanceContext();
+  const domRows = [
+    {
+      date: "2026-05-17",
+      channel: "Яндекс руб",
+      currency: "RUB",
+      amount: "70203.51",
+      rate: "",
+      usdAmount: "",
+      comment: "typed before save"
+    },
+    {
+      date: "2026-05-17",
+      channel: "монобанк грн",
+      currency: "UAH",
+      amount: "14033",
+      rate: "",
+      usdAmount: "",
+      comment: ""
+    }
+  ];
+  context.document = {
+    querySelector(selector) {
+      if (selector !== "[data-manual-balance-editor]") return null;
+      return {
+        querySelectorAll(rowSelector) {
+          assert.equal(rowSelector, "tr[data-manual-balance-row]");
+          return domRows.map((row) => ({
+            querySelector(fieldSelector) {
+              const field = fieldSelector.match(/"([^"]+)"/)?.[1];
+              return { value: row[field] || "" };
+            }
+          }));
+        }
+      };
+    }
+  };
+  context.state.manualFinance.activeInnerTab = "balances";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    balanceRows: [
+      { date: "2026-05-17", channel: "Яндекс руб", amount: "", currency: "RUB", comment: "" },
+    ],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.deepEqual(plain(context.savedBalanceRows), [
+    { date: "2026-05-17", channel: "Яндекс руб", amount: "70203,51", currency: "RUB", rate: "", usdAmount: "", comment: "typed before save" },
+    { date: "2026-05-17", channel: "монобанк грн", amount: "14033", currency: "UAH", rate: "", usdAmount: "", comment: "" },
+  ]);
 });
 
 test("balance snapshot editor expands every configured channel as target-date input rows", () => {
@@ -250,6 +310,8 @@ test("fact UI has separate inner tabs for balances and cash", () => {
   assert.match(uiJs, /renderManualFinanceCashEditor/);
   assert.match(uiJs, /Date", "Channel", "Currency", "Balance", "Status/);
   assert.match(uiJs, /ensureManualFinanceBalanceInputRows/);
+  assert.match(uiJs, /manualBalanceEditor/);
+  assert.match(uiJs, /manualBalanceField/);
 });
 
 test("fact tab opens the selected period instead of forcing today", () => {
