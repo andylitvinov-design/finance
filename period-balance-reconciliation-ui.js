@@ -40,7 +40,8 @@
   }
 
   function insertBeforeRemainingBalanceSections(container, node) {
-    const firstRemainingBalanceSection = (container.children || []).find((child) => {
+    const children = Array.from(container.children || []);
+    const firstRemainingBalanceSection = children.find((child) => {
       const className = String(child?.className || "");
       return className.includes("balance-coverage-section") || className.includes("balance-snapshots-section");
     });

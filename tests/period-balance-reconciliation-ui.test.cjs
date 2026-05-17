@@ -58,6 +58,37 @@ test("period balance reconciliation block replaces Analytics placeholder with AP
   assert.match(analyticsContainer.textContent, /Изменение баланса по валютам/);
 });
 
+test("period balance reconciliation inserts before remaining balance sections with DOM children collection", () => {
+  const doc = createTestDocument();
+  const analyticsContainer = createHtmlCollectionLikeContainer();
+  const root = {
+    document: doc,
+    fetch: () => new Promise(() => {}),
+    renderAnalyticsSections(container) {
+      const normal = doc.createElement("div");
+      normal.className = "normal-analytics-section";
+      normal.textContent = "Обычная аналитика";
+      const coverage = doc.createElement("section");
+      coverage.className = "finance-analysis-section balance-coverage-section";
+      coverage.textContent = "Сверка остатков по счетам";
+      container.appendChild(normal);
+      container.appendChild(coverage);
+    },
+  };
+
+  ui.installPeriodBalanceReconciliationUi(root);
+  root.renderAnalyticsSections(analyticsContainer, []);
+
+  assert.deepEqual(
+    analyticsContainer.childList.map((node) => node.className),
+    [
+      "normal-analytics-section",
+      "finance-analysis-section period-balance-reconciliation-section",
+      "finance-analysis-section balance-coverage-section",
+    ]
+  );
+});
+
 test("period balance top summary renders required total labels", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot());
@@ -265,6 +296,34 @@ class TestElement {
   get innerHTML() {
     return this._innerHTML;
   }
+}
+
+function createHtmlCollectionLikeContainer() {
+  const container = {
+    childList: [],
+    get children() {
+      return this.childList.reduce((collection, child, index) => {
+        collection[index] = child;
+        return collection;
+      }, { length: this.childList.length });
+    },
+    appendChild(child) {
+      child.parentElement = this;
+      this.childList.push(child);
+      return child;
+    },
+    insertBefore(child, reference) {
+      child.parentElement = this;
+      const index = this.childList.indexOf(reference);
+      if (index === -1) {
+        this.childList.push(child);
+      } else {
+        this.childList.splice(index, 0, child);
+      }
+      return child;
+    },
+  };
+  return container;
 }
 
 function findByClass(root, className) {
