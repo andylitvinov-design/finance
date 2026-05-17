@@ -76,10 +76,56 @@ function canonicalManualFinanceChannel(value) {
     { pattern: /^(монобанк|monobank|mono)( грн| uah)?$/, channel: "монобанк грн" },
     { pattern: /^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/, channel: "приват-фоп" },
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
+    { pattern: /^(transferwise|wise|трансервайз)( дол| usd| dollar| dollars)?$/, channel: "трансервайз дол" },
+    { pattern: /^(transferwise|wise|трансервайз)( евр| евро| eur| euro| euros)$/, channel: "трансервайз евро" },
     { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" },
   ];
   const match = aliases.find((entry) => entry.pattern.test(normalized));
   return match?.channel || raw;
+}
+
+function normalizeBalanceChannel(rawChannel, rawCurrency) {
+  const normalizedRawChannel = normalizeLookupText(rawChannel);
+  if (["transferwise", "wise", "трансервайз"].includes(normalizedRawChannel)) {
+    const currency = normalizeBalanceCurrency(rawCurrency, rawChannel);
+    if (currency === "EUR") return "трансервайз евро";
+    if (currency === "USD") return "трансервайз дол";
+  }
+  const channel = canonicalManualFinanceChannel(rawChannel);
+  const normalizedChannel = normalizeLookupText(channel);
+  if (["transferwise", "wise", "трансервайз"].includes(normalizedChannel)) {
+    const currency = normalizeBalanceCurrency(rawCurrency, channel);
+    if (currency === "EUR") return "трансервайз евро";
+    if (currency === "USD") return "трансервайз дол";
+  }
+  return channel;
+}
+
+function normalizeBalanceCurrency(value, channel) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeLookupText(raw);
+  if (!normalized) return String(inferChannelCurrency(channel) || "").trim().toUpperCase();
+  if (/^(usd|дол|доллар|dollar|dollars)$/.test(normalized) || raw === "$") return "USD";
+  if (/^(eur|евро|евр|euro|euros)$/.test(normalized) || raw === "€") return "EUR";
+  if (/^(uah|грн|гривна|гривны|гривня)$/.test(normalized) || raw === "₴") return "UAH";
+  if (/^(rub|руб|рубль|рубли|рубля)$/.test(normalized) || raw === "₽") return "RUB";
+  if (/^(cad|кад)$/.test(normalized)) return "CAD";
+  if (normalized === "usdt") return "USDT";
+  if (/^(local|местная валюта|местная валюты)$/.test(normalized)) return "LOCAL";
+  return raw.toUpperCase();
+}
+
+function inferChannelCurrency(channel) {
+  const normalized = String(channel || "").trim();
+  if (!normalized) return "";
+  if (/usdt/i.test(normalized)) return "USDT";
+  if (/руб/i.test(normalized)) return "RUB";
+  if (/грн/i.test(normalized)) return "UAH";
+  if (/(евр|eur|euro)/i.test(normalized)) return "EUR";
+  if (/(cad|кад|канада)/i.test(normalized)) return "CAD";
+  if (/(дол|usd|binance|payoneer - dol|revolut|wise|transferwise|трансервайз)/i.test(normalized)) return "USD";
+  if (/местная/i.test(normalized)) return "LOCAL";
+  return "";
 }
 
 function canonicalManualExpenseChannel(value) {
@@ -791,7 +837,9 @@ function parseBalanceRows(values) {
   // "Остатки" stores end-of-day provider/manual balance snapshots by date + channel + currency.
   return rows
     .map((row) => {
-      const channel = String(row[channelIndex] || "").trim();
+      const rawChannel = String(row[channelIndex] || "").trim();
+      const rawCurrency = currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim();
+      const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
       const amount = String(row[amountIndex] || "").trim();
       return {
         date: normalizeDate(row[dateIndex]),
@@ -799,7 +847,7 @@ function parseBalanceRows(values) {
         accountName: channel,
         amount,
         balanceAmount: amount,
-        currency: currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim(),
+        currency: normalizeBalanceCurrency(rawCurrency, channel),
         rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
         usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
         comment: commentIndex === -1 ? "" : String(row[commentIndex] || "").trim(),

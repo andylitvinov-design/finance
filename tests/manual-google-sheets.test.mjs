@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
 import { loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
+import { buildPeriodBalanceReconciliation } from "../server/period-balance-reconciliation-engine.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
@@ -482,6 +483,84 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
 	      { category: "food", amount: 1000, amountUsd: 11.82, count: 1 },
       { category: "serviceIncome", amount: 369, amountUsd: 369, count: 1 },
     ]);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets canonicalizes balance channels and currencies", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:V",
+                values: [
+                  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_gross", "amount_fee", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                  ["2026-05-17", "income", "", "Яндекс руб", "1000", "RUB", "", "1000", "", "1000", "serviceIncome", "", "in", "", "manual", "income-1", "", "", ""],
+                ],
+              },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория"]] },
+              {
+                range: "'Остатки'!A1:G",
+                values: [
+                  ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                  ["2026-05-17", "яндекс", "68000", "руб", "", "", ""],
+                  ["2026-05-17", "монобанк", "14033", "грн", "", "", ""],
+                  ["2026-05-17", "TransferWise", "1070.48", "usd", "", "", ""],
+                  ["2026-05-17", "Wise", "0", "евро", "", "", ""],
+                  ["2026-05-17", "БАНК КАНАДА cad", "2380", "кад", "", "", ""],
+                  ["2026-05-17", "Бинанс spot", "103", "usdt", "", "", ""],
+                  ["2026-05-17", "пейпал дол", "100", "USD", "", "", ""],
+                ],
+              },
+              { range: "'План'!A1:E1", values: [["месяц", "канал", "валюта", "сумма", "операция"]] },
+              { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
+              { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.deepEqual(
+      repository.balances.map(({ channel, currency }) => ({ channel, currency })),
+      [
+        { channel: "Яндекс руб", currency: "RUB" },
+        { channel: "монобанк грн", currency: "UAH" },
+        { channel: "трансервайз дол", currency: "USD" },
+        { channel: "трансервайз евро", currency: "EUR" },
+        { channel: "БАНК КАНАДА cad", currency: "CAD" },
+        { channel: "Бинанс spot", currency: "USDT" },
+        { channel: "пейпал дол", currency: "USD" },
+      ]
+    );
+
+    const reconciliation = buildPeriodBalanceReconciliation({
+      period: { from: "2026-05-17", to: "2026-05-17" },
+      operations: repository.operations,
+      balanceRows: [
+        { date: "2026-05-16", channel: "Яндекс руб", currency: "RUB", amount: "67000" },
+        ...repository.balances,
+      ],
+    });
+    const yandex = reconciliation.by_channel_currency.find((row) => row.channel === "Яндекс руб" && row.currency === "RUB");
+    assert.equal(yandex?.status, "ok");
+    assert.equal(yandex?.factual_closing_balance, 68000);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
