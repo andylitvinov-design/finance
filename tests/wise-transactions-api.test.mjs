@@ -29,6 +29,7 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.channel, "трансервайз дол");
   assert.equal(entry.direction, "expense");
   assert.equal(entry.localAmount, 12.34);
+  assert.equal(entry.netAmount, 12.34);
   assert.equal(entry.feeAmount, 0.44);
   assert.equal(entry.feeCurrency, "USD");
   assert.equal(entry.organization, "Card payment to Vendor | CARD | reference WISE-1 | balance USD | profile profile-1");

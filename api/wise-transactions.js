@@ -163,6 +163,7 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     localAmount: Math.abs(amount.value),
     currency: amount.currency || String(balance?.currency || "").toUpperCase(),
     usdAmount: explicitUsdAmount ?? ((amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null),
+    netAmount: Math.abs(amount.value),
     suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
     organization: buildWiseDescription(transaction, balance, profileId),
     ...counterparty,

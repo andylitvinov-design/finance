@@ -18,11 +18,11 @@ export function buildPeriodBalanceReconciliation({
   const from = normalizeDate(period.from);
   const to = normalizeDate(period.to);
   const warnings = [];
-  const real = buildRealMovementIndex(operations, { from, to });
+  const periodReal = buildRealMovementIndex(operations, { from, to });
   const planned = buildPlannedMovementIndex(plannedRows, { from, to });
   const balanceIndex = buildBalanceIndex(balanceRows);
   const accountKeys = new Set([
-    ...real.byKey.keys(),
+    ...periodReal.byKey.keys(),
     ...planned.byKey.keys(),
     ...balanceIndex.keysBeforePeriod(from),
     ...balanceIndex.keysInPeriod({ from, to }),
@@ -31,7 +31,7 @@ export function buildPeriodBalanceReconciliation({
   const rows = Array.from(accountKeys)
     .map((key) => buildAccountRow({
       key,
-      real: real.byKey.get(key),
+      operations,
       planned: planned.byKey.get(key),
       balanceIndex,
       from,
@@ -41,8 +41,9 @@ export function buildPeriodBalanceReconciliation({
     .sort(compareRows);
 
   const byCurrency = buildCurrencyRows(rows);
+  const missingAmountNetRows = rows.reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
   const summary = buildSummary(rows, {
-    missingAmountNetRows: real.missing_amount_net_rows,
+    missingAmountNetRows,
     plannedRows: planned.rows,
     plannedSourceStatus,
   });
@@ -50,8 +51,8 @@ export function buildPeriodBalanceReconciliation({
   if (planSourceUnavailable && rows.length) {
     warnings.push("needs verification: planned balance movement source is unavailable; planned_delta is 0 until planned rows are connected.");
   }
-  if (real.missing_amount_net_rows) {
-    warnings.push(formatMissingAmountNetWarning(real.missing_amount_net_rows, real.paypal_missing_amount_net_rows));
+  if (missingAmountNetRows) {
+    warnings.push(formatMissingAmountNetWarning(missingAmountNetRows, countPayPalMissingAmountNetRows(rows)));
   }
 
   return {
@@ -66,12 +67,14 @@ export function buildPeriodBalanceReconciliation({
   };
 }
 
-function buildAccountRow({ key, real, planned, balanceIndex, from, to }) {
+function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const [channel, currency] = splitKey(key);
   if (!channel || !currency) return null;
 
   const openingSnapshot = balanceIndex.findOpening(key, from);
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
+  const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
+  const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
   const hasMovement = Boolean(real && (real.rows || real.inflow || real.outflow || real.missing_amount_net_rows));
   const hasPlan = Boolean(planned && (planned.rows || planned.inflow || planned.outflow));
   const opening = openingSnapshot?.amount ?? null;
@@ -180,6 +183,27 @@ function buildRealMovementIndex(operations, period) {
     missing_amount_net_rows: missingAmountNetRows,
     paypal_missing_amount_net_rows: paypalMissingAmountNetRows,
   };
+}
+
+function getMovementWindowStart(openingDate, from) {
+  if (!openingDate) return from;
+  const afterOpening = addDays(openingDate, 1);
+  if (!from) return afterOpening;
+  return afterOpening && afterOpening < from ? afterOpening : from;
+}
+
+function addDays(date, days) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function countPayPalMissingAmountNetRows(rows = []) {
+  return rows
+    .filter((row) => Number(row.missing_amount_net_rows || 0))
+    .filter((row) => /paypal|пейпал/i.test(`${row.channel} ${row.source || ""}`))
+    .reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
 }
 
 function formatMissingAmountNetWarning(missingRows, paypalRows) {

@@ -79,6 +79,41 @@ test("mismatch shows factual minus computed real difference", () => {
   assert.equal(row.real_difference, -10);
 });
 
+test("real reconciliation includes movements after the opening snapshot even when selected period starts later", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-17", to: "2026-05-17" },
+    operations: [
+      {
+        date: "2026-05-16",
+        fromChannel: "трансервайз дол",
+        currency: "USD",
+        amountNet: "726.13",
+        balanceAmount: -726.13,
+        ledgerV2: {
+          date: "2026-05-16",
+          operation: "expense",
+          from_channel: "трансервайз дол",
+          currency: "USD",
+          amount_net: "726.13",
+          balance_amount: -726.13,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-15", channel: "трансервайз дол", currency: "USD", amount: "1796.61" },
+      { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: "1070.48" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance_date, "2026-05-15");
+  assert.equal(row.real_outflow, 726.13);
+  assert.equal(row.movement_rows, 1);
+  assert.equal(row.computed_real_closing_balance, 1070.48);
+  assert.equal(row.real_difference, 0);
+});
+
 test("empty amount_net makes reconciliation failed", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [income({ amountNet: "", ledgerV2: { amount_net: "" } })], balanceRows: balances("1300") });
   const row = result.by_channel_currency[0];
