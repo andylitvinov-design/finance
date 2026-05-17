@@ -204,6 +204,53 @@ test("period balance UI shows missing provider balance as blocked, not OK", () =
   assert.equal(positionRows[1][7], "Нет фактического остатка на дату");
 });
 
+test("period balance UI keeps existing factual values visible when summary failed", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    summary: {
+      status: "failed",
+      positions_checked: 2,
+      currencies_checked: 1,
+      channels_checked: 2,
+      planned_rows: 0,
+      planned_source_status: "available_empty",
+      missing_amount_net_rows: 0,
+      blocked: 1,
+      status_counts: { mismatch: 1, missing_provider_balance: 1 },
+    },
+    by_channel_currency: [
+      {
+        channel: "трансервайз дол",
+        currency: "USD",
+        opening_balance: 1000,
+        real_delta: 76.25,
+        computed_real_closing_balance: 1076.25,
+        factual_closing_balance: 1070.48,
+        real_difference: -5.77,
+        closing_balance_source: "exact",
+        status: "mismatch",
+        fix_action: "Проверить Ledger movements.",
+      },
+      {
+        channel: "монобанк грн",
+        currency: "UAH",
+        opening_balance: 14033,
+        real_delta: 0,
+        computed_real_closing_balance: 14033,
+        factual_closing_balance: null,
+        real_difference: null,
+        closing_balance_source: "missing",
+        status: "missing_provider_balance",
+        fix_action: "Добавить фактический остаток.",
+      },
+    ],
+  }));
+
+  const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  assert.equal(positionRows[1][5], "1070.48");
+  assert.equal(positionRows[2][5], "—");
+});
+
 test("period balance API failure renders non-blocking Analytics error", async () => {
   const doc = createTestDocument();
   const analyticsContainer = doc.createElement("div");

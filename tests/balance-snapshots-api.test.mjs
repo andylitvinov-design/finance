@@ -186,6 +186,15 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
   assert.deepEqual(snapshot.balance_snapshots.rows, [
     { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 1070.48 },
   ]);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics, {
+    fact_balance_rows_detected: 2,
+    fact_balance_rows_saved_to_ostatki: 1,
+    balance_snapshot_rows_loaded: 1,
+    skipped_non_balance_fact_rows: 0,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+  });
   assert.ok(snapshot.warnings.includes("Остатки внесены во вкладку Факт, но сверка использует вкладку Остатки."));
   assert.ok(snapshot.balance_snapshots.fact_balance_rows.some((row) =>
     row.sheet === "Факт"

@@ -55,6 +55,12 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     plannedSourceStatus,
     period,
   });
+  reconciliation.diagnostics = {
+    ...(reconciliation.diagnostics || {}),
+    balance_snapshot_rows_loaded: Array.isArray(repository.balances) ? repository.balances.length : 0,
+    analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
+      .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
+  };
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
   if (!plannedRows.length && plannedSourceStatus !== "available") {
