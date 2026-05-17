@@ -125,8 +125,9 @@ function buildFinanceContext() {
       context.savedCashEntries = entries;
       return { ledgerRowCount: entries.length, savedAt: "cash-saved" };
     },
-    async saveManualSheetDirect() {
+    async saveManualSheetDirect(payload) {
       context.legacyFactSaveCalled = true;
+      context.savedManualPayload = payload;
       return { savedAt: "legacy-saved" };
     },
   };
@@ -238,6 +239,31 @@ test("saving balance snapshot reads current editor DOM values before writing", a
   assert.deepEqual(plain(context.savedBalanceRows), [
     { date: "2026-05-17", channel: "Яндекс руб", amount: "70203,51", currency: "RUB", rate: "", usdAmount: "", comment: "typed before save" },
     { date: "2026-05-17", channel: "монобанк грн", amount: "14033", currency: "UAH", rate: "", usdAmount: "", comment: "" },
+  ]);
+});
+
+test("saving legacy fact range carries current balance rows into manual finance payload", async () => {
+  const context = buildFinanceContext();
+  context.state.manualFinance.activeInnerTab = "legacy";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    moneyRows: [
+      { channel: "трансервайз дол", now: "1070.48", serviceIncome: "", business: "", food: "", house: "", fun: "", study: "", travelFun: "", exchange: "" },
+    ],
+    transferRows: [],
+    balanceRows: [
+      { date: "2026-05-17", channel: "трансервайз дол", amount: "1070.48", currency: "USD", comment: "typed in fact balance table" },
+      { date: "2026-05-17", channel: "монобанк грн", amount: "", currency: "UAH", comment: "" },
+    ],
+    cashRows: [],
+    expenseRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.deepEqual(plain(context.savedManualPayload.balanceRows), [
+    { date: "2026-05-17", channel: "трансервайз дол", amount: "1070,48", currency: "USD", rate: "", usdAmount: "", comment: "typed in fact balance table" },
   ]);
 });
 

@@ -120,6 +120,15 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     total_rows: filteredRows.length,
     valid_rows: validRows.length,
     incomplete_rows: invalidRows.length,
+    diagnostics: {
+      fact_balance_rows_detected: factBalanceRows.length,
+      fact_balance_rows_saved_to_ostatki: factBalanceRows.filter((row) => row.status === "matched_ostatki").length,
+      balance_snapshot_rows_loaded: validRows.length,
+      skipped_non_balance_fact_rows: countSkippedNonBalanceFactRows(repository, periodFilter),
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+    },
     dates,
     rows: buildDetailedRows(validRows),
     fact_balance_rows: factBalanceRows,
@@ -159,6 +168,15 @@ function emptyBalanceSnapshotsSummary() {
     missing_amount_rows: 0,
     incomplete_preview: [],
     fact_balance_rows: [],
+    diagnostics: {
+      fact_balance_rows_detected: 0,
+      fact_balance_rows_saved_to_ostatki: 0,
+      balance_snapshot_rows_loaded: 0,
+      skipped_non_balance_fact_rows: 0,
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+    },
   };
 }
 
@@ -239,6 +257,16 @@ function buildFactBalanceRows(repository = {}, periodFilter = {}, balanceRows = 
 
 function normalizeFactCategory(value) {
   return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+}
+
+function countSkippedNonBalanceFactRows(repository = {}, periodFilter = {}) {
+  let skipped = 0;
+  for (const row of repository.legacyExpenseRows || []) {
+    const date = normalizeDate(row?.date);
+    if (date && !isDateInPeriod(date, periodFilter)) continue;
+    if (normalizeFactCategory(row?.category) !== "now") skipped += 1;
+  }
+  return skipped;
 }
 
 function getOperationChannelCurrencyPairs(operation) {

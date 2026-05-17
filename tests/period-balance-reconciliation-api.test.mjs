@@ -43,6 +43,8 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].planned_delta, 400);
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].real_delta, 300);
   assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].plan_vs_real_delta, -100);
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.balance_snapshot_rows_loaded, 2);
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.analytics_fact_rows_rendered, 1);
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 

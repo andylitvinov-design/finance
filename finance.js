@@ -2855,6 +2855,9 @@ async function saveManualFinanceSheet() {
     return;
   }
   const moneyRows = state.manualFinance.data.moneyRows || [];
+  const balanceRows = normalizeManualFinanceBalanceRows(collectManualFinanceBalanceRowsFromEditor(), {
+    defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
+  }).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
   const payload = {
     startDate: state.manualFinance.data.periodStart,
     endDate: state.manualFinance.data.periodEnd,
@@ -2878,7 +2881,8 @@ async function saveManualFinanceSheet() {
       channel: String(row.channel || "").trim(),
       rate: normalizeManualFinancePersistedNumberInput(row.rate),
       usdAmount: normalizeManualFinancePersistedNumberInput(row.usdAmount)
-    })).filter((row) => Object.values(row).some((value) => String(value || "").trim() !== ""))
+    })).filter((row) => Object.values(row).some((value) => String(value || "").trim() !== "")),
+    balanceRows
   };
   if (!hasConfiguredManualFinanceEndpoint()) {
     persistLocalDraft(payload.startDate, payload.endDate, payload);

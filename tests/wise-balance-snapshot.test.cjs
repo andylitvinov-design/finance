@@ -55,6 +55,28 @@ test("buildWiseBalanceSnapshotRows maps Wise balances into Остатки rows",
       const raw = String(value ?? "").trim();
       return raw ? raw.replace(".", ",") : "";
     },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (/eur|евр/i.test(String(channel || ""))) return "EUR";
+      if (/cad|сad/i.test(String(channel || ""))) return "CAD";
+      return "USD";
+    },
+    normalizeLookupText(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^0-9a-zа-я]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (/eur|евр/i.test(String(channel || ""))) return "EUR";
+      if (/cad|сad/i.test(String(channel || ""))) return "CAD";
+      return "USD";
+    },
     parseLooseNumber(value) {
       const raw = String(value ?? "").trim();
       if (!raw) return 0;
@@ -202,6 +224,14 @@ test("saveBalanceSnapshotRowsDirect replaces same date and channel instead of du
       const raw = String(value ?? "").trim();
       return raw ? raw.replace(".", ",") : "";
     },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (/eur|евр/i.test(String(channel || ""))) return "EUR";
+      if (/cad|сad/i.test(String(channel || ""))) return "CAD";
+      return "USD";
+    },
     parseIncomingBalanceSheetValues(values) {
       return (values || []).slice(1).map((row) => ({
         date: row[0],
@@ -212,13 +242,6 @@ test("saveBalanceSnapshotRowsDirect replaces same date and channel instead of du
         usdAmount: row[5],
         comment: row[6]
       }));
-    },
-    mergeManualBalanceRows(existingRows = [], replacementRows = []) {
-      const replacementKeys = new Set(replacementRows.map((row) => `${row.date}|${row.channel}`));
-      return [
-        ...existingRows.filter((row) => !replacementKeys.has(`${row.date}|${row.channel}`)),
-        ...replacementRows
-      ];
     },
     buildIncomingBalanceSheetValues(rows) {
       return [
@@ -242,7 +265,15 @@ test("saveBalanceSnapshotRowsDirect replaces same date and channel instead of du
   };
   vm.createContext(context);
   vm.runInContext(
-    `${extractFunction(googleSheetsJs, "saveBalanceSnapshotRowsDirect")}\nthis.saveBalanceSnapshotRowsDirect = saveBalanceSnapshotRowsDirect;`,
+    `${extractFunction(googleSheetsJs, "appendManualBalanceSourceMarker")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceCurrencyForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceChannelForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceRowForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceRowsForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "makeManualBalanceRowKey")}\n` +
+    `${extractFunction(googleSheetsJs, "mergeManualBalanceRowsWithStats")}\n` +
+    `${extractFunction(googleSheetsJs, "saveBalanceSnapshotRowsDirect")}\n` +
+    "this.saveBalanceSnapshotRowsDirect = saveBalanceSnapshotRowsDirect;",
     context
   );
 
@@ -270,11 +301,29 @@ test("mergeManualBalanceRows keeps same channel balances separated by currency",
   const context = {
     normalizeIncomingSheetDateValue(value) {
       return String(value || "").trim();
-    }
+    },
+    normalizeManualFinancePersistedNumberInput(value) {
+      return String(value ?? "").trim();
+    },
+    normalizeLookupText(value) {
+      return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+    },
+    canonicalManualFinanceChannel(value) {
+      return String(value || "").trim();
+    },
+    inferManualFinanceChannelCurrency(channel) {
+      if (/cad|сad/i.test(String(channel || ""))) return "CAD";
+      return "USD";
+    },
   };
   vm.createContext(context);
   vm.runInContext(
+    `${extractFunction(googleSheetsJs, "appendManualBalanceSourceMarker")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceCurrencyForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceChannelForSave")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeManualBalanceRowForSave")}\n` +
     `${extractFunction(googleSheetsJs, "makeManualBalanceRowKey")}\n` +
+    `${extractFunction(googleSheetsJs, "mergeManualBalanceRowsWithStats")}\n` +
     `${extractFunction(googleSheetsJs, "mergeManualBalanceRows")}\n` +
     "this.mergeManualBalanceRows = mergeManualBalanceRows;",
     context
@@ -291,7 +340,7 @@ test("mergeManualBalanceRows keeps same channel balances separated by currency",
   ));
 
   assert.deepEqual(merged, [
-    { date: "2026-05-17", channel: "пейпал сad", currency: "CAD", amount: "10" },
-    { date: "2026-05-17", channel: "пейпал сad", currency: "USD", amount: "25" },
+    { date: "2026-05-17", channel: "пейпал сad", currency: "CAD", amount: "10", rate: "", usdAmount: "", comment: "" },
+    { date: "2026-05-17", channel: "пейпал сad", currency: "USD", amount: "25", rate: "", usdAmount: "", comment: "" },
   ]);
 });
