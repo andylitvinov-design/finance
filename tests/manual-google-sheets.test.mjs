@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import { loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
+import { appendManualOstatkiRows, loadManualRepositoryFromGoogleSheets, probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "../server/period-balance-reconciliation-engine.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -16,6 +16,70 @@ function jsonResponse(payload, init = {}) {
     },
   };
 }
+
+test("appendManualOstatkiRows appends only new Остатки rows and skips duplicate date channel currency", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const fetchCalls = [];
+    const result = await appendManualOstatkiRows({
+      rows: [
+        { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 1000 },
+        { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351, comment: "carried" },
+      ],
+      fetchImpl: async (url, options = {}) => {
+        fetchCalls.push({ url: String(url), options });
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("values:batchGet")) {
+          return jsonResponse({
+            valueRanges: [{
+              range: "'Остатки'!A1:G",
+              values: [
+                ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                ["2026-05-17", "wise usd", "1000", "USD", "", "", ""],
+              ],
+            }],
+          });
+        }
+        if (String(url).includes(":append")) {
+          const body = JSON.parse(options.body);
+          assert.deepEqual(body.values, [["2026-05-17", "БАНК КАНАДА cad", "7351", "CAD", "", "", "carried"]]);
+          return jsonResponse({ updates: { updatedRange: "'Остатки'!A3:G3" } });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(result.appendRowCount, 1);
+    assert.equal(result.appended[0].channel, "БАНК КАНАДА cad");
+    assert.equal(result.skipped[0].reason, "duplicate_date_channel_currency");
+    assert.equal(fetchCalls.filter((call) => call.url.includes(":append")).length, 1);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("appendManualOstatkiRows does not call Sheets when no eligible amount rows exist", async () => {
+  let fetchCount = 0;
+  const result = await appendManualOstatkiRows({
+    rows: [{ date: "2026-05-17", channel: "wise usd", currency: "USD", amount: null }],
+    fetchImpl: async () => {
+      fetchCount += 1;
+      throw new Error("fetch should not be called");
+    },
+  });
+
+  assert.equal(result.appendRowCount, 0);
+  assert.equal(fetchCount, 0);
+});
 
 test("probeGoogleSheetAccess reports missing credentials without fetching", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;

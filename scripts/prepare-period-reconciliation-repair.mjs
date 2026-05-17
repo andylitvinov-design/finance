@@ -3,8 +3,7 @@ import { inspect } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { updateLedgerOperationRow } from "../api/ledger-operation.js";
-import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import { appendManualOstatkiRows, loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "../server/period-balance-reconciliation-engine.js";
 import { buildWiseAmountNetHistoryFix } from "./fix-wise-amount-net-history.mjs";
 
@@ -72,6 +71,11 @@ export function buildRepairReport({ repository, options }) {
   });
   const missingProviderRows = buildMissingProviderTemplates(reconciliation, options);
   const missingOpeningRows = buildMissingOpeningTemplates(reconciliation);
+  const ostatkiRepair = buildOstatkiRepairRows({
+    reconciliation,
+    balanceRows: repository.balances || [],
+    options,
+  });
   const paypalCandidates = buildPayPalPersonalCandidates(repository.operations || [], options);
   const wise = buildWiseRemainingMismatchDetails({ reconciliation, operations: repository.operations || [] });
   const wiseFix = repository.ledgerValues?.length
@@ -84,6 +88,8 @@ export function buildRepairReport({ repository, options }) {
     period,
     reconciliation_summary: reconciliation.summary,
     actionable_rows: reconciliation.actionable_rows || [],
+    ostatki_repair_rows: ostatkiRepair.rows,
+    skipped_ostatki_repair_rows: ostatkiRepair.skipped,
     missing_balance_template_rows: missingProviderRows,
     missing_opening_balance_rows: missingOpeningRows,
     paypal_personal_manual_confirmation_candidates: paypalCandidates,
@@ -93,11 +99,12 @@ export function buildRepairReport({ repository, options }) {
       totalCorrection: wiseFix.totalCorrection || 0,
       may2026Correction: wiseFix.may2026Correction || 0,
     },
-    copyable_ostatki_template: buildCopyableOstatkiTemplate([...missingProviderRows, ...missingOpeningRows]),
+    copyable_ostatki_template: buildCopyableOstatkiTemplate([...ostatkiRepair.rows, ...missingOpeningRows]),
     warnings: [
       "amount must stay blank unless the user has factual provider/manual balance",
       "expected_closing is a hint only; it is not a provider amount",
-      "PayPal personal confirmations require explicit --paypal-personal-confirm raw_source_id=amount",
+      "--apply appends eligible carried-forward rows to Остатки only; Ledger is not changed by this script",
+      "missing_provider_balance rows with movement require a manual provider fact; computed closing is only a hint",
     ],
   };
 }
@@ -158,6 +165,63 @@ function buildMissingProviderTemplates(reconciliation, options) {
         status: row.status,
       };
     });
+}
+
+function buildOstatkiRepairRows({ reconciliation, balanceRows, options }) {
+  const existingKeys = new Set((balanceRows || []).map(buildBalanceKey));
+  const rows = [];
+  const skipped = [];
+  for (const row of reconciliation.by_channel_currency || []) {
+    const key = buildBalanceKey({
+      date: reconciliation.period?.to || options.to,
+      channel: row.channel,
+      currency: row.currency,
+    });
+    if (existingKeys.has(key)) {
+      if (row.status === "carried_forward_conditional" || row.status === "missing_provider_balance") {
+        skipped.push({
+          date: reconciliation.period?.to || options.to,
+          channel: row.channel,
+          currency: row.currency,
+          status: row.status,
+          reason: "duplicate_date_channel_currency",
+        });
+      }
+      continue;
+    }
+    if (row.status === "carried_forward_conditional") {
+      existingKeys.add(key);
+      rows.push({
+        date: reconciliation.period?.to || options.to,
+        channel: row.channel,
+        currency: row.currency,
+        amount: row.factual_closing_balance,
+        factual_closing_balance_date: row.factual_closing_balance_date,
+        closing_balance_source: row.closing_balance_source,
+        status: row.status,
+        movement_rows: row.movement_rows,
+        missing_amount_net_rows: row.missing_amount_net_rows,
+        action: "append_carried_forward_balance",
+        safe_fill: "eligible: no movement, no missing amount_net, carried forward from last observed Остатки",
+        comment: `carried_forward_conditional from ${row.factual_closing_balance_date || "last observed"} via period reconciliation`,
+      });
+    } else if (row.status === "missing_provider_balance" && Number(row.movement_rows || 0) > 0) {
+      rows.push({
+        date: reconciliation.period?.to || options.to,
+        channel: row.channel,
+        currency: row.currency,
+        amount: null,
+        expected_closing_hint: row.computed_real_closing_balance,
+        expected_closing_source: "computed_from_opening_plus_amount_net_movements",
+        status: row.status,
+        movement_rows: row.movement_rows,
+        missing_amount_net_rows: row.missing_amount_net_rows,
+        action: "manual_provider_fact_required",
+        safe_fill: "нужен фактический баланс провайдера; computed_real_closing_balance is not a fact",
+      });
+    }
+  }
+  return { rows, skipped };
 }
 
 function buildMissingOpeningTemplates(reconciliation) {
@@ -273,24 +337,15 @@ function getWiseCardDebitCandidateFromOperation(row) {
   };
 }
 
-async function applyRequestedRepairs({ report, options }) {
-  const applied = [];
-  for (const candidate of report.paypal_personal_manual_confirmation_candidates || []) {
-    if (candidate.confirmed_amount_net === null) continue;
-    await updateLedgerOperationRow({
-      sheetRowNumber: candidate.sheetRowNumber,
-      amount_net: candidate.confirmed_amount_net,
-      source: "paypal_personal_manual",
-      comment: appendMarker(candidate, "paypal_personal_manual fee_unavailable_personal_account manual_provider_confirmed"),
-    });
-    applied.push({
-      type: "paypal_personal_manual_confirmation",
-      sheetRowNumber: candidate.sheetRowNumber,
-      raw_source_id: candidate.raw_source_id,
-      amount_net: candidate.confirmed_amount_net,
-    });
+export async function applyRequestedRepairs({ report, appendOstatkiRowsImpl = appendManualOstatkiRows }) {
+  const rows = (report.ostatki_repair_rows || [])
+    .filter((row) => row.action === "append_carried_forward_balance")
+    .filter((row) => row.amount !== null && row.amount !== undefined && row.amount !== "");
+  if (!rows.length) {
+    return { type: "ostatki_append", appended: [], skipped: [], appendRowCount: 0 };
   }
-  return applied;
+  const result = await appendOstatkiRowsImpl({ rows });
+  return { type: "ostatki_append", ...result };
 }
 
 function buildCopyableOstatkiTemplate(rows) {
@@ -304,6 +359,22 @@ function buildCopyableOstatkiTemplate(rows) {
       row.expected_closing_hint === null || row.expected_closing_hint === undefined ? "" : row.expected_closing_hint,
     ].join("\t")),
   ].join("\n");
+}
+
+function buildBalanceKey(row) {
+  return [
+    String(row?.date || "").trim(),
+    normalizeKeyText(row?.channel || row?.accountName || row?.account || ""),
+    String(row?.currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function normalizeKeyText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
 }
 
 function addConfirmation(options, value) {

@@ -17,6 +17,7 @@ import {
 
 export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4";
 
@@ -255,6 +256,76 @@ export async function getManualGoogleSheetsAccessToken({ scope = SHEETS_SCOPE, f
     throw new Error("Google service account credentials are not configured.");
   }
   return requestServiceAccountAccessToken({ clientEmail, privateKey, scope, fetchImpl });
+}
+
+export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, spreadsheetId = MANUAL_SPREADSHEET_ID } = {}) {
+  const candidates = (rows || [])
+    .map(normalizeOstatkiAppendCandidate)
+    .filter((row) => row.date && row.channel && row.currency && row.amount !== null);
+  if (!candidates.length) {
+    return { appended: [], skipped: [], appendRowCount: 0 };
+  }
+
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  const valuesBySheet = await batchGetSheetValues({
+    spreadsheetId,
+    sheetNames: [BALANCE_SHEET_NAME],
+    accessToken,
+    fetchImpl,
+  });
+  const existingKeys = new Set(parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []).map(buildOstatkiKey));
+  const appendRows = [];
+  const appended = [];
+  const skipped = [];
+
+  for (const row of candidates) {
+    const key = buildOstatkiKey(row);
+    if (existingKeys.has(key)) {
+      skipped.push({ ...row, reason: "duplicate_date_channel_currency" });
+      continue;
+    }
+    existingKeys.add(key);
+    appendRows.push([
+      row.date,
+      row.channel,
+      formatOstatkiAmount(row.amount),
+      row.currency,
+      "",
+      "",
+      row.comment,
+    ]);
+    appended.push(row);
+  }
+
+  if (!appendRows.length) {
+    return { appended, skipped, appendRowCount: 0 };
+  }
+
+  const escaped = BALANCE_SHEET_NAME.replace(/'/g, "''");
+  const range = encodeURIComponent(`'${escaped}'!A:G`);
+  const response = await fetchImpl(
+    `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values: appendRows }),
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Sheets Остатки append failed with HTTP ${response.status}`);
+  }
+
+  return {
+    appended,
+    skipped,
+    appendRowCount: appendRows.length,
+    updatedRange: payload?.updates?.updatedRange || null,
+  };
 }
 
 async function requestServiceAccountAccessToken({ clientEmail, privateKey, scope = SHEETS_SCOPE, fetchImpl }) {
@@ -856,6 +927,37 @@ function parseBalanceRows(values) {
       };
     })
     .filter((row) => row.date && row.channel && row.amount);
+}
+
+function normalizeOstatkiAppendCandidate(row) {
+  const rawChannel = String(row?.channel || row?.accountName || row?.account || "").trim();
+  const rawAmount = String(row?.amount ?? "").trim();
+  const currency = normalizeBalanceCurrency(row?.currency, rawChannel);
+  const channel = normalizeBalanceChannel(rawChannel, currency);
+  const amount = rawAmount ? parseNumberString(rawAmount) : null;
+  return {
+    date: normalizeDate(row?.date),
+    channel,
+    currency,
+    amount: Number.isFinite(amount) ? amount : null,
+    comment: String(row?.comment || "period reconciliation carried forward").trim(),
+  };
+}
+
+function formatOstatkiAmount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return String(numeric).replace(".", ",");
+}
+
+function buildOstatkiKey(row) {
+  const channel = normalizeBalanceChannel(row?.channel || row?.accountName || row?.account || "", row?.currency);
+  const currency = normalizeBalanceCurrency(row?.currency, channel);
+  return [
+    normalizeDate(row?.date),
+    normalizeLookupText(channel),
+    currency,
+  ].join("|");
 }
 
 function parseTransferRows(values) {
