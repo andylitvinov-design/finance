@@ -16,7 +16,7 @@
       const result = original.apply(this, arguments);
       try {
         const placeholder = renderPlaceholder(globalRoot.document);
-        container.appendChild(placeholder);
+        insertBeforeRemainingBalanceSections(container, placeholder);
         loadAndRender(globalRoot, placeholder);
       } catch (error) {
         // Additive UI extension must never break the existing analytics screen.
@@ -37,6 +37,18 @@
     } catch (error) {
       container.replaceWith(renderError(doc, error));
     }
+  }
+
+  function insertBeforeRemainingBalanceSections(container, node) {
+    const firstRemainingBalanceSection = (container.children || []).find((child) => {
+      const className = String(child?.className || "");
+      return className.includes("balance-coverage-section") || className.includes("balance-snapshots-section");
+    });
+    if (firstRemainingBalanceSection && typeof container.insertBefore === "function") {
+      container.insertBefore(node, firstRemainingBalanceSection);
+      return;
+    }
+    container.appendChild(node);
   }
 
   async function fetchPeriodBalanceReconciliation(globalRoot = root) {

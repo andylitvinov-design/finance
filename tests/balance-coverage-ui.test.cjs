@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const ui = require("../balance-coverage-ui.js");
+const script = fs.readFileSync(path.join(__dirname, "..", "balance-coverage-ui.js"), "utf8");
 
 class TestElement {
   constructor(tagName) {
@@ -26,6 +29,27 @@ class TestElement {
 
   append(...children) {
     children.forEach((child) => this.appendChild(child));
+  }
+
+  insertBefore(child, reference) {
+    child.parentElement = this;
+    const index = this.children.indexOf(reference);
+    if (index === -1) {
+      this.children.push(child);
+    } else {
+      this.children.splice(index, 0, child);
+    }
+    return child;
+  }
+
+  replaceWith(replacement) {
+    if (!this.parentElement) return;
+    const siblings = this.parentElement.children;
+    const index = siblings.indexOf(this);
+    if (index === -1) return;
+    replacement.parentElement = this.parentElement;
+    this.parentElement = null;
+    siblings.splice(index, 1, replacement);
   }
 
   set textContent(value) {
@@ -59,8 +83,86 @@ function createTestDocument() {
     createElement(tagName) {
       return new TestElement(tagName);
     },
+    getElementById() {
+      return null;
+    },
   };
 }
+
+function findByClass(root, className) {
+  const expected = String(className).split(/\s+/).filter(Boolean);
+  const matches = [];
+  const visit = (node) => {
+    const classes = String(node.className || "").split(/\s+/).filter(Boolean);
+    if (expected.every((item) => classes.includes(item))) matches.push(node);
+    node.children.forEach(visit);
+  };
+  visit(root);
+  return matches;
+}
+
+function flushPromises() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+test("balance coverage UI wraps renderAnalyticsSections instead of expense financial analysis", () => {
+  assert.match(script, /renderAnalyticsSections/);
+  assert.doesNotMatch(script, /renderExpenseFinancialAnalysis/);
+});
+
+test("balance coverage UI wraps Analytics, not expense financial analysis", () => {
+  const doc = createTestDocument();
+  const analyticsContainer = doc.createElement("div");
+  const expenseBlock = doc.createElement("div");
+  const root = {
+    document: doc,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, balance_coverage: { summary: {}, accounts: [], actionable_accounts: [] } }) }),
+    renderAnalyticsSections(container) {
+      const normal = doc.createElement("div");
+      normal.className = "normal-analytics-section";
+      normal.textContent = "Обычная аналитика";
+      container.appendChild(normal);
+    },
+    renderExpenseFinancialAnalysis() {
+      return expenseBlock;
+    },
+  };
+  const originalExpenseRenderer = root.renderExpenseFinancialAnalysis;
+
+  assert.equal(ui.installBalanceCoverageUi(root), true);
+
+  root.renderAnalyticsSections(analyticsContainer, []);
+  const renderedExpense = root.renderExpenseFinancialAnalysis();
+
+  assert.equal(root.renderExpenseFinancialAnalysis, originalExpenseRenderer);
+  assert.equal(renderedExpense, expenseBlock);
+  assert.equal(findByClass(expenseBlock, "balance-coverage-section").length, 0);
+  assert.equal(findByClass(analyticsContainer, "normal-analytics-section").length, 1);
+  assert.equal(findByClass(analyticsContainer, "balance-coverage-section").length, 1);
+});
+
+test("balance coverage API failure renders non-blocking Analytics error", async () => {
+  const doc = createTestDocument();
+  const analyticsContainer = doc.createElement("div");
+  const root = {
+    document: doc,
+    fetch: async () => ({ ok: false, status: 503, json: async () => ({ ok: false, error: "audit unavailable" }) }),
+    renderAnalyticsSections(container) {
+      const normal = doc.createElement("div");
+      normal.className = "normal-analytics-section";
+      normal.textContent = "Обычная аналитика";
+      container.appendChild(normal);
+    },
+  };
+
+  ui.installBalanceCoverageUi(root);
+  root.renderAnalyticsSections(analyticsContainer, []);
+  await flushPromises();
+
+  assert.equal(findByClass(analyticsContainer, "normal-analytics-section").length, 1);
+  assert.equal(findByClass(analyticsContainer, "finance-status error").length, 1);
+  assert.match(analyticsContainer.textContent, /Сверка остатков пока недоступна: audit unavailable/);
+});
 
 test("balance coverage UI maps statuses to user-facing labels and actions", () => {
   assert.equal(ui.getStatusLabel("ok"), "OK");
