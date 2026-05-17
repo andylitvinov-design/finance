@@ -15,6 +15,7 @@
     function wrappedRenderAnalyticsSections(container) {
       const result = original.apply(this, arguments);
       try {
+        removeCompetingLegacyBalanceSections(container);
         const placeholder = renderPlaceholder(globalRoot.document);
         prependToAnalyticsContainer(container, placeholder);
         loadAndRender(globalRoot, placeholder);
@@ -26,6 +27,28 @@
     wrappedRenderAnalyticsSections.__periodBalanceReconciliationWrapped = true;
     globalRoot.renderAnalyticsSections = wrappedRenderAnalyticsSections;
     return true;
+  }
+
+  function removeCompetingLegacyBalanceSections(container) {
+    Array.from(container?.children || []).forEach((child) => {
+      const text = String(child?.textContent || "");
+      if (!isCompetingLegacyBalanceSection(text)) return;
+      if (typeof child.remove === "function") {
+        child.remove();
+        return;
+      }
+      const siblings = child.parentElement?.children;
+      const index = Array.isArray(siblings) ? siblings.indexOf(child) : -1;
+      if (index !== -1) siblings.splice(index, 1);
+    });
+  }
+
+  function isCompetingLegacyBalanceSection(text) {
+    const normalized = String(text || "").toUpperCase();
+    return normalized.includes("БАЛАНС") &&
+      normalized.includes("PLAN PROFIT") &&
+      normalized.includes("РАЗНИЦА1") &&
+      normalized.includes("EXTRA");
   }
 
   async function loadAndRender(globalRoot, container) {
@@ -212,7 +235,7 @@
     block.className = "period-balance-total-summary";
     const title = doc.createElement("div");
     title.className = "tab-note";
-    title.textContent = "Итоги по валютам";
+    title.textContent = "Сводка по валютам, справочно";
     block.appendChild(title);
     if (!currencies.length) {
       const empty = doc.createElement("div");
@@ -289,7 +312,7 @@
     ];
     return renderSubsection(
       doc,
-      "По счетам и валютам",
+      "Остатки по каналам оплаты",
       ["Счёт", "Валюта", "Было факт", "Реал Δ", "Расчётный остаток", "Факт ручной/провайдер", "Источник факта", "Разница факт-расчёт", "Статус"],
       tableRows
     );
@@ -302,11 +325,11 @@
       if (!currency) return;
       if (!totalsByCurrency.has(currency)) {
         totalsByCurrency.set(currency, {
-          opening_balance: 0,
-          real_delta: 0,
-          calculated_closing_balance: 0,
-          manual_provider_closing_balance: 0,
-          real_difference: 0,
+          opening_balance: createTotalBucket(),
+          real_delta: createTotalBucket(),
+          calculated_closing_balance: createTotalBucket(),
+          manual_provider_closing_balance: createTotalBucket(),
+          real_difference: createTotalBucket(),
         });
       }
       const totals = totalsByCurrency.get(currency);
@@ -319,22 +342,32 @@
     return Array.from(totalsByCurrency.entries())
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([currency, totals]) => [
-        "ИТОГО",
+        `ИТОГО ${currency}`,
         currency,
-        formatNumber(totals.opening_balance),
-        formatNumber(totals.real_delta),
-        formatNumber(totals.calculated_closing_balance),
-        formatNumber(totals.manual_provider_closing_balance),
+        formatTotalBucket(totals.opening_balance),
+        formatTotalBucket(totals.real_delta),
+        formatTotalBucket(totals.calculated_closing_balance),
+        formatTotalBucket(totals.manual_provider_closing_balance),
         "Итого",
-        formatNumber(totals.real_difference),
+        formatTotalBucket(totals.real_difference),
         "Итого по валюте",
       ]);
+  }
+
+  function createTotalBucket() {
+    return { value: 0, count: 0 };
   }
 
   function addNumeric(target, field, value) {
     const numeric = parseNumeric(value);
     if (numeric === null) return;
-    target[field] = (target[field] || 0) + numeric;
+    target[field].value += numeric;
+    target[field].count += 1;
+  }
+
+  function formatTotalBucket(bucket) {
+    if (!bucket?.count) return "—";
+    return formatNumber(bucket.value);
   }
 
   function renderSubsection(doc, titleText, header, rows) {
@@ -428,5 +461,6 @@
     renderPeriodBalanceBlock,
     getStatusLabel,
     formatNumber,
+    isCompetingLegacyBalanceSection,
   };
 });
