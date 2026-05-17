@@ -146,6 +146,14 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
       lastObservedClosingSnapshot,
       closingSnapshot,
     }),
+    repair_template: buildRepairTemplate({
+      status,
+      channel,
+      currency,
+      to,
+      movementDate: firstMovementDate(real),
+      computedRealClosing,
+    }),
   };
 
   return {
@@ -179,6 +187,7 @@ function buildRealMovementIndex(operations, period) {
       missingAmountNetRows += 1;
       if (isPayPalAmountNetPermissionRow(row)) paypalMissingAmountNetRows += 1;
       current.missing_amount_net_rows += 1;
+      current.movement_dates.push(date);
       byKey.set(key, current);
       continue;
     }
@@ -187,6 +196,7 @@ function buildRealMovementIndex(operations, period) {
     if (balanceAmount >= 0) current.inflow += balanceAmount;
     else current.outflow += Math.abs(balanceAmount);
     current.rows += 1;
+    current.movement_dates.push(date);
     byKey.set(key, current);
   }
 
@@ -468,6 +478,44 @@ function buildFixAction(row) {
   return "Проверить дату, счет, валюту и сумму в Ledger/Остатки.";
 }
 
+function buildRepairTemplate({ status, channel, currency, to, movementDate, computedRealClosing }) {
+  if (status === STATUS.MISSING_PROVIDER) {
+    return {
+      sheet: "Остатки",
+      date: to || "",
+      channel,
+      currency,
+      amount: null,
+      expected_closing_hint: computedRealClosing,
+      safe_fill: "amount must be factual provider/manual balance; expected_closing_hint is not an auto-fill value",
+    };
+  }
+  if (status === STATUS.MISSING_OPENING) {
+    return {
+      sheet: "Остатки",
+      date: previousDate(movementDate || to),
+      channel,
+      currency,
+      amount: null,
+      safe_fill: "amount must be factual opening balance before first movement",
+    };
+  }
+  return null;
+}
+
+function previousDate(date) {
+  if (!date) return "";
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function firstMovementDate(real) {
+  const dates = (real?.movement_dates || []).filter(Boolean).sort();
+  return dates[0] || "";
+}
+
 function buildFormula(row) {
   return [
     `opening ${formatValue(row.opening_balance)}`,
@@ -508,7 +556,7 @@ function getMovementChannel(row, amount) {
 }
 
 function emptyMovement() {
-  return { inflow: 0, outflow: 0, rows: 0, missing_amount_net_rows: 0 };
+  return { inflow: 0, outflow: 0, rows: 0, missing_amount_net_rows: 0, movement_dates: [] };
 }
 
 function makeKey(channel, currency) {

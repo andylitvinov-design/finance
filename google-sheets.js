@@ -421,7 +421,8 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
+  if (["paypal_personal", "manual_provider_confirmed"].includes(token)) return "paypal_personal_manual";
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
   if (["transferwise"].includes(token)) return "wise";
@@ -437,7 +438,8 @@ function normalizeManualLedgerSource(value, fallback = "") {
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
+  else if (["paypal_personal", "manual_provider_confirmed"].includes(token)) normalized = "paypal_personal_manual";
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
   else if (["transferwise"].includes(token)) normalized = "wise";
@@ -906,7 +908,7 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const hasExplicitFee = String(amountFee || "").trim() !== "" && Number.isFinite(parseLooseNumber(amountFee));
     const derivedAmountNet = hasExplicitFee
       ? formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))))
-      : (resolvedSource === "paypal" ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
+      : (resolvedSource === "paypal" || resolvedSource === "paypal_personal_manual" ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
     const amountNet = normalizeManualFinancePersistedNumberInput(
       firstNonEmpty(row?.amountNet, row?.amount_net, row?.netAmount, derivedAmountNet)
     );

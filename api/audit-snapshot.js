@@ -9,7 +9,7 @@ import {
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const PUBLIC_SUMMARY_ONLY_WARNING =
   "includeRows is disabled in Phase 1 public summary-only mode; raw and sanitized rows are not returned.";
-const SOURCE_KEYS = ["manual", "fact", "paypal", "wise", "monobank", "privatbank", "td_bank", "migration", "unknown"];
+const SOURCE_KEYS = ["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "migration", "unknown"];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -511,7 +511,7 @@ function buildMissingAmountNetFixRow(row) {
     : recommendedAmountNet !== null
       ? `Set amount_net to ${formatFixNumber(recommendedAmountNet)}`
       : "Review amount_net manually before balance reconciliation";
-  return {
+  const fix = {
     date: normalizeDate(ledger.date || row.date),
     operation: getV2Operation(row),
     from_channel: String(ledger.from_channel || row.fromChannel || "").trim(),
@@ -530,10 +530,17 @@ function buildMissingAmountNetFixRow(row) {
     ).trim(),
     recommended_amount_net: recommendedAmountNet,
     reason: paypal
-      ? "PayPal fee/net is unavailable, so amount_net is intentionally empty and the row is excluded from balance reconciliation."
+      ? "PayPal fee/net is unavailable for this account context, so amount_net is intentionally empty until provider net is proven or the personal-account net is manually confirmed."
       : "amount_net is empty, so the row is excluded from balance reconciliation.",
     action,
   };
+  if (paypal) {
+    fix.manual_confirmation_supported = true;
+    fix.manual_confirmation_source = "paypal_personal_manual";
+    fix.warning_status = "fee_unavailable_personal_account";
+    fix.manual_confirmation_action = "After explicit user confirmation, set amount_net and source=paypal_personal_manual/manual_provider_confirmed; preserve fee unavailable warning.";
+  }
+  return fix;
 }
 
 function formatMissingAmountNetWarning(operations, suffix) {
@@ -633,6 +640,7 @@ function buildPayPalSummary(operations) {
         row.id ||
         ""
     ).trim();
+    const manuallyConfirmed = isPayPalPersonalManualRow(row);
     if (grossValue !== null) {
       gross += Math.abs(grossValue);
       hasGross = true;
@@ -642,9 +650,11 @@ function buildPayPalSummary(operations) {
       hasFee = true;
     } else {
       missingFeeRows += 1;
-      warnings.push(`PayPal warning: missing fee${externalId ? ` for ${externalId}` : ""}; net is not counted as exact.`);
+      warnings.push(manuallyConfirmed
+        ? `PayPal personal manual confirmation: fee unavailable${externalId ? ` for ${externalId}` : ""}; amount_net is user-confirmed, not provider-proven.`
+        : `PayPal warning: missing fee${externalId ? ` for ${externalId}` : ""}; net is not counted as exact.`);
     }
-    if (feeValue !== null && netValue !== null) {
+    if ((feeValue !== null || manuallyConfirmed) && netValue !== null) {
       net += netValue;
       hasNet = true;
     }
@@ -659,6 +669,9 @@ function buildPayPalSummary(operations) {
     missing_fee_rows: missingFeeRows,
     missing_counterparty_rows: missingCounterpartyRows,
     permission_status: "needs verification",
+    net_status: hasNet && missingFeeRows ? "mixed_provider_and_manual" : hasNet ? "provider_proven" : "missing_net",
+    personal_manual_confirmed_rows: paypalRows.filter(isPayPalPersonalManualRow).length,
+    warning_status: paypalRows.some(isPayPalPersonalManualRow) ? "fee_unavailable_personal_account" : null,
     warnings: unique(warnings),
   };
 }
@@ -740,13 +753,20 @@ function isExchangeRow(row) {
 function isPayPalRow(row) {
   const source = normalizeSource(row);
   const channel = `${row?.fromChannel || ""} ${row?.toChannel || ""} ${row?.ledgerV2?.from_channel || ""} ${row?.ledgerV2?.to_channel || ""}`.toLowerCase();
-  return source === "paypal" || /paypal|пейпал/.test(channel);
+  return source === "paypal" || source === "paypal_personal_manual" || /paypal|пейпал/.test(channel);
+}
+
+function isPayPalPersonalManualRow(row) {
+  const source = normalizeSource(row);
+  const marker = `${row?.comment || ""} ${row?.description || ""} ${row?.ledgerV2?.comment || ""}`.toLowerCase();
+  return source === "paypal_personal_manual" || /paypal_personal_manual|manual_provider_confirmed|fee_unavailable_personal_account/.test(marker);
 }
 
 function normalizeSource(row) {
   const raw = String(row?.source || row?.ledgerV2?.source || "").trim().toLowerCase();
   if (raw === "privat_bank") return "privatbank";
   if (raw === "tdbank") return "td_bank";
+  if (raw === "paypal_personal" || raw === "manual_provider_confirmed") return "paypal_personal_manual";
   if (raw === "mcp" || raw === "photo" || raw === "provider" || raw === "import") return "unknown";
   if (SOURCE_KEYS.includes(raw)) return raw;
   if (!raw || raw === "other" || raw === "google_sheets") return "unknown";

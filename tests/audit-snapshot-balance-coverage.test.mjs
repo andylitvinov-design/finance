@@ -259,6 +259,55 @@ test("audit snapshot weekly balance summary blocks ok status when amount_net is 
   assert.equal(snapshot.balance_fixes.missing_amount_net_rows[0].channel, "wise usd");
 });
 
+test("audit snapshot distinguishes PayPal personal manual net from provider-proven net", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-11" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-11",
+          toChannel: "пейпал евр",
+          currency: "EUR",
+          amount: "36",
+          amountNet: "36",
+          amountGross: "36",
+          amountFee: "",
+          source: "paypal_personal_manual",
+          ledgerV2: {
+            date: "2026-05-11",
+            operation: "income",
+            to_channel: "пейпал евр",
+            currency: "EUR",
+            amount: "36",
+            amount_gross: "36",
+            amount_fee: "",
+            amount_net: "36",
+            balance_amount: 36,
+            source: "paypal_personal_manual",
+            external_id: "5U351082V9506951V",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-10", channel: "пейпал евр", currency: "EUR", amount: "0" },
+        { date: "2026-05-11", channel: "пейпал евр", currency: "EUR", amount: "36" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balances.missing_amount_net_rows, 0);
+  assert.equal(snapshot.paypal.personal_manual_confirmed_rows, 1);
+  assert.equal(snapshot.paypal.warning_status, "fee_unavailable_personal_account");
+  assert.equal(snapshot.paypal.net_status, "mixed_provider_and_manual");
+  assert.match(snapshot.paypal.warnings[0], /not provider-proven/);
+});
+
 test("audit snapshot reconciles today's balance change against same-day closing snapshot", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-05-06", to: "2026-05-06" },
