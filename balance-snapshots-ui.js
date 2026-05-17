@@ -36,7 +36,7 @@
     var header = el("div", "tab-header");
     var titleWrap = el("div");
     titleWrap.appendChild(el("h3", "", "Инвентарь остатков"));
-    titleWrap.appendChild(el("div", "tab-note", "Активные каналы раскрыты отдельными строками для ввода остатков за целевую дату."));
+    titleWrap.appendChild(el("div", "tab-note", "Остатки для сверки нужно вносить во вкладку Остатки, не во Факт."));
     header.appendChild(titleWrap);
     section.appendChild(header);
 
@@ -80,12 +80,13 @@
     var table = el("table");
     var tbody = el("tbody");
     var head = el("tr");
-    ["Date", "Channel", "Currency", "Balance", "Status"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    ["Date", "Sheet", "Channel", "Currency", "Balance", "Status"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
     tbody.appendChild(head);
     rows.forEach(function (row) {
       var tr = el("tr");
       [
         row.date || "—",
+        row.sheet || "Остатки",
         row.channel || "—",
         row.currency || "—",
         formatAmount(row.existing_amount ?? row.amount),

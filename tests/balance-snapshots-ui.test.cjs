@@ -196,7 +196,8 @@ test("balance snapshots UI renders input rows first with balance entry headers a
 
   const firstTable = section.querySelectorAll("table")[0];
   const rows = textRows(firstTable);
-  assert.deepEqual(rows[0], ["Date", "Channel", "Currency", "Balance", "Status"]);
-  assert.deepEqual(rows[1], ["2026-05-15", "wise usd", "USD", "1300", "already entered"]);
-  assert.deepEqual(rows[2], ["2026-05-15", "paypal eur", "EUR", "—", "needs input"]);
+  assert.match(section.textContent, /Остатки для сверки нужно вносить во вкладку Остатки, не во Факт/);
+  assert.deepEqual(rows[0], ["Date", "Sheet", "Channel", "Currency", "Balance", "Status"]);
+  assert.deepEqual(rows[1], ["2026-05-15", "Остатки", "wise usd", "USD", "1300", "already entered"]);
+  assert.deepEqual(rows[2], ["2026-05-15", "Остатки", "paypal eur", "EUR", "—", "needs input"]);
 });
