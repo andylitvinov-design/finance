@@ -185,6 +185,7 @@ function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) 
         existing_amount: existingAmount,
         amount: existingAmount,
         needs_input: existingAmount === null,
+        source: existingAmount === null ? "active_channel_missing_balance" : "existing_balance",
         status: existingAmount === null ? "needs_input" : "already_entered",
       };
     });
