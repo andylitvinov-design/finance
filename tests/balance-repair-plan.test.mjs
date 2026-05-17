@@ -43,13 +43,13 @@ const snapshot = {
       {
         date: "2026-05-11",
         operation: "expense",
-        channel: "wise usd",
-        currency: "USD",
-        amount: 52.79,
-        recommended_amount_net: 52.79,
-        raw_source_id: "WISE-1",
-        reason: "amount_net is empty, so the row is excluded from balance reconciliation.",
-        action: "Set amount_net to 52.79",
+        channel: "пейпал евр",
+        currency: "EUR",
+        amount: 216,
+        recommended_amount_net: null,
+        raw_source_id: "PAYPAL-1",
+        reason: "PayPal fee/net is unavailable, so amount_net is intentionally empty and the row is excluded from balance reconciliation.",
+        action: "verify PayPal fee/net; do not auto-fill",
       },
     ],
     missing_opening_balance_rows: [
@@ -84,7 +84,7 @@ test("balance repair plan orders blocking fixes before missing Остатки ro
     "missing_opening_balance",
     "missing_provider_balance",
   ]);
-  assert.equal(plan.actions[0].safe_to_apply, true);
+  assert.equal(plan.actions[0].safe_to_apply, false);
   assert.equal(plan.actions[0].operation, "expense");
   assert.equal(plan.actions[1].safe_to_apply, false);
   assert.equal(plan.actions[1].opening_balance, 2217.41);
@@ -92,6 +92,11 @@ test("balance repair plan orders blocking fixes before missing Остатки ro
   assert.equal(plan.actions[1].outflow, 52.79);
   assert.equal(plan.actions[1].provider_reported_balance, 2026.03);
   assert.equal(plan.actions[3].verification_required, true);
+  assert.equal(plan.paypal_manual_confirmations.length, 1);
+  assert.equal(plan.paypal_manual_confirmations[0].confirmed_amount_net, "");
+  assert.equal(plan.paypal_manual_confirmations[0].safe_to_apply, false);
+  assert.equal(plan.balance_template_rows.length, 2);
+  assert.match(plan.balance_template_tsv, /confirmed_balance/);
   assert.match(plan.tsv, /priority\tseverity\tproblem\tdate\tmovement_date\toperation/);
   assert.match(plan.tsv, /opening_balance\tinflow\toutflow\tcomputed_closing_balance\tprovider_reported_balance/);
   assert.match(plan.copyable_ostatki_rows, /монобанк грн/);
@@ -103,5 +108,8 @@ test("balance repair plan text warns against writing computed balances as facts"
   assert.match(text, /Balance repair plan/);
   assert.match(text, /P1 \| missing_amount_net/);
   assert.match(text, /P2 \| balance_mismatch/);
+  assert.match(text, /PayPal manual confirmations/);
+  assert.match(text, /Blank balance templates/);
   assert.match(text, /Do not write computed Остатки rows as factual balances/);
+  assert.match(text, /gross amount must not be copied into amount_net/);
 });
