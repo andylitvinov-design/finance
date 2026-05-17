@@ -123,6 +123,9 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     diagnostics: {
       fact_balance_rows_detected: factBalanceRows.length,
       fact_balance_rows_saved_to_ostatki: factBalanceRows.filter((row) => row.status === "matched_ostatki").length,
+      raw_fact_balance_rows: factBalanceRows,
+      saved_fact_balance_rows: factBalanceRows.filter((row) => row.status === "matched_ostatki"),
+      skipped_fact_balance_rows: factBalanceRows.filter((row) => row.status !== "matched_ostatki"),
       balance_snapshot_rows_loaded: validRows.length,
       skipped_non_balance_fact_rows: countSkippedNonBalanceFactRows(repository, periodFilter),
       inserted: 0,
@@ -171,6 +174,9 @@ function emptyBalanceSnapshotsSummary() {
     diagnostics: {
       fact_balance_rows_detected: 0,
       fact_balance_rows_saved_to_ostatki: 0,
+      raw_fact_balance_rows: [],
+      saved_fact_balance_rows: [],
+      skipped_fact_balance_rows: [],
       balance_snapshot_rows_loaded: 0,
       skipped_non_balance_fact_rows: 0,
       inserted: 0,
@@ -218,6 +224,7 @@ function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) 
         needs_input: existingAmount === null,
         source: existingAmount === null ? "active_channel_missing_balance" : "existing_balance",
         status: existingAmount === null ? "needs_input" : "already_entered",
+        normalized_key: makeNormalizedKey(targetDate, pair.channel, pair.currency),
       };
     });
 }
@@ -237,11 +244,14 @@ function buildFactBalanceRows(repository = {}, periodFilter = {}, balanceRows = 
         balance.date === date
         && makeKey(balance.channel, balance.currency) === makeKey(channel, currency)
       );
+      const normalizedKey = makeNormalizedKey(date, channel, currency);
       rows.push({
         date,
         channel,
         currency,
         amount,
+        normalized_key: normalizedKey,
+        matching_ostatki_key: exists ? normalizedKey : null,
         sheet: FACT_SHEET_NAME,
         expected_sheet: BALANCE_SHEET_NAME,
         status: exists ? "matched_ostatki" : "missing_in_ostatki",
@@ -464,6 +474,10 @@ function resolvePeriod(periodFilter, dates = []) {
 
 function makeKey(channel, currency) {
   return `${channel}|${currency}`;
+}
+
+function makeNormalizedKey(date, channel, currency) {
+  return [date || "", channel || "", String(currency || "").trim().toUpperCase()].join("|");
 }
 
 function normalizeDate(value) {

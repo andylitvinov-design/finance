@@ -118,8 +118,9 @@ test("non-balance fact rows are skipped before Остатки persistence", () =
   const result = context.normalizeManualBalanceRowsForSave([
     { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: "" },
     { date: "2026-05-17", channel: "", currency: "USD", amount: "22" },
+    { date: "2026-05-17", channel: "wise usd", currency: "USD", calculated_closing_balance: "1100" },
   ]);
 
   assert.equal(result.rows.length, 0);
-  assert.equal(result.skipped, 2);
+  assert.equal(result.skipped, 3);
 });

@@ -17,7 +17,7 @@ function jsonResponse(payload, init = {}) {
   };
 }
 
-test("appendManualOstatkiRows appends only new Остатки rows and skips duplicate date channel currency", async () => {
+test("appendManualOstatkiRows upserts Остатки rows by normalized date channel currency", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
@@ -27,7 +27,7 @@ test("appendManualOstatkiRows appends only new Остатки rows and skips dup
     const fetchCalls = [];
     const result = await appendManualOstatkiRows({
       rows: [
-        { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 1000 },
+        { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 1200 },
         { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351, comment: "carried" },
       ],
       fetchImpl: async (url, options = {}) => {
@@ -46,6 +46,11 @@ test("appendManualOstatkiRows appends only new Остатки rows and skips dup
             }],
           });
         }
+        if (decodeURIComponent(String(url)).includes("'Остатки'!A2:G2") && options.method === "PUT") {
+          const body = JSON.parse(options.body);
+          assert.deepEqual(body.values, [["2026-05-17", "трансервайз дол", "1200", "USD", "", "", ""]]);
+          return jsonResponse({ updatedRange: "'Остатки'!A2:G2" });
+        }
         if (String(url).includes(":append")) {
           const body = JSON.parse(options.body);
           assert.deepEqual(body.values, [["2026-05-17", "БАНК КАНАДА cad", "7351", "CAD", "", "", "carried"]]);
@@ -56,8 +61,10 @@ test("appendManualOstatkiRows appends only new Остатки rows and skips dup
     });
 
     assert.equal(result.appendRowCount, 1);
+    assert.equal(result.updateRowCount, 1);
     assert.equal(result.appended[0].channel, "БАНК КАНАДА cad");
-    assert.equal(result.skipped[0].reason, "duplicate_date_channel_currency");
+    assert.equal(result.updated[0].reason, "updated_date_channel_currency");
+    assert.equal(fetchCalls.filter((call) => call.options?.method === "PUT").length, 1);
     assert.equal(fetchCalls.filter((call) => call.url.includes(":append")).length, 1);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -99,6 +106,21 @@ test("appendManualOstatkiRows does not treat calculated hints as Остатки 
   });
 
   assert.equal(result.appendRowCount, 0);
+  assert.equal(fetchCount, 0);
+});
+
+test("appendManualOstatkiRows does not substitute invalid fact amounts with zero", async () => {
+  let fetchCount = 0;
+  const result = await appendManualOstatkiRows({
+    rows: [{ date: "2026-05-17", channel: "wise usd", currency: "USD", amount: "not a balance" }],
+    fetchImpl: async () => {
+      fetchCount += 1;
+      throw new Error("fetch should not be called");
+    },
+  });
+
+  assert.equal(result.appendRowCount, 0);
+  assert.equal(result.updateRowCount, 0);
   assert.equal(fetchCount, 0);
 });
 
