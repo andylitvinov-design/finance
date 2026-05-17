@@ -148,14 +148,24 @@ async function collectWiseBalanceRows({ date, env, fetchImpl }) {
       baseUrl: env.WISE_API_BASE || "https://api.wise.com",
       fetchImpl,
     });
-    const rows = (balances || []).map((balance) => buildSnapshotRow({
-      date,
-      channel: balance.channel,
-      amount: balance.amount,
-      currency: balance.currency,
-      amountUsd: balance.amountUsd,
-    })).filter(Boolean);
-    return { provider, provider_current_balance_status: "available", rows, skipped_rows: [] };
+    const rows = [];
+    const skipped_rows = [];
+    for (const balance of balances || []) {
+      const currency = String(balance?.currency || "").trim().toUpperCase();
+      if (!["USD", "EUR"].includes(currency)) {
+        skipped_rows.push({ provider, currency, reason: "missing_configured_channel" });
+        continue;
+      }
+      const row = buildSnapshotRow({
+        date,
+        channel: balance.channel,
+        amount: balance.amount,
+        currency,
+        amountUsd: balance.amountUsd,
+      });
+      if (row) rows.push(row);
+    }
+    return { provider, provider_current_balance_status: "available", rows, skipped_rows };
   } catch (error) {
     return { provider, provider_current_balance_status: "error", rows: [], skipped_rows: [], error: String(error?.message || error) };
   }

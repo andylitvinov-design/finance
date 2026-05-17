@@ -103,6 +103,7 @@ test("Wise and Monobank real provider balances map to Остатки rows", asyn
       return jsonResponse([
         { id: "wise-usd", currency: "USD", availableAmount: { value: 120.45, currency: "USD" } },
         { id: "wise-eur", currency: "EUR", availableAmount: { value: 85.5, currency: "EUR" } },
+        { id: "wise-gbp", currency: "GBP", availableAmount: { value: 0, currency: "GBP" } },
       ]);
     }
     if (value.endsWith("/personal/client-info")) {
@@ -134,6 +135,7 @@ test("Wise and Monobank real provider balances map to Остатки rows", asyn
     "монобанк грн|UAH|1234,56",
   ]);
   assert.equal(results.find((result) => result.provider === "monobank")?.skipped_rows.length, 1);
+  assert.equal(results.find((result) => result.provider === "wise")?.skipped_rows.length, 1);
   assert.equal(rows.every((row) => row.comment === "auto daily provider snapshot"), true);
 });
 
