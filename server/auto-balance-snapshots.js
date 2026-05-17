@@ -74,7 +74,7 @@ export async function runAutoBalanceSnapshots(options = {}) {
     if (result.error) warnings.push(`${result.provider}: ${result.error}`);
   }
 
-  let saveResult = { rowCount: 0, skipped: dryRun ? "dry_run" : "no_rows" };
+  let saveResult = { rowCount: 0, inserted: 0, updated: 0, skipped: dryRun ? skippedRows.length : "no_rows" };
   if (!dryRun && rows.length) {
     try {
       saveResult = await saveAutoBalanceSnapshotRows(rows, { fetchImpl });
@@ -92,6 +92,9 @@ export async function runAutoBalanceSnapshots(options = {}) {
     ...buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, warnings }),
     ok: true,
     saved_rows: dryRun ? 0 : Number(saveResult.rowCount || 0),
+    inserted: dryRun ? 0 : Number(saveResult.inserted || 0),
+    updated: dryRun ? 0 : Number(saveResult.updated || 0),
+    skipped: dryRun ? rows.length : Number(saveResult.skipped || 0),
     save: saveResult,
   };
 }
@@ -242,14 +245,24 @@ function buildSnapshotRow({ date, channel, amount, currency, amountUsd }) {
 
 export async function saveAutoBalanceSnapshotRows(rows, { fetchImpl = fetch } = {}) {
   const snapshotRows = normalizeSnapshotRows(rows);
-  if (!snapshotRows.length) return { rowCount: 0, savedAt: new Date().toISOString() };
+  if (!snapshotRows.length) return { rowCount: 0, inserted: 0, updated: 0, skipped: 0, savedAt: new Date().toISOString() };
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
   await ensureBalanceSheetExists({ accessToken, fetchImpl });
   const existingValues = await getBalanceSheetValues({ accessToken, fetchImpl });
   const existingRows = parseBalanceSheetValues(existingValues);
+  const existingKeys = new Set(existingRows.map(balanceRowKey));
+  const replacementKeys = new Set(snapshotRows.map(balanceRowKey));
   const mergedRows = mergeBalanceRowsByDateChannelCurrency(existingRows, snapshotRows);
   await putBalanceSheetValues(buildBalanceSheetValues(mergedRows), { accessToken, fetchImpl });
-  return { rowCount: snapshotRows.length, savedAt: new Date().toISOString() };
+  const updated = Array.from(replacementKeys).filter((key) => existingKeys.has(key)).length;
+  const inserted = replacementKeys.size - updated;
+  return {
+    rowCount: snapshotRows.length,
+    inserted,
+    updated,
+    skipped: Math.max(0, snapshotRows.length - replacementKeys.size),
+    savedAt: new Date().toISOString(),
+  };
 }
 
 function normalizeSnapshotRows(rows) {

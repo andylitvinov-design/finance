@@ -137,11 +137,33 @@ async function fetchWiseJson(options) {
       Accept: "application/json"
     }
   });
-  const payload = await upstream.json().catch(() => null);
+  const { payload, text } = await readProviderPayload(upstream);
   if (!upstream.ok) {
-    throw new Error(payload?.error || payload?.message || `Wise request failed (${upstream.status}).`);
+    throw new Error(payload?.error || payload?.message || `Wise request failed (${upstream.status}): ${shortExcerpt(text)}`);
   }
   return payload;
+}
+
+function parseJsonPayload(text) {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readProviderPayload(upstream) {
+  if (typeof upstream.text === "function") {
+    const text = await upstream.text().catch(() => "");
+    return { payload: parseJsonPayload(text), text };
+  }
+  const payload = typeof upstream.json === "function" ? await upstream.json().catch(() => null) : null;
+  return { payload, text: payload ? JSON.stringify(payload) : "" };
+}
+
+function shortExcerpt(text) {
+  const excerpt = String(text || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  return excerpt || "empty response";
 }
 
 export function normalizeWiseTransaction(transaction, balance, profileId, index = 0) {

@@ -57,7 +57,8 @@ test("period balance reconciliation block replaces Analytics placeholder with AP
   assert.equal(findByClass(analyticsContainer, "period-balance-reconciliation-section").length, 1);
   assert.match(analyticsContainer.textContent, /ИТОГО: НЕ ОК/);
   assert.match(analyticsContainer.textContent, /OK позиций/);
-  assert.match(analyticsContainer.textContent, /Изменение баланса по валютам/);
+  assert.doesNotMatch(analyticsContainer.textContent, /Изменение баланса по валютам/);
+  assert.match(analyticsContainer.textContent, /Остатки по каналам оплаты/);
 });
 
 test("period balance reconciliation prepends Analytics container with DOM children collection", () => {
@@ -131,7 +132,7 @@ test("period balance renders all position rows before currency summary tables", 
   assert.deepEqual(titles, [
     "По счетам и валютам",
     "Где исправить",
-    "Изменение баланса по валютам",
+    "Остатки по каналам оплаты",
   ]);
 
   const positionRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
@@ -142,6 +143,33 @@ test("period balance renders all position rows before currency summary tables", 
   assert.equal(positionRows[2][0], "paypal eur");
   assert.equal(positionRows[3][0], "mono uah");
   assert.equal(positionRows[3][7], "Реальное расхождение");
+});
+
+test("period balance channel balances group by channel, currency, warnings, and totals", () => {
+  const result = ui.buildPaymentChannelBalanceRows([
+    { channel: "PayPal", currency: "USD", factual_closing_balance: 100, status: "ok" },
+    { channel: "Wise / TransferWise", currency: "EUR", factual_closing_balance: 200, status: "ok" },
+    { channel: "Binance", currency: "USDT", computed_real_closing_balance: 50, status: "missing_opening_balance", fix_action: "Добавить стартовый остаток" },
+    { channel: "PayPal", currency: "EUR", computed_real_closing_balance: 0, missing_amount_net_rows: 1, status: "missing_amount_net" },
+  ]);
+
+  assert.deepEqual(result.currencies, ["EUR", "USD", "USDT"]);
+  const paypal = result.rows.find((row) => row.channel === "PayPal");
+  const wise = result.rows.find((row) => row.channel === "Wise / TransferWise");
+  const binance = result.rows.find((row) => row.channel === "Binance");
+  const total = result.rows.at(-1);
+
+  assert.equal(paypal.balances.USD, 100);
+  assert.equal(paypal.balances.EUR, 0);
+  assert.match(paypal.statusWarnings, /Нет amount_net/);
+  assert.equal(wise.balances.EUR, 200);
+  assert.equal(binance.balances.USDT, 50);
+  assert.match(binance.statusWarnings, /Добавить стартовый остаток/);
+  assert.equal(total.channel, "ИТОГО");
+  assert.equal(total.balances.EUR, 200);
+  assert.equal(total.balances.USD, 100);
+  assert.equal(total.balances.USDT, 50);
+  assert.equal(total.totalUsd, 382);
 });
 
 test("period balance actionable rows still render under fix section only", () => {

@@ -91,6 +91,55 @@ test("same date channel currency replaces existing row without deleting another 
   ]);
 });
 
+test("snapshot save result reports idempotent insert and update counts", async () => {
+  const writes = [];
+  const fetchImpl = async (url, options = {}) => {
+    const value = String(url);
+    if (value === "https://oauth2.googleapis.com/token") {
+      return jsonResponse({ access_token: "token" });
+    }
+    if (value.includes("/spreadsheets/") && !value.includes("/values/")) {
+      return jsonResponse({ sheets: [{ properties: { title: "Остатки" } }] });
+    }
+    if (value.includes("/values/") && (!options.method || options.method === "GET")) {
+      return jsonResponse({
+        values: [
+          ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+          ["2026-05-17", "PayPal", "1", "USD", "1", "1", "old"],
+        ],
+      });
+    }
+    if (value.includes("/values/") && options.method === "PUT") {
+      writes.push(JSON.parse(options.body));
+      return jsonResponse({});
+    }
+    throw new Error(`Unexpected URL ${value}`);
+  };
+
+  const { saveAutoBalanceSnapshotRows } = await import("../server/auto-balance-snapshots.js");
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "test@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 })
+    .privateKey
+    .export({ type: "pkcs8", format: "pem" });
+
+  try {
+    const result = await saveAutoBalanceSnapshotRows([
+      { date: "2026-05-17", channel: "PayPal", amount: "2", currency: "USD", rate: "1", usdAmount: "2" },
+      { date: "2026-05-17", channel: "Wise", amount: "3", currency: "EUR", rate: "1.16", usdAmount: "3.48" },
+    ], { fetchImpl });
+
+    assert.equal(result.inserted, 1);
+    assert.equal(result.updated, 1);
+    assert.equal(result.rowCount, 2);
+    assert.equal(writes.length, 1);
+  } finally {
+    restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
+    restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);
+  }
+});
+
 test("Wise and Monobank real provider balances map to Остатки rows", async () => {
   const calls = [];
   const fetchImpl = async (url) => {

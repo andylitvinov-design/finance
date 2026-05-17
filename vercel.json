@@ -13,6 +13,10 @@
       "destination": "/api/index?action=autoBalanceSnapshots"
     },
     {
+      "source": "/api/balance-snapshot-daily",
+      "destination": "/api/index?action=autoBalanceSnapshots"
+    },
+    {
       "source": "/api/balance-snapshots",
       "destination": "/api/index?action=balanceSnapshots"
     },
