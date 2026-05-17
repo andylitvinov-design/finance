@@ -1,0 +1,53 @@
+@media (max-width: 680px) {
+  .analytics-root,
+  .analytics-root > *,
+  .finance-analysis-section,
+  .finance-analysis-section > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .analytics-root .table-wrap,
+  .finance-analysis-section .table-wrap {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+  }
+
+  .analytics-root .table-wrap > div,
+  .finance-analysis-section .table-wrap > div,
+  .analytics-root .table-wrap .desktop-table,
+  .finance-analysis-section .table-wrap .desktop-table,
+  .analytics-root .table-wrap table,
+  .finance-analysis-section .table-wrap table {
+    display: block;
+    width: max-content;
+    min-width: max-content;
+    max-width: none;
+  }
+
+  .analytics-root .table-wrap .mobile-table,
+  .finance-analysis-section .table-wrap .mobile-table {
+    display: none;
+  }
+
+  .analytics-root .table-wrap th,
+  .analytics-root .table-wrap td,
+  .finance-analysis-section .table-wrap th,
+  .finance-analysis-section .table-wrap td {
+    white-space: nowrap;
+  }
+
+  .analytics-root .table-wrap table tr > :first-child,
+  .finance-analysis-section .table-wrap table tr > :first-child {
+    position: static;
+    left: auto;
+    z-index: auto;
+  }
+}
