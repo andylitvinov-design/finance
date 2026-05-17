@@ -265,3 +265,33 @@ test("saveBalanceSnapshotRowsDirect replaces same date and channel instead of du
     ["2026-05-02", "трансервайз дол", "120,45", "USD", "1", "120,45", "wise auto snapshot"]
   ]);
 });
+
+test("mergeManualBalanceRows keeps same channel balances separated by currency", () => {
+  const context = {
+    normalizeIncomingSheetDateValue(value) {
+      return String(value || "").trim();
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(googleSheetsJs, "makeManualBalanceRowKey")}\n` +
+    `${extractFunction(googleSheetsJs, "mergeManualBalanceRows")}\n` +
+    "this.mergeManualBalanceRows = mergeManualBalanceRows;",
+    context
+  );
+
+  const merged = plain(context.mergeManualBalanceRows(
+    [
+      { date: "2026-05-17", channel: "пейпал сad", currency: "CAD", amount: "10" },
+      { date: "2026-05-17", channel: "пейпал сad", currency: "USD", amount: "20" },
+    ],
+    [
+      { date: "2026-05-17", channel: "пейпал сad", currency: "USD", amount: "25" },
+    ]
+  ));
+
+  assert.deepEqual(merged, [
+    { date: "2026-05-17", channel: "пейпал сad", currency: "CAD", amount: "10" },
+    { date: "2026-05-17", channel: "пейпал сad", currency: "USD", amount: "25" },
+  ]);
+});

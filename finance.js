@@ -2905,7 +2905,7 @@ async function saveManualFinanceSheet() {
 
 async function saveManualFinanceBalanceRows() {
   if (!state.manualFinance.data) return;
-  const rows = normalizeManualFinanceBalanceRows(state.manualFinance.data.balanceRows, {
+  const rows = normalizeManualFinanceBalanceRows(collectManualFinanceBalanceRowsFromEditor(), {
     defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
   }).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
   if (!hasConfiguredManualFinanceEndpoint()) {
@@ -2933,6 +2933,26 @@ async function saveManualFinanceBalanceRows() {
     state.manualFinance.loading = false;
     renderTabs();
   }
+}
+
+function collectManualFinanceBalanceRowsFromEditor() {
+  const fallbackRows = state.manualFinance.data?.balanceRows || [];
+  if (typeof document === "undefined") return fallbackRows;
+  const table = document.querySelector("[data-manual-balance-editor]");
+  if (!table) return fallbackRows;
+  const rows = Array.from(table.querySelectorAll("tr[data-manual-balance-row]")).map((row) => {
+    const read = (field) => row.querySelector(`[data-manual-balance-field="${field}"]`)?.value || "";
+    return {
+      date: read("date"),
+      channel: read("channel"),
+      currency: read("currency"),
+      amount: read("amount"),
+      rate: read("rate"),
+      usdAmount: read("usdAmount"),
+      comment: read("comment")
+    };
+  });
+  return rows.length ? rows : fallbackRows;
 }
 
 async function saveManualFinanceCashRows() {

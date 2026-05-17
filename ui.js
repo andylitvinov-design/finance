@@ -4536,6 +4536,7 @@ function renderManualFinanceBalanceEditor() {
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
+  table.dataset.manualBalanceEditor = "true";
   const body = document.createElement("tbody");
   const header = document.createElement("tr");
   ["Date", "Channel", "Currency", "Balance", "Status", "курс", "сумма_usd", "комментарий"].forEach((label) => {
@@ -4548,14 +4549,15 @@ function renderManualFinanceBalanceEditor() {
   const rows = ensureManualFinanceBalanceInputRows();
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
-    appendManualFinanceInputCell(tr, row.date || "", "date", (value) => updateManualFinanceBalanceValue(rowIndex, "date", value));
-    appendManualFinanceSelectCell(tr, row.channel || "", getManualFinanceChannels(), (value) => updateManualFinanceBalanceValue(rowIndex, "channel", value));
-    appendManualFinanceInputCell(tr, row.currency || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "currency", value));
-    appendManualFinanceInputCell(tr, row.amount || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "amount", value));
+    tr.dataset.manualBalanceRow = "true";
+    appendManualFinanceInputCell(tr, row.date || "", "date", (value) => updateManualFinanceBalanceValue(rowIndex, "date", value), "date");
+    appendManualFinanceSelectCell(tr, row.channel || "", getManualFinanceChannels(), (value) => updateManualFinanceBalanceValue(rowIndex, "channel", value), "channel");
+    appendManualFinanceInputCell(tr, row.currency || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "currency", value), "currency");
+    appendManualFinanceInputCell(tr, row.amount || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "amount", value), "amount");
     appendManualFinanceReadonlyCell(tr, row.amount ? "already entered" : "needs input");
-    appendManualFinanceReadonlyCell(tr, row.rate || "");
-    appendManualFinanceReadonlyCell(tr, row.usdAmount || "");
-    appendManualFinanceInputCell(tr, row.comment || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "comment", value));
+    appendManualFinanceReadonlyCell(tr, row.rate || "", "rate");
+    appendManualFinanceReadonlyCell(tr, row.usdAmount || "", "usdAmount");
+    appendManualFinanceInputCell(tr, row.comment || "", "text", (value) => updateManualFinanceBalanceValue(rowIndex, "comment", value), "comment");
     body.appendChild(tr);
   });
   table.appendChild(body);
@@ -4610,21 +4612,23 @@ function renderManualFinanceCashEditor() {
   return block;
 }
 
-function appendManualFinanceInputCell(row, value, type, onInput) {
+function appendManualFinanceInputCell(row, value, type, onInput, fieldName = "") {
   const td = document.createElement("td");
   const input = document.createElement("input");
   input.className = "finance-input";
   input.type = type || "text";
   input.value = value || "";
+  if (fieldName) input.dataset.manualBalanceField = fieldName;
   input.addEventListener("input", (event) => onInput(event.target.value));
   td.appendChild(input);
   row.appendChild(td);
 }
 
-function appendManualFinanceSelectCell(row, value, options, onChange) {
+function appendManualFinanceSelectCell(row, value, options, onChange, fieldName = "") {
   const td = document.createElement("td");
   const select = document.createElement("select");
   select.className = "finance-input";
+  if (fieldName) select.dataset.manualBalanceField = fieldName;
   (options || []).forEach((option) => {
     const node = document.createElement("option");
     if (Array.isArray(option)) {
@@ -4648,10 +4652,17 @@ function appendManualFinanceSelectCell(row, value, options, onChange) {
   row.appendChild(td);
 }
 
-function appendManualFinanceReadonlyCell(row, value) {
+function appendManualFinanceReadonlyCell(row, value, fieldName = "") {
   const td = document.createElement("td");
   td.className = "readonly-cell";
   td.textContent = value || "";
+  if (fieldName) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.value = value || "";
+    input.dataset.manualBalanceField = fieldName;
+    td.appendChild(input);
+  }
   row.appendChild(td);
 }
 
