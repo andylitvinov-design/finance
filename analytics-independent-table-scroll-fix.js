@@ -45,21 +45,59 @@
     return changed;
   }
 
+  function normalizeNestedAnalyticsTableWraps(doc = root.document) {
+    if (!root.matchMedia || !root.matchMedia("(max-width: 680px)").matches) return 0;
+    let changed = 0;
+    queryAll(doc, ".analytics-root .table-wrap, .finance-analysis-section .table-wrap").forEach((wrap) => {
+      wrap.style.display = "block";
+      wrap.style.width = "100%";
+      wrap.style.maxWidth = "100%";
+      wrap.style.minWidth = "0";
+      wrap.style.overflowX = "auto";
+      wrap.style.overflowY = "hidden";
+      wrap.style.webkitOverflowScrolling = "touch";
+      wrap.style.overscrollBehaviorX = "contain";
+      queryAll(wrap, ".desktop-table").forEach((node) => {
+        node.style.display = "block";
+        node.style.width = "max-content";
+        node.style.minWidth = "max-content";
+        node.style.maxWidth = "none";
+      });
+      queryAll(wrap, ".mobile-table").forEach((node) => {
+        node.style.display = "none";
+      });
+      queryAll(wrap, "table").forEach((table) => {
+        table.style.width = "max-content";
+        table.style.minWidth = "max-content";
+        table.style.maxWidth = "none";
+      });
+      wrap.dataset.analyticsInnerScrollNormalized = "true";
+      changed += 1;
+    });
+    return changed;
+  }
+
+  function normalizeAll(doc = root.document) {
+    return normalizeAnalyticsOuterContainers(doc) + normalizeNestedAnalyticsTableWraps(doc);
+  }
+
   function install() {
-    normalizeAnalyticsOuterContainers(root.document);
+    normalizeAll(root.document);
     const target = root.document?.getElementById?.("tabPanels") || root.document?.body;
     if (!target || target.dataset?.analyticsIndependentScrollObserver === "true") return;
     target.dataset = target.dataset || {};
     target.dataset.analyticsIndependentScrollObserver = "true";
     const Observer = root.MutationObserver || globalThis.MutationObserver;
     if (!Observer) return;
-    const observer = new Observer(() => normalizeAnalyticsOuterContainers(root.document));
+    const observer = new Observer(() => normalizeAll(root.document));
     observer.observe(target, { childList: true, subtree: true });
   }
 
   root.EzohataAnalyticsIndependentTableScrollFix = {
     install,
+    normalizeAll,
     normalizeAnalyticsOuterContainers,
+    normalizeNestedAnalyticsTableWraps,
     isAnalyticsOuterTableWrap,
   };
 
