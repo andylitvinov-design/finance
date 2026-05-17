@@ -114,7 +114,6 @@
       ));
     }
 
-    section.appendChild(renderCurrencyTable(doc, reconciliation.by_currency || []));
     section.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const warnings = snapshot?.warnings || reconciliation.warnings || [];
@@ -213,7 +212,7 @@
     block.className = "period-balance-total-summary";
     const title = doc.createElement("div");
     title.className = "tab-note";
-    title.textContent = "Итоги по всем каналам";
+    title.textContent = "Итоги по валютам";
     block.appendChild(title);
     if (!currencies.length) {
       const empty = doc.createElement("div");
@@ -273,32 +272,9 @@
     return result;
   }
 
-  function renderCurrencyTable(doc, rows) {
-    return renderSubsection(
-      doc,
-      "Изменение баланса по валютам",
-      ["Валюта", "План приход", "План расход", "План изменение", "Реал приход", "Реал расход", "Реал изменение", "План-реал", "Реал разница", "Статус"],
-      rows.map((row) => [
-        row.currency || "—",
-        formatNumber(row.planned_inflow),
-        formatNumber(row.planned_outflow),
-        formatNumber(row.planned_delta),
-        formatNumber(row.real_inflow),
-        formatNumber(row.real_outflow),
-        formatNumber(row.real_delta),
-        formatNumber(row.plan_vs_real_delta),
-        formatNumber(row.real_difference),
-        getStatusLabel(row.status),
-      ])
-    );
-  }
-
   function renderPositionTable(doc, rows) {
-    return renderSubsection(
-      doc,
-      "По счетам и валютам",
-      ["Счёт", "Валюта", "Было", "Реал Δ", "Реал должно", "Факт", "Разница", "Статус", "Что сделать"],
-      rows.map((row) => [
+    const tableRows = [
+      ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
         formatNumber(row.opening_balance),
@@ -307,9 +283,56 @@
         formatNumber(row.factual_closing_balance),
         formatNumber(row.real_difference),
         getStatusLabel(row.status),
-        row.fix_action || "—",
-      ])
+      ]),
+      ...buildChannelCurrencyTotalRows(rows),
+    ];
+    return renderSubsection(
+      doc,
+      "Остатки по каналам оплаты",
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "ОЖИДАЕМЫЙ ОСТАТОК", "ФАКТ ОСТАТОК", "РАЗНИЦА", "СТАТУС"],
+      tableRows
     );
+  }
+
+  function buildChannelCurrencyTotalRows(rows) {
+    const totalsByCurrency = new Map();
+    (rows || []).forEach((row) => {
+      const currency = String(row?.currency || "").trim().toUpperCase();
+      if (!currency) return;
+      if (!totalsByCurrency.has(currency)) {
+        totalsByCurrency.set(currency, {
+          opening_balance: 0,
+          real_delta: 0,
+          computed_real_closing_balance: 0,
+          factual_closing_balance: 0,
+          real_difference: 0,
+        });
+      }
+      const totals = totalsByCurrency.get(currency);
+      addNumeric(totals, "opening_balance", row.opening_balance);
+      addNumeric(totals, "real_delta", row.real_delta);
+      addNumeric(totals, "computed_real_closing_balance", row.computed_real_closing_balance);
+      addNumeric(totals, "factual_closing_balance", row.factual_closing_balance);
+      addNumeric(totals, "real_difference", row.real_difference);
+    });
+    return Array.from(totalsByCurrency.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([currency, totals]) => [
+        "ИТОГО",
+        currency,
+        formatNumber(totals.opening_balance),
+        formatNumber(totals.real_delta),
+        formatNumber(totals.computed_real_closing_balance),
+        formatNumber(totals.factual_closing_balance),
+        formatNumber(totals.real_difference),
+        "Итого по валюте",
+      ]);
+  }
+
+  function addNumeric(target, field, value) {
+    const numeric = parseNumeric(value);
+    if (numeric === null) return;
+    target[field] = (target[field] || 0) + numeric;
   }
 
   function renderSubsection(doc, titleText, header, rows) {
