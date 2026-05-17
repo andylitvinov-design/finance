@@ -277,10 +277,11 @@
       ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
-        formatNumber(row.opening_balance),
+        formatNumber(row.opening_fact_balance ?? row.opening_balance),
         formatNumber(row.real_delta),
-        formatNumber(row.computed_real_closing_balance),
-        formatNumber(row.factual_closing_balance),
+        formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
+        formatNumber(getManualProviderBalance(row)),
+        getFactSourceLabel(row.fact_source || row.closing_balance_source || (getManualProviderBalance(row) !== null ? "manual" : "")),
         formatNumber(row.real_difference),
         getStatusLabel(row.status),
       ]),
@@ -288,8 +289,8 @@
     ];
     return renderSubsection(
       doc,
-      "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "РЕАЛ ИЗМЕНЕНИЕ", "ОЖИДАЕМЫЙ ОСТАТОК", "ФАКТ ОСТАТОК", "РАЗНИЦА", "СТАТУС"],
+      "По счетам и валютам",
+      ["Счёт", "Валюта", "Было факт", "Реал Δ", "Расчётный остаток", "Факт ручной/провайдер", "Источник факта", "Разница факт-расчёт", "Статус"],
       tableRows
     );
   }
@@ -303,16 +304,16 @@
         totalsByCurrency.set(currency, {
           opening_balance: 0,
           real_delta: 0,
-          computed_real_closing_balance: 0,
-          factual_closing_balance: 0,
+          calculated_closing_balance: 0,
+          manual_provider_closing_balance: 0,
           real_difference: 0,
         });
       }
       const totals = totalsByCurrency.get(currency);
-      addNumeric(totals, "opening_balance", row.opening_balance);
+      addNumeric(totals, "opening_balance", row.opening_fact_balance ?? row.opening_balance);
       addNumeric(totals, "real_delta", row.real_delta);
-      addNumeric(totals, "computed_real_closing_balance", row.computed_real_closing_balance);
-      addNumeric(totals, "factual_closing_balance", row.factual_closing_balance);
+      addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
+      addNumeric(totals, "manual_provider_closing_balance", getManualProviderBalance(row));
       addNumeric(totals, "real_difference", row.real_difference);
     });
     return Array.from(totalsByCurrency.entries())
@@ -322,8 +323,9 @@
         currency,
         formatNumber(totals.opening_balance),
         formatNumber(totals.real_delta),
-        formatNumber(totals.computed_real_closing_balance),
-        formatNumber(totals.factual_closing_balance),
+        formatNumber(totals.calculated_closing_balance),
+        formatNumber(totals.manual_provider_closing_balance),
+        "Итого",
         formatNumber(totals.real_difference),
         "Итого по валюте",
       ]);
@@ -375,7 +377,26 @@
     if (normalized === "missing_closing_balance") return "Нет конечного остатка";
     if (normalized === "carried_forward_conditional") return "Условно перенесено";
     if (normalized === "missing_amount_net") return "Нет amount_net";
+    if (normalized === "no_data") return "Нет данных";
     return "Проверить";
+  }
+
+  function getManualProviderBalance(row) {
+    if (row?.manual_provider_closing_balance !== undefined) return row.manual_provider_closing_balance;
+    const source = String(row?.fact_source || row?.closing_balance_source || "").trim();
+    if (source && source !== "carried_forward" && source !== "missing") return row?.factual_closing_balance;
+    if (!source && row?.status !== "carried_forward_conditional") return row?.factual_closing_balance;
+    return null;
+  }
+
+  function getFactSourceLabel(source) {
+    const normalized = String(source || "").trim();
+    if (normalized === "manual") return "manual";
+    if (normalized === "provider") return "provider";
+    if (normalized === "carried_forward") return "carried_forward";
+    if (normalized === "missing") return "missing";
+    if (normalized === "exact") return "manual";
+    return normalized || "missing";
   }
 
   function formatNumber(value) {

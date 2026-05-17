@@ -81,6 +81,27 @@ test("appendManualOstatkiRows does not call Sheets when no eligible amount rows 
   assert.equal(fetchCount, 0);
 });
 
+test("appendManualOstatkiRows does not treat calculated hints as Остатки facts", async () => {
+  let fetchCount = 0;
+  const result = await appendManualOstatkiRows({
+    rows: [{
+      date: "2026-05-17",
+      channel: "wise usd",
+      currency: "USD",
+      amount: null,
+      expected_closing_hint: 1100,
+      action: "manual_provider_fact_required",
+    }],
+    fetchImpl: async () => {
+      fetchCount += 1;
+      throw new Error("fetch should not be called");
+    },
+  });
+
+  assert.equal(result.appendRowCount, 0);
+  assert.equal(fetchCount, 0);
+});
+
 test("probeGoogleSheetAccess reports missing credentials without fetching", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
