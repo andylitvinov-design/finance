@@ -32,6 +32,7 @@ test("period balance reconciliation UI wraps Analytics, not expense financial an
   assert.equal(findByClass(expenseBlock, "period-balance-reconciliation-section").length, 0);
   assert.equal(findByClass(analyticsContainer, "normal-analytics-section").length, 1);
   assert.equal(findByClass(analyticsContainer, "period-balance-reconciliation-section").length, 1);
+  assert.equal(analyticsContainer.children[0].className, "finance-analysis-section period-balance-reconciliation-section");
 });
 
 test("period balance reconciliation block replaces Analytics placeholder with API result", async () => {
@@ -54,11 +55,12 @@ test("period balance reconciliation block replaces Analytics placeholder with AP
 
   assert.equal(findByClass(analyticsContainer, "normal-analytics-section").length, 1);
   assert.equal(findByClass(analyticsContainer, "period-balance-reconciliation-section").length, 1);
-  assert.match(analyticsContainer.textContent, /Полная сумма остатков на начало периода/);
+  assert.match(analyticsContainer.textContent, /ИТОГО: НЕ ОК/);
+  assert.match(analyticsContainer.textContent, /OK позиций/);
   assert.match(analyticsContainer.textContent, /Изменение баланса по валютам/);
 });
 
-test("period balance reconciliation inserts before remaining balance sections with DOM children collection", () => {
+test("period balance reconciliation prepends Analytics container with DOM children collection", () => {
   const doc = createTestDocument();
   const analyticsContainer = createHtmlCollectionLikeContainer();
   const root = {
@@ -82,25 +84,26 @@ test("period balance reconciliation inserts before remaining balance sections wi
   assert.deepEqual(
     analyticsContainer.childList.map((node) => node.className),
     [
-      "normal-analytics-section",
       "finance-analysis-section period-balance-reconciliation-section",
+      "normal-analytics-section",
       "finance-analysis-section balance-coverage-section",
     ]
   );
 });
 
-test("period balance top summary renders required total labels", () => {
+test("period balance verdict renders required total labels", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot());
   const text = block.textContent;
 
   [
-    "Полная сумма остатков на начало периода",
-    "Полная сумма остатков на конец периода",
-    "Плановая сумма приходов",
-    "Плановая сумма расходов",
-    "Плановый рост",
-    "Фактический рост",
+    "ИТОГО: НЕ ОК",
+    "Проверено позиций",
+    "OK позиций",
+    "Расхождения",
+    "Нет начального",
+    "Нет конечного",
+    "Нет amount_net",
   ].forEach((label) => assert.match(text, new RegExp(escapeRegExp(label))));
 });
 
@@ -111,12 +114,45 @@ test("period balance top summary keeps multi-currency totals separated", () => {
   const table = findTag(summary, "TABLE")[0];
   const rows = getTableTextRows(table);
 
-  assert.deepEqual(rows[0], ["Показатель", "EUR", "USD"]);
-  assert.deepEqual(rows[1], ["Полная сумма остатков на начало периода", "200", "1000"]);
-  assert.deepEqual(rows[2], ["Полная сумма остатков на конец периода", "240", "1125"]);
+  assert.deepEqual(rows[0], ["Показатель", "EUR", "UAH", "USD"]);
+  assert.deepEqual(rows[1], ["Полная сумма остатков на начало периода", "200", "100", "1000"]);
+  assert.deepEqual(rows[2], ["Полная сумма остатков на конец периода", "240", "70", "1125"]);
   assert.equal(rows[3][0], "Плановая сумма приходов");
   assert.equal(rows[3][1], "50");
-  assert.equal(rows[3][2], "200");
+  assert.equal(rows[3][3], "200");
+});
+
+test("period balance renders all position rows before currency summary tables", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot());
+  const subsections = findByClass(block, "period-balance-subsection");
+  const titles = subsections.map((section) => section.children[0].textContent);
+
+  assert.deepEqual(titles, [
+    "По счетам и валютам",
+    "Где исправить",
+    "Изменение баланса по валютам",
+  ]);
+
+  const positionRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
+  assert.equal(positionRows.length, 4);
+  assert.deepEqual(positionRows[0], ["Счёт", "Валюта", "Было", "Реал Δ", "Реал должно", "Факт", "Разница", "Статус", "Что сделать"]);
+  assert.equal(positionRows[1][0], "wise usd");
+  assert.equal(positionRows[1][7], "OK");
+  assert.equal(positionRows[2][0], "paypal eur");
+  assert.equal(positionRows[3][0], "mono uah");
+  assert.equal(positionRows[3][7], "Расхождение");
+});
+
+test("period balance actionable rows still render under fix section only", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot());
+  const fixSection = findByClass(block, "period-balance-subsection").find((section) => section.children[0].textContent === "Где исправить");
+  const rows = getTableTextRows(findTag(fixSection, "TABLE")[0]);
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1][0], "mono uah");
+  assert.equal(rows[1][6], "Проверить Ledger movements");
 });
 
 test("period balance API failure renders non-blocking Analytics error", async () => {
@@ -160,14 +196,21 @@ function buildSnapshot() {
     period_balance_reconciliation: {
       period: { from: "2026-05-11", to: "2026-05-15" },
       summary: {
-        status: "ok",
-        positions_checked: 2,
+        status: "failed",
+        positions_checked: 3,
         currencies_checked: 2,
-        channels_checked: 2,
+        channels_checked: 3,
         planned_rows: 2,
         planned_source_status: "ok",
-        missing_amount_net_rows: 0,
-        status_counts: { carried_forward_conditional: 0 },
+        missing_amount_net_rows: 1,
+        status_counts: {
+          ok: 2,
+          mismatch: 1,
+          missing_opening_balance: 0,
+          missing_closing_balance: 0,
+          missing_amount_net: 1,
+          carried_forward_conditional: 0,
+        },
       },
       by_currency: [
         {
@@ -222,8 +265,33 @@ function buildSnapshot() {
           closing_balance_source: "exact",
           status: "ok",
         },
+        {
+          channel: "mono uah",
+          currency: "UAH",
+          opening_balance: 100,
+          planned_delta: 0,
+          planned_closing_balance: 100,
+          real_delta: -25,
+          computed_real_closing_balance: 75,
+          factual_closing_balance: 70,
+          real_difference: -5,
+          closing_balance_source: "exact",
+          status: "mismatch",
+          diagnosis: "Расхождение",
+          fix_action: "Проверить Ledger movements",
+        },
       ],
-      actionable_rows: [],
+      actionable_rows: [
+        {
+          channel: "mono uah",
+          currency: "UAH",
+          real_difference: -5,
+          plan_vs_real_delta: -25,
+          status: "mismatch",
+          diagnosis: "Расхождение",
+          fix_action: "Проверить Ledger movements",
+        },
+      ],
     },
   };
 }
