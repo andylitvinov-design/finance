@@ -122,11 +122,15 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       actions: actions.length,
     },
     actions,
+    paypal_manual_confirmations: buildPayPalManualConfirmations(actions),
+    balance_template_rows: buildBalanceTemplateRows(actions),
     tsv: buildRepairTsv(actions),
+    balance_template_tsv: buildBalanceTemplateTsv(buildBalanceTemplateRows(actions)),
     copyable_ostatki_rows: String(weekly.copyable_ostatki_rows || fixes.copyable_ostatki_rows || ""),
     warnings: [
       "Do not write computed Остатки rows as factual balances until provider/manual statements confirm them.",
       "Fix missing amount_net and mismatches before trusting missing_provider_balance copyable rows.",
+      "PayPal personal rows must be manually confirmed from account activity; gross amount must not be copied into amount_net.",
     ],
   };
 }
@@ -162,7 +166,24 @@ export function buildBalanceRepairPlanText(plan = {}) {
   }
 
   if (plan.copyable_ostatki_rows) {
-    lines.push("", "Copyable Остатки rows after provider verification:", plan.copyable_ostatki_rows);
+    lines.push("", "Computed Остатки reference rows after provider verification only:", plan.copyable_ostatki_rows);
+  }
+
+  if (plan.balance_template_tsv) {
+    lines.push("", "Blank balance templates for provider/manual confirmation:", plan.balance_template_tsv);
+  }
+
+  if (plan.paypal_manual_confirmations?.length) {
+    lines.push("", "PayPal manual confirmations:");
+    for (const row of plan.paypal_manual_confirmations) {
+      lines.push([
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        row.raw_source_id || "—",
+        "confirmed_amount_net must be filled manually",
+      ].join(" | "));
+    }
   }
 
   if (plan.tsv) lines.push("", "Repair TSV:", plan.tsv);
@@ -217,6 +238,73 @@ function buildRepairTsv(actions = []) {
       row.verification_required ? "yes" : "no",
       row.safe_to_apply ? "yes" : "no",
       row.action || "",
+    ].join("\t")),
+  ].join("\n");
+}
+
+function buildPayPalManualConfirmations(actions = []) {
+  return actions
+    .filter((row) => row.problem === "missing_amount_net")
+    .filter((row) => /paypal|пейпал/i.test(`${row.channel} ${row.raw_source_id}`))
+    .map((row) => ({
+      date: row.date || "",
+      operation: row.operation || "",
+      channel: row.channel || "",
+      currency: row.currency || "",
+      gross_amount_reference: row.amount ?? null,
+      confirmed_amount_net: "",
+      confirmed_fee: "",
+      raw_source_id: row.raw_source_id || "",
+      confirmation_source: "",
+      notes: "",
+      safe_to_apply: false,
+      action: "Open PayPal personal activity and manually confirm net/fee before filling amount_net.",
+    }));
+}
+
+function buildBalanceTemplateRows(actions = []) {
+  return actions
+    .filter((row) => row.problem === "missing_provider_balance" || row.problem === "missing_opening_balance")
+    .map((row) => ({
+      date: row.date || "",
+      channel: row.channel || "",
+      currency: row.currency || "",
+      confirmed_balance: "",
+      computed_reference_balance: row.computed_closing_balance ?? "",
+      purpose: row.problem,
+      verification_source: "",
+      safe_to_apply: false,
+      action: row.problem === "missing_opening_balance"
+        ? "Fill factual opening balance from provider/manual statement before movement date."
+        : "Fill factual closing balance from provider/manual statement for period end date.",
+    }));
+}
+
+function buildBalanceTemplateTsv(rows = []) {
+  if (!rows.length) return "";
+  const header = [
+    "date",
+    "channel",
+    "currency",
+    "confirmed_balance",
+    "computed_reference_balance",
+    "purpose",
+    "verification_source",
+    "safe_to_apply",
+    "action",
+  ];
+  return [
+    header.join("\t"),
+    ...rows.map((row) => [
+      row.date,
+      row.channel,
+      row.currency,
+      row.confirmed_balance,
+      formatCell(row.computed_reference_balance),
+      row.purpose,
+      row.verification_source,
+      row.safe_to_apply ? "yes" : "no",
+      row.action,
     ].join("\t")),
   ].join("\n");
 }
