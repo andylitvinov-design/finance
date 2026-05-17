@@ -36,6 +36,8 @@ test("real period balance reconciles when fact equals opening plus real delta", 
   assert.equal(row.calculated_closing_balance, 1200);
   assert.equal(row.computed_real_closing_balance, 1200);
   assert.equal(row.manual_provider_closing_balance, 1200);
+  assert.equal(row.manual_provider_closing_balance_date, "2026-05-15");
+  assert.equal(row.manual_provider_fact_lookup_key, "2026-05-15|wise usd|USD");
   assert.equal(row.carried_forward_balance, null);
   assert.equal(row.displayed_fact_balance, 1200);
   assert.equal(row.factual_closing_balance, 1200);
@@ -118,6 +120,10 @@ test("missing exact target-date provider balance with movements is blocked, not 
   assert.equal(row.status, "missing_provider_balance");
   assert.equal(row.calculated_closing_balance, 1300);
   assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.manual_provider_fact_lookup_key, "2026-05-15|wise usd|USD");
+  assert.equal(row.nearest_manual_provider_fact_date, "2026-05-10");
+  assert.equal(row.nearest_manual_provider_fact_amount, 1000);
+  assert.match(row.missing_fact_reason, /period end is 2026-05-15/);
   assert.equal(row.carried_forward_balance, null);
   assert.equal(row.displayed_fact_balance, null);
   assert.equal(row.factual_closing_balance, null);

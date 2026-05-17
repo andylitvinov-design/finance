@@ -263,7 +263,7 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
     .map(normalizeOstatkiAppendCandidate)
     .filter((row) => row.date && row.channel && row.currency && row.amount !== null);
   if (!candidates.length) {
-    return { appended: [], skipped: [], appendRowCount: 0 };
+    return { appended: [], updated: [], skipped: [], appendRowCount: 0, updatedRowCount: 0 };
   }
 
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
@@ -273,36 +273,79 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
     accessToken,
     fetchImpl,
   });
-  const existingKeys = new Set(parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []).map(buildOstatkiKey));
-  const appendRows = [];
+  const existingRows = parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []);
+  const outputByKey = new Map(existingRows.map((row) => [buildOstatkiKey(row), row]));
   const appended = [];
+  const updated = [];
   const skipped = [];
 
   for (const row of candidates) {
     const key = buildOstatkiKey(row);
-    if (existingKeys.has(key)) {
-      skipped.push({ ...row, reason: "duplicate_date_channel_currency" });
+    const existing = outputByKey.get(key);
+    if (existing) {
+      outputByKey.set(key, {
+        ...existing,
+        ...row,
+        amount: formatOstatkiAmount(row.amount),
+        balanceAmount: formatOstatkiAmount(row.amount),
+        comment: row.comment || existing.comment || "",
+      });
+      updated.push(row);
       continue;
     }
-    existingKeys.add(key);
-    appendRows.push([
-      row.date,
-      row.channel,
-      formatOstatkiAmount(row.amount),
-      row.currency,
-      "",
-      "",
-      row.comment,
-    ]);
+    outputByKey.set(key, {
+      ...row,
+      amount: formatOstatkiAmount(row.amount),
+      balanceAmount: formatOstatkiAmount(row.amount),
+      rate: "",
+      usdAmount: "",
+    });
     appended.push(row);
   }
 
-  if (!appendRows.length) {
-    return { appended, skipped, appendRowCount: 0 };
+  if (!appended.length && !updated.length) {
+    return { appended, updated, skipped, appendRowCount: 0, updatedRowCount: 0 };
   }
 
   const escaped = BALANCE_SHEET_NAME.replace(/'/g, "''");
   const range = encodeURIComponent(`'${escaped}'!A:G`);
+  if (updated.length) {
+    const mergedRows = Array.from(outputByKey.values());
+    const response = await fetchImpl(
+      `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ values: buildOstatkiSheetValues(mergedRows) }),
+      }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Sheets Остатки update failed with HTTP ${response.status}`);
+    }
+    return {
+      appended,
+      updated,
+      skipped,
+      appendRowCount: appended.length,
+      updatedRowCount: updated.length,
+      updatedRange: payload?.updatedRange || null,
+    };
+  }
+
+  const appendRows = appended.map((row) => [
+    row.date,
+    row.channel,
+    formatOstatkiAmount(row.amount),
+    row.currency,
+    "",
+    "",
+    row.comment,
+  ]);
   const response = await fetchImpl(
     `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     {
@@ -322,10 +365,27 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
 
   return {
     appended,
+    updated,
     skipped,
     appendRowCount: appendRows.length,
+    updatedRowCount: 0,
     updatedRange: payload?.updates?.updatedRange || null,
   };
+}
+
+function buildOstatkiSheetValues(rows = []) {
+  return [
+    ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+    ...rows.map((row) => [
+      normalizeDate(row?.date),
+      row?.channel || "",
+      String(row?.amount ?? row?.balanceAmount ?? ""),
+      row?.currency || "",
+      row?.rate || "",
+      row?.usdAmount || "",
+      row?.comment || "",
+    ]),
+  ];
 }
 
 async function requestServiceAccountAccessToken({ clientEmail, privateKey, scope = SHEETS_SCOPE, fetchImpl }) {
