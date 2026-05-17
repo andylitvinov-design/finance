@@ -138,6 +138,7 @@ test("balance snapshots API returns input rows for active ledger channels missin
     && row.currency === "USD"
     && row.existing_amount === 1300
     && row.needs_input === false
+    && row.source === "existing_balance"
     && row.status === "already_entered"
   ));
   assert.ok(inputRows.some((row) =>
@@ -146,6 +147,7 @@ test("balance snapshots API returns input rows for active ledger channels missin
     && row.currency === "EUR"
     && row.existing_amount === null
     && row.needs_input === true
+    && row.source === "active_channel_missing_balance"
     && row.status === "needs_input"
   ));
 });
