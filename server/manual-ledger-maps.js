@@ -39,6 +39,7 @@ export const MANUAL_LEDGER_SOURCES = [
   "manual",
   "fact",
   "paypal",
+  "paypal_personal_manual",
   "wise",
   "binance",
   "monobank",
@@ -200,6 +201,7 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   const normalizedToken = token.replace(/\s+/g, "_");
   if (MANUAL_LEDGER_SOURCES.includes(normalizedToken)) return normalizedToken;
   if (["manual_fact", "manual_finance"].includes(normalizedToken)) return "manual";
+  if (["paypal_personal", "paypal_personal_manual", "manual_provider_confirmed"].includes(normalizedToken)) return "paypal_personal_manual";
   if (["paypal", "paypal_mcp"].includes(normalizedToken)) return "paypal";
   if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
   if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";

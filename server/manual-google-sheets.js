@@ -176,6 +176,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       ok: true,
       spreadsheetId: MANUAL_SPREADSHEET_ID,
       ...ledgerRepository,
+      ledgerValues,
       legacyExpenseRows: legacyRepository.expenseRows || [],
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       monthlyPlanRows,
