@@ -121,11 +121,13 @@ test("carried-forward conditional row produces safe Остатки repair row fo
     amount: 7351,
     factual_closing_balance_date: "2026-05-01",
     closing_balance_source: "carried_forward",
+    fact_source: "carried_forward",
     status: "carried_forward_conditional",
     movement_rows: 0,
     missing_amount_net_rows: 0,
     action: "append_carried_forward_balance",
-    safe_fill: "eligible: no movement, no missing amount_net, carried forward from last observed Остатки",
+    can_write_to_ostatki: true,
+    safe_fill: "eligible only after explicit confirmation: no movement, no missing amount_net, carried forward from last observed Остатки",
     comment: "carried_forward_conditional from 2026-05-01 via period reconciliation",
   });
 });
@@ -155,6 +157,7 @@ test("missing provider balance with movement requires manual provider fact and n
   assert.equal(row.amount, null);
   assert.equal(row.expected_closing_hint, 1100);
   assert.equal(row.action, "manual_provider_fact_required");
+  assert.equal(row.can_write_to_ostatki, false);
   assert.match(row.safe_fill, /нужен фактический баланс провайдера/);
 });
 
@@ -201,7 +204,7 @@ test("apply is explicit and appends only eligible carried-forward Остатки
   assert.equal(applied.appendRowCount, 1);
 });
 
-test("Binance USDT missing opening generates template before first movement", () => {
+test("Binance USDT movement without provider fact generates blank provider template, not calculated amount", () => {
   const report = buildRepairReport({
     options: parseArgs(["--from", "2026-05-01", "--to", "2026-05-17"]),
     repository: {
@@ -223,13 +226,18 @@ test("Binance USDT missing opening generates template before first movement", ()
     },
   });
 
-  assert.deepEqual(report.missing_opening_balance_rows[0], {
-    date: "2026-05-13",
+  assert.equal(report.missing_opening_balance_rows.length, 0);
+  assert.deepEqual(report.missing_balance_template_rows[0], {
+    date: "2026-05-17",
     channel: "Бинанс spot",
     currency: "USDT",
     amount: null,
-    status: "missing_opening_balance",
-    movement_rows: 1,
-    action: "enter factual opening balance before first movement",
+    expected_closing_hint: null,
+    expected_closing_source: "computed_from_opening_plus_amount_net_movements",
+    safe_fill: "blank until factual provider/manual balance is entered",
+    status: "missing_provider_balance",
   });
+  assert.equal(report.ostatki_repair_rows[0].amount, null);
+  assert.equal(report.ostatki_repair_rows[0].expected_closing_hint, null);
+  assert.equal(report.ostatki_repair_rows[0].can_write_to_ostatki, false);
 });

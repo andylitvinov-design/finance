@@ -104,7 +104,7 @@ export function buildRepairReport({ repository, options }) {
       "amount must stay blank unless the user has factual provider/manual balance",
       "expected_closing is a hint only; it is not a provider amount",
       "--apply appends eligible carried-forward rows to Остатки only; Ledger is not changed by this script",
-      "missing_provider_balance rows with movement require a manual provider fact; computed closing is only a hint",
+      "missing_provider_balance rows with movement require a manual provider fact; calculated closing is only a hint",
     ],
   };
 }
@@ -155,7 +155,7 @@ function buildMissingProviderTemplates(reconciliation, options) {
         channel: row.channel,
         currency: row.currency,
         amount: confirmedZero ? 0 : null,
-        expected_closing_hint: row.computed_real_closing_balance,
+        expected_closing_hint: row.calculated_closing_balance ?? row.computed_real_closing_balance,
         expected_closing_source: "computed_from_opening_plus_amount_net_movements",
         safe_fill: confirmedZero
           ? "user confirmed zero balance"
@@ -195,14 +195,16 @@ function buildOstatkiRepairRows({ reconciliation, balanceRows, options }) {
         date: reconciliation.period?.to || options.to,
         channel: row.channel,
         currency: row.currency,
-        amount: row.factual_closing_balance,
+        amount: row.carried_forward_balance,
         factual_closing_balance_date: row.factual_closing_balance_date,
         closing_balance_source: row.closing_balance_source,
+        fact_source: row.fact_source,
         status: row.status,
         movement_rows: row.movement_rows,
         missing_amount_net_rows: row.missing_amount_net_rows,
         action: "append_carried_forward_balance",
-        safe_fill: "eligible: no movement, no missing amount_net, carried forward from last observed Остатки",
+        can_write_to_ostatki: true,
+        safe_fill: "eligible only after explicit confirmation: no movement, no missing amount_net, carried forward from last observed Остатки",
         comment: `carried_forward_conditional from ${row.factual_closing_balance_date || "last observed"} via period reconciliation`,
       });
     } else if (row.status === "missing_provider_balance" && Number(row.movement_rows || 0) > 0) {
@@ -211,12 +213,13 @@ function buildOstatkiRepairRows({ reconciliation, balanceRows, options }) {
         channel: row.channel,
         currency: row.currency,
         amount: null,
-        expected_closing_hint: row.computed_real_closing_balance,
+        expected_closing_hint: row.calculated_closing_balance ?? row.computed_real_closing_balance,
         expected_closing_source: "computed_from_opening_plus_amount_net_movements",
         status: row.status,
         movement_rows: row.movement_rows,
         missing_amount_net_rows: row.missing_amount_net_rows,
         action: "manual_provider_fact_required",
+        can_write_to_ostatki: false,
         safe_fill: "нужен фактический баланс провайдера; computed_real_closing_balance is not a fact",
       });
     }
@@ -288,8 +291,8 @@ function buildWiseRemainingMismatchDetails({ reconciliation, operations }) {
     status: row?.status || "not_found",
     opening: row?.opening_balance ?? null,
     real_delta: row?.real_delta ?? null,
-    expected_closing: row?.computed_real_closing_balance ?? null,
-    factual_closing: row?.factual_closing_balance ?? null,
+    expected_closing: row?.calculated_closing_balance ?? row?.computed_real_closing_balance ?? null,
+    factual_closing: row?.manual_provider_closing_balance ?? row?.displayed_fact_balance ?? row?.factual_closing_balance ?? null,
     diff: row?.real_difference ?? null,
     note: row?.real_difference
       ? "remaining mismatch needs row-level verification; check stale Остатки, missing Wise movement, duplicate, CARD fee semantics, or provider statement mismatch"
