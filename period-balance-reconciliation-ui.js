@@ -154,9 +154,12 @@
       ["Проверено позиций", counts.total],
       ["OK позиций", counts.ok],
       ["Расхождения", counts.mismatch],
+      ["Нет факта на дату", counts.missing_provider_balance],
       ["Нет начального", counts.missing_opening_balance],
       ["Нет конечного", counts.missing_closing_balance],
       ["Нет amount_net", counts.missing_amount_net],
+      ["Без amount_net", summary.missing_amount_net_rows],
+      ["Заблокировано", summary.blocked],
     ].forEach(([text, value]) => {
       const card = doc.createElement("div");
       card.className = "metric";
@@ -186,6 +189,7 @@
       ok: Number(statusCounts.ok ?? derived.ok ?? 0) || 0,
       mismatch: Number(statusCounts.mismatch ?? derived.mismatch ?? 0) || 0,
       missing_opening_balance: Number(statusCounts.missing_opening_balance ?? derived.missing_opening_balance ?? 0) || 0,
+      missing_provider_balance: Number(statusCounts.missing_provider_balance ?? derived.missing_provider_balance ?? 0) || 0,
       missing_closing_balance: Number(statusCounts.missing_closing_balance ?? derived.missing_closing_balance ?? 0) || 0,
       missing_amount_net: Number(statusCounts.missing_amount_net ?? summary?.missing_amount_net_rows ?? derived.missing_amount_net ?? 0) || 0,
       needs_verification: Number(statusCounts.needs_verification ?? derived.needs_verification ?? 0) || 0,
@@ -196,7 +200,7 @@
     const status = String(summary?.status || "").trim();
     if (status === "ok") return "OK";
     if (status === "failed") return "НЕ ОК";
-    if (counts.mismatch || counts.missing_opening_balance || counts.missing_closing_balance || counts.missing_amount_net) return "НЕ ОК";
+    if (counts.mismatch || counts.missing_opening_balance || counts.missing_provider_balance || counts.missing_closing_balance || counts.missing_amount_net) return "НЕ ОК";
     if (counts.total && counts.ok === counts.total) return "OK";
     return "Проверить";
   }
@@ -342,9 +346,10 @@
     const normalized = String(status || "").trim();
     if (normalized === "ok") return "OK";
     if (normalized === "failed") return "НЕ ОК";
-    if (normalized === "mismatch") return "Расхождение";
-    if (normalized === "missing_opening_balance") return "Нет начального";
-    if (normalized === "missing_closing_balance") return "Нет конечного";
+    if (normalized === "mismatch") return "Реальное расхождение";
+    if (normalized === "missing_provider_balance") return "Нет фактического остатка на дату";
+    if (normalized === "missing_opening_balance") return "Нет стартового остатка";
+    if (normalized === "missing_closing_balance") return "Нет конечного остатка";
     if (normalized === "carried_forward_conditional") return "Условно перенесено";
     if (normalized === "missing_amount_net") return "Нет amount_net";
     return "Проверить";
