@@ -1,7 +1,10 @@
+import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
+const MANUAL_BALANCE_SHEET_NAME = "Остатки";
+const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
 
 export default async function periodBalanceReconciliationHandler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -17,6 +20,7 @@ export default async function periodBalanceReconciliationHandler(request, respon
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: request.query || {},
     repositoryLoader: loadManualRepositoryFromGoogleSheets,
+    autoBalanceLoader: loadAutoBalanceRowsFromGoogleSheets,
   });
   return response.status(200).json(snapshot);
 }
@@ -26,43 +30,58 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const period = parsePeriod(query);
   const warnings = [];
   const repository = await loadRepository(options.repositoryLoader);
+  const autoBalances = Array.isArray(repository?.autoBalances)
+    ? { ok: true, balances: repository.autoBalances, warnings: [] }
+    : (options.autoBalanceLoader
+      ? await loadAutoBalances(options.autoBalanceLoader)
+      : { ok: true, balances: [], warnings: [] });
 
   if (!repository.ok) {
     warnings.push("needs verification: manual Google Sheets read access is unavailable.");
     if (repository.warning) warnings.push(toSafeWarning(repository.warning));
+    warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
+    const balanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+    const reconciliation = buildPeriodBalanceReconciliation({
+      operations: [],
+      balanceRows,
+      plannedRows: [],
+      plannedSourceStatus: "needs_verification",
+      period,
+    });
+    annotateReconciliationSources(reconciliation, balanceRows);
     return {
       ok: true,
       generated_at: new Date().toISOString(),
       project: PROJECT_NAME,
       period,
-      period_balance_reconciliation: buildPeriodBalanceReconciliation({
-        operations: [],
-        balanceRows: [],
-        plannedRows: [],
-        plannedSourceStatus: "needs_verification",
-        period,
-      }),
+      period_balance_reconciliation: reconciliation,
       warnings: unique(warnings),
     };
   }
 
   const plannedRows = resolvePlannedRows(repository);
   const plannedSourceStatus = resolvePlannedSourceStatus(repository, plannedRows);
+  const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
+  const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+  const balanceRows = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
-    balanceRows: repository.balances || [],
-    autoBalanceRows: repository.autoBalances || [],
+    balanceRows,
     plannedRows,
     plannedSourceStatus,
     period,
   });
+  annotateReconciliationSources(reconciliation, balanceRows);
   reconciliation.diagnostics = {
     ...(reconciliation.diagnostics || {}),
-    balance_snapshot_rows_loaded: Array.isArray(repository.balances) ? repository.balances.length : 0,
+    manual_balance_snapshot_rows_loaded: manualBalances.length,
+    auto_balance_snapshot_rows_loaded: autoBalanceRows.length,
+    balance_snapshot_rows_loaded: balanceRows.length,
     analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
       .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
   };
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
+  warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
   if (!plannedRows.length && plannedSourceStatus !== "available") {
     warnings.push(
@@ -78,6 +97,103 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
+  const manualRows = (manualBalances || []).map((row) => {
+    const source = normalizeBalanceSource(row, "manual_fact");
+    return {
+      ...row,
+      source,
+      fact_source: source,
+      sourceSheet: row.sourceSheet || MANUAL_BALANCE_SHEET_NAME,
+    };
+  });
+  const manualFactKeys = new Set(manualRows
+    .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
+    .map(balanceKey));
+  return [
+    ...manualRows,
+    ...(autoBalances || [])
+      .filter((row) => !manualFactKeys.has(balanceKey(row)))
+      .map((row) => ({
+        ...row,
+        source: "provider_auto",
+        fact_source: "provider_auto",
+        sourceSheet: row.sourceSheet || AUTO_BALANCE_SHEET_NAME,
+      })),
+  ];
+}
+
+function annotateReconciliationSources(reconciliation, balanceRows = []) {
+  const lookup = buildBalanceRowLookup(balanceRows);
+  reconciliation.by_channel_currency = (reconciliation.by_channel_currency || []).map((row) => {
+    const sourceRow = findSourceBalanceRow(row, lookup);
+    const balanceSource = sourceRow
+      ? (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact")
+      : "missing";
+    return {
+      ...row,
+      balanceSource,
+      balance_source: balanceSource,
+      needsManualConfirmation: balanceSource !== "manual_fact",
+      needs_manual_confirmation: balanceSource !== "manual_fact",
+      provider: sourceRow?.provider || "",
+      sourceSheet: sourceRow?.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" ? AUTO_BALANCE_SHEET_NAME : "")),
+      source_sheet: sourceRow?.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" ? AUTO_BALANCE_SHEET_NAME : "")),
+      sourceRow: sourceRow?.sourceRow || null,
+      source_row: sourceRow?.sourceRow || null,
+      sourceComment: sourceRow?.comment || "",
+      source_comment: sourceRow?.comment || "",
+    };
+  });
+}
+
+function buildBalanceRowLookup(balanceRows = []) {
+  const lookup = new Map();
+  (balanceRows || []).forEach((row) => {
+    const key = balanceDatedKey(row.date, row.channel || row.accountName || row.account, row.currency);
+    if (!key) return;
+    const existing = lookup.get(key);
+    if (existing && normalizeBalanceSource(existing, "manual_fact") === "manual_fact") return;
+    lookup.set(key, row);
+  });
+  return lookup;
+}
+
+function findSourceBalanceRow(row, lookup) {
+  const date = row.manual_provider_closing_balance_date || "";
+  const exactKey = balanceDatedKey(date, row.channel, row.currency);
+  if (exactKey && lookup.has(exactKey)) return lookup.get(exactKey);
+  return null;
+}
+
+function balanceDatedKey(date, channel, currency) {
+  const normalizedDate = normalizeDate(date);
+  const normalizedChannel = String(channel || "").trim();
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (!normalizedDate || !normalizedChannel || !normalizedCurrency) return "";
+  return [normalizedDate, normalizedChannel, normalizedCurrency].join("|");
+}
+
+function balanceKey(row = {}) {
+  return [
+    normalizeDate(row.date),
+    String(row.channel || row.accountName || row.account || "").trim(),
+    String(row.currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
+  return fallback;
 }
 
 function resolvePlannedRows(repository) {
@@ -107,6 +223,18 @@ async function loadRepository(repositoryLoader = loadManualRepositoryFromGoogleS
     return {
       ok: false,
       warning: `Manual Google Sheets overlay failed: ${String(error?.message || error)}`,
+    };
+  }
+}
+
+async function loadAutoBalances(autoBalanceLoader = loadAutoBalanceRowsFromGoogleSheets) {
+  try {
+    return await autoBalanceLoader();
+  } catch (error) {
+    return {
+      ok: false,
+      balances: [],
+      warnings: [`Auto balance sheet failed: ${String(error?.message || error)}`],
     };
   }
 }
