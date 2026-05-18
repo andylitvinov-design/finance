@@ -940,7 +940,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
 
     const balances = response.body?.data?.manual?.balances || [];
     assert.ok(balances.length > 0);
-    assert.equal(balances.find((row) => row.channel === "пейпал дол")?.amount, "648,00");
+    assert.equal(balances.find((row) => row.channel === "пейпал дол")?.amount, 648);
 
     const analyticsRows = response.body?.data?.tabs?.analytics?.values || [];
     const planIndex = analyticsRows.findIndex((row) => row?.[0] === "Plan");
