@@ -100,17 +100,22 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
 }
 
 function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
-  const manualRows = (manualBalances || []).map((row) => ({
-    ...row,
-    source: normalizeBalanceSource(row, "manual_fact"),
-    fact_source: normalizeBalanceSource(row, "manual_fact"),
-    sourceSheet: row.sourceSheet || MANUAL_BALANCE_SHEET_NAME,
-  }));
-  const manualKeys = new Set(manualRows.map(balanceKey));
+  const manualRows = (manualBalances || []).map((row) => {
+    const source = normalizeBalanceSource(row, "manual_fact");
+    return {
+      ...row,
+      source,
+      fact_source: source,
+      sourceSheet: row.sourceSheet || MANUAL_BALANCE_SHEET_NAME,
+    };
+  });
+  const manualFactKeys = new Set(manualRows
+    .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
+    .map(balanceKey));
   return [
     ...manualRows,
     ...(autoBalances || [])
-      .filter((row) => !manualKeys.has(balanceKey(row)))
+      .filter((row) => !manualFactKeys.has(balanceKey(row)))
       .map((row) => ({
         ...row,
         source: "provider_auto",
@@ -180,8 +185,14 @@ function balanceKey(row = {}) {
 }
 
 function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
-  const text = String(row.source || row.fact_source || row.provider || row.comment || "").trim().toLowerCase();
-  if (/auto snapshot|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
   return fallback;
 }
 
