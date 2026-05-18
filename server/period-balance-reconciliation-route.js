@@ -32,7 +32,9 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const repository = await loadRepository(options.repositoryLoader);
   const autoBalances = Array.isArray(repository?.autoBalances)
     ? { ok: true, balances: repository.autoBalances, warnings: [] }
-    : await loadAutoBalances(options.autoBalanceLoader);
+    : (options.autoBalanceLoader
+      ? await loadAutoBalances(options.autoBalanceLoader)
+      : { ok: true, balances: [], warnings: [] });
 
   if (!repository.ok) {
     warnings.push("needs verification: manual Google Sheets read access is unavailable.");
