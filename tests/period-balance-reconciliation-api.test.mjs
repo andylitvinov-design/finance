@@ -120,14 +120,63 @@ test("period balance reconciliation falls back to auto and marks missing facts",
   const paypal = snapshot.period_balance_reconciliation.by_channel_currency.find((row) => row.channel === "paypal usd");
   assert.equal(wise.manual_provider_closing_balance, 1050);
   assert.equal(wise.balanceSource, "provider_auto");
+  assert.equal(wise.balance_source, "provider_auto");
   assert.equal(wise.needsManualConfirmation, true);
+  assert.equal(wise.needs_manual_confirmation, true);
   assert.equal(wise.provider, "wise");
   assert.equal(wise.sourceSheet, "Авто Остатки");
+  assert.equal(wise.source_sheet, "Авто Остатки");
   assert.equal(wise.sourceRow, 2);
+  assert.equal(wise.source_row, 2);
   assert.equal(wise.sourceComment, "wise auto snapshot");
   assert.equal(paypal.balanceSource, "missing");
+  assert.equal(paypal.balance_source, "missing");
   assert.equal(paypal.needsManualConfirmation, true);
+  assert.equal(paypal.needs_manual_confirmation, true);
   assert.equal(paypal.sourceSheet, "");
+  assert.equal(paypal.source_sheet, "");
+  assert.deepEqual(snapshot.period_balance_reconciliation.summary.balance_source_counts, {
+    manual_fact: 0,
+    provider_auto: 1,
+    missing: 1,
+  });
+  assert.deepEqual(
+    snapshot.period_balance_reconciliation.required_manual_fact_rows.map((row) => ({
+      sheet: row.sheet,
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      amount: row.amount,
+      amount_hint: row.amount_hint,
+      balance_source: row.balance_source,
+      source_sheet: row.source_sheet,
+      status: row.status,
+    })).sort((left, right) => left.channel.localeCompare(right.channel)),
+    [
+      {
+        sheet: "Остатки",
+        date: "2026-05-15",
+        channel: "paypal usd",
+        currency: "USD",
+        amount: null,
+        amount_hint: null,
+        balance_source: "missing",
+        source_sheet: "",
+        status: "missing_provider_balance",
+      },
+      {
+        sheet: "Остатки",
+        date: "2026-05-15",
+        channel: "wise usd",
+        currency: "USD",
+        amount: null,
+        amount_hint: 1050,
+        balance_source: "provider_auto",
+        source_sheet: "Авто Остатки",
+        status: "ok",
+      },
+    ]
+  );
 });
 
 test("period balance reconciliation API reports planned source gap and carried-forward provider balance", async () => {

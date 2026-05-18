@@ -49,6 +49,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
       period,
     });
     annotateReconciliationSources(reconciliation, balanceRows);
+    annotateBalanceSourceDiagnostics(reconciliation, period);
     return {
       ok: true,
       generated_at: new Date().toISOString(),
@@ -72,6 +73,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period,
   });
   annotateReconciliationSources(reconciliation, balanceRows);
+  annotateBalanceSourceDiagnostics(reconciliation, period);
   reconciliation.diagnostics = {
     ...(reconciliation.diagnostics || {}),
     manual_balance_snapshot_rows_loaded: manualBalances.length,
@@ -147,6 +149,71 @@ function annotateReconciliationSources(reconciliation, balanceRows = []) {
       source_comment: sourceRow?.comment || "",
     };
   });
+  reconciliation.actionable_rows = (reconciliation.actionable_rows || []).map((row) => {
+    const sourceRow = findSourceBalanceRow(row, lookup);
+    const balanceSource = sourceRow
+      ? (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact")
+      : String(row.balanceSource || row.balance_source || "missing").trim() || "missing";
+    return {
+      ...row,
+      balanceSource,
+      balance_source: balanceSource,
+      needsManualConfirmation: balanceSource !== "manual_fact",
+      needs_manual_confirmation: balanceSource !== "manual_fact",
+      sourceSheet: sourceRow?.sourceSheet || row.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" ? AUTO_BALANCE_SHEET_NAME : "")),
+      source_sheet: sourceRow?.sourceSheet || row.source_sheet || row.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" ? AUTO_BALANCE_SHEET_NAME : "")),
+      sourceRow: sourceRow?.sourceRow || row.sourceRow || null,
+      source_row: sourceRow?.sourceRow || row.source_row || row.sourceRow || null,
+      sourceComment: sourceRow?.comment || row.sourceComment || "",
+      source_comment: sourceRow?.comment || row.source_comment || row.sourceComment || "",
+    };
+  });
+}
+
+function annotateBalanceSourceDiagnostics(reconciliation, period = {}) {
+  const rows = Array.isArray(reconciliation.by_channel_currency) ? reconciliation.by_channel_currency : [];
+  const counts = { manual_fact: 0, provider_auto: 0, missing: 0 };
+  rows.forEach((row) => {
+    const source = String(row.balanceSource || row.balance_source || "missing").trim();
+    if (Object.prototype.hasOwnProperty.call(counts, source)) counts[source] += 1;
+    else counts.missing += 1;
+  });
+  reconciliation.summary = {
+    ...(reconciliation.summary || {}),
+    balance_source_counts: counts,
+    manual_fact_rows: counts.manual_fact,
+    provider_auto_rows: counts.provider_auto,
+    missing_fact_rows: counts.missing,
+  };
+  reconciliation.required_manual_fact_rows = rows
+    .filter((row) => row.needsManualConfirmation || row.needs_manual_confirmation || String(row.balanceSource || row.balance_source || "") !== "manual_fact")
+    .filter((row) => String(row.status || "") !== "no_data")
+    .map((row) => buildRequiredManualFactRow(row, period));
+}
+
+function buildRequiredManualFactRow(row, period = {}) {
+  const source = String(row.balanceSource || row.balance_source || "missing").trim() || "missing";
+  return {
+    sheet: MANUAL_BALANCE_SHEET_NAME,
+    date: period.to || row.manual_provider_closing_balance_date || "",
+    channel: row.channel || "",
+    currency: row.currency || "",
+    amount: null,
+    amount_hint: source === "provider_auto" ? row.manual_provider_closing_balance : null,
+    balanceSource: source,
+    balance_source: source,
+    needsManualConfirmation: true,
+    needs_manual_confirmation: true,
+    sourceSheet: row.sourceSheet || row.source_sheet || "",
+    source_sheet: row.source_sheet || row.sourceSheet || "",
+    sourceRow: row.sourceRow || row.source_row || null,
+    source_row: row.source_row || row.sourceRow || null,
+    status: row.status || "",
+    reason: row.missing_fact_reason || row.diagnosis || "",
+    action: source === "provider_auto"
+      ? "Confirm provider auto balance, then enter the factual balance in Остатки."
+      : "Enter factual manual/provider balance in Остатки.",
+  };
 }
 
 function buildBalanceRowLookup(balanceRows = []) {
