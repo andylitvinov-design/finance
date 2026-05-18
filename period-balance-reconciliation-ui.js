@@ -777,6 +777,8 @@
         formatCanonicalNative(row, "movement_native", row.real_delta),
         formatCanonicalNative(row, "planned_end_native", row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatCanonicalNative(row, "confirmed_end_native", row.manual_provider_closing_balance ?? row.factual_closing_balance),
+        formatNumber(row.manual_provider_fact_amount_usd ?? row.manual_provider_closing_balance_usd ?? row.amount_usd),
+        getValueTypeLabel(row.manual_provider_fact_value_type || row.value_type),
         formatCanonicalNative(row, "diff_native", row.real_difference),
         formatCanonicalUsd(row, "opening_usd"),
         formatCanonicalUsd(row, "movement_usd"),
@@ -795,7 +797,7 @@
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты (debug native)",
-      ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "USD ЭКВИВАЛЕНТ", "ТИП ЗНАЧЕНИЯ", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
   }
@@ -1012,6 +1014,27 @@
     return `${sourceSheet || "source"} #${sourceRow}`;
   }
 
+  function getValueTypeLabel(value) {
+    const type = String(value || "").trim();
+    const labels = {
+      native_and_usd: "native + USD",
+      native_only: "native",
+      usd_only_needs_native: "USD-only",
+      explicit_zero: "zero",
+      carried_forward: "перенос",
+      calculated_hint: "расчет",
+      needs_verification: "проверить",
+    };
+    return labels[type] || "—";
+  }
+
+  function getNativeUsdWarning(row) {
+    if (row?.needs_native_currency_value || row?.diagnostics?.needs_native_currency_value) {
+      return "Нужен native amount: есть только USD equivalent.";
+    }
+    return "";
+  }
+
   function getFactDiagnosis(row) {
     if (!row) return "—";
     if ((row.fx_diagnostics || []).length) return row.fx_diagnostics.join(" | ");
@@ -1021,7 +1044,7 @@
     if (!row.manual_provider_closing_balance_date && row.last_observed_closing_balance_date) {
       return `Факт есть на начало/ближайшую дату, нет факта на конец периода. Ближайшая дата: ${row.last_observed_closing_balance_date} ${formatNumber(row.last_observed_closing_balance)}.`;
     }
-    return row.missing_fact_reason || row.diagnosis || "—";
+    return getNativeUsdWarning(row) || row.native_fact_missing_reason || row.missing_fact_reason || row.diagnosis || "—";
   }
 
   function buildChannelCurrencyTotalRows(rows, summary = {}) {
@@ -1035,6 +1058,7 @@
           movement_native: createTotalBucket(),
           planned_end_native: createTotalBucket(),
           confirmed_end_native: createTotalBucket(),
+          manual_provider_fact_amount_usd: createTotalBucket(),
           diff_native: createTotalBucket(),
           opening_usd: createTotalBucket(),
           movement_usd: createTotalBucket(),
@@ -1048,6 +1072,7 @@
       addNumeric(totals, "movement_native", row.movement_native ?? row.real_delta);
       addNumeric(totals, "planned_end_native", row.planned_end_native ?? row.calculated_closing_balance ?? row.computed_real_closing_balance);
       addNumeric(totals, "confirmed_end_native", row.confirmed_end_native ?? row.manual_provider_closing_balance ?? row.factual_closing_balance);
+      addNumeric(totals, "manual_provider_fact_amount_usd", row.manual_provider_fact_amount_usd ?? row.manual_provider_closing_balance_usd ?? row.amount_usd);
       addNumeric(totals, "diff_native", row.diff_native ?? row.real_difference);
       addNumeric(totals, "opening_usd", row.opening_usd);
       addNumeric(totals, "movement_usd", row.movement_usd);
@@ -1064,6 +1089,8 @@
         formatTotalBucket(totals.movement_native),
         formatTotalBucket(totals.planned_end_native),
         formatTotalBucket(totals.confirmed_end_native),
+        formatTotalBucket(totals.manual_provider_fact_amount_usd),
+        "—",
         formatTotalBucket(totals.diff_native),
         formatTotalBucket(totals.opening_usd),
         formatTotalBucket(totals.movement_usd),

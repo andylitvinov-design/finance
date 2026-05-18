@@ -41,7 +41,7 @@
     section.appendChild(header);
 
     var cards = el("div", "metrics balance-snapshots-summary");
-    [["Дат", data.dates?.length || 0], ["Целевая", inputTargetDate(data)], ["К вводу", countNeedsInput(data.input_rows)], ["Канал/валюта", data.by_channel_currency?.length || 0], ["Валидных", data.valid_rows || 0]].forEach(function (item) {
+    [["Дат", data.dates?.length || 0], ["Целевая", inputTargetDate(data)], ["К вводу", countNeedsInput(data.input_rows)], ["Канал/валюта", data.by_channel_currency?.length || 0], ["Native valid", data.native_valid_rows ?? data.valid_rows ?? 0], ["USD-only", data.usd_only_rows || 0]].forEach(function (item) {
       var card = el("div", "metric");
       card.appendChild(el("div", "metric-label", item[0]));
       card.appendChild(el("div", "metric-value", item[1]));
@@ -111,11 +111,19 @@
     var table = el("table");
     var tbody = el("tbody");
     var head = el("tr");
-    ["Дата", "Канал", "Валюта", "Факт остаток"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    ["Дата", "Канал", "Валюта", "Native fact", "USD equivalent", "Value type", "Status"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
     tbody.appendChild(head);
     rows.forEach(function (row) {
       var tr = el("tr");
-      [row.date || "—", row.channel || "—", row.currency || "—", formatAmount(row.amount)].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
+      [
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        formatAmount(row.amount_native ?? row.amount),
+        formatAmount(row.amount_usd),
+        formatValueType(row.value_type),
+        row.needs_native_currency_value ? "needs native amount" : (row.valid_native_balance === false ? "needs verification" : "ok"),
+      ].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -220,6 +228,20 @@
     return String(Math.round(numeric * 10000) / 10000);
   }
 
+  function formatValueType(value) {
+    var type = String(value || "").trim();
+    var labels = {
+      native_and_usd: "native + USD",
+      native_only: "native",
+      usd_only_needs_native: "USD-only",
+      explicit_zero: "zero",
+      carried_forward: "carried forward",
+      calculated_hint: "calculated hint",
+      needs_verification: "needs verification",
+    };
+    return labels[type] || "—";
+  }
+
   function install() {
     if (!isDebugMode()) return false;
     if (typeof renderAnalyticsSections !== "function" || renderAnalyticsSections.__balanceSnapshotsWrapped) return false;
@@ -250,6 +272,6 @@
     }
   }
 
-  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory, formatAmount: formatAmount, isDebugMode: isDebugMode };
+  window.EzohataBalanceSnapshotsUi = { install: install, recommendation: recommendation, renderInventory: renderInventory, formatAmount: formatAmount, formatValueType: formatValueType, isDebugMode: isDebugMode };
   install();
 })();

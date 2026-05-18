@@ -272,7 +272,7 @@ test("selected-date snapshot hydrates native USD stablecoin rows but keeps non-U
 
   assert.equal(byChannel.get("трансервайз дол")?.amount_usd, 1275.42);
   assert.equal(byChannel.get("Бинанс spot")?.amount_usd, 100);
-  assert.equal(byChannel.get("монобанк грн")?.amount_usd, undefined);
+  assert.equal(byChannel.get("монобанк грн")?.amount_usd, null);
   assert.ok(summary.selected_date_diagnostics.some((line) =>
     /native amount without trusted USD equivalent/.test(line)
   ));
@@ -502,7 +502,7 @@ test("balance snapshots selected date returns merged fallback rows when manual r
   assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-17");
   assert.equal(snapshot.balance_snapshots.selected_date_source, "merged");
   assert.deepEqual(snapshot.balance_snapshots.selected_date_rows, [
-    { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 90, amount_usd: 90 },
+    { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 90, amount_native: 90, amount_usd: 90, fx_rate_to_usd: 1, value_type: "native_and_usd", valid_native_balance: true, needs_native_currency_value: false },
   ]);
   assert.deepEqual(snapshot.balance_snapshots.diagnostics.selected_balance_dates, ["2026-05-17"]);
   assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, []);
