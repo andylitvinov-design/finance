@@ -162,7 +162,7 @@ function buildBalanceRowLookup(balanceRows = []) {
 }
 
 function findSourceBalanceRow(row, lookup) {
-  const date = row.factual_closing_balance_date || row.manual_provider_closing_balance_date || row.opening_balance_date || "";
+  const date = row.factual_closing_balance_date || row.manual_provider_closing_balance_date || "";
   const exactKey = balanceDatedKey(date, row.channel, row.currency);
   if (exactKey && lookup.has(exactKey)) return lookup.get(exactKey);
   return null;
@@ -254,7 +254,7 @@ function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   const displayMatch = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
-  if (displayMatch) return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
+  if (displayMatch) return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1]}`;
   return "";
 }
 
