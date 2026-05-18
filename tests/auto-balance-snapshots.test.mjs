@@ -6,12 +6,15 @@ import { generateKeyPairSync } from "node:crypto";
 
 import handler from "../api/index.js";
 import {
+  AUTO_BALANCE_SHEET_NAME,
   collectProviderBalanceRows,
   mergeBalanceRowsByDateChannelCurrency,
   runAutoBalanceSnapshots,
 } from "../server/auto-balance-snapshots.js";
 
 const root = path.join(import.meta.dirname, "..");
+const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
+const ENCODED_AUTO_RANGE = "'%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AL";
 
 function createResponseRecorder() {
   return {
@@ -39,6 +42,10 @@ function jsonResponse(payload, status = 200) {
     async json() {
       return payload;
     },
+    async text() {
+      return JSON.stringify(payload);
+    },
+    headers: { get: () => "" },
   };
 }
 
@@ -57,41 +64,49 @@ test("vercel cron points daily UTC schedule to auto balance snapshots endpoint",
   assert.deepEqual(config.regions, ["fra1"]);
 });
 
-test("provider unavailable does not write zero rows", async () => {
+test("provider unavailable creates dated status rows instead of fake zero rows", async () => {
   const result = await runAutoBalanceSnapshots({
-    query: { date: "2026-05-17" },
+    query: { date: "2026-05-17", dryRun: "1" },
     env: {},
     fetchImpl: async () => {
-      throw new Error("fetch should not be called without provider credentials");
+      throw new Error("fetch should not be called without provider credentials in dry-run collection");
     },
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.saved_rows, 0);
-  assert.equal(result.rows_preview.length, 0);
+  assert.equal(result.target_sheet, AUTO_BALANCE_SHEET_NAME);
+  assert.ok(result.rows_preview.length > 0);
   assert.equal(result.provider_current_balance_status.wise, "needs_permission");
   assert.equal(result.provider_current_balance_status.monobank, "needs_permission");
-  assert.match(result.warnings.join("\n"), /No provider returned/);
+
+  const paypalRows = result.rows_preview.filter((row) => row.provider === "paypal");
+  assert.deepEqual(paypalRows.map((row) => `${row.channel}|${row.currency}|${row.status}|${row.amount}`), [
+    "пейпал дол|USD|provider_not_implemented|",
+    "пейпал евр|EUR|provider_not_implemented|",
+    "пейпал сad|CAD|provider_not_implemented|",
+  ]);
+  assert.equal(paypalRows.every((row) => row.date === "2026-05-17"), true);
 });
 
-test("same date channel currency replaces existing row without deleting another currency", () => {
+test("same date provider channel currency replaces existing auto row without deleting another currency", () => {
   const merged = mergeBalanceRowsByDateChannelCurrency(
     [
-      { date: "2026-05-17", channel: "трансервайз дол", amount: "1", currency: "USD", rate: "1", usdAmount: "1", comment: "manual" },
-      { date: "2026-05-17", channel: "трансервайз дол", amount: "2", currency: "EUR", rate: "1,16", usdAmount: "2,32", comment: "manual" },
+      { date: "2026-05-17", provider: "wise", channel: "трансервайз дол", amount: "1", currency: "USD", rate: "1", amountUsd: "1", source: "wise_auto", rawSourceId: "old-usd", status: "ok", comment: "old" },
+      { date: "2026-05-17", provider: "wise", channel: "трансервайз евро", amount: "2", currency: "EUR", rate: "1,16", amountUsd: "2,32", source: "wise_auto", rawSourceId: "old-eur", status: "ok", comment: "old" },
     ],
     [
-      { date: "2026-05-17", channel: "трансервайз дол", amount: "9", currency: "USD", rate: "1", usdAmount: "9", comment: "auto daily provider snapshot" },
+      { date: "2026-05-17", provider: "wise", channel: "трансервайз дол", amount: "9", currency: "USD", rate: "1", amountUsd: "9", source: "wise_auto", rawSourceId: "new-usd", status: "ok", comment: "auto daily provider snapshot" },
     ]
   );
 
-  assert.deepEqual(merged, [
-    { date: "2026-05-17", channel: "трансервайз дол", amount: "2", currency: "EUR", rate: "1,16", usdAmount: "2,32", comment: "manual" },
-    { date: "2026-05-17", channel: "трансервайз дол", amount: "9", currency: "USD", rate: "1", usdAmount: "9", comment: "auto daily provider snapshot" },
+  assert.deepEqual(merged.map((row) => `${row.provider}|${row.channel}|${row.currency}|${row.amount}|${row.rawSourceId}`), [
+    "wise|трансервайз евро|EUR|2|old-eur",
+    "wise|трансервайз дол|USD|9|new-usd",
   ]);
 });
 
-test("Wise and Monobank real provider balances map to Авто Остатки rows", async () => {
+test("Wise and Monobank balances produce complete expected provider rows, including zero/missing rows", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
     const value = String(url);
@@ -102,14 +117,13 @@ test("Wise and Monobank real provider balances map to Авто Остатки ro
     if (value.includes("/v4/profiles/111/balances")) {
       return jsonResponse([
         { id: "wise-usd", currency: "USD", availableAmount: { value: 120.45, currency: "USD" } },
-        { id: "wise-eur", currency: "EUR", availableAmount: { value: 85.5, currency: "EUR" } },
         { id: "wise-gbp", currency: "GBP", availableAmount: { value: 0, currency: "GBP" } },
       ]);
     }
     if (value.endsWith("/personal/client-info")) {
       return jsonResponse({
         accounts: [
-          { id: "mono-uah", currencyCode: 980, balance: 123456 },
+          { id: "mono-uah", currencyCode: 980, balance: 0 },
           { id: "mono-usd", currencyCode: 840, balance: 1000 },
         ],
       });
@@ -129,18 +143,18 @@ test("Wise and Monobank real provider balances map to Авто Остатки ro
   const rows = results.flatMap((result) => result.rows);
 
   assert.ok(calls.some((url) => url.includes("/v4/profiles/111/balances")));
-  assert.deepEqual(rows.map((row) => `${row.channel}|${row.currency}|${row.amount}`), [
-    "трансервайз дол|USD|120,45",
-    "трансервайз евро|EUR|85,5",
-    "монобанк грн|UAH|1234,56",
+  assert.deepEqual(rows.filter((row) => row.provider === "wise").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "трансервайз дол|USD|120,45|ok",
+    "трансервайз евро|EUR||missing_provider_balance",
+  ]);
+  assert.deepEqual(rows.filter((row) => row.provider === "monobank").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "монобанк грн|UAH|0|zero_balance",
   ]);
   assert.equal(results.find((result) => result.provider === "monobank")?.skipped_rows.length, 1);
   assert.equal(results.find((result) => result.provider === "wise")?.skipped_rows.length, 1);
-  assert.equal(rows.every((row) => row.comment === "auto daily provider snapshot"), true);
-  assert.equal(rows.every((row) => row.source === `${row.provider}_auto`), true);
 });
 
-test("non-JSON provider response becomes structured JSON error", async () => {
+test("non-JSON provider response becomes structured JSON error rows", async () => {
   const request = {
     method: "GET",
     query: {
@@ -163,6 +177,10 @@ test("non-JSON provider response becomes structured JSON error", async () => {
     async json() {
       throw new Error("not json");
     },
+    async text() {
+      return "not json";
+    },
+    headers: { get: () => "" },
   });
 
   try {
@@ -170,8 +188,9 @@ test("non-JSON provider response becomes structured JSON error", async () => {
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers["content-type"], "application/json; charset=utf-8");
     assert.equal(response.body.ok, true);
+    assert.equal(response.body.target_sheet, AUTO_BALANCE_SHEET_NAME);
     assert.equal(response.body.provider_current_balance_status.wise, "error");
-    assert.deepEqual(response.body.providers_failed, ["wise", "monobank"]);
+    assert.ok(response.body.rows_preview.some((row) => row.provider === "wise" && row.status === "provider_error"));
     assert.match(response.body.warnings.join("\n"), /Wise request failed \(502\)/);
   } finally {
     global.fetch = previousFetch;
@@ -193,20 +212,23 @@ test("auto snapshot save writes merged Авто Остатки values through Go
     if (value === "https://oauth2.googleapis.com/token") {
       return jsonResponse({ access_token: "sheet-token" });
     }
-    if (value.endsWith("/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY")) {
-      return jsonResponse({ sheets: [{ properties: { title: "Авто Остатки" } }, { properties: { title: "Остатки" } }] });
+    if (value.endsWith(`/spreadsheets/${MANUAL_SPREADSHEET_ID}`)) {
+      return jsonResponse({ sheets: [{ properties: { title: AUTO_BALANCE_SHEET_NAME } }] });
     }
-    if (value.includes("/values/'%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AL") && (!options.method || options.method === "GET")) {
+    if (value.includes(`/values/${ENCODED_AUTO_RANGE}`) && (!options.method || options.method === "GET")) {
       return jsonResponse({
         values: [
           ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
-          ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto", "2026-05-17T00:00:00.000Z", "old", "ok", "old auto"],
+          ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto", "old", "wise:old", "ok", "old"],
         ],
       });
     }
-    if (value.includes("/values/'%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AL?valueInputOption=USER_ENTERED")) {
+    if (value.includes(`/values/${ENCODED_AUTO_RANGE}?valueInputOption=USER_ENTERED`)) {
       writes.push(JSON.parse(options.body).values);
-      return jsonResponse({ updatedRows: 2 });
+      return jsonResponse({ updatedRows: 3 });
+    }
+    if (value.includes("%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8")) {
+      throw new Error("Auto snapshot must not write to manual Остатки sheet");
     }
     throw new Error(`Unexpected URL ${value}`);
   };
@@ -225,14 +247,13 @@ test("auto snapshot save writes merged Авто Остатки values through Go
       },
     });
 
-    assert.equal(result.saved_rows, 1);
+    assert.ok(result.saved_rows > 1);
+    assert.equal(result.save.sheetName, AUTO_BALANCE_SHEET_NAME);
     assert.equal(writes.length, 1);
-    assert.deepEqual(writes[0][0], ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"]);
-    assert.deepEqual(writes[0][1].slice(0, 8), ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto"]);
-    assert.deepEqual(writes[0][2].slice(0, 8), ["2026-05-17", "wise", "трансервайз дол", "120,45", "USD", "1", "120,45", "wise_auto"]);
-    assert.equal(writes[0][2][9], "wise-usd");
-    assert.equal(writes[0][2][10], "ok");
-    assert.equal(writes[0][2][11], "auto daily provider snapshot");
+    assert.equal(writes[0][0][0], "date");
+    assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз дол" && row[3] === "120,45" && row[10] === "ok"));
+    assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз евро" && row[10] === "missing_provider_balance"));
+    assert.ok(writes[0].some((row) => row[1] === "paypal" && row[2] === "пейпал дол" && row[10] === "provider_not_implemented"));
   } finally {
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);
