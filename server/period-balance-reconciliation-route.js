@@ -1,3 +1,4 @@
+import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 
@@ -17,6 +18,7 @@ export default async function periodBalanceReconciliationHandler(request, respon
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: request.query || {},
     repositoryLoader: loadManualRepositoryFromGoogleSheets,
+    autoBalanceLoader: loadAutoBalanceRowsFromGoogleSheets,
   });
   return response.status(200).json(snapshot);
 }
@@ -26,10 +28,12 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const period = parsePeriod(query);
   const warnings = [];
   const repository = await loadRepository(options.repositoryLoader);
+  const autoBalances = await loadAutoBalances(options.autoBalanceLoader);
 
   if (!repository.ok) {
     warnings.push("needs verification: manual Google Sheets read access is unavailable.");
     if (repository.warning) warnings.push(toSafeWarning(repository.warning));
+    warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
     return {
       ok: true,
       generated_at: new Date().toISOString(),
@@ -37,7 +41,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
       period,
       period_balance_reconciliation: buildPeriodBalanceReconciliation({
         operations: [],
-        balanceRows: [],
+        balanceRows: autoBalances.balances || [],
         plannedRows: [],
         plannedSourceStatus: "needs_verification",
         period,
@@ -48,21 +52,26 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
 
   const plannedRows = resolvePlannedRows(repository);
   const plannedSourceStatus = resolvePlannedSourceStatus(repository, plannedRows);
+  const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
+  const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+  const balanceRows = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
-    balanceRows: repository.balances || [],
-    autoBalanceRows: repository.autoBalances || [],
+    balanceRows,
     plannedRows,
     plannedSourceStatus,
     period,
   });
   reconciliation.diagnostics = {
     ...(reconciliation.diagnostics || {}),
-    balance_snapshot_rows_loaded: Array.isArray(repository.balances) ? repository.balances.length : 0,
+    manual_balance_snapshot_rows_loaded: manualBalances.length,
+    auto_balance_snapshot_rows_loaded: autoBalanceRows.length,
+    balance_snapshot_rows_loaded: balanceRows.length,
     analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
       .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
   };
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
+  warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
   if (!plannedRows.length && plannedSourceStatus !== "available") {
     warnings.push(
@@ -78,6 +87,30 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
+  const manualKeys = new Set((manualBalances || []).map(balanceKey));
+  return [
+    ...(manualBalances || []).map((row) => ({ ...row, source: normalizeBalanceSource(row, "manual_fact") })),
+    ...(autoBalances || [])
+      .filter((row) => !manualKeys.has(balanceKey(row)))
+      .map((row) => ({ ...row, source: "provider_auto", fact_source: "provider_auto" })),
+  ];
+}
+
+function balanceKey(row = {}) {
+  return [
+    normalizeDate(row.date),
+    String(row.channel || row.accountName || row.account || "").trim(),
+    String(row.currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
+  const text = String(row.source || row.fact_source || row.provider || row.comment || "").trim().toLowerCase();
+  if (/auto snapshot|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
+  return fallback;
 }
 
 function resolvePlannedRows(repository) {
@@ -107,6 +140,18 @@ async function loadRepository(repositoryLoader = loadManualRepositoryFromGoogleS
     return {
       ok: false,
       warning: `Manual Google Sheets overlay failed: ${String(error?.message || error)}`,
+    };
+  }
+}
+
+async function loadAutoBalances(autoBalanceLoader = loadAutoBalanceRowsFromGoogleSheets) {
+  try {
+    return await autoBalanceLoader();
+  } catch (error) {
+    return {
+      ok: false,
+      balances: [],
+      warnings: [`Auto balance sheet failed: ${String(error?.message || error)}`],
     };
   }
 }
