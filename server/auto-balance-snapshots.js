@@ -129,10 +129,13 @@ export async function collectProviderBalanceRows({ date, env = process.env, fetc
   return [
     await collectWiseBalanceRows({ date, env, fetchImpl }),
     await collectMonobankBalanceRows({ date, env, fetchImpl }),
-    buildUnavailableProviderResult("paypal", "not_implemented", "PayPal module imports transactions only; no proven current-balance endpoint is wired."),
-    buildUnavailableProviderResult("privatbank", "not_implemented", "PrivatBank module imports transactions only; no proven current-balance endpoint is wired."),
-    buildUnavailableProviderResult("yoomoney", "not_implemented", "YooMoney module imports transactions only; no proven current-balance endpoint is wired."),
-    buildUnavailableProviderResult("binance", "not_implemented", "Binance module imports transactions only; no proven current-balance snapshot writer is wired."),
+    buildUnavailableProviderResult("paypal", "not_implemented", "PayPal current-balance endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("privatbank", "not_implemented", "PrivatBank current-balance endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("yoomoney", "not_implemented", "YooMoney current-balance endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("binance", "not_implemented", "Binance current-balance snapshot endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("tdbank", "not_implemented", "TD Bank current-balance snapshot endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("payoneer", "not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet.", date),
+    buildUnavailableProviderResult("revolut", "not_implemented", "Revolut current-balance snapshot endpoint is not wired yet.", date),
   ];
 }
 
@@ -140,7 +143,7 @@ async function collectWiseBalanceRows({ date, env, fetchImpl }) {
   const provider = "wise";
   try {
     if (!String(env.WISE_API_TOKEN || "").trim()) {
-      return buildUnavailableProviderResult(provider, "needs_permission", "WISE_API_TOKEN is not configured.");
+      return buildUnavailableProviderResult(provider, "needs_permission", "WISE_API_TOKEN is not configured.", date);
     }
     const balances = await fetchWiseBalances({
       apiToken: env.WISE_API_TOKEN,
@@ -177,7 +180,7 @@ async function collectMonobankBalanceRows({ date, env, fetchImpl }) {
   const provider = "monobank";
   try {
     if (!String(env.MONOBANK_API_TOKEN || "").trim()) {
-      return buildUnavailableProviderResult(provider, "needs_permission", "MONOBANK_API_TOKEN is not configured.");
+      return buildUnavailableProviderResult(provider, "needs_permission", "MONOBANK_API_TOKEN is not configured.", date);
     }
     const clientInfo = await fetchMonobankClientInfo({
       apiToken: env.MONOBANK_API_TOKEN,
@@ -217,8 +220,14 @@ function mapMonobankAccountToSnapshotRow(account, date) {
   return buildSnapshotRow({ date, provider: "monobank", channel, amount, currency, rawSourceId: account.id || account.account || "" });
 }
 
-function buildUnavailableProviderResult(provider, status, warning) {
-  return { provider, provider_current_balance_status: status, rows: [], skipped_rows: [], warning };
+function buildUnavailableProviderResult(provider, status, warning, date = "") {
+  return {
+    provider,
+    provider_current_balance_status: status,
+    rows: buildExpectedProviderRows({ provider, date, status: mapUnavailableStatus(status), comment: warning }),
+    skipped_rows: [],
+    warning,
+  };
 }
 
 function buildSnapshotRow({ date, provider = "provider", channel, amount, currency, amountUsd, rawSourceId = "" }) {
