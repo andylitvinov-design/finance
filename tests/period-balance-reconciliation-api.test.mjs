@@ -48,6 +48,88 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 
+test("period balance reconciliation uses manual fact before auto fallback", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-15" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        {
+          date: "2026-05-12",
+          toChannel: "wise usd",
+          currency: "USD",
+          amountNet: "50",
+          balanceAmount: 50,
+          ledgerV2: { date: "2026-05-12", operation: "income", to_channel: "wise usd", currency: "USD", amount_net: "50", balance_amount: 50 },
+        },
+      ],
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000", balanceSource: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-15", channel: "wise usd", currency: "USD", amount: "1070", balanceSource: "manual_fact", sourceSheet: "Остатки", comment: "manual_fact" },
+      ],
+      autoBalances: [
+        { date: "2026-05-15", provider: "wise", channel: "wise usd", currency: "USD", amount: "9999", balanceSource: "provider_auto", sourceSheet: "Авто Остатки", comment: "auto daily provider snapshot" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency[0];
+  assert.equal(row.manual_provider_closing_balance, 1070);
+  assert.equal(row.balanceSource, "manual_fact");
+  assert.equal(row.needsManualConfirmation, false);
+  assert.equal(row.sourceSheet, "Остатки");
+});
+
+test("period balance reconciliation falls back to auto and marks missing facts", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-15" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        {
+          date: "2026-05-12",
+          toChannel: "wise usd",
+          currency: "USD",
+          amountNet: "50",
+          balanceAmount: 50,
+          ledgerV2: { date: "2026-05-12", operation: "income", to_channel: "wise usd", currency: "USD", amount_net: "50", balance_amount: 50 },
+        },
+        {
+          date: "2026-05-12",
+          toChannel: "paypal usd",
+          currency: "USD",
+          amountNet: "5",
+          balanceAmount: 5,
+          ledgerV2: { date: "2026-05-12", operation: "income", to_channel: "paypal usd", currency: "USD", amount_net: "5", balance_amount: 5 },
+        },
+      ],
+      balances: [
+        { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000", balanceSource: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-15", provider: "wise", channel: "wise usd", currency: "USD", amount: "1050", balanceSource: "provider_auto", sourceSheet: "Авто Остатки", sourceRow: 2, comment: "wise auto snapshot" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  const wise = snapshot.period_balance_reconciliation.by_channel_currency.find((row) => row.channel === "wise usd");
+  const paypal = snapshot.period_balance_reconciliation.by_channel_currency.find((row) => row.channel === "paypal usd");
+  assert.equal(wise.manual_provider_closing_balance, 1050);
+  assert.equal(wise.balanceSource, "provider_auto");
+  assert.equal(wise.needsManualConfirmation, true);
+  assert.equal(wise.provider, "wise");
+  assert.equal(wise.sourceSheet, "Авто Остатки");
+  assert.equal(wise.sourceRow, 2);
+  assert.equal(wise.sourceComment, "wise auto snapshot");
+  assert.equal(paypal.balanceSource, "missing");
+  assert.equal(paypal.needsManualConfirmation, true);
+  assert.equal(paypal.sourceSheet, "");
+});
+
 test("period balance reconciliation API reports planned source gap and carried-forward provider balance", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },

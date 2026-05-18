@@ -26,6 +26,8 @@ const LEDGER_SHEET_NAME = "Ledger";
 export const MANUAL_LEDGER_SHEET_NAME = LEDGER_SHEET_NAME;
 export const SHEETS_API_BASE_URL = SHEETS_API_BASE;
 const BALANCE_SHEET_NAME = "Остатки";
+export const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
+export const AUTO_BALANCE_HEADERS = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
 const PLAN_SHEET_NAME = "План";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
@@ -155,7 +157,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
     const accessToken = await requestServiceAccountAccessToken({ clientEmail, privateKey, fetchImpl });
     const valuesBySheet = await batchGetSheetValues({
       spreadsheetId: MANUAL_SPREADSHEET_ID,
-      sheetNames: [LEDGER_SHEET_NAME, EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, PLAN_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
+      sheetNames: [LEDGER_SHEET_NAME, EXPENSE_SHEET_NAME, BALANCE_SHEET_NAME, AUTO_BALANCE_SHEET_NAME, PLAN_SHEET_NAME, TRANSFER_SHEET_NAME, COMMISSION_SHEET_NAME],
       accessToken,
       fetchImpl,
     });
@@ -180,6 +182,7 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       ledgerValues,
       legacyExpenseRows: legacyRepository.expenseRows || [],
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
+      autoBalances: parseAutoBalanceRows(valuesBySheet[AUTO_BALANCE_SHEET_NAME] || []),
       monthlyPlanRows,
       plannedRows: buildPlannedRowsFromMonthlyPlan(monthlyPlanRows),
       plannedSourceStatus: planValues.length ? "available" : "needs_verification",
@@ -966,13 +969,16 @@ function parseBalanceRows(values) {
   const rateIndex = findHeaderIndex(header, ["курс", "rate"]);
   const usdIndex = findHeaderIndex(header, ["сумма_usd", "usd amount", "usdAmount"]);
   const commentIndex = findHeaderIndex(header, ["комментарий", "comment"]);
-  // "Остатки" stores end-of-day provider/manual balance snapshots by date + channel + currency.
+  const sourceIndex = findHeaderIndex(header, ["source"]);
   return rows
-    .map((row) => {
+    .map((row, rowIndex) => {
       const rawChannel = String(row[channelIndex] || "").trim();
       const rawCurrency = currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim();
       const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
       const amount = String(row[amountIndex] || "").trim();
+      const comment = commentIndex === -1 ? "" : String(row[commentIndex] || "").trim();
+      const rawSource = sourceIndex === -1 ? "" : String(row[sourceIndex] || "").trim();
+      const balanceSource = classifyBalanceSource({ source: rawSource, comment });
       return {
         date: normalizeDate(row[dateIndex]),
         channel,
@@ -982,11 +988,86 @@ function parseBalanceRows(values) {
         currency: normalizeBalanceCurrency(rawCurrency, channel),
         rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
         usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
-        comment: commentIndex === -1 ? "" : String(row[commentIndex] || "").trim(),
-        source: "manual-google-sheets",
+        comment,
+        source: balanceSource === "provider_auto" ? "provider_auto" : (rawSource || "manual-google-sheets"),
+        balanceSource,
+        sourceSheet: BALANCE_SHEET_NAME,
+        sourceRow: rowIndex + 2,
       };
     })
     .filter((row) => row.date && row.channel && row.amount);
+}
+
+function parseAutoBalanceRows(values) {
+  const { header, rows } = splitHeaderRows(values);
+  const dateIndex = findHeaderIndex(header, ["date", "дата"]);
+  const providerIndex = findHeaderIndex(header, ["provider", "провайдер"]);
+  const channelIndex = findHeaderIndex(header, ["channel", "канал", "account"]);
+  const amountIndex = findHeaderIndex(header, ["amount", "сумма"]);
+  if (dateIndex === -1 || channelIndex === -1 || amountIndex === -1) return [];
+  const currencyIndex = findHeaderIndex(header, ["currency", "валюта"]);
+  const rateIndex = findHeaderIndex(header, ["rate", "курс"]);
+  const usdIndex = findHeaderIndex(header, ["amount_usd", "сумма_usd", "usd amount", "usdAmount"]);
+  const sourceIndex = findHeaderIndex(header, ["source"]);
+  const fetchedAtIndex = findHeaderIndex(header, ["fetched_at", "fetchedAt"]);
+  const rawSourceIdIndex = findHeaderIndex(header, ["raw_source_id", "rawSourceId"]);
+  const statusIndex = findHeaderIndex(header, ["status"]);
+  const commentIndex = findHeaderIndex(header, ["comment", "комментарий"]);
+  return rows
+    .map((row, rowIndex) => {
+      const rawChannel = String(row[channelIndex] || "").trim();
+      const rawCurrency = currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim();
+      const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
+      const provider = normalizeAutoBalanceProvider(providerIndex === -1 ? "" : row[providerIndex], sourceIndex === -1 ? "" : row[sourceIndex], commentIndex === -1 ? "" : row[commentIndex]);
+      const source = normalizeAutoBalanceSource(sourceIndex === -1 ? "" : row[sourceIndex], provider);
+      const amount = String(row[amountIndex] || "").trim();
+      return {
+        date: normalizeDate(row[dateIndex]),
+        provider,
+        channel,
+        accountName: channel,
+        amount,
+        balanceAmount: amount,
+        currency: normalizeBalanceCurrency(rawCurrency, channel),
+        rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
+        usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
+        source,
+        balanceSource: "provider_auto",
+        fetchedAt: fetchedAtIndex === -1 ? "" : String(row[fetchedAtIndex] || "").trim(),
+        rawSourceId: rawSourceIdIndex === -1 ? "" : String(row[rawSourceIdIndex] || "").trim(),
+        status: statusIndex === -1 ? "" : String(row[statusIndex] || "").trim(),
+        comment: commentIndex === -1 ? "" : String(row[commentIndex] || "").trim(),
+        sourceSheet: AUTO_BALANCE_SHEET_NAME,
+        sourceRow: rowIndex + 2,
+      };
+    })
+    .filter((row) => row.date && row.channel && row.amount);
+}
+
+function classifyBalanceSource({ source = "", comment = "" } = {}) {
+  const text = normalizeLookupText(`${source} ${comment}`);
+  if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(text)) return "provider_auto";
+  if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(text)) return "provider_auto";
+  return "manual_fact";
+}
+
+function normalizeAutoBalanceProvider(provider, source = "", comment = "") {
+  const text = normalizeLookupText(`${provider} ${source} ${comment}`);
+  if (/wise|transferwise|трансервайз/.test(text)) return "wise";
+  if (/paypal|пейпал/.test(text)) return "paypal";
+  if (/binance|бинанс/.test(text)) return "binance";
+  if (/mono|monobank|монобанк/.test(text)) return "monobank";
+  if (/privat|приват/.test(text)) return "privatbank";
+  if (/yoomoney|юmoney|юмани|яндекс/.test(text)) return "yoomoney";
+  return String(provider || "").trim().toLowerCase() || "provider";
+}
+
+function normalizeAutoBalanceSource(source, provider) {
+  const raw = String(source || "").trim().toLowerCase();
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  const normalizedProvider = normalizeAutoBalanceProvider(provider);
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  return "provider_auto";
 }
 
 function normalizeOstatkiAppendCandidate(row) {

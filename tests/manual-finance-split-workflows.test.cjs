@@ -143,6 +143,7 @@ function buildFinanceContext() {
       `${extractFunction(financeJs, "buildManualFinanceCashEntries")}\n` +
       `${extractFunction(financeJs, "formatManualFinanceStableIdPart")}\n` +
       `${extractFunction(financeJs, "collectManualFinanceBalanceRowsFromEditor")}\n` +
+      `${extractFunction(financeJs, "countExpectedManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceCashRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceSheet")}\n` +
@@ -182,6 +183,7 @@ test("saving balance snapshot uses Остатки writer and does not call legac
   assert.equal(context.savedCashEntries, undefined);
   assert.equal(context.legacyFactSaveCalled, undefined);
   assert.match(context.lastStatus.message, /Остатки/);
+  assert.match(context.lastStatus.message, /1 из 1 строк/);
 });
 
 test("saving balance snapshot reads current editor DOM values before writing", async () => {
@@ -240,6 +242,33 @@ test("saving balance snapshot reads current editor DOM values before writing", a
     { date: "2026-05-17", channel: "Яндекс руб", amount: "70203,51", currency: "RUB", rate: "", usdAmount: "", comment: "typed before save" },
     { date: "2026-05-17", channel: "монобанк грн", amount: "14033", currency: "UAH", rate: "", usdAmount: "", comment: "" },
   ]);
+  assert.match(context.lastStatus.message, /2 из 2 строк/);
+});
+
+test("saving balance snapshot reports partial save when only one of many expected rows is saved", async () => {
+  const context = buildFinanceContext();
+  context.saveBalanceSnapshotRowsDirect = async (rows) => {
+    context.savedBalanceRows = rows;
+    return { rowCount: 1, savedAt: "partial" };
+  };
+  context.state.manualFinance.activeInnerTab = "balances";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    balanceRows: [
+      { date: "2026-05-17", channel: "Яндекс руб", amount: "1", currency: "RUB", comment: "" },
+      { date: "2026-05-17", channel: "монобанк грн", amount: "2", currency: "UAH", comment: "" },
+      { date: "2026-05-17", channel: "трансервайз дол", amount: "3", currency: "USD", comment: "" },
+    ],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.equal(context.lastStatus.isError, true);
+  assert.match(context.lastStatus.message, /Остатки сохранены не полностью: сохранено 1 из 3 строк/);
 });
 
 test("saving legacy fact range carries current balance rows into manual finance payload", async () => {

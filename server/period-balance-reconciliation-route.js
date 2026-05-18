@@ -51,6 +51,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
     balanceRows: repository.balances || [],
+    autoBalanceRows: repository.autoBalances || [],
     plannedRows,
     plannedSourceStatus,
     period,

@@ -2909,7 +2909,9 @@ async function saveManualFinanceSheet() {
 
 async function saveManualFinanceBalanceRows() {
   if (!state.manualFinance.data) return;
-  const rows = normalizeManualFinanceBalanceRows(collectManualFinanceBalanceRowsFromEditor(), {
+  const collectedRows = collectManualFinanceBalanceRowsFromEditor();
+  const expectedRowCount = countExpectedManualFinanceBalanceRows(collectedRows);
+  const rows = normalizeManualFinanceBalanceRows(collectedRows, {
     defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
   }).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
   if (!hasConfiguredManualFinanceEndpoint()) {
@@ -2927,16 +2929,27 @@ async function saveManualFinanceBalanceRows() {
   renderTabs();
   try {
     const response = await saveBalanceSnapshotRowsDirect(rows);
+    const savedRowCount = Number(response?.rowCount || 0);
+    if (expectedRowCount > 1 && savedRowCount === 1) {
+      setManualFinanceStatus(`Остатки сохранены не полностью: сохранено 1 из ${expectedRowCount} строк`, true);
+      return;
+    }
     state.manualFinance.data.balanceRows = rows;
     state.manualFinance.dirty = false;
     await loadDashboardData();
-    setManualFinanceStatus(`Остатки сохранены: ${response?.rowCount || 0}. ${response?.savedAt || ""}`.trim(), false);
+    setManualFinanceStatus(`Остатки сохранены: ${savedRowCount} из ${expectedRowCount} строк. ${response?.savedAt || ""}`.trim(), false);
   } catch (error) {
     setManualFinanceStatus(error.message || "Не удалось сохранить Остатки.", true);
   } finally {
     state.manualFinance.loading = false;
     renderTabs();
   }
+}
+
+function countExpectedManualFinanceBalanceRows(rows) {
+  const rowCount = Array.isArray(rows) ? rows.length : 0;
+  if (rowCount) return rowCount;
+  return Array.isArray(state.manualFinance.data?.balanceRows) ? state.manualFinance.data.balanceRows.length : 0;
 }
 
 function collectManualFinanceBalanceRowsFromEditor() {

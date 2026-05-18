@@ -7,8 +7,8 @@ import {
 } from "./manual-google-sheets.js";
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const BALANCE_SHEET_NAME = "Остатки";
-const BALANCE_HEADERS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
+export const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
+export const AUTO_BALANCE_HEADERS = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
 const SNAPSHOT_COMMENT = "auto daily provider snapshot";
 const FALLBACK_USD_RATES = {
   USD: 1,
@@ -158,10 +158,12 @@ async function collectWiseBalanceRows({ date, env, fetchImpl }) {
       }
       const row = buildSnapshotRow({
         date,
+        provider,
         channel: balance.channel,
         amount: balance.amount,
         currency,
         amountUsd: balance.amountUsd,
+        rawSourceId: balance.id || balance.balanceId || "",
       });
       if (row) rows.push(row);
     }
@@ -212,17 +214,18 @@ function mapMonobankAccountToSnapshotRow(account, date) {
   if (!channel) return null;
   const amount = Math.round((Number(account.balance) / 100) * 10000) / 10000;
   if (!Number.isFinite(amount)) return null;
-  return buildSnapshotRow({ date, channel, amount, currency });
+  return buildSnapshotRow({ date, provider: "monobank", channel, amount, currency, rawSourceId: account.id || account.account || "" });
 }
 
 function buildUnavailableProviderResult(provider, status, warning) {
   return { provider, provider_current_balance_status: status, rows: [], skipped_rows: [], warning };
 }
 
-function buildSnapshotRow({ date, channel, amount, currency, amountUsd }) {
+function buildSnapshotRow({ date, provider = "provider", channel, amount, currency, amountUsd, rawSourceId = "" }) {
   const numericAmount = Number(amount);
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
   const normalizedChannel = String(channel || "").trim();
+  const normalizedProvider = normalizeProvider(provider);
   if (!date || !normalizedChannel || !normalizedCurrency || !Number.isFinite(numericAmount)) return null;
   const rate = Number(FALLBACK_USD_RATES[normalizedCurrency] || 0);
   const numericUsd = Number(amountUsd);
@@ -231,11 +234,16 @@ function buildSnapshotRow({ date, channel, amount, currency, amountUsd }) {
     : (rate ? numericAmount * rate : "");
   return {
     date,
+    provider: normalizedProvider,
     channel: normalizedChannel,
     amount: formatSheetNumber(numericAmount),
     currency: normalizedCurrency,
     rate: rate ? formatSheetNumber(rate, 6) : "",
     usdAmount: usdAmount === "" ? "" : formatSheetNumber(usdAmount),
+    source: `${normalizedProvider}_auto`,
+    fetchedAt: new Date().toISOString(),
+    rawSourceId: String(rawSourceId || "").trim(),
+    status: "ok",
     comment: SNAPSHOT_COMMENT,
   };
 }
@@ -255,14 +263,19 @@ export async function saveAutoBalanceSnapshotRows(rows, { fetchImpl = fetch } = 
 function normalizeSnapshotRows(rows) {
   return (rows || []).map((row) => ({
     date: normalizeIsoDate(row?.date),
+    provider: normalizeProvider(row?.provider),
     channel: String(row?.channel || "").trim(),
     amount: formatSheetNumber(parseSheetNumber(row?.amount)),
     currency: String(row?.currency || "").trim().toUpperCase(),
     rate: row?.rate === "" ? "" : formatSheetNumber(parseSheetNumber(row?.rate), 6),
     usdAmount: row?.usdAmount === "" ? "" : formatSheetNumber(parseSheetNumber(row?.usdAmount)),
+    source: normalizeAutoSource(row?.source, row?.provider),
+    fetchedAt: normalizeTimestamp(row?.fetchedAt || row?.fetched_at) || new Date().toISOString(),
+    rawSourceId: String(row?.rawSourceId || row?.raw_source_id || "").trim(),
+    status: String(row?.status || "ok").trim() || "ok",
     comment: String(row?.comment || SNAPSHOT_COMMENT).trim(),
   })).filter((row) =>
-    row.date && row.channel && row.currency && (String(row.amount).trim() || String(row.usdAmount).trim())
+    row.date && row.provider && row.channel && row.currency && (String(row.amount).trim() || String(row.usdAmount).trim())
   );
 }
 
@@ -279,7 +292,22 @@ export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replace
 }
 
 function balanceRowKey(row) {
-  return `${normalizeIsoDate(row?.date)}|${String(row?.channel || "").trim()}|${String(row?.currency || "").trim().toUpperCase()}`;
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || "").trim();
+  if (rawSourceId) {
+    return [
+      normalizeIsoDate(row?.date),
+      normalizeProvider(row?.provider),
+      String(row?.channel || "").trim(),
+      String(row?.currency || "").trim().toUpperCase(),
+      rawSourceId,
+    ].join("|");
+  }
+  return [
+    normalizeIsoDate(row?.date),
+    normalizeProvider(row?.provider),
+    String(row?.channel || "").trim(),
+    String(row?.currency || "").trim().toUpperCase(),
+  ].join("|");
 }
 
 async function ensureBalanceSheetExists({ accessToken, fetchImpl }) {
@@ -288,66 +316,100 @@ async function ensureBalanceSheetExists({ accessToken, fetchImpl }) {
   });
   const metadata = await metadataResponse.json().catch(() => ({}));
   if (!metadataResponse.ok) throw new Error(metadata?.error?.message || `Sheets metadata failed with HTTP ${metadataResponse.status}`);
-  const exists = (metadata.sheets || []).some((sheet) => sheet?.properties?.title === BALANCE_SHEET_NAME);
+  const exists = (metadata.sheets || []).some((sheet) => sheet?.properties?.title === AUTO_BALANCE_SHEET_NAME);
   if (exists) return;
   const createResponse = await fetchImpl(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}:batchUpdate`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: BALANCE_SHEET_NAME } } }] }),
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: AUTO_BALANCE_SHEET_NAME } } }] }),
   });
   const payload = await createResponse.json().catch(() => ({}));
-  if (!createResponse.ok) throw new Error(payload?.error?.message || `Create Остатки sheet failed with HTTP ${createResponse.status}`);
+  if (!createResponse.ok) throw new Error(payload?.error?.message || `Create Авто Остатки sheet failed with HTTP ${createResponse.status}`);
 }
 
 async function getBalanceSheetValues({ accessToken, fetchImpl }) {
-  const range = encodeURIComponent(`'${BALANCE_SHEET_NAME}'!A:G`);
+  const range = encodeURIComponent(`'${AUTO_BALANCE_SHEET_NAME}'!A:L`);
   const response = await fetchImpl(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.error?.message || `Read Остатки failed with HTTP ${response.status}`);
+  if (!response.ok) throw new Error(payload?.error?.message || `Read Авто Остатки failed with HTTP ${response.status}`);
   return payload.values || [];
 }
 
 async function putBalanceSheetValues(values, { accessToken, fetchImpl }) {
-  const range = encodeURIComponent(`'${BALANCE_SHEET_NAME}'!A:G`);
+  const range = encodeURIComponent(`'${AUTO_BALANCE_SHEET_NAME}'!A:L`);
   const response = await fetchImpl(
     `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`,
     {
       method: "PUT",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ range: `'${BALANCE_SHEET_NAME}'!A:G`, majorDimension: "ROWS", values }),
+      body: JSON.stringify({ range: `'${AUTO_BALANCE_SHEET_NAME}'!A:L`, majorDimension: "ROWS", values }),
     }
   );
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.error?.message || `Write Остатки failed with HTTP ${response.status}`);
+  if (!response.ok) throw new Error(payload?.error?.message || `Write Авто Остатки failed with HTTP ${response.status}`);
 }
 
 function parseBalanceSheetValues(values) {
   return (values || []).slice(1).map((row) => ({
     date: normalizeIsoDate(row?.[0]),
-    channel: String(row?.[1] || "").trim(),
-    amount: formatSheetNumber(parseSheetNumber(row?.[2])),
-    currency: String(row?.[3] || "").trim().toUpperCase(),
-    rate: row?.[4] === undefined || row?.[4] === "" ? "" : formatSheetNumber(parseSheetNumber(row?.[4]), 6),
-    usdAmount: row?.[5] === undefined || row?.[5] === "" ? "" : formatSheetNumber(parseSheetNumber(row?.[5])),
-    comment: String(row?.[6] || "").trim(),
-  })).filter((row) => row.date && row.channel && row.currency && (row.amount || row.usdAmount));
+    provider: normalizeProvider(row?.[1]),
+    channel: String(row?.[2] || "").trim(),
+    amount: formatSheetNumber(parseSheetNumber(row?.[3])),
+    currency: String(row?.[4] || "").trim().toUpperCase(),
+    rate: row?.[5] === undefined || row?.[5] === "" ? "" : formatSheetNumber(parseSheetNumber(row?.[5]), 6),
+    usdAmount: row?.[6] === undefined || row?.[6] === "" ? "" : formatSheetNumber(parseSheetNumber(row?.[6])),
+    source: normalizeAutoSource(row?.[7], row?.[1]),
+    fetchedAt: String(row?.[8] || "").trim(),
+    rawSourceId: String(row?.[9] || "").trim(),
+    status: String(row?.[10] || "ok").trim() || "ok",
+    comment: String(row?.[11] || "").trim(),
+  })).filter((row) => row.date && row.provider && row.channel && row.currency && (row.amount || row.usdAmount));
 }
 
 function buildBalanceSheetValues(rows) {
   return [
-    BALANCE_HEADERS.slice(),
+    AUTO_BALANCE_HEADERS.slice(),
     ...(rows || []).map((row) => [
       row.date || "",
+      row.provider || "",
       row.channel || "",
       row.amount || "",
       row.currency || "",
       row.rate || "",
       row.usdAmount || "",
+      row.source || "",
+      row.fetchedAt || "",
+      row.rawSourceId || "",
+      row.status || "",
       row.comment || "",
     ]),
   ];
+}
+
+function normalizeProvider(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (/wise|transferwise|трансервайз/.test(raw)) return "wise";
+  if (/mono|monobank|монобанк/.test(raw)) return "monobank";
+  if (/paypal|пейпал/.test(raw)) return "paypal";
+  if (/binance|бинанс/.test(raw)) return "binance";
+  if (/privat|приват/.test(raw)) return "privatbank";
+  if (/yoomoney|юmoney|юмани|яндекс/.test(raw)) return "yoomoney";
+  return raw || "provider";
+}
+
+function normalizeAutoSource(value, provider) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  const normalizedProvider = normalizeProvider(provider);
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  return "provider_auto";
+}
+
+function normalizeTimestamp(value) {
+  const raw = String(value || "").trim();
+  return raw && !Number.isNaN(Date.parse(raw)) ? new Date(raw).toISOString() : "";
 }
 
 function monobankCurrencyByCode(code) {

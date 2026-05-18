@@ -2252,9 +2252,13 @@ function buildWiseBalanceSnapshotRows(balances, snapshotDate) {
     const explicitUsdAmount = normalizeManualFinancePersistedNumberInput(balance.amountUsd);
     return {
       ...row,
+      provider: "wise",
       currency: String(balance.currency || row.currency || "").trim().toUpperCase(),
       amount: normalizeManualFinancePersistedNumberInput(balance.amount ?? row.amount),
       usdAmount: String(explicitUsdAmount || "").trim() ? explicitUsdAmount : row.usdAmount,
+      source: "wise_auto",
+      rawSourceId: String(balance.id || balance.balanceId || "").trim(),
+      status: "ok",
       comment: "wise auto snapshot"
     };
   });
@@ -2277,9 +2281,12 @@ async function saveWiseBalanceSnapshotsIfNeeded(balances) {
   if (!hasConfiguredManualFinanceEndpoint()) {
     return { saved: false, statusSuffix: " Snapshot баланса Wise пропущен: Google write access via manual workbook server is unavailable." };
   }
+  const saveAutoRows = typeof saveAutoBalanceSnapshotRowsDirect === "function"
+    ? saveAutoBalanceSnapshotRowsDirect
+    : saveBalanceSnapshotRowsDirect;
   const response = typeof withManualServerRoute === "function"
-    ? await withManualServerRoute("/api/manual-savings", () => saveBalanceSnapshotRowsDirect(pendingRows))
-    : await saveBalanceSnapshotRowsDirect(pendingRows);
+    ? await withManualServerRoute("/api/manual-savings", () => saveAutoRows(pendingRows))
+    : await saveAutoRows(pendingRows);
   pendingRows.forEach((row) => {
     state.expenseAccounting.wiseBalanceSnapshotKeys.add(getWiseBalanceSnapshotAttemptKey(snapshotDate, row.channel));
   });

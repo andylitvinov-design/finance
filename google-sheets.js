@@ -369,6 +369,10 @@ function getManualBalancesSheetName() {
   return String(state.config?.manualFinance?.balancesSheetName || MANUAL_FINANCE_BALANCE_TITLE).trim() || MANUAL_FINANCE_BALANCE_TITLE;
 }
 
+function getAutoBalancesSheetName() {
+  return String(state.config?.manualFinance?.autoBalancesSheetName || "Авто Остатки").trim() || "Авто Остатки";
+}
+
 function getManualCommissionsSheetName() {
   return String(state.config?.manualFinance?.commissionsSheetName || MANUAL_FINANCE_COMMISSION_TITLE).trim() || MANUAL_FINANCE_COMMISSION_TITLE;
 }
@@ -805,6 +809,61 @@ function buildIncomingBalanceSheetValues(rows) {
       row.currency || "",
       row.rate || "",
       row.usdAmount || "",
+      row.comment || ""
+    ])
+  ];
+}
+
+function parseAutoBalanceSheetValues(values) {
+  const rows = values || [];
+  const header = (rows[0] || []).map((cell) => String(cell || "").trim());
+  const index = (aliases) => findHeaderIndexByAliases(header, aliases);
+  const dateIndex = index(["date", "дата"]);
+  const providerIndex = index(["provider", "провайдер"]);
+  const channelIndex = index(["channel", "канал"]);
+  const amountIndex = index(["amount", "сумма"]);
+  if (dateIndex === -1 || channelIndex === -1 || amountIndex === -1) return [];
+  const currencyIndex = index(["currency", "валюта"]);
+  const rateIndex = index(["rate", "курс"]);
+  const usdIndex = index(["amount_usd", "сумма_usd", "usdAmount"]);
+  const sourceIndex = index(["source"]);
+  const fetchedAtIndex = index(["fetched_at", "fetchedAt"]);
+  const rawSourceIdIndex = index(["raw_source_id", "rawSourceId"]);
+  const statusIndex = index(["status"]);
+  const commentIndex = index(["comment", "комментарий"]);
+  return rows.slice(1)
+    .map((row) => ({
+      date: normalizeIncomingSheetDateValue(row[dateIndex]),
+      provider: normalizeAutoBalanceProvider(providerIndex === -1 ? "" : row[providerIndex], sourceIndex === -1 ? "" : row[sourceIndex], commentIndex === -1 ? "" : row[commentIndex]),
+      channel: canonicalManualFinanceChannel(row[channelIndex]),
+      amount: normalizeManualFinancePersistedNumberInput(row[amountIndex] || ""),
+      currency: String(currencyIndex === -1 ? "" : row[currencyIndex] || "").trim().toUpperCase(),
+      rate: normalizeManualFinancePersistedNumberInput(rateIndex === -1 ? "" : row[rateIndex]),
+      usdAmount: normalizeManualFinancePersistedNumberInput(usdIndex === -1 ? "" : row[usdIndex]),
+      source: normalizeAutoBalanceSource(sourceIndex === -1 ? "" : row[sourceIndex], providerIndex === -1 ? "" : row[providerIndex]),
+      fetchedAt: String(fetchedAtIndex === -1 ? "" : row[fetchedAtIndex] || "").trim(),
+      rawSourceId: String(rawSourceIdIndex === -1 ? "" : row[rawSourceIdIndex] || "").trim(),
+      status: String(statusIndex === -1 ? "" : row[statusIndex] || "ok").trim() || "ok",
+      comment: String(commentIndex === -1 ? "" : row[commentIndex] || "").trim()
+    }))
+    .filter((row) => row.date && row.channel && row.amount);
+}
+
+function buildAutoBalanceSheetValues(rows) {
+  return [
+    ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+    ...(rows || []).map((row) => [
+      row.date || "",
+      row.provider || "",
+      row.channel || "",
+      row.amount || "",
+      row.currency || "",
+      row.rate || "",
+      row.usdAmount || "",
+      row.source || "",
+      row.fetchedAt || "",
+      row.rawSourceId || "",
+      row.status || "",
       row.comment || ""
     ])
   ];
@@ -1504,6 +1563,73 @@ function appendManualBalanceSourceMarker(comment, sourceMarker) {
   return [raw, marker].filter(Boolean).join(" | ");
 }
 
+function normalizeAutoBalanceRowsForSave(rows = []) {
+  return (rows || []).map((row) => {
+    const provider = normalizeAutoBalanceProvider(row?.provider, row?.source, row?.comment);
+    const channel = normalizeManualBalanceChannelForSave(row?.channel || row?.accountName || "", row?.currency || "");
+    const currency = normalizeManualBalanceCurrencyForSave(row?.currency || "", channel);
+    const amount = normalizeManualFinancePersistedNumberInput(row?.amount ?? row?.balanceAmount);
+    const usdAmount = normalizeManualFinancePersistedNumberInput(row?.usdAmount ?? row?.amountUsd);
+    return {
+      date: normalizeIncomingSheetDateValue(row?.date || ""),
+      provider,
+      channel,
+      amount,
+      currency,
+      rate: normalizeManualFinancePersistedNumberInput(row?.rate),
+      usdAmount,
+      source: normalizeAutoBalanceSource(row?.source, provider),
+      fetchedAt: String(row?.fetchedAt || row?.fetched_at || new Date().toISOString()).trim(),
+      rawSourceId: String(row?.rawSourceId || row?.raw_source_id || "").trim(),
+      status: String(row?.status || "ok").trim() || "ok",
+      comment: String(row?.comment || "auto daily provider snapshot").trim()
+    };
+  }).filter((row) => row.date && row.provider && row.channel && row.currency && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+}
+
+function mergeAutoBalanceRows(existingRows = [], replacementRows = []) {
+  const replacementKeys = new Set((replacementRows || []).map(makeAutoBalanceRowKey));
+  return [
+    ...(existingRows || []).filter((row) => !replacementKeys.has(makeAutoBalanceRowKey(row))),
+    ...(replacementRows || [])
+  ].sort((left, right) => {
+    if (left.date !== right.date) return left.date.localeCompare(right.date);
+    if (left.provider !== right.provider) return left.provider.localeCompare(right.provider);
+    if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+    return String(left.currency || "").localeCompare(String(right.currency || ""));
+  });
+}
+
+function makeAutoBalanceRowKey(row = {}) {
+  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || "").trim();
+  const base = [
+    normalizeIncomingSheetDateValue(row?.date || ""),
+    normalizeAutoBalanceProvider(row?.provider, row?.source, row?.comment),
+    String(row?.channel || "").trim(),
+    String(row?.currency || "").trim().toUpperCase()
+  ];
+  return rawSourceId ? [...base, rawSourceId].join("|") : base.join("|");
+}
+
+function normalizeAutoBalanceProvider(provider, source = "", comment = "") {
+  const text = normalizeLookupText(`${provider || ""} ${source || ""} ${comment || ""}`);
+  if (/wise|transferwise|трансервайз/.test(text)) return "wise";
+  if (/paypal|пейпал/.test(text)) return "paypal";
+  if (/binance|бинанс/.test(text)) return "binance";
+  if (/mono|monobank|монобанк/.test(text)) return "monobank";
+  if (/privat|приват/.test(text)) return "privatbank";
+  if (/yoomoney|юmoney|юмани|яндекс/.test(text)) return "yoomoney";
+  return String(provider || "").trim().toLowerCase() || "provider";
+}
+
+function normalizeAutoBalanceSource(source, provider) {
+  const raw = String(source || "").trim().toLowerCase();
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  const normalizedProvider = normalizeAutoBalanceProvider(provider);
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  return "provider_auto";
+}
+
 function makeManualBalanceRowKey(row = {}) {
   return [
     normalizeIncomingSheetDateValue(row?.date || ""),
@@ -1629,7 +1755,7 @@ async function getManualSheetDirect(startDate, endDate) {
 }
 
 async function saveBalanceSnapshotRowsDirect(rows) {
-  const normalized = normalizeManualBalanceRowsForSave(rows);
+  const normalized = normalizeManualBalanceRowsForSave(rows, { sourceMarker: "manual_fact" });
   const snapshotRows = normalized.rows;
   if (!snapshotRows.length) {
     return { rowCount: 0, inserted: 0, updated: 0, skipped: normalized.skipped, savedAt: new Date().toLocaleString("ru-RU") };
@@ -1653,6 +1779,29 @@ async function saveBalanceSnapshotRowsDirect(rows) {
     skipped: normalized.skipped + merge.skipped,
     fact_balance_rows_detected: snapshotRows.length,
     fact_balance_rows_saved_to_ostatki: merge.inserted + merge.updated,
+    savedAt: new Date().toLocaleString("ru-RU")
+  };
+}
+
+async function saveAutoBalanceSnapshotRowsDirect(rows) {
+  const snapshotRows = normalizeAutoBalanceRowsForSave(rows);
+  if (!snapshotRows.length) {
+    return { rowCount: 0, savedAt: new Date().toLocaleString("ru-RU") };
+  }
+  const metadata = await getManualSpreadsheetMetadata();
+  const titles = new Set((metadata.sheets || []).map((sheet) => sheet?.properties?.title || ""));
+  const existingBalances = titles.has(getAutoBalancesSheetName())
+    ? parseAutoBalanceSheetValues(await getSheetValuesByTitle(getAutoBalancesSheetName()))
+    : [];
+  const mergedBalances = mergeAutoBalanceRows(existingBalances, snapshotRows);
+  await ensureSheetExists(getAutoBalancesSheetName(), getManualFinanceSpreadsheetId());
+  await overwriteSheetValues(
+    getAutoBalancesSheetName(),
+    buildAutoBalanceSheetValues(mergedBalances),
+    getManualFinanceSpreadsheetId()
+  );
+  return {
+    rowCount: snapshotRows.length,
     savedAt: new Date().toLocaleString("ru-RU")
   };
 }
@@ -1908,6 +2057,9 @@ async function loadManualSheetByTitleDirect(sheetTitle) {
   }
   if (sheetTitle === getManualBalancesSheetName()) {
     return { balanceRows: parseIncomingBalanceSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
+  }
+  if (sheetTitle === getAutoBalancesSheetName()) {
+    return { autoBalanceRows: parseAutoBalanceSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };
   }
   if (sheetTitle === getManualCommissionsSheetName()) {
     return { commissionRows: parseIncomingCommissionSheetValues(await getSheetValuesByTitle(sheetTitle, getManualFinanceSpreadsheetId())) };

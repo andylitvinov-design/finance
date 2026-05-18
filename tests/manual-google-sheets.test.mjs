@@ -421,6 +421,9 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
         usdAmount: "1000",
         comment: "opening",
         source: "manual-google-sheets",
+        balanceSource: "manual_fact",
+        sourceSheet: "Остатки",
+        sourceRow: 2,
       },
     ]);
 	    assert.deepEqual(repository.expenseRows, [
