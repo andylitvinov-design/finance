@@ -91,7 +91,7 @@ test("same date channel currency replaces existing row without deleting another 
   ]);
 });
 
-test("Wise and Monobank real provider balances map to Остатки rows", async () => {
+test("Wise and Monobank real provider balances map to Авто Остатки rows", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
     const value = String(url);
@@ -137,6 +137,7 @@ test("Wise and Monobank real provider balances map to Остатки rows", asyn
   assert.equal(results.find((result) => result.provider === "monobank")?.skipped_rows.length, 1);
   assert.equal(results.find((result) => result.provider === "wise")?.skipped_rows.length, 1);
   assert.equal(rows.every((row) => row.comment === "auto daily provider snapshot"), true);
+  assert.equal(rows.every((row) => row.source === `${row.provider}_auto`), true);
 });
 
 test("non-JSON provider response becomes structured JSON error", async () => {
@@ -179,7 +180,7 @@ test("non-JSON provider response becomes structured JSON error", async () => {
   }
 });
 
-test("auto snapshot save writes merged Остатки values through Google Sheets", async () => {
+test("auto snapshot save writes merged Авто Остатки values through Google Sheets", async () => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -193,17 +194,17 @@ test("auto snapshot save writes merged Остатки values through Google Shee
       return jsonResponse({ access_token: "sheet-token" });
     }
     if (value.endsWith("/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY")) {
-      return jsonResponse({ sheets: [{ properties: { title: "Остатки" } }] });
+      return jsonResponse({ sheets: [{ properties: { title: "Авто Остатки" } }, { properties: { title: "Остатки" } }] });
     }
-    if (value.includes("/values/'%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AG") && (!options.method || options.method === "GET")) {
+    if (value.includes("/values/'%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AL") && (!options.method || options.method === "GET")) {
       return jsonResponse({
         values: [
-          ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
-          ["2026-05-17", "трансервайз дол", "1", "USD", "1", "1", "manual"],
+          ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+          ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto", "2026-05-17T00:00:00.000Z", "old", "ok", "old auto"],
         ],
       });
     }
-    if (value.includes("/values/'%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AG?valueInputOption=USER_ENTERED")) {
+    if (value.includes("/values/'%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8'!A%3AL?valueInputOption=USER_ENTERED")) {
       writes.push(JSON.parse(options.body).values);
       return jsonResponse({ updatedRows: 2 });
     }
@@ -226,10 +227,12 @@ test("auto snapshot save writes merged Остатки values through Google Shee
 
     assert.equal(result.saved_rows, 1);
     assert.equal(writes.length, 1);
-    assert.deepEqual(writes[0], [
-      ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
-      ["2026-05-17", "трансервайз дол", "120,45", "USD", "1", "120,45", "auto daily provider snapshot"],
-    ]);
+    assert.deepEqual(writes[0][0], ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"]);
+    assert.deepEqual(writes[0][1].slice(0, 8), ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto"]);
+    assert.deepEqual(writes[0][2].slice(0, 8), ["2026-05-17", "wise", "трансервайз дол", "120,45", "USD", "1", "120,45", "wise_auto"]);
+    assert.equal(writes[0][2][9], "wise-usd");
+    assert.equal(writes[0][2][10], "ok");
+    assert.equal(writes[0][2][11], "auto daily provider snapshot");
   } finally {
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);

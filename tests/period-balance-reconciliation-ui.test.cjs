@@ -165,7 +165,7 @@ test("period balance renders channel balances before secondary currency totals",
   assert.equal(channelRows.length, 7);
   assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(channelRows[1][0], "wise usd");
-  assert.deepEqual(channelRows[1], ["wise usd", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "ручной", "0", "-25", "OK", "—"]);
+  assert.deepEqual(channelRows[1], ["wise usd", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "manual fact", "0", "-25", "OK", "—"]);
   assert.equal(channelRows[2][0], "paypal eur");
   assert.equal(channelRows[3][0], "mono uah");
   assert.equal(channelRows[3][3], "0");
@@ -305,7 +305,7 @@ test("period balance main table uses payment channel rows and preserves mismatch
   ["ИТОГО CAD", "ИТОГО EUR", "ИТОГО RUB", "ИТОГО UAH", "ИТОГО USD", "ИТОГО USDT"].forEach((label) => {
     assert.ok(rowLabels.includes(label), `${label} total row must render when currency is present`);
   });
-  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 13), ["USD", "2704.25", "0", "2704.25", "-1628", "1076.25", "1070.48", "—", "ручной", "-5.77", "-1628", "Реальное расхождение"]);
+  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 13), ["USD", "2704.25", "0", "2704.25", "-1628", "1076.25", "1070.48", "—", "manual fact", "-5.77", "-1628", "Реальное расхождение"]);
   assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad").slice(1, 13), ["CAD", "10107.92", "0", "10107.92", "0", "10107.92", "—", "7351", "перенесён", "-2756.92", "0", "Условно перенесено"]);
   assert.equal(rows.find((row) => row[0] === "Яндекс руб")[12], "OK");
   assert.equal(rows.find((row) => row[0] === "пейпал евр")[12], "Нет amount_net");
@@ -459,7 +459,7 @@ test("period balance UI keeps existing factual values visible when summary faile
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   assert.equal(positionRows[1][7], "1070.48");
   assert.equal(positionRows[1][8], "—");
-  assert.equal(positionRows[1][9], "ручной");
+  assert.equal(positionRows[1][9], "manual fact");
   assert.equal(positionRows[1][10], "-5.77");
   assert.equal(positionRows[2][7], "—");
 });
@@ -534,11 +534,11 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(provider[7], "11.5");
   assert.equal(provider[8], "—");
-  assert.equal(provider[9], "провайдер");
+  assert.equal(provider[9], "auto, needs manual confirmation");
   assert.equal(wise[6], "1100");
   assert.equal(wise[7], "—");
   assert.equal(wise[8], "—");
-  assert.equal(wise[9], "нет факта");
+  assert.equal(wise[9], "add manual fact balance");
   assert.equal(cash[6], "999");
   assert.equal(cash[7], "—");
   assert.equal(cash[8], "50");

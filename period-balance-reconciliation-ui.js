@@ -311,7 +311,7 @@
         formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatNumber(row.manual_provider_closing_balance),
         formatNumber(getCarriedForwardComparisonFact(row)),
-        getFactSourceLabel(row.fact_source),
+        getFactSourceLabel(row),
         formatNumber(row.real_difference),
         formatNumber(row.plan_vs_real_delta),
         getStatusLabel(row.status),
@@ -510,12 +510,17 @@
     return "Проверить";
   }
 
-  function getFactSourceLabel(source) {
-    const normalized = String(source || "").trim();
-    if (normalized === "manual") return "ручной";
-    if (normalized === "provider") return "провайдер";
+  function getFactSourceLabel(rowOrSource) {
+    const row = rowOrSource && typeof rowOrSource === "object" ? rowOrSource : null;
+    const normalizedBalanceSource = String(row?.balanceSource || row?.balance_source || "").trim();
+    if (normalizedBalanceSource === "manual_fact") return "manual fact";
+    if (normalizedBalanceSource === "provider_auto") return "auto, needs manual confirmation";
+    if (normalizedBalanceSource === "missing") return "add manual fact balance";
+    const normalized = String(row ? row.fact_source : rowOrSource || "").trim();
+    if (normalized === "manual") return "manual fact";
+    if (normalized === "provider") return "auto, needs manual confirmation";
     if (normalized === "carried_forward") return "перенесён";
-    if (normalized === "missing") return "нет факта";
+    if (normalized === "missing") return "add manual fact balance";
     return normalized || "—";
   }
 

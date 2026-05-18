@@ -110,20 +110,28 @@ test("buildWiseBalanceSnapshotRows maps Wise balances into Остатки rows",
   assert.deepEqual(rows, [
     {
       date: "2026-05-02",
+      provider: "wise",
       channel: "трансервайз дол",
       amount: "120,45",
       currency: "USD",
       rate: "1,000000",
       usdAmount: "120,45",
+      source: "wise_auto",
+      rawSourceId: "",
+      status: "ok",
       comment: "wise auto snapshot"
     },
     {
       date: "2026-05-02",
+      provider: "wise",
       channel: "трансервайз евро",
       amount: "85,5",
       currency: "EUR",
       rate: "1,200000",
       usdAmount: "99,12",
+      source: "wise_auto",
+      rawSourceId: "",
+      status: "ok",
       comment: "wise auto snapshot"
     }
   ]);
@@ -168,7 +176,7 @@ test("saveWiseBalanceSnapshotsIfNeeded saves only once per session and skips wit
     hasConfiguredManualFinanceEndpoint() {
       return true;
     },
-    async saveBalanceSnapshotRowsDirect(rows) {
+    async saveAutoBalanceSnapshotRowsDirect(rows) {
       savedRows.push(...rows);
       return { rowCount: rows.length, savedAt: "saved-now" };
     }
@@ -293,7 +301,7 @@ test("saveBalanceSnapshotRowsDirect replaces same date and channel instead of du
   assert.equal(writtenPayloads.length, 1);
   assert.deepEqual(writtenPayloads[0], [
     ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
-    ["2026-05-02", "трансервайз дол", "120,45", "USD", "1", "120,45", "wise auto snapshot"]
+    ["2026-05-02", "трансервайз дол", "120,45", "USD", "1", "120,45", "wise auto snapshot | manual_fact"]
   ]);
 });
 

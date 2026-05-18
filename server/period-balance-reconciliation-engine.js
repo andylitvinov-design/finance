@@ -13,6 +13,7 @@ const STATUS = {
 export function buildPeriodBalanceReconciliation({
   operations = [],
   balanceRows = [],
+  autoBalanceRows = [],
   plannedRows = [],
   plannedSourceStatus = "",
   period = {},
@@ -22,7 +23,7 @@ export function buildPeriodBalanceReconciliation({
   const warnings = [];
   const periodReal = buildRealMovementIndex(operations, { from, to });
   const planned = buildPlannedMovementIndex(plannedRows, { from, to });
-  const balanceIndex = buildBalanceIndex(balanceRows);
+  const balanceIndex = buildBalanceIndex(balanceRows, autoBalanceRows);
   const accountKeys = new Set([
     ...periodReal.byKey.keys(),
     ...planned.byKey.keys(),
@@ -153,6 +154,12 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     manual_provider_closing_balance: roundedManualProviderClosing,
     manual_provider_closing_balance_date: closingSnapshot?.date || null,
     manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
+    balanceSource: closingSnapshot ? getResolvedBalanceSource(closingSnapshot) : "missing",
+    needsManualConfirmation: closingSnapshot ? getResolvedBalanceSource(closingSnapshot) !== "manual_fact" : true,
+    provider: closingSnapshot?.provider || null,
+    sourceSheet: closingSnapshot?.sourceSheet || "",
+    sourceRow: closingSnapshot?.sourceRow || null,
+    sourceComment: closingSnapshot?.comment || "",
     carried_forward_balance: roundedCarriedForwardClosing,
     carried_forward_lookup_key: lastObservedClosingSnapshot
       ? makeLookupKey({ date: lastObservedClosingSnapshot.date, channel, currency })
@@ -236,9 +243,10 @@ function buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to
 }
 
 function getBalanceFactSource(row) {
-  const source = normalizeText(row?.source || row?.fact_source || row?.provider || "");
-  if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider";
-  return "manual";
+  const resolved = getResolvedBalanceSource(row);
+  if (resolved === "provider_auto") return "provider";
+  if (resolved === "manual_fact") return "manual";
+  return "missing";
 }
 
 function buildRealMovementIndex(operations, period) {
@@ -372,9 +380,9 @@ function buildPlannedMovementIndex(plannedRows, period) {
   return { byKey, rows };
 }
 
-function buildBalanceIndex(balanceRows) {
+function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
   const byKey = new Map();
-  for (const row of balanceRows || []) {
+  for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows)) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
@@ -382,10 +390,21 @@ function buildBalanceIndex(balanceRows) {
     if (!date || !channel || !currency || amount === null) continue;
     const key = makeKey(channel, currency);
     const rows = byKey.get(key) || [];
-    rows.push({ date, channel, currency, amount, source: row?.source || row?.fact_source || row?.provider || "" });
+    rows.push({
+      date,
+      channel,
+      currency,
+      amount,
+      source: row?.source || row?.fact_source || row?.provider || "",
+      balanceSource: getResolvedBalanceSource(row),
+      provider: row?.provider || null,
+      sourceSheet: row?.sourceSheet || "",
+      sourceRow: row?.sourceRow || null,
+      comment: row?.comment || "",
+    });
     byKey.set(key, rows);
   }
-  for (const rows of byKey.values()) rows.sort((left, right) => left.date.localeCompare(right.date));
+  for (const rows of byKey.values()) rows.sort(compareBalanceSnapshots);
 
   return {
     findOpening(key, from) {
@@ -430,6 +449,42 @@ function buildBalanceIndex(balanceRows) {
         .map(([key]) => key);
     },
   };
+}
+
+function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = []) {
+  return [
+    ...(balanceRows || []).map((row) => ({
+      ...row,
+      balanceSource: getResolvedBalanceSource(row),
+      sourceSheet: row?.sourceSheet || "Остатки",
+    })),
+    ...(autoBalanceRows || []).map((row) => ({
+      ...row,
+      balanceSource: "provider_auto",
+      source: row?.source || "provider_auto",
+      sourceSheet: row?.sourceSheet || "Авто Остатки",
+    })),
+  ];
+}
+
+function compareBalanceSnapshots(left, right) {
+  const dateDiff = left.date.localeCompare(right.date);
+  if (dateDiff) return dateDiff;
+  return balanceSourcePriority(left) - balanceSourcePriority(right);
+}
+
+function balanceSourcePriority(row) {
+  return getResolvedBalanceSource(row) === "manual_fact" ? 0 : 1;
+}
+
+function getResolvedBalanceSource(row = {}) {
+  const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
+  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "missing") return explicit;
+  const source = normalizeText(`${row?.source || ""} ${row?.fact_source || ""} ${row?.provider || ""} ${row?.comment || ""}`);
+  if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(source)) return "provider_auto";
+  if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
+  if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider_auto";
+  return "manual_fact";
 }
 
 function buildCurrencyRows(rows) {
