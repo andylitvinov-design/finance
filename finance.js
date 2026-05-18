@@ -2909,11 +2909,16 @@ async function saveManualFinanceSheet() {
 
 async function saveManualFinanceBalanceRows() {
   if (!state.manualFinance.data) return;
-  const collectedRows = collectManualFinanceBalanceRowsFromEditor();
-  const expectedRowCount = countExpectedManualFinanceBalanceRows(collectedRows);
-  const rows = normalizeManualFinanceBalanceRows(collectedRows, {
+  const expectedRows = ensureManualFinanceBalanceInputRows();
+  const expectedRowCount = countSavableManualFinanceBalanceRows(expectedRows);
+  const rows = normalizeManualFinanceBalanceRows(collectManualFinanceBalanceRowsFromEditor(), {
     defaultDate: state.manualFinance.data.periodEnd || elements.endDate.value
-  }).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+  }).filter(isSavableManualFinanceBalanceRow);
+  if (expectedRowCount > 1 && rows.length <= 1) {
+    setManualFinanceStatus(`Остатки сохранены не полностью: собрано ${rows.length} из ${expectedRowCount} строк. Проверьте таблицу Факт.`, true);
+    renderTabs();
+    return;
+  }
   if (!hasConfiguredManualFinanceEndpoint()) {
     persistLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd, {
       ...(getLocalDraft(state.manualFinance.data.periodStart, state.manualFinance.data.periodEnd) || {}),
@@ -2929,15 +2934,16 @@ async function saveManualFinanceBalanceRows() {
   renderTabs();
   try {
     const response = await saveBalanceSnapshotRowsDirect(rows);
-    const savedRowCount = Number(response?.rowCount || 0);
-    if (expectedRowCount > 1 && savedRowCount === 1) {
-      setManualFinanceStatus(`Остатки сохранены не полностью: сохранено 1 из ${expectedRowCount} строк`, true);
-      return;
-    }
+    const savedCount = resolveManualFinanceBalanceSavedCount(response, rows.length);
     state.manualFinance.data.balanceRows = rows;
     state.manualFinance.dirty = false;
     await loadDashboardData();
-    setManualFinanceStatus(`Остатки сохранены: ${savedRowCount} из ${expectedRowCount} строк. ${response?.savedAt || ""}`.trim(), false);
+    if (expectedRowCount > 1 && savedCount < expectedRowCount) {
+      setManualFinanceStatus(`Остатки сохранены не полностью: сохранено ${savedCount} из ${expectedRowCount} строк.`, true);
+    } else {
+      const displayExpectedCount = Math.max(expectedRowCount || 0, rows.length);
+      setManualFinanceStatus(`Остатки сохранены: ${savedCount} из ${displayExpectedCount || rows.length} строк. ${response?.savedAt || ""}`.trim(), false);
+    }
   } catch (error) {
     setManualFinanceStatus(error.message || "Не удалось сохранить Остатки.", true);
   } finally {
@@ -2946,10 +2952,37 @@ async function saveManualFinanceBalanceRows() {
   }
 }
 
-function countExpectedManualFinanceBalanceRows(rows) {
-  const rowCount = Array.isArray(rows) ? rows.length : 0;
-  if (rowCount) return rowCount;
-  return Array.isArray(state.manualFinance.data?.balanceRows) ? state.manualFinance.data.balanceRows.length : 0;
+function isSavableManualFinanceBalanceRow(row) {
+  return Boolean(
+    row?.date &&
+    row?.channel &&
+    (hasManualFinanceBalanceValue(row?.amount) || hasManualFinanceBalanceValue(row?.usdAmount))
+  );
+}
+
+function countSavableManualFinanceBalanceRows(rows = []) {
+  return normalizeManualFinanceBalanceRows(rows, {
+    defaultDate: state.manualFinance.data?.periodEnd || elements.endDate.value
+  }).filter((row) => row.date && row.channel && row.currency).length;
+}
+
+function hasManualFinanceBalanceValue(value) {
+  return String(value ?? "").trim() !== "";
+}
+
+function resolveManualFinanceBalanceSavedCount(response, fallbackCount = 0) {
+  const candidates = [
+    response?.rowCount,
+    response?.fact_balance_rows_saved_to_ostatki,
+    Number(response?.inserted || 0) + Number(response?.updated || 0),
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+  }
+  const skipped = Number(response?.skipped);
+  if (Number.isFinite(skipped) && skipped >= 0) return Math.max(0, Number(fallbackCount || 0) - skipped);
+  return Number(fallbackCount || 0);
 }
 
 function collectManualFinanceBalanceRowsFromEditor() {

@@ -23,11 +23,11 @@ test("migration detects legacy auto rows in manual Остатки", () => {
       amount: "1070,48",
       currency: "USD",
       rate: "1",
-      usdAmount: "1070,48",
+      amountUsd: "1070,48",
       source: "wise_auto",
       fetchedAt: "",
-      rawSourceId: "",
-      status: "legacy",
+      rawSourceId: "legacy-ostatki:2",
+      status: "ok",
       comment: "wise auto snapshot",
       sourceRow: 2,
     },
@@ -48,9 +48,9 @@ test("migration summarizes copy and duplicate counts without removing manual row
   });
 
   assert.equal(summary.detected, 2);
-  assert.equal(summary.wouldCopy, 1);
-  assert.equal(summary.duplicates, 1);
-  assert.equal(summary.skipped, 0);
+  assert.equal(summary.rowsToCopy.length, 1);
+  assert.equal(summary.duplicates.length, 1);
+  assert.equal(summary.skipped.length, 0);
   assert.deepEqual(buildAutoBalanceValues(summary.rowsToCopy)[1].slice(0, 8), [
     "2026-05-17",
     "wise",

@@ -142,8 +142,11 @@ function buildFinanceContext() {
       `${extractFunction(financeJs, "buildManualFinanceCashRowsFromLedgerRows")}\n` +
       `${extractFunction(financeJs, "buildManualFinanceCashEntries")}\n` +
       `${extractFunction(financeJs, "formatManualFinanceStableIdPart")}\n` +
+      `${extractFunction(financeJs, "isSavableManualFinanceBalanceRow")}\n` +
+      `${extractFunction(financeJs, "countSavableManualFinanceBalanceRows")}\n` +
+      `${extractFunction(financeJs, "hasManualFinanceBalanceValue")}\n` +
+      `${extractFunction(financeJs, "resolveManualFinanceBalanceSavedCount")}\n` +
       `${extractFunction(financeJs, "collectManualFinanceBalanceRowsFromEditor")}\n` +
-      `${extractFunction(financeJs, "countExpectedManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceBalanceRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceCashRows")}\n` +
       `${extractFunction(financeJs, "saveManualFinanceSheet")}\n` +
@@ -167,6 +170,9 @@ test("saving balance snapshot uses Остатки writer and does not call legac
     periodEnd: "2026-05-14",
     balanceRows: [
       { date: "2026-05-14", channel: "трансервайз дол", amount: "120.45", currency: "USD", comment: "actual" },
+      { date: "2026-05-14", channel: "Налично -я-евр", amount: "0", currency: "EUR", comment: "zero actual" },
+      { date: "2026-05-14", channel: "нал-мам-дол", amount: "10", currency: "USD", comment: "" },
+      { date: "2026-05-14", channel: "пейпал сad", amount: "1", currency: "CAD", comment: "" },
     ],
     cashRows: [
       { date: "2026-05-14", channel: "Налично -я-евр", direction: "income", amount: "99", currency: "EUR" },
@@ -178,17 +184,47 @@ test("saving balance snapshot uses Остатки writer and does not call legac
   await context.saveManualFinanceSheet();
 
   assert.deepEqual(plain(context.savedBalanceRows), [
+    { date: "2026-05-14", channel: "Налично -я-евр", amount: "0", currency: "EUR", rate: "", usdAmount: "", comment: "zero actual" },
+    { date: "2026-05-14", channel: "нал-мам-дол", amount: "10", currency: "USD", rate: "", usdAmount: "", comment: "" },
+    { date: "2026-05-14", channel: "пейпал сad", amount: "1", currency: "CAD", rate: "", usdAmount: "", comment: "" },
     { date: "2026-05-14", channel: "трансервайз дол", amount: "120,45", currency: "USD", rate: "", usdAmount: "", comment: "actual" },
   ]);
   assert.equal(context.savedCashEntries, undefined);
   assert.equal(context.legacyFactSaveCalled, undefined);
-  assert.match(context.lastStatus.message, /Остатки/);
-  assert.match(context.lastStatus.message, /1 из 1 строк/);
+  assert.equal(context.lastStatus.message, "Остатки сохранены: 4 из 4 строк. balance-saved");
+  assert.equal(context.lastStatus.isError, false);
 });
 
 test("saving balance snapshot reads current editor DOM values before writing", async () => {
   const context = buildFinanceContext();
   const domRows = [
+    {
+      date: "2026-05-17",
+      channel: "Налично -я-евр",
+      currency: "EUR",
+      amount: "0",
+      rate: "",
+      usdAmount: "",
+      comment: "zero typed"
+    },
+    {
+      date: "2026-05-17",
+      channel: "нал-мам-дол",
+      currency: "USD",
+      amount: "10",
+      rate: "",
+      usdAmount: "",
+      comment: ""
+    },
+    {
+      date: "2026-05-17",
+      channel: "пейпал сad",
+      currency: "CAD",
+      amount: "1",
+      rate: "",
+      usdAmount: "",
+      comment: ""
+    },
     {
       date: "2026-05-17",
       channel: "Яндекс руб",
@@ -239,10 +275,13 @@ test("saving balance snapshot reads current editor DOM values before writing", a
   await context.saveManualFinanceSheet();
 
   assert.deepEqual(plain(context.savedBalanceRows), [
+    { date: "2026-05-17", channel: "Налично -я-евр", amount: "0", currency: "EUR", rate: "", usdAmount: "", comment: "zero typed" },
+    { date: "2026-05-17", channel: "нал-мам-дол", amount: "10", currency: "USD", rate: "", usdAmount: "", comment: "" },
+    { date: "2026-05-17", channel: "пейпал сad", amount: "1", currency: "CAD", rate: "", usdAmount: "", comment: "" },
     { date: "2026-05-17", channel: "Яндекс руб", amount: "70203,51", currency: "RUB", rate: "", usdAmount: "", comment: "typed before save" },
     { date: "2026-05-17", channel: "монобанк грн", amount: "14033", currency: "UAH", rate: "", usdAmount: "", comment: "" },
   ]);
-  assert.match(context.lastStatus.message, /2 из 2 строк/);
+  assert.match(context.lastStatus.message, /5 из 5 строк/);
 });
 
 test("saving balance snapshot reports partial save when only one of many expected rows is saved", async () => {
@@ -256,9 +295,10 @@ test("saving balance snapshot reports partial save when only one of many expecte
     periodStart: "2026-05-17",
     periodEnd: "2026-05-17",
     balanceRows: [
-      { date: "2026-05-17", channel: "Яндекс руб", amount: "1", currency: "RUB", comment: "" },
-      { date: "2026-05-17", channel: "монобанк грн", amount: "2", currency: "UAH", comment: "" },
-      { date: "2026-05-17", channel: "трансервайз дол", amount: "3", currency: "USD", comment: "" },
+      { date: "2026-05-17", channel: "Налично -я-евр", amount: "1", currency: "EUR", comment: "" },
+      { date: "2026-05-17", channel: "нал-мам-дол", amount: "2", currency: "USD", comment: "" },
+      { date: "2026-05-17", channel: "пейпал сad", amount: "3", currency: "CAD", comment: "" },
+      { date: "2026-05-17", channel: "трансервайз дол", amount: "4", currency: "USD", comment: "" },
     ],
     cashRows: [],
     moneyRows: [],
@@ -268,7 +308,102 @@ test("saving balance snapshot reports partial save when only one of many expecte
   await context.saveManualFinanceSheet();
 
   assert.equal(context.lastStatus.isError, true);
-  assert.match(context.lastStatus.message, /Остатки сохранены не полностью: сохранено 1 из 3 строк/);
+  assert.match(context.lastStatus.message, /Остатки сохранены не полностью: сохранено 1 из 4 строк/);
+});
+
+test("balance snapshot save blocks suspicious one-row partial editor collection", async () => {
+  const context = buildFinanceContext();
+  context.getManualFinanceChannels = () => Array.from({ length: 24 }, (_, index) => `канал ${index + 1}`);
+  context.document = {
+    querySelector(selector) {
+      if (selector !== "[data-manual-balance-editor]") return null;
+      return {
+        querySelectorAll() {
+          return [{
+            querySelector(fieldSelector) {
+              const field = fieldSelector.match(/"([^"]+)"/)?.[1];
+              const row = { date: "2026-05-17", channel: "канал 1", currency: "USD", amount: "1", rate: "", usdAmount: "", comment: "" };
+              return { value: row[field] || "" };
+            }
+          }];
+        }
+      };
+    }
+  };
+  context.state.manualFinance.activeInnerTab = "balances";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    balanceRows: [],
+    ledgerRows: [],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.equal(context.savedBalanceRows, undefined);
+  assert.equal(context.lastStatus.isError, true);
+  assert.equal(context.lastStatus.message, "Остатки сохранены не полностью: собрано 1 из 24 строк. Проверьте таблицу Факт.");
+});
+
+test("balance snapshot save preserves explicit zero rows", async () => {
+  const context = buildFinanceContext();
+  context.state.manualFinance.activeInnerTab = "balances";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    balanceRows: [
+      { date: "2026-05-17", channel: "Налично -я-евр", amount: "0", currency: "EUR", comment: "zero" },
+      { date: "2026-05-17", channel: "нал-мам-дол", amount: "0", currency: "USD", comment: "zero" },
+      { date: "2026-05-17", channel: "пейпал сad", amount: "0", currency: "CAD", comment: "zero" },
+      { date: "2026-05-17", channel: "трансервайз дол", amount: "0", currency: "USD", comment: "zero" },
+    ],
+    ledgerRows: [],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.deepEqual(plain(context.savedBalanceRows).map((row) => [row.channel, row.amount]), [
+    ["Налично -я-евр", "0"],
+    ["нал-мам-дол", "0"],
+    ["пейпал сad", "0"],
+    ["трансервайз дол", "0"],
+  ]);
+  assert.equal(context.lastStatus.message, "Остатки сохранены: 4 из 4 строк. balance-saved");
+});
+
+test("balance snapshot save reports server partial write response as error", async () => {
+  const context = buildFinanceContext();
+  context.saveBalanceSnapshotRowsDirect = async (rows) => {
+    context.savedBalanceRows = rows;
+    return { rowCount: 1, savedAt: "partial-save" };
+  };
+  context.state.manualFinance.activeInnerTab = "balances";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-17",
+    periodEnd: "2026-05-17",
+    balanceRows: [
+      { date: "2026-05-17", channel: "Налично -я-евр", amount: "2", currency: "EUR", comment: "" },
+      { date: "2026-05-17", channel: "нал-мам-дол", amount: "3", currency: "USD", comment: "" },
+      { date: "2026-05-17", channel: "пейпал сad", amount: "4", currency: "CAD", comment: "" },
+      { date: "2026-05-17", channel: "трансервайз дол", amount: "5", currency: "USD", comment: "" },
+    ],
+    ledgerRows: [],
+    cashRows: [],
+    moneyRows: [],
+    transferRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.equal(context.savedBalanceRows.length, 4);
+  assert.equal(context.lastStatus.isError, true);
+  assert.equal(context.lastStatus.message, "Остатки сохранены не полностью: сохранено 1 из 4 строк.");
 });
 
 test("saving legacy fact range carries current balance rows into manual finance payload", async () => {

@@ -16,7 +16,28 @@ const FALLBACK_USD_RATES = {
   CAD: 0.74,
   UAH: 1 / 43.86,
   RUB: 1 / 84.5563,
+  USDT: 1,
 };
+
+const EXPECTED_PROVIDER_BALANCES = [
+  { provider: "wise", channel: "трансервайз дол", currency: "USD", source: "wise_auto" },
+  { provider: "wise", channel: "трансервайз евро", currency: "EUR", source: "wise_auto" },
+  { provider: "monobank", channel: "монобанк грн", currency: "UAH", source: "monobank_auto" },
+  { provider: "paypal", channel: "пейпал дол", currency: "USD", source: "paypal_auto" },
+  { provider: "paypal", channel: "пейпал евр", currency: "EUR", source: "paypal_auto" },
+  { provider: "paypal", channel: "пейпал сad", currency: "CAD", source: "paypal_auto" },
+  { provider: "privatbank", channel: "приват 24-дол", currency: "USD", source: "privatbank_auto" },
+  { provider: "privatbank", channel: "приват 24-евро", currency: "EUR", source: "privatbank_auto" },
+  { provider: "privatbank", channel: "приват 24-грн", currency: "UAH", source: "privatbank_auto" },
+  { provider: "privatbank", channel: "приват-фоп", currency: "UAH", source: "privatbank_auto" },
+  { provider: "yoomoney", channel: "Яндекс руб", currency: "RUB", source: "yoomoney_auto" },
+  { provider: "binance", channel: "Бинанс spot", currency: "USDT", source: "binance_auto" },
+  { provider: "binance", channel: "binance save", currency: "USDT", source: "binance_auto" },
+  { provider: "tdbank", channel: "БАНК КАНАДА cad", currency: "CAD", source: "tdbank_auto" },
+  { provider: "payoneer", channel: "Payoneer - eur", currency: "EUR", source: "payoneer_auto" },
+  { provider: "payoneer", channel: "Payoneer - dol", currency: "USD", source: "payoneer_auto" },
+  { provider: "revolut", channel: "REVOLUT дол", currency: "USD", source: "revolut_auto" },
+];
 
 export function getProviderCurrentBalanceCapabilities(env = process.env) {
   return [
@@ -32,6 +53,9 @@ export function getProviderCurrentBalanceCapabilities(env = process.env) {
     { provider: "privatbank", provider_current_balance_status: "not_implemented" },
     { provider: "yoomoney", provider_current_balance_status: "not_implemented" },
     { provider: "binance", provider_current_balance_status: "not_implemented" },
+    { provider: "tdbank", provider_current_balance_status: "not_implemented" },
+    { provider: "payoneer", provider_current_balance_status: "not_implemented" },
+    { provider: "revolut", provider_current_balance_status: "not_implemented" },
   ];
 }
 
@@ -101,11 +125,12 @@ function buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, w
     ok: true,
     date,
     dryRun,
+    target_sheet: AUTO_BALANCE_SHEET_NAME,
     saved_rows: 0,
     skipped_rows: skippedRows.length,
     providers_checked: providerResults.map((result) => result.provider),
     providers_succeeded: providerResults
-      .filter((result) => result.provider_current_balance_status === "available" && result.rows?.length)
+      .filter((result) => result.provider_current_balance_status === "available" && result.rows?.some((row) => row.status === "ok" || row.status === "zero_balance"))
       .map((result) => result.provider),
     providers_failed: providerResults
       .filter((result) => ["error", "needs_permission"].includes(result.provider_current_balance_status))
@@ -117,11 +142,12 @@ function buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, w
       provider: result.provider,
       provider_current_balance_status: result.provider_current_balance_status,
       rows: result.rows?.length || 0,
+      writable_rows: result.rows?.filter((row) => row.status === "ok" || row.status === "zero_balance").length || 0,
       skipped_rows: result.skipped_rows?.length || 0,
       error: result.error || null,
     })),
     warnings: unique(warnings).slice(0, 20),
-    rows_preview: rows.slice(0, 20),
+    rows_preview: rows.slice(0, 30),
   };
 }
 
@@ -151,28 +177,34 @@ async function collectWiseBalanceRows({ date, env, fetchImpl }) {
       baseUrl: env.WISE_API_BASE || "https://api.wise.com",
       fetchImpl,
     });
-    const rows = [];
+    const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
     const skipped_rows = [];
     for (const balance of balances || []) {
       const currency = String(balance?.currency || "").trim().toUpperCase();
-      if (!["USD", "EUR"].includes(currency)) {
+      const expected = findExpectedProviderBalance(provider, currency);
+      if (!expected) {
         skipped_rows.push({ provider, currency, reason: "missing_configured_channel" });
         continue;
       }
-      const row = buildSnapshotRow({
+      replaceExpectedRow(rows, buildSnapshotRow({
+        ...expected,
         date,
-        provider,
-        channel: balance.channel,
         amount: balance.amount,
-        currency,
         amountUsd: balance.amountUsd,
-        rawSourceId: balance.id || balance.balanceId || "",
-      });
-      if (row) rows.push(row);
+        rawSourceId: String(balance.id || balance.balanceId || `${provider}:${currency}`).trim(),
+        status: Number(balance.amount) === 0 ? "zero_balance" : "ok",
+        comment: SNAPSHOT_COMMENT,
+      }));
     }
     return { provider, provider_current_balance_status: "available", rows, skipped_rows };
   } catch (error) {
-    return { provider, provider_current_balance_status: "error", rows: [], skipped_rows: [], error: String(error?.message || error) };
+    return {
+      provider,
+      provider_current_balance_status: "error",
+      rows: buildExpectedProviderRows({ provider, date, status: "provider_error", comment: String(error?.message || error) }),
+      skipped_rows: [],
+      error: String(error?.message || error),
+    };
   }
 }
 
@@ -188,11 +220,11 @@ async function collectMonobankBalanceRows({ date, env, fetchImpl }) {
       fetchImpl,
     });
     const accounts = collectMonobankRawAccounts(clientInfo.rawClient);
-    const rows = [];
+    const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
     const skipped_rows = [];
     for (const account of accounts) {
       const mapped = mapMonobankAccountToSnapshotRow(account, date);
-      if (mapped) rows.push(mapped);
+      if (mapped) replaceExpectedRow(rows, mapped);
       else skipped_rows.push({ provider, reason: "missing_real_balance_or_supported_channel" });
     }
     return { provider, provider_current_balance_status: "available", rows, skipped_rows };
@@ -213,11 +245,18 @@ function collectMonobankRawAccounts(clientInfo) {
 function mapMonobankAccountToSnapshotRow(account, date) {
   if (!Object.prototype.hasOwnProperty.call(account || {}, "balance")) return null;
   const currency = monobankCurrencyByCode(account?.currencyCode);
-  const channel = currency === "UAH" ? "монобанк грн" : "";
-  if (!channel) return null;
+  const expected = findExpectedProviderBalance("monobank", currency);
+  if (!expected) return null;
   const amount = Math.round((Number(account.balance) / 100) * 10000) / 10000;
   if (!Number.isFinite(amount)) return null;
-  return buildSnapshotRow({ date, provider: "monobank", channel, amount, currency, rawSourceId: account.id || account.account || "" });
+  return buildSnapshotRow({
+    ...expected,
+    date,
+    amount,
+    rawSourceId: String(account.id || `monobank:${currency}`).trim(),
+    status: amount === 0 ? "zero_balance" : "ok",
+    comment: SNAPSHOT_COMMENT,
+  });
 }
 
 function buildUnavailableProviderResult(provider, status, warning, date = "") {
@@ -230,30 +269,76 @@ function buildUnavailableProviderResult(provider, status, warning, date = "") {
   };
 }
 
-function buildSnapshotRow({ date, provider = "provider", channel, amount, currency, amountUsd, rawSourceId = "" }) {
-  const numericAmount = Number(amount);
+function mapUnavailableStatus(status) {
+  if (status === "needs_permission") return "needs_provider_permission";
+  if (status === "not_implemented") return "provider_not_implemented";
+  return status || "missing_provider_balance";
+}
+
+function findExpectedProviderBalance(provider, currency) {
+  return EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.currency === currency) || null;
+}
+
+function buildExpectedProviderRows({ provider, date = "", status = "missing_provider_balance", comment = "" } = {}) {
+  return EXPECTED_PROVIDER_BALANCES
+    .filter((row) => row.provider === provider)
+    .map((expected) => buildSnapshotRow({
+      ...expected,
+      date,
+      amount: "",
+      amountUsd: "",
+      rawSourceId: `${expected.provider}:${expected.channel}:${expected.currency}`,
+      status,
+      comment: comment || status,
+    }));
+}
+
+function replaceExpectedRow(rows, replacement) {
+  if (!replacement) return;
+  const index = rows.findIndex((row) =>
+    row.provider === replacement.provider && row.channel === replacement.channel && row.currency === replacement.currency
+  );
+  if (index === -1) rows.push(replacement);
+  else rows[index] = replacement;
+}
+
+function buildSnapshotRow({
+  date,
+  provider = "provider",
+  channel,
+  amount,
+  currency,
+  amountUsd,
+  source,
+  fetchedAt,
+  rawSourceId = "",
+  status,
+  comment,
+}) {
+  const numericAmount = parseSheetNumber(amount);
+  const hasAmount = Number.isFinite(numericAmount);
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
   const normalizedChannel = String(channel || "").trim();
   const normalizedProvider = normalizeProvider(provider);
-  if (!date || !normalizedChannel || !normalizedCurrency || !Number.isFinite(numericAmount)) return null;
   const rate = Number(FALLBACK_USD_RATES[normalizedCurrency] || 0);
-  const numericUsd = Number(amountUsd);
-  const usdAmount = Number.isFinite(numericUsd) && numericUsd !== 0
+  const numericUsd = parseSheetNumber(amountUsd);
+  const usdAmount = Number.isFinite(numericUsd)
     ? numericUsd
-    : (rate ? numericAmount * rate : "");
+    : (hasAmount && rate ? numericAmount * rate : "");
+  if (!normalizedChannel || !normalizedCurrency) return null;
   return {
-    date,
+    date: normalizeIsoDate(date),
     provider: normalizedProvider,
     channel: normalizedChannel,
-    amount: formatSheetNumber(numericAmount),
+    amount: hasAmount ? formatSheetNumber(numericAmount) : "",
     currency: normalizedCurrency,
     rate: rate ? formatSheetNumber(rate, 6) : "",
     usdAmount: usdAmount === "" ? "" : formatSheetNumber(usdAmount),
-    source: `${normalizedProvider}_auto`,
-    fetchedAt: new Date().toISOString(),
-    rawSourceId: String(rawSourceId || "").trim(),
-    status: "ok",
-    comment: SNAPSHOT_COMMENT,
+    source: String(source || `${normalizedProvider}_auto`).trim(),
+    fetchedAt: String(fetchedAt || new Date().toISOString()).trim(),
+    rawSourceId: String(rawSourceId || `${normalizedProvider}:${normalizedChannel}:${normalizedCurrency}`).trim(),
+    status: String(status || (hasAmount && numericAmount === 0 ? "zero_balance" : "ok")).trim(),
+    comment: String(comment || SNAPSHOT_COMMENT).trim(),
   };
 }
 
@@ -266,7 +351,7 @@ export async function saveAutoBalanceSnapshotRows(rows, { fetchImpl = fetch } = 
   const existingRows = parseBalanceSheetValues(existingValues);
   const mergedRows = mergeBalanceRowsByDateChannelCurrency(existingRows, snapshotRows);
   await putBalanceSheetValues(buildBalanceSheetValues(mergedRows), { accessToken, fetchImpl });
-  return { rowCount: snapshotRows.length, savedAt: new Date().toISOString() };
+  return { rowCount: snapshotRows.length, savedAt: new Date().toISOString(), sheetName: AUTO_BALANCE_SHEET_NAME };
 }
 
 function normalizeSnapshotRows(rows) {
@@ -274,18 +359,16 @@ function normalizeSnapshotRows(rows) {
     date: normalizeIsoDate(row?.date),
     provider: normalizeProvider(row?.provider),
     channel: String(row?.channel || "").trim(),
-    amount: formatSheetNumber(parseSheetNumber(row?.amount)),
+    amount: row?.amount === "" ? "" : formatSheetNumber(parseSheetNumber(row?.amount)),
     currency: String(row?.currency || "").trim().toUpperCase(),
     rate: row?.rate === "" ? "" : formatSheetNumber(parseSheetNumber(row?.rate), 6),
-    usdAmount: row?.usdAmount === "" ? "" : formatSheetNumber(parseSheetNumber(row?.usdAmount)),
+    usdAmount: (row?.amountUsd === "" || row?.amount_usd === "") ? "" : formatSheetNumber(parseSheetNumber(row?.amountUsd ?? row?.amount_usd)),
     source: normalizeAutoSource(row?.source, row?.provider),
     fetchedAt: normalizeTimestamp(row?.fetchedAt || row?.fetched_at) || new Date().toISOString(),
     rawSourceId: String(row?.rawSourceId || row?.raw_source_id || "").trim(),
     status: String(row?.status || "ok").trim() || "ok",
     comment: String(row?.comment || SNAPSHOT_COMMENT).trim(),
-  })).filter((row) =>
-    row.date && row.provider && row.channel && row.currency && (String(row.amount).trim() || String(row.usdAmount).trim())
-  );
+  })).filter((row) => row.date && row.provider && row.channel && row.currency && row.status);
 }
 
 export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replacementRows = []) {
@@ -293,24 +376,10 @@ export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replace
   return [
     ...(existingRows || []).filter((row) => !replacementKeys.has(balanceRowKey(row))),
     ...(replacementRows || []),
-  ].sort((left, right) => {
-    if (left.date !== right.date) return left.date.localeCompare(right.date);
-    if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
-    return left.currency.localeCompare(right.currency);
-  });
+  ];
 }
 
 function balanceRowKey(row) {
-  const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || "").trim();
-  if (rawSourceId) {
-    return [
-      normalizeIsoDate(row?.date),
-      normalizeProvider(row?.provider),
-      String(row?.channel || "").trim(),
-      String(row?.currency || "").trim().toUpperCase(),
-      rawSourceId,
-    ].join("|");
-  }
   return [
     normalizeIsoDate(row?.date),
     normalizeProvider(row?.provider),

@@ -131,3 +131,47 @@ test("legacy auto row in manual Остатки is classified as provider_auto", 
   assert.equal(row.sourceSheet, "Остатки");
   assert.equal(row.sourceComment, "wise auto snapshot");
 });
+
+test("display date input is normalized with padded month and day", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "1.5.2026", to: "17.5.2026" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [],
+      balances: [],
+      autoBalances: [],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.period_balance_reconciliation.period, {
+    from: "2026-05-01",
+    to: "2026-05-17",
+  });
+});
+
+test("carried-forward opening row is not labeled as closing manual fact", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [],
+      balances: [
+        { date: "2026-04-30", channel: "трансервайз дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки", comment: "manual opening only" },
+      ],
+      autoBalances: [],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "трансервайз дол");
+  assert.equal(row.status, "carried_forward_conditional");
+  assert.equal(row.closing_balance_source, "carried_forward");
+  assert.equal(row.balanceSource, "missing");
+  assert.equal(row.needsManualConfirmation, true);
+  assert.equal(row.sourceSheet, "");
+});
