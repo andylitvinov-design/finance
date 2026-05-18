@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
+import { normalizeBalanceValueContract } from "./balance-native-usd-contract.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
@@ -112,6 +113,9 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   const filteredRows = normalizedRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
   const validRows = filteredRows.filter((row) => row.valid);
   const invalidRows = filteredRows.filter((row) => !row.valid);
+  const usdOnlyRows = filteredRows.filter((row) => row.value_type === "usd_only_needs_native");
+  const explicitZeroRows = filteredRows.filter((row) => row.value_type === "explicit_zero");
+  const blankAmountRows = filteredRows.filter((row) => row.missing.amount && row.amount_usd === null);
   const dates = unique(validRows.map((row) => row.date)).sort();
   const targetDate = resolveInputTargetDate(periodFilter, validRows);
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
@@ -119,6 +123,11 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   return {
     total_rows: filteredRows.length,
     valid_rows: validRows.length,
+    native_valid_rows: validRows.length,
+    usd_only_rows: usdOnlyRows.length,
+    needs_native_currency_value_rows: filteredRows.filter((row) => row.needs_native_currency_value).length,
+    explicit_zero_rows: explicitZeroRows.length,
+    blank_amount_rows: blankAmountRows.length,
     incomplete_rows: invalidRows.length,
     diagnostics: {
       fact_balance_rows_detected: factBalanceRows.length,
@@ -156,6 +165,11 @@ function emptyBalanceSnapshotsSummary() {
   return {
     total_rows: 0,
     valid_rows: 0,
+    native_valid_rows: 0,
+    usd_only_rows: 0,
+    needs_native_currency_value_rows: 0,
+    explicit_zero_rows: 0,
+    blank_amount_rows: 0,
     incomplete_rows: 0,
     dates: [],
     rows: [],
@@ -325,7 +339,10 @@ function normalizeBalanceSnapshotRow(row) {
   const date = normalizeDate(row?.date);
   const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
   const currency = String(row?.currency || "").trim().toUpperCase();
-  const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+  const contract = normalizeBalanceValueContract(row);
+  const amount = contract.amount_native;
+  const validNativeBalance = ["native_and_usd", "native_only", "explicit_zero"].includes(contract.value_type)
+    && amount !== null;
   const missing = {
     date: !date,
     channel: !channel,
@@ -336,14 +353,21 @@ function normalizeBalanceSnapshotRow(row) {
     .filter(([, value]) => value)
     .map(([key]) => `missing_${key}`)
     .join(", ");
+  const needsNative = contract.value_type === "usd_only_needs_native";
   return {
     date,
     channel,
     currency,
     amount,
-    valid: !reason,
+    amount_native: contract.amount_native,
+    amount_usd: contract.amount_usd,
+    fx_rate_to_usd: contract.fx_rate_to_usd,
+    value_type: contract.value_type,
+    valid_native_balance: validNativeBalance,
+    needs_native_currency_value: needsNative,
+    valid: !missing.date && !missing.channel && !missing.currency && validNativeBalance,
     missing,
-    reason,
+    reason: needsNative ? "needs_native_currency_value" : reason,
   };
 }
 
@@ -354,6 +378,12 @@ function buildDetailedRows(rows) {
       channel: row.channel,
       currency: row.currency,
       amount: row.amount,
+      amount_native: row.amount_native,
+      amount_usd: row.amount_usd,
+      fx_rate_to_usd: row.fx_rate_to_usd,
+      value_type: row.value_type,
+      valid_native_balance: row.valid_native_balance,
+      needs_native_currency_value: row.needs_native_currency_value,
     }))
     .sort((left, right) => {
       if (left.date !== right.date) return left.date.localeCompare(right.date);

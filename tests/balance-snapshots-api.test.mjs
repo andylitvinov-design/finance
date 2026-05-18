@@ -6,6 +6,15 @@ import {
   buildBalanceSnapshotsSummary,
 } from "../server/balance-snapshots.js";
 
+function rowCore(row) {
+  return {
+    date: row.date,
+    channel: row.channel,
+    currency: row.currency,
+    amount: row.amount,
+  };
+}
+
 test("balance snapshots summary returns dates, detailed rows, and account-currency coverage", () => {
   const summary = buildBalanceSnapshotsSummary([
     { date: "2026-04-30", channel: "wise usd", currency: "USD", amount: "1200" },
@@ -15,12 +24,17 @@ test("balance snapshots summary returns dates, detailed rows, and account-curren
 
   assert.equal(summary.total_rows, 3);
   assert.equal(summary.valid_rows, 3);
+  assert.equal(summary.native_valid_rows, 3);
+  assert.equal(summary.usd_only_rows, 0);
+  assert.equal(summary.needs_native_currency_value_rows, 0);
+  assert.equal(summary.explicit_zero_rows, 0);
+  assert.equal(summary.blank_amount_rows, 0);
   assert.equal(summary.incomplete_rows, 0);
   assert.deepEqual(summary.dates, ["2026-04-30", "2026-05-06"]);
   assert.deepEqual(summary.rows, [
-    { date: "2026-04-30", channel: "wise usd", currency: "USD", amount: 1200 },
-    { date: "2026-05-06", channel: "wise usd", currency: "USD", amount: 1300 },
-    { date: "2026-05-06", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 2380 },
+    { date: "2026-04-30", channel: "wise usd", currency: "USD", amount: 1200, amount_native: 1200, amount_usd: 1200, fx_rate_to_usd: 1, value_type: "native_and_usd", valid_native_balance: true, needs_native_currency_value: false },
+    { date: "2026-05-06", channel: "wise usd", currency: "USD", amount: 1300, amount_native: 1300, amount_usd: 1300, fx_rate_to_usd: 1, value_type: "native_and_usd", valid_native_balance: true, needs_native_currency_value: false },
+    { date: "2026-05-06", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 2380, amount_native: 2380, amount_usd: null, fx_rate_to_usd: null, value_type: "native_only", valid_native_balance: true, needs_native_currency_value: false },
   ]);
   assert.deepEqual(summary.by_date, [
     { date: "2026-04-30", rows: 1, channel_currency_pairs: 1 },
@@ -57,8 +71,10 @@ test("balance snapshots summary counts incomplete Остатки rows", () => {
 
   assert.equal(summary.total_rows, 5);
   assert.equal(summary.valid_rows, 1);
+  assert.equal(summary.native_valid_rows, 1);
+  assert.equal(summary.blank_amount_rows, 1);
   assert.equal(summary.incomplete_rows, 4);
-  assert.deepEqual(summary.rows, [
+  assert.deepEqual(summary.rows.map(rowCore), [
     { date: "2026-05-06", channel: "wise usd", currency: "USD", amount: 1300 },
   ]);
   assert.equal(summary.missing_date_rows, 1);
@@ -70,6 +86,32 @@ test("balance snapshots summary counts incomplete Остатки rows", () => {
     "missing_amount",
     "missing_date",
     "missing_channel",
+  ]);
+});
+
+test("balance snapshots summary reports USD-only rows that need native value", () => {
+  const summary = buildBalanceSnapshotsSummary([
+    { date: "2026-05-06", channel: "paypal eur", currency: "EUR", amount_native: null, amount_usd: 100, value_type: "usd_only_needs_native" },
+    { date: "2026-05-06", channel: "paypal cad", currency: "CAD", amount: "0" },
+  ]);
+
+  assert.equal(summary.total_rows, 2);
+  assert.equal(summary.valid_rows, 1);
+  assert.equal(summary.native_valid_rows, 1);
+  assert.equal(summary.usd_only_rows, 1);
+  assert.equal(summary.needs_native_currency_value_rows, 1);
+  assert.equal(summary.explicit_zero_rows, 1);
+  assert.equal(summary.blank_amount_rows, 0);
+  assert.deepEqual(summary.rows.map(rowCore), [
+    { date: "2026-05-06", channel: "paypal cad", currency: "CAD", amount: 0 },
+  ]);
+  assert.deepEqual(summary.incomplete_preview, [
+    {
+      date: "2026-05-06",
+      channel: "paypal eur",
+      currency: "EUR",
+      reason: "needs_native_currency_value",
+    },
   ]);
 });
 
@@ -90,7 +132,7 @@ test("balance snapshots API applies period filter and exposes detailed rows", as
   assert.equal(snapshot.ok, true);
   assert.deepEqual(snapshot.period, { from: "2026-05-01", to: "2026-05-31" });
   assert.deepEqual(snapshot.balance_snapshots.dates, ["2026-05-06"]);
-  assert.deepEqual(snapshot.balance_snapshots.rows, [
+  assert.deepEqual(snapshot.balance_snapshots.rows.map(rowCore), [
     { date: "2026-05-06", channel: "wise usd", currency: "USD", amount: 1300 },
   ]);
   assert.equal(snapshot.balance_snapshots.total_rows, 2);
@@ -183,7 +225,7 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
     }),
   });
 
-  assert.deepEqual(snapshot.balance_snapshots.rows, [
+  assert.deepEqual(snapshot.balance_snapshots.rows.map(rowCore), [
     { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 1070.48 },
   ]);
   assert.deepEqual(snapshot.balance_snapshots.diagnostics, {
