@@ -548,6 +548,86 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   assert.notEqual(cash[8], "999");
 });
 
+test("period balance UI moves empty no-data rows out of the main table", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "пейпал cad",
+        currency: "CAD",
+        opening_fact_balance: null,
+        planned_delta: 0,
+        planned_closing_balance: null,
+        real_delta: 0,
+        calculated_closing_balance: null,
+        manual_provider_closing_balance: null,
+        carried_forward_balance: null,
+        displayed_fact_balance: null,
+        fact_source: "missing",
+        real_difference: null,
+        plan_vs_real_delta: null,
+        movement_rows: 0,
+        planned_rows: 0,
+        status: "no_data",
+      },
+      {
+        channel: "missing movement",
+        currency: "USD",
+        opening_fact_balance: null,
+        planned_delta: null,
+        real_delta: 25,
+        calculated_closing_balance: null,
+        manual_provider_closing_balance: null,
+        fact_source: "missing",
+        real_difference: null,
+        movement_rows: 1,
+        planned_rows: 0,
+        status: "missing_provider_balance",
+      },
+      {
+        channel: "amount net problem",
+        currency: "EUR",
+        opening_fact_balance: null,
+        planned_delta: null,
+        real_delta: null,
+        calculated_closing_balance: null,
+        manual_provider_closing_balance: null,
+        fact_source: "missing",
+        real_difference: null,
+        missing_amount_net_rows: 1,
+        status: "missing_amount_net",
+      },
+      {
+        channel: "carried mismatch",
+        currency: "UAH",
+        opening_fact_balance: 100,
+        planned_delta: 0,
+        real_delta: 0,
+        calculated_closing_balance: 100,
+        manual_provider_closing_balance: null,
+        carried_forward_balance: 90,
+        displayed_fact_balance: 90,
+        fact_source: "carried_forward",
+        real_difference: -10,
+        status: "carried_forward_conditional",
+      },
+    ],
+    actionable_rows: [],
+  }));
+
+  const mainRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  const mainLabels = mainRows.slice(1).map((row) => row[0]);
+  assert.ok(!mainLabels.includes("пейпал cad"));
+  assert.ok(mainLabels.includes("missing movement"));
+  assert.ok(mainLabels.includes("amount net problem"));
+  assert.ok(mainLabels.includes("carried mismatch"));
+
+  const hiddenSection = findByClass(block, "period-balance-no-data-subsection")[0];
+  assert.equal(hiddenSection.children[0].textContent, "Строки без данных");
+  assert.match(hiddenSection.textContent, /Скрыто строк без данных: 1/);
+  assert.match(hiddenSection.textContent, /пейпал cad/);
+});
+
 test("period balance API failure renders non-blocking Analytics error", async () => {
   const doc = createTestDocument();
   const analyticsContainer = doc.createElement("div");
