@@ -50,7 +50,7 @@ test("appendManualOstatkiRows updates existing Остатки rows by normalized
           const body = JSON.parse(options.body);
           assert.deepEqual(body.values, [
             ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
-            ["2026-05-17", "трансервайз дол", "1070,48", "USD", "", "", "manual fact"],
+            ["2026-05-17", "трансервайз дол", "1070,48", "USD", "", "1070,48", "manual fact"],
             ["2026-05-17", "БАНК КАНАДА cad", "7351", "CAD", "", "", "carried"],
           ]);
           return jsonResponse({ updatedRange: "'Остатки'!A1:G3" });
@@ -107,6 +107,72 @@ test("appendManualOstatkiRows does not treat calculated hints as Остатки 
 
   assert.equal(result.appendRowCount, 0);
   assert.equal(fetchCount, 0);
+});
+
+test("loadManualRepositoryFromGoogleSheets parses Остатки native and USD contract fields", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("values:batchGet")) {
+          return jsonResponse({
+            valueRanges: [
+              { range: "'Ledger'!A:V", values: [["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category"]] },
+              { range: "'Расходы'!A1:Z10", values: [["дата", "категория"]] },
+              {
+                range: "'Остатки'!A1:G",
+                values: [
+                  ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                  ["2026-05-01", "пейпал дол", "100", "USD", "", "", "usd native"],
+                  ["2026-05-01", "монобанк", "26670", "UAH", "", "603", "native plus usd"],
+                  ["2026-05-01", "пейпал евр", "", "EUR", "", "100", "usd only"],
+                  ["2026-05-01", "БАНК КАНАДА cad", "", "CAD", "", "", "blank native"],
+                  ["2026-05-01", "Wise", "0", "EUR", "", "0", "explicit zero"],
+                ],
+              },
+              { range: "'План'!A1:E1", values: [["месяц", "канал", "валюта", "сумма", "операция"]] },
+              { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
+              { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.deepEqual(
+      repository.balances.map((row) => ({
+        channel: row.channel,
+        currency: row.currency,
+        amount: row.amount,
+        balanceAmount: row.balanceAmount,
+        amount_native: row.amount_native,
+        amount_usd: row.amount_usd,
+        usdAmount: row.usdAmount,
+        value_type: row.value_type,
+      })),
+      [
+        { channel: "пейпал дол", currency: "USD", amount: 100, balanceAmount: 100, amount_native: 100, amount_usd: 100, usdAmount: 100, value_type: "native_and_usd" },
+        { channel: "монобанк грн", currency: "UAH", amount: 26670, balanceAmount: 26670, amount_native: 26670, amount_usd: 603, usdAmount: 603, value_type: "native_and_usd" },
+        { channel: "пейпал евр", currency: "EUR", amount: null, balanceAmount: null, amount_native: null, amount_usd: 100, usdAmount: 100, value_type: "usd_only_needs_native" },
+        { channel: "БАНК КАНАДА cad", currency: "CAD", amount: null, balanceAmount: null, amount_native: null, amount_usd: null, usdAmount: null, value_type: "needs_verification" },
+        { channel: "трансервайз евро", currency: "EUR", amount: 0, balanceAmount: 0, amount_native: 0, amount_usd: 0, usdAmount: 0, value_type: "explicit_zero" },
+      ]
+    );
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
 });
 
 test("probeGoogleSheetAccess reports missing credentials without fetching", async () => {
@@ -414,11 +480,15 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
         date: "2026-04-23",
         channel: "трансервайз дол",
         accountName: "трансервайз дол",
-        amount: "1000",
-        balanceAmount: "1000",
+        amount: 1000,
+        balanceAmount: 1000,
+        amount_native: 1000,
+        amount_usd: 1000,
+        fx_rate_to_usd: 1,
+        value_type: "native_and_usd",
         currency: "USD",
         rate: "1",
-        usdAmount: "1000",
+        usdAmount: 1000,
         comment: "opening",
         source: "manual-google-sheets",
         balanceSource: "manual_fact",

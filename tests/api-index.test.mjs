@@ -243,7 +243,10 @@ test("GET getDashboardData merges manual and auto balances before analytics norm
     assert.equal(manual.autoBalances.length, 2);
     assert.equal(manual.balanceSnapshotMerge.auto_balance_rows_used_as_fallback, 1);
     assert.equal(manual.balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual, 1);
-    assert.equal(manual.balanceRows.find((row) => row.channel === "трансервайз дол")?.amount, "1000");
+    const manualUsdBalance = manual.balanceRows.find((row) => row.channel === "трансервайз дол");
+    assert.equal(manualUsdBalance?.amount, 1000);
+    assert.equal(manualUsdBalance?.amount_native, 1000);
+    assert.equal(manualUsdBalance?.amount_usd, 1000);
     assert.equal(manual.balanceRows.find((row) => row.channel === "трансервайз евро")?.sourceSheet, "Авто Остатки");
 
     const analyticsRows = response.body?.data?.tabs?.analytics?.values || [];
@@ -1304,7 +1307,7 @@ test("GET getDashboardData restores balances and current Plan layout from legacy
 
     const balances = response.body?.data?.manual?.balances || [];
     assert.ok(balances.length > 0);
-    assert.equal(balances.find((row) => row.channel === "пейпал дол")?.amount, "648,00");
+    assert.equal(balances.find((row) => row.channel === "пейпал дол")?.amount, 648);
 
     const analyticsRows = response.body?.data?.tabs?.analytics?.values || [];
     const planIndex = analyticsRows.findIndex((row) => row?.[0] === "Plan");
