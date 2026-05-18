@@ -61,6 +61,85 @@ test("period balance reconciliation block replaces Analytics placeholder with AP
   assert.match(analyticsContainer.textContent, /Остатки по каналам оплаты/);
 });
 
+test("period balance UI shows fact source counts and required manual fact rows", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    summary: {
+      status: "failed",
+      positions_checked: 2,
+      currencies_checked: 1,
+      channels_checked: 2,
+      planned_rows: 0,
+      planned_source_status: "available_empty",
+      missing_amount_net_rows: 0,
+      status_counts: { ok: 0, mismatch: 1, missing_provider_balance: 1 },
+      balance_source_counts: { manual_fact: 0, provider_auto: 1, missing: 1 },
+      blocked: 1,
+    },
+    by_channel_currency: [
+      {
+        channel: "wise usd",
+        currency: "USD",
+        opening_fact_balance: 1000,
+        real_delta: 70,
+        calculated_closing_balance: 1070,
+        manual_provider_closing_balance: 1050,
+        displayed_fact_balance: 1050,
+        balanceSource: "provider_auto",
+        sourceSheet: "Авто Остатки",
+        needsManualConfirmation: true,
+        status: "mismatch",
+      },
+      {
+        channel: "paypal usd",
+        currency: "USD",
+        opening_fact_balance: null,
+        real_delta: 10,
+        calculated_closing_balance: null,
+        manual_provider_closing_balance: null,
+        displayed_fact_balance: null,
+        balanceSource: "missing",
+        needsManualConfirmation: true,
+        status: "missing_provider_balance",
+      },
+    ],
+    required_manual_fact_rows: [
+      {
+        sheet: "Остатки",
+        date: "2026-05-17",
+        channel: "wise usd",
+        currency: "USD",
+        amount: null,
+        amount_hint: 1050,
+        balanceSource: "provider_auto",
+        status: "mismatch",
+        action: "Confirm provider auto balance, then enter the factual balance in Остатки.",
+      },
+      {
+        sheet: "Остатки",
+        date: "2026-05-17",
+        channel: "paypal usd",
+        currency: "USD",
+        amount: null,
+        balanceSource: "missing",
+        status: "missing_provider_balance",
+        action: "Enter factual manual/provider balance in Остатки.",
+      },
+    ],
+    actionable_rows: [],
+  }));
+
+  assert.match(block.textContent, /Факт из Остатки/);
+  assert.match(block.textContent, /Авто факт к подтверждению/);
+  assert.match(block.textContent, /Нужно ввести факт/);
+  assert.match(block.textContent, /Что добавить в Остатки/);
+  assert.match(block.textContent, /2026-05-17/);
+  assert.match(block.textContent, /wise usd/);
+  assert.match(block.textContent, /auto, needs manual confirmation/);
+  assert.match(block.textContent, /paypal usd/);
+  assert.match(block.textContent, /add manual fact balance/);
+});
+
 test("period balance reconciliation prepends Analytics container with DOM children collection", () => {
   const doc = createTestDocument();
   const analyticsContainer = createHtmlCollectionLikeContainer();
@@ -767,6 +846,7 @@ function buildSnapshot(overrides = {}) {
         },
       ],
       by_channel_currency: byChannelCurrency,
+      required_manual_fact_rows: overrides.required_manual_fact_rows || [],
       actionable_rows: overrides.actionable_rows || [
         {
           channel: "mono uah",

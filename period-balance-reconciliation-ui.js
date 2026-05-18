@@ -123,6 +123,11 @@
     section.appendChild(renderPositionTable(doc, meaningfulRows));
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
+    const requiredManualFactRows = reconciliation.required_manual_fact_rows || [];
+    if (requiredManualFactRows.length) {
+      section.appendChild(renderRequiredManualFactRows(doc, requiredManualFactRows));
+    }
+
     const actions = reconciliation.actionable_rows || [];
     if (actions.length) {
       section.appendChild(renderSubsection(
@@ -185,6 +190,9 @@
       ["Нет конечного", counts.missing_closing_balance],
       ["Нет amount_net", counts.missing_amount_net],
       ["Без amount_net", summary.missing_amount_net_rows],
+      ["Факт из Остатки", summary.balance_source_counts?.manual_fact ?? summary.manual_fact_rows],
+      ["Авто факт к подтверждению", summary.balance_source_counts?.provider_auto ?? summary.provider_auto_rows],
+      ["Нужно ввести факт", summary.balance_source_counts?.missing ?? summary.missing_fact_rows],
       ["Заблокировано", summary.blocked],
     ].forEach(([text, value]) => {
       const card = doc.createElement("div");
@@ -324,6 +332,23 @@
       "Остатки по каналам оплаты",
       ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
+    );
+  }
+
+  function renderRequiredManualFactRows(doc, rows) {
+    return renderSubsection(
+      doc,
+      "Что добавить в Остатки",
+      ["Дата", "Канал", "Валюта", "Сумма", "Источник сейчас", "Статус", "Что сделать"],
+      (rows || []).map((row) => [
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        formatNumber(row.amount),
+        getFactSourceLabel(row),
+        getStatusLabel(row.status),
+        row.action || "Enter factual manual/provider balance in Остатки.",
+      ])
     );
   }
 
