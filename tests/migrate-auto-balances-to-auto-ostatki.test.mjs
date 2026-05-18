@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildAutoBalanceValues,
   detectLegacyAutoRows,
+  replaceSheetValues,
   summarizeMigration,
 } from "../scripts/migrate-auto-balances-to-auto-ostatki.mjs";
 
@@ -60,4 +61,29 @@ test("migration summarizes copy and duplicate counts without removing manual row
     "11,6",
     "wise_auto",
   ]);
+});
+
+test("replaceSheetValues clears the target range before rewriting fewer rows", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method, body: options.body });
+    return {
+      ok: true,
+      async json() {
+        return {};
+      },
+    };
+  };
+
+  await replaceSheetValues("token", "Остатки", "A:H", [
+    ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+    ["2026-05-17", "монобанк грн", "14033", "UAH", "", "", "manual_fact"],
+  ], { fetchImpl });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, "POST");
+  assert.match(decodeURIComponent(calls[0].url), /values\/'Остатки'!A:H:clear$/);
+  assert.equal(calls[1].method, "PUT");
+  assert.match(decodeURIComponent(calls[1].url), /values\/'Остатки'!A:H\?valueInputOption=USER_ENTERED$/);
+  assert.match(calls[1].body, /2026-05-17/);
 });
