@@ -133,6 +133,60 @@ test("missing exact target-date provider balance with movements is blocked, not 
   assert.match(row.diagnosis, /Нет фактического остатка на дату/);
 });
 
+test("USD-only Остатки row is not used as native provider fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [{
+      date: "2026-05-12",
+      toChannel: "paypal eur",
+      currency: "EUR",
+      amountNet: "20",
+      balanceAmount: 20,
+      ledgerV2: { date: "2026-05-12", operation: "income", to_channel: "paypal eur", currency: "EUR", amount_net: "20", balance_amount: 20 },
+    }],
+    balanceRows: [
+      { date: "2026-05-10", channel: "paypal eur", currency: "EUR", amount_native: 100, amount_usd: 110, value_type: "native_and_usd" },
+      { date: "2026-05-15", channel: "paypal eur", currency: "EUR", amount_native: null, amount_usd: 132, value_type: "usd_only_needs_native" },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.opening_fact_balance, 100);
+  assert.equal(row.calculated_closing_balance, 120);
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.needs_native_currency_value, true);
+  assert.equal(row.opening_fact_value_type, "native_and_usd");
+  assert.equal(row.manual_provider_fact_value_type, "usd_only_needs_native");
+  assert.match(row.native_fact_missing_reason, /USD equivalent only/);
+  assert.equal(row.diagnostics.needs_native_currency_value, true);
+  assert.equal(row.diagnostics.manual_provider_fact_value_type, "usd_only_needs_native");
+  assert.equal(row.diagnostics.native_fact_missing_reason, row.native_fact_missing_reason);
+  assert(row.diagnostics.categories.includes("missing native currency balance"));
+});
+
+test("explicit zero Остатки row is a valid native provider fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [{
+      date: "2026-05-12",
+      fromChannel: "paypal eur",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: { date: "2026-05-12", operation: "expense", from_channel: "paypal eur", currency: "EUR", amount_net: "100", balance_amount: -100 },
+    }],
+    balanceRows: [
+      { date: "2026-05-10", channel: "paypal eur", currency: "EUR", amount: "100" },
+      { date: "2026-05-15", channel: "paypal eur", currency: "EUR", amount: "0" },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.manual_provider_closing_balance, 0);
+  assert.equal(row.manual_provider_fact_value_type, "explicit_zero");
+  assert.equal(row.needs_native_currency_value, false);
+});
+
 test("no opening, no movement, no fact, and no plan is ignored as no data", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

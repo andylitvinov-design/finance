@@ -1,3 +1,5 @@
+import { normalizeBalanceValueContract } from "./balance-native-usd-contract.js";
+
 const STATUS = {
   OK: "ok",
   MISMATCH: "mismatch",
@@ -75,7 +77,9 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   if (!channel || !currency) return null;
 
   const openingSnapshot = balanceIndex.findOpening(key, from);
+  const openingBalanceCandidate = openingSnapshot || balanceIndex.findOpeningAny(key, from);
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
+  const exactTargetBalanceCandidate = to ? balanceIndex.findExactAny(key, to) : null;
   const nearestManualProviderFact = balanceIndex.findNearest(key, to);
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
   const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
@@ -106,6 +110,21 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     closingSource = "carried_forward";
   }
   const factSource = resolveFactSource({ closingSnapshot, canCarryForwardClosing });
+  const openingFactValueType = openingSnapshot?.value_type || openingBalanceCandidate?.value_type || null;
+  const manualProviderFactValueType = closingSnapshot?.value_type || exactTargetBalanceCandidate?.value_type || null;
+  const needsNativeCurrencyValue = needsNativeFactValue({
+    openingSnapshot,
+    openingBalanceCandidate,
+    closingSnapshot,
+    exactTargetBalanceCandidate,
+  });
+  const nativeFactMissingReason = buildNativeFactMissingReason({
+    openingSnapshot,
+    openingBalanceCandidate,
+    closingSnapshot,
+    exactTargetBalanceCandidate,
+    to,
+  });
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
     ? round(displayedFactClosing - calculatedClosing)
     : null;
@@ -169,6 +188,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     factual_closing_balance_date: closingSnapshot?.date || (canCarryForwardClosing ? lastObservedClosingSnapshot.date : null),
     closing_balance_source: closingSource,
     fact_source: factSource,
+    needs_native_currency_value: needsNativeCurrencyValue,
+    opening_fact_value_type: openingFactValueType,
+    manual_provider_fact_value_type: manualProviderFactValueType,
+    native_fact_missing_reason: nativeFactMissingReason,
     missing_fact_reason: buildMissingFactReason({
       closingSnapshot,
       nearestManualProviderFact,
@@ -196,6 +219,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
       lastObservedClosingSnapshot,
       closingSnapshot,
       nearestManualProviderFact,
+      needsNativeCurrencyValue,
+      openingFactValueType,
+      manualProviderFactValueType,
+      nativeFactMissingReason,
       to,
     }),
     repair_template: buildRepairTemplate({
@@ -240,6 +267,34 @@ function buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to
     return `manual/provider fact exists for ${nearestManualProviderFact.date}, but period end is ${to}; exact date fact is missing.`;
   }
   return `manual/provider fact is missing for period end ${to}.`;
+}
+
+function needsNativeFactValue({
+  openingSnapshot,
+  openingBalanceCandidate,
+  closingSnapshot,
+  exactTargetBalanceCandidate,
+}) {
+  return Boolean(
+    (!openingSnapshot && openingBalanceCandidate?.value_type === "usd_only_needs_native") ||
+    (!closingSnapshot && exactTargetBalanceCandidate?.value_type === "usd_only_needs_native")
+  );
+}
+
+function buildNativeFactMissingReason({
+  openingSnapshot,
+  openingBalanceCandidate,
+  closingSnapshot,
+  exactTargetBalanceCandidate,
+  to,
+}) {
+  if (!openingSnapshot && openingBalanceCandidate?.value_type === "usd_only_needs_native") {
+    return "opening balance has USD equivalent only; native currency amount is required for reconciliation.";
+  }
+  if (!closingSnapshot && exactTargetBalanceCandidate?.value_type === "usd_only_needs_native") {
+    return `period end ${to || "target date"} has USD equivalent only; native currency amount is required for reconciliation.`;
+  }
+  return null;
 }
 
 function getBalanceFactSource(row) {
@@ -382,29 +437,40 @@ function buildPlannedMovementIndex(plannedRows, period) {
 
 function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
   const byKey = new Map();
+  const allByKey = new Map();
   for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows)) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
-    const amount = parseNumber(row?.balanceAmount ?? row?.amount);
-    if (!date || !channel || !currency || amount === null) continue;
+    if (!date || !channel || !currency) continue;
+    const contract = normalizeBalanceValueContract(row);
+    const amount = parseNumber(contract.amount_native);
     const key = makeKey(channel, currency);
-    const rows = byKey.get(key) || [];
-    rows.push({
+    const record = {
       date,
       channel,
       currency,
       amount,
+      amount_usd: contract.amount_usd,
+      fx_rate_to_usd: contract.fx_rate_to_usd,
+      value_type: contract.value_type,
       source: row?.source || row?.fact_source || row?.provider || "",
       balanceSource: getResolvedBalanceSource(row),
       provider: row?.provider || null,
       sourceSheet: row?.sourceSheet || "",
       sourceRow: row?.sourceRow || null,
       comment: row?.comment || "",
-    });
+    };
+    const allRows = allByKey.get(key) || [];
+    allRows.push(record);
+    allByKey.set(key, allRows);
+    if (!isValidNativeBalanceFact(record)) continue;
+    const rows = byKey.get(key) || [];
+    rows.push(record);
     byKey.set(key, rows);
   }
   for (const rows of byKey.values()) rows.sort(compareBalanceSnapshots);
+  for (const rows of allByKey.values()) rows.sort(compareBalanceSnapshots);
 
   return {
     findOpening(key, from) {
@@ -416,6 +482,15 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
       const rows = byKey.get(key) || [];
       if (to) return rows.find((row) => row.date === to) || null;
       return rows.filter((row) => (!from || row.date >= from)).at(-1) || null;
+    },
+    findOpeningAny(key, from) {
+      const rows = allByKey.get(key) || [];
+      if (!from) return rows[0] || null;
+      return rows.filter((row) => row.date < from).at(-1) || null;
+    },
+    findExactAny(key, date) {
+      const rows = allByKey.get(key) || [];
+      return rows.find((row) => row.date === date) || null;
     },
     findLatestBeforeOrOn(key, to) {
       const rows = byKey.get(key) || [];
@@ -438,13 +513,13 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
       return afterDistance < beforeDistance ? after : before;
     },
     keysBeforePeriod(from) {
-      if (!from) return Array.from(byKey.keys());
-      return Array.from(byKey.entries())
+      if (!from) return Array.from(allByKey.keys());
+      return Array.from(allByKey.entries())
         .filter(([, rows]) => rows.some((row) => row.date < from))
         .map(([key]) => key);
     },
     keysInPeriod(period) {
-      return Array.from(byKey.entries())
+      return Array.from(allByKey.entries())
         .filter(([, rows]) => rows.some((row) => isInPeriod(row.date, period)))
         .map(([key]) => key);
     },
@@ -485,6 +560,10 @@ function getResolvedBalanceSource(row = {}) {
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
   if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider_auto";
   return "manual_fact";
+}
+
+function isValidNativeBalanceFact(row) {
+  return row.amount !== null && ["native_and_usd", "native_only", "explicit_zero"].includes(row.value_type);
 }
 
 function buildCurrencyRows(rows) {
@@ -598,11 +677,22 @@ function buildDiagnostics({
   lastObservedClosingSnapshot,
   closingSnapshot,
   nearestManualProviderFact,
+  needsNativeCurrencyValue,
+  openingFactValueType,
+  manualProviderFactValueType,
+  nativeFactMissingReason,
   to,
 }) {
   const categories = [];
+  const nativeDiagnostics = {
+    needs_native_currency_value: Boolean(needsNativeCurrencyValue),
+    opening_fact_value_type: openingFactValueType || null,
+    manual_provider_fact_value_type: manualProviderFactValueType || null,
+    native_fact_missing_reason: nativeFactMissingReason || null,
+  };
   if (status === STATUS.NO_DATA) {
     return {
+      ...nativeDiagnostics,
       categories,
       has_exact_provider_balance: Boolean(closingSnapshot),
       last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
@@ -619,7 +709,9 @@ function buildDiagnostics({
   if (status === STATUS.MISSING_AMOUNT_NET || missingAmountNetRows) categories.push("amount_net issue");
   if (status === STATUS.MISSING_OPENING || opening === null) categories.push("missing opening balance");
   if (status === STATUS.MISSING_PROVIDER || displayedFactClosing === null) categories.push("missing provider balance");
+  if (needsNativeCurrencyValue) categories.push("missing native currency balance");
   return {
+    ...nativeDiagnostics,
     categories: Array.from(new Set(categories)),
     has_exact_provider_balance: Boolean(closingSnapshot),
     last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
