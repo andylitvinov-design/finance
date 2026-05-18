@@ -23,7 +23,7 @@ test("2026-05-01 balance backfill is idempotent and does not duplicate rows", ()
   const secondPlan = classifyBackfillRows(merged, backfillRows);
 
   assert.equal(secondPlan.rowsToWrite.length, 0);
-  assert.equal(secondPlan.skippedRows.length, 22);
+  assert.equal(secondPlan.skippedRows.length, 24);
   assert.equal(new Set(merged.map((row) => `${row.date}|${row.channel}|${row.currency}`)).size, merged.length);
 });
 
@@ -36,11 +36,66 @@ test("2026-05-01 balance backfill summary reports normalized channel decisions",
     && row.channel === "приват 24-грн"
     && row.currency === "UAH"
     && row.amount === 11239
-    && row.note.includes("254")
+    && row.amount_usd === 254
   ));
-  assert.ok(summary.rows_to_write.some((row) =>
-    row.input_channel === "карта май"
-    && row.currency === "UNKNOWN"
-    && row.resolution === "user_provided_unknown_currency"
+  assert.ok(summary.skipped_rows.some((row) =>
+    row.input_channel === "карта тай"
+    && row.classification === "missing_channel_alias"
+    && row.safe_action === "skip_missing_channel_alias"
   ));
+});
+
+test("USD channels write user amount as native USD amount", () => {
+  const row = buildBackfillRows().find((entry) => entry.inputChannel === "пейпал дол");
+  const plan = classifyBackfillRows([], [row]);
+
+  assert.equal(plan.rowsToWrite.length, 1);
+  assert.equal(plan.rowsToWrite[0].amount, 435);
+  assert.equal(plan.rowsToWrite[0].usdAmount, 435);
+  assert.equal(plan.rowsToWrite[0].classification, "missing_native_amount");
+  assert.equal(plan.rowsToWrite[0].safeAction, "write_native_amount");
+});
+
+test("UAH rows write native UAH and user-provided amount_usd separately", () => {
+  const row = buildBackfillRows().find((entry) => entry.inputChannel === "монобанк");
+  const plan = classifyBackfillRows([], [row]);
+
+  assert.equal(plan.rowsToWrite[0].amount, 26670);
+  assert.equal(plan.rowsToWrite[0].usdAmount, 603);
+  assert.equal(plan.rowsToWrite[0].currency, "UAH");
+});
+
+test("USD-equivalent-only non-USD rows are not written as native amount", () => {
+  const row = buildBackfillRows().find((entry) => entry.inputChannel === "Payoneer - eur");
+  const plan = classifyBackfillRows([
+    { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount: "1284", usdAmount: "1489,44" },
+  ], [row]);
+
+  assert.equal(plan.rowsToWrite[0].amount, "");
+  assert.equal(plan.rowsToWrite[0].usdAmount, 1284);
+  assert.equal(plan.rowsToWrite[0].classification, "present_wrong_amount_usd_used_as_native");
+  assert.equal(plan.rowsToWrite[0].safeAction, "write_amount_usd_only_needs_native");
+});
+
+test("blank user value is not converted to zero", () => {
+  const row = buildBackfillRows().find((entry) => entry.inputChannel === "нал-мам-д");
+  const plan = classifyBackfillRows([], [row]);
+
+  assert.equal(plan.rowsToWrite.length, 0);
+  assert.equal(plan.skippedRows[0].amount, "");
+  assert.equal(plan.skippedRows[0].usdAmount, "");
+  assert.equal(plan.skippedRows[0].classification, "missing_native_amount");
+  assert.equal(plan.skippedRows[0].safeAction, "skip_blank_value");
+});
+
+test("existing rows update by normalized date channel currency key", () => {
+  const row = buildBackfillRows().find((entry) => entry.inputChannel === "24-грн");
+  const plan = classifyBackfillRows([
+    { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", usdAmount: "256,24" },
+  ], [row]);
+
+  assert.equal(plan.rowsToWrite.length, 1);
+  assert.equal(plan.rowsToWrite[0].action, "update");
+  assert.equal(plan.rowsToWrite[0].amount, 11239);
+  assert.equal(plan.rowsToWrite[0].usdAmount, 254);
 });

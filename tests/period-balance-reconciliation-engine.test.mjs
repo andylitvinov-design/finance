@@ -300,3 +300,37 @@ test("Binance spot USDT movement without manual/provider fact reports missing pr
   assert.equal(row.fact_source, "missing");
   assert.match(row.fix_action, /фактический остаток/);
 });
+
+test("opening and closing reconciliation use native amount, not amount_usd", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-02", to: "2026-05-03" },
+    operations: [
+      {
+        date: "2026-05-02",
+        fromChannel: "приват 24-грн",
+        currency: "UAH",
+        amountNet: "239",
+        balanceAmount: -239,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "expense",
+          from_channel: "приват 24-грн",
+          currency: "UAH",
+          amount_net: "239",
+          balance_amount: -239,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", usdAmount: "254" },
+      { date: "2026-05-03", channel: "приват 24-грн", currency: "UAH", amount: "11000", usdAmount: "248" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.opening_fact_balance, 11239);
+  assert.equal(row.real_outflow, 239);
+  assert.equal(row.computed_real_closing_balance, 11000);
+  assert.equal(row.factual_closing_balance, 11000);
+  assert.equal(row.status, "ok");
+});
