@@ -116,8 +116,12 @@
       return section;
     }
 
-    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, reconciliation.by_channel_currency || []));
-    section.appendChild(renderPositionTable(doc, reconciliation.by_channel_currency || []));
+    const positionRows = reconciliation.by_channel_currency || [];
+    const meaningfulRows = positionRows.filter(isMeaningfulReconciliationRow);
+    const emptyRows = positionRows.filter((row) => !isMeaningfulReconciliationRow(row));
+    section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, positionRows));
+    section.appendChild(renderPositionTable(doc, meaningfulRows));
+    if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
     const actions = reconciliation.actionable_rows || [];
     if (actions.length) {
@@ -321,6 +325,75 @@
       ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
+  }
+
+  function renderNoDataRowsBlock(doc, rows) {
+    const section = doc.createElement("div");
+    section.className = "period-balance-subsection period-balance-no-data-subsection config-note";
+    const title = doc.createElement("div");
+    title.className = "tab-note";
+    title.textContent = "Строки без данных";
+    const count = doc.createElement("div");
+    count.className = "config-note";
+    count.textContent = `Скрыто строк без данных: ${rows.length}`;
+    section.append(title, count);
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap period-balance-table-wrap";
+    wrap.appendChild(renderTable(doc, [
+      ["КАНАЛ", "ВАЛЮТА", "СТАТУС", "ПРИЧИНА"],
+      ...rows.map((row) => [
+        row.channel || "—",
+        row.currency || "—",
+        getStatusLabel(row.status),
+        row.missing_fact_reason || row.diagnosis || "Нет данных для сверки",
+      ]),
+    ]));
+    section.appendChild(wrap);
+    return section;
+  }
+
+  function isMeaningfulReconciliationRow(row) {
+    if (!row || typeof row !== "object") return false;
+    const status = String(row.status || "").trim();
+    const hasActivity = hasPositiveNumber(row.planned_rows)
+      || hasPositiveNumber(row.movement_rows)
+      || hasPositiveNumber(row.missing_amount_net_rows);
+    const hasMajorValue = hasNumber(row.opening_fact_balance ?? row.opening_balance)
+      || hasNumber(row.planned_delta)
+      || hasNumber(row.real_delta)
+      || hasNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance)
+      || hasNumber(row.manual_provider_closing_balance)
+      || hasNumber(row.carried_forward_balance)
+      || hasNumber(row.displayed_fact_balance)
+      || hasNumber(row.real_difference);
+    if (status === "no_data" && !hasActivity && !hasNonZeroMajorValue(row)) return false;
+    return hasMajorValue
+      || ["mismatch", "missing_amount_net", "missing_provider_balance", "missing_opening_balance"].includes(status);
+  }
+
+  function hasNonZeroMajorValue(row) {
+    return [
+      row.opening_fact_balance ?? row.opening_balance,
+      row.planned_delta,
+      row.real_delta,
+      row.calculated_closing_balance ?? row.computed_real_closing_balance,
+      row.manual_provider_closing_balance,
+      row.carried_forward_balance,
+      row.displayed_fact_balance,
+      row.real_difference,
+    ].some((value) => {
+      const numeric = parseNumeric(value);
+      return numeric !== null && Math.abs(numeric) > 0.0001;
+    });
+  }
+
+  function hasNumber(value) {
+    return parseNumeric(value) !== null;
+  }
+
+  function hasPositiveNumber(value) {
+    const numeric = parseNumeric(value);
+    return numeric !== null && Math.abs(numeric) > 0.0001;
   }
 
   function getCarriedForwardComparisonFact(row) {
