@@ -171,6 +171,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     calculated_closing_balance: calculatedClosing,
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
+    manual_provider_fact_amount_usd: closingSnapshot?.amount_usd ?? exactTargetBalanceCandidate?.amount_usd ?? null,
     manual_provider_closing_balance_date: closingSnapshot?.date || null,
     manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
     balanceSource: closingSnapshot ? getResolvedBalanceSource(closingSnapshot) : "missing",
@@ -190,6 +191,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     fact_source: factSource,
     needs_native_currency_value: needsNativeCurrencyValue,
     opening_fact_value_type: openingFactValueType,
+    opening_fact_amount_usd: openingSnapshot?.amount_usd ?? openingBalanceCandidate?.amount_usd ?? null,
     manual_provider_fact_value_type: manualProviderFactValueType,
     native_fact_missing_reason: nativeFactMissingReason,
     missing_fact_reason: buildMissingFactReason({

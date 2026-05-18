@@ -163,16 +163,16 @@ test("period balance renders channel balances before secondary currency totals",
 
   const channelRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
   assert.equal(channelRows.length, 7);
-  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
+  assert.deepEqual(channelRows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ NATIVE", "USD ЭКВИВАЛЕНТ", "ТИП ЗНАЧЕНИЯ", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(channelRows[1][0], "wise usd");
-  assert.deepEqual(channelRows[1], ["wise usd", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "manual fact", "0", "-25", "OK", "—"]);
+  assert.deepEqual(channelRows[1], ["wise usd", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "—", "—", "manual fact", "0", "-25", "OK", "—"]);
   assert.equal(channelRows[2][0], "paypal eur");
   assert.equal(channelRows[3][0], "mono uah");
   assert.equal(channelRows[3][3], "0");
-  assert.equal(channelRows[3][12], "Реальное расхождение");
-  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "40", "240", "240", "—", "—", "0", "0", "Итого по валюте", "—"]);
-  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "0", "100", "-25", "75", "70", "—", "—", "-5", "-25", "Итого по валюте", "—"]);
-  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "—", "0", "-25", "Итого по валюте", "—"]);
+  assert.equal(channelRows[3][14], "Реальное расхождение");
+  assert.deepEqual(channelRows.at(-3), ["ИТОГО EUR", "EUR", "200", "40", "240", "40", "240", "240", "—", "—", "—", "—", "0", "0", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-2), ["ИТОГО UAH", "UAH", "100", "0", "100", "-25", "75", "70", "—", "—", "—", "—", "-5", "-25", "Итого по валюте", "—"]);
+  assert.deepEqual(channelRows.at(-1), ["ИТОГО USD", "USD", "1000", "150", "1150", "125", "1125", "1125", "—", "—", "—", "—", "0", "-25", "Итого по валюте", "—"]);
   assert.match(block.textContent, /Сводка по валютам, справочно/);
   assert.doesNotMatch(block.textContent, /Итоги по валютам/);
   assert.doesNotMatch(block.textContent, /Итоги по всем каналам/);
@@ -305,11 +305,11 @@ test("period balance main table uses payment channel rows and preserves mismatch
   ["ИТОГО CAD", "ИТОГО EUR", "ИТОГО RUB", "ИТОГО UAH", "ИТОГО USD", "ИТОГО USDT"].forEach((label) => {
     assert.ok(rowLabels.includes(label), `${label} total row must render when currency is present`);
   });
-  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 13), ["USD", "2704.25", "0", "2704.25", "-1628", "1076.25", "1070.48", "—", "manual fact", "-5.77", "-1628", "Реальное расхождение"]);
-  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad").slice(1, 13), ["CAD", "10107.92", "0", "10107.92", "0", "10107.92", "—", "7351", "перенесён", "-2756.92", "0", "Условно перенесено"]);
-  assert.equal(rows.find((row) => row[0] === "Яндекс руб")[12], "OK");
-  assert.equal(rows.find((row) => row[0] === "пейпал евр")[12], "Нет amount_net");
-  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[12], "Нет стартового остатка");
+  assert.deepEqual(rows.find((row) => row[0] === "трансервайз дол").slice(1, 15), ["USD", "2704.25", "0", "2704.25", "-1628", "1076.25", "1070.48", "—", "—", "—", "manual fact", "-5.77", "-1628", "Реальное расхождение"]);
+  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad").slice(1, 15), ["CAD", "10107.92", "0", "10107.92", "0", "10107.92", "—", "—", "—", "7351", "перенесён", "-2756.92", "0", "Условно перенесено"]);
+  assert.equal(rows.find((row) => row[0] === "Яндекс руб")[14], "OK");
+  assert.equal(rows.find((row) => row[0] === "пейпал евр")[14], "Нет amount_net");
+  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[14], "Нет стартового остатка");
 });
 
 test("period balance analytics UI does not render raw daily snapshot inventory", () => {
@@ -409,7 +409,7 @@ test("period balance UI shows missing provider balance as blocked, not OK", () =
   assert.match(text, /Нет фактического остатка на дату/);
   assert.match(text, /Добавить фактический остаток на дату окончания периода/);
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.equal(positionRows[1][12], "Нет фактического остатка на дату");
+  assert.equal(positionRows[1][14], "Нет фактического остатка на дату");
 });
 
 test("period balance UI keeps existing factual values visible when summary failed", () => {
@@ -459,8 +459,8 @@ test("period balance UI keeps existing factual values visible when summary faile
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   assert.equal(positionRows[1][7], "1070.48");
   assert.equal(positionRows[1][8], "—");
-  assert.equal(positionRows[1][9], "manual fact");
-  assert.equal(positionRows[1][10], "-5.77");
+  assert.equal(positionRows[1][11], "manual fact");
+  assert.equal(positionRows[1][12], "-5.77");
   assert.equal(positionRows[2][7], "—");
 });
 
@@ -531,21 +531,51 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   const wise = rows.find((row) => row[0] === "wise usd");
   const cash = rows.find((row) => row[0] === "cash usd");
 
-  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
+  assert.deepEqual(rows[0], ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ NATIVE", "USD ЭКВИВАЛЕНТ", "ТИП ЗНАЧЕНИЯ", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"]);
   assert.equal(provider[7], "11.5");
   assert.equal(provider[8], "—");
-  assert.equal(provider[9], "auto, needs manual confirmation");
+  assert.equal(provider[11], "auto, needs manual confirmation");
   assert.equal(wise[6], "1100");
   assert.equal(wise[7], "—");
   assert.equal(wise[8], "—");
-  assert.equal(wise[9], "add manual fact balance");
+  assert.equal(wise[11], "add manual fact balance");
   assert.equal(cash[6], "999");
   assert.equal(cash[7], "—");
-  assert.equal(cash[8], "50");
-  assert.equal(cash[9], "перенесён");
-  assert.equal(cash[10], "0");
+  assert.equal(cash[10], "50");
+  assert.equal(cash[11], "перенесён");
+  assert.equal(cash[12], "0");
   assert.notEqual(cash[7], "999");
-  assert.notEqual(cash[8], "999");
+  assert.notEqual(cash[10], "999");
+});
+
+test("period balance UI shows USD-only native amount warning and value type", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "paypal eur",
+        currency: "EUR",
+        opening_fact_balance: 100,
+        planned_delta: 0,
+        real_delta: 20,
+        calculated_closing_balance: 120,
+        manual_provider_closing_balance: null,
+        manual_provider_fact_amount_usd: 132,
+        manual_provider_fact_value_type: "usd_only_needs_native",
+        needs_native_currency_value: true,
+        fact_source: "missing",
+        status: "missing_provider_balance",
+      },
+    ],
+    actionable_rows: [],
+  }));
+
+  const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  const paypal = rows.find((row) => row[0] === "paypal eur");
+  assert.equal(paypal[7], "—");
+  assert.equal(paypal[8], "132");
+  assert.equal(paypal[9], "USD-only");
+  assert.equal(paypal[15], "Нужен native amount: есть только USD equivalent.");
 });
 
 test("period balance UI moves empty no-data rows out of the main table", () => {
@@ -617,15 +647,12 @@ test("period balance UI moves empty no-data rows out of the main table", () => {
 
   const mainRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   const mainLabels = mainRows.slice(1).map((row) => row[0]);
-  assert.ok(!mainLabels.includes("пейпал cad"));
+  assert.ok(mainLabels.includes("пейпал cad"));
   assert.ok(mainLabels.includes("missing movement"));
   assert.ok(mainLabels.includes("amount net problem"));
   assert.ok(mainLabels.includes("carried mismatch"));
 
-  const hiddenSection = findByClass(block, "period-balance-no-data-subsection")[0];
-  assert.equal(hiddenSection.children[0].textContent, "Строки без данных");
-  assert.match(hiddenSection.textContent, /Скрыто строк без данных: 1/);
-  assert.match(hiddenSection.textContent, /пейпал cad/);
+  assert.equal(findByClass(block, "period-balance-no-data-subsection").length, 0);
 });
 
 test("period balance API failure renders non-blocking Analytics error", async () => {

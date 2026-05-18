@@ -117,11 +117,8 @@
     }
 
     const positionRows = reconciliation.by_channel_currency || [];
-    const meaningfulRows = positionRows.filter(isMeaningfulReconciliationRow);
-    const emptyRows = positionRows.filter((row) => !isMeaningfulReconciliationRow(row));
     section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, positionRows));
-    section.appendChild(renderPositionTable(doc, meaningfulRows));
-    if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
+    section.appendChild(renderPositionTable(doc, positionRows));
 
     const actions = reconciliation.actionable_rows || [];
     if (actions.length) {
@@ -310,19 +307,21 @@
         formatNumber(row.real_delta),
         formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatNumber(row.manual_provider_closing_balance),
+        formatNumber(row.manual_provider_fact_amount_usd ?? row.amount_usd),
+        getValueTypeLabel(row.manual_provider_fact_value_type || row.value_type),
         formatNumber(getCarriedForwardComparisonFact(row)),
         getFactSourceLabel(row),
         formatNumber(row.real_difference),
         formatNumber(row.plan_vs_real_delta),
         getStatusLabel(row.status),
-        row.missing_fact_reason || row.diagnosis || "—",
+        getNativeUsdWarning(row) || row.native_fact_missing_reason || row.missing_fact_reason || row.diagnosis || "—",
       ]),
       ...buildChannelCurrencyTotalRows(rows),
     ];
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ NATIVE", "USD ЭКВИВАЛЕНТ", "ТИП ЗНАЧЕНИЯ", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
   }
@@ -401,6 +400,27 @@
     return row.displayed_fact_balance ?? row.carried_forward_balance;
   }
 
+  function getValueTypeLabel(value) {
+    const type = String(value || "").trim();
+    const labels = {
+      native_and_usd: "native + USD",
+      native_only: "native",
+      usd_only_needs_native: "USD-only",
+      explicit_zero: "zero",
+      carried_forward: "перенос",
+      calculated_hint: "расчет",
+      needs_verification: "проверить",
+    };
+    return labels[type] || "—";
+  }
+
+  function getNativeUsdWarning(row) {
+    if (row?.needs_native_currency_value || row?.diagnostics?.needs_native_currency_value) {
+      return "Нужен native amount: есть только USD equivalent.";
+    }
+    return "";
+  }
+
   function buildChannelCurrencyTotalRows(rows) {
     const totalsByCurrency = new Map();
     (rows || []).forEach((row) => {
@@ -414,6 +434,7 @@
           real_delta: createTotalBucket(),
           calculated_closing_balance: createTotalBucket(),
           manual_provider_closing_balance: createTotalBucket(),
+          manual_provider_fact_amount_usd: createTotalBucket(),
           carried_forward_comparison_fact: createTotalBucket(),
           real_difference: createTotalBucket(),
           plan_vs_real_delta: createTotalBucket(),
@@ -426,6 +447,7 @@
       addNumeric(totals, "real_delta", row.real_delta);
       addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
       addNumeric(totals, "manual_provider_closing_balance", row.manual_provider_closing_balance);
+      addNumeric(totals, "manual_provider_fact_amount_usd", row.manual_provider_fact_amount_usd ?? row.amount_usd);
       addNumeric(totals, "carried_forward_comparison_fact", getCarriedForwardComparisonFact(row));
       addNumeric(totals, "real_difference", row.real_difference);
       addNumeric(totals, "plan_vs_real_delta", row.plan_vs_real_delta);
@@ -441,6 +463,8 @@
         formatTotalBucket(totals.real_delta),
         formatTotalBucket(totals.calculated_closing_balance),
         formatTotalBucket(totals.manual_provider_closing_balance),
+        formatTotalBucket(totals.manual_provider_fact_amount_usd),
+        "—",
         formatTotalBucket(totals.carried_forward_comparison_fact),
         "—",
         formatTotalBucket(totals.real_difference),

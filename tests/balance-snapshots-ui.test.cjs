@@ -207,20 +207,31 @@ test("balance snapshots UI renders input rows first with balance entry headers a
     balance_snapshots: {
       dates: ["2026-05-15"],
       valid_rows: 1,
+      native_valid_rows: 1,
+      usd_only_rows: 1,
       incomplete_rows: 0,
       by_channel_currency: [{ channel: "wise usd", currency: "USD", rows: 1, dates: ["2026-05-15"], first_date: "2026-05-15", last_date: "2026-05-15" }],
       input_rows: [
         { date: "2026-05-15", channel: "wise usd", currency: "USD", existing_amount: 1300, needs_input: false },
         { date: "2026-05-15", channel: "paypal eur", currency: "EUR", existing_amount: null, needs_input: true },
       ],
-      rows: [{ date: "2026-05-15", channel: "wise usd", currency: "USD", amount: 1300 }],
+      rows: [
+        { date: "2026-05-15", channel: "wise usd", currency: "USD", amount: 1300, amount_native: 1300, amount_usd: 1300, value_type: "native_and_usd", valid_native_balance: true },
+        { date: "2026-05-15", channel: "paypal eur", currency: "EUR", amount_native: null, amount_usd: 100, value_type: "usd_only_needs_native", valid_native_balance: false, needs_native_currency_value: true },
+      ],
     },
   });
 
   const firstTable = section.querySelectorAll("table")[0];
+  const balanceRows = textRows(section.querySelectorAll("table")[1]);
   const rows = textRows(firstTable);
   assert.match(section.textContent, /Остатки для сверки нужно вносить во вкладку Остатки, не во Факт/);
+  assert.match(section.textContent, /Native valid1/);
+  assert.match(section.textContent, /USD-only1/);
   assert.deepEqual(rows[0], ["Date", "Sheet", "Channel", "Currency", "Balance", "Status"]);
   assert.deepEqual(rows[1], ["2026-05-15", "Остатки", "wise usd", "USD", "1300", "already entered"]);
   assert.deepEqual(rows[2], ["2026-05-15", "Остатки", "paypal eur", "EUR", "—", "needs input"]);
+  assert.deepEqual(balanceRows[0], ["Дата", "Канал", "Валюта", "Native fact", "USD equivalent", "Value type", "Status"]);
+  assert.deepEqual(balanceRows[1], ["2026-05-15", "wise usd", "USD", "1300", "1300", "native + USD", "ok"]);
+  assert.deepEqual(balanceRows[2], ["2026-05-15", "paypal eur", "EUR", "—", "100", "USD-only", "needs native amount"]);
 });
