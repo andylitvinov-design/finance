@@ -107,12 +107,12 @@ async function main() {
     ...summary.rowsToCopy,
   ];
   if (apply && summary.rowsToCopy.length) {
-    await putValues(accessToken, AUTO_BALANCE_SHEET_NAME, "A:L", buildAutoBalanceValues(nextAutoRows));
+    await replaceSheetValues(accessToken, AUTO_BALANCE_SHEET_NAME, "A:L", buildAutoBalanceValues(nextAutoRows));
   }
   if (removeLegacyAuto && summary.detectedRows.length) {
     const detectedRows = new Set(summary.detectedRows.map((row) => row.sourceRow));
     const keptManualRows = (manualValues || []).filter((row, index) => index === 0 || !detectedRows.has(index + 1));
-    await putValues(accessToken, MANUAL_BALANCE_SHEET_NAME, "A:H", keptManualRows);
+    await replaceSheetValues(accessToken, MANUAL_BALANCE_SHEET_NAME, "A:H", keptManualRows);
   }
   console.log(JSON.stringify({
     dryRun: !apply,
@@ -173,9 +173,25 @@ async function getValues(accessToken, title, columns, options = {}) {
   return payload.values || [];
 }
 
-async function putValues(accessToken, title, columns, values) {
+export async function replaceSheetValues(accessToken, title, columns, values, { fetchImpl = fetch } = {}) {
+  await clearValues(accessToken, title, columns, { fetchImpl });
+  return putValues(accessToken, title, columns, values, { fetchImpl });
+}
+
+async function clearValues(accessToken, title, columns, { fetchImpl = fetch } = {}) {
   const range = encodeURIComponent(`'${title}'!${columns}`);
-  const response = await fetch(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`, {
+  const response = await fetchImpl(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}:clear`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({}),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error?.message || `Clear ${title} failed with HTTP ${response.status}`);
+}
+
+async function putValues(accessToken, title, columns, values, { fetchImpl = fetch } = {}) {
+  const range = encodeURIComponent(`'${title}'!${columns}`);
+  const response = await fetchImpl(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ range: `'${title}'!${columns}`, majorDimension: "ROWS", values }),
