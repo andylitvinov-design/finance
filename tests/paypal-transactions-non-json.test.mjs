@@ -134,6 +134,26 @@ test("handler returns structured JSON when PayPal MCP tool text is non-JSON", as
   assert.doesNotMatch(response.body.error, /^Unexpected token|SyntaxError/);
 });
 
+test("handler imports manual PayPal rows without calling provider credentials", async () => {
+  const response = createResponseRecorder();
+  await handler({
+    method: "POST",
+    body: {
+      source: "paypal_manual",
+      manualRows: [
+        { date: "2026-05-13", counterparty: "Booking.com BV", amount: "-€27.14", type: "Payment" }
+      ]
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.source, "paypal_manual");
+  assert.equal(response.body.entries.length, 1);
+  assert.equal(response.body.entries[0].source, "paypal_manual");
+  assert.equal(response.body.entries[0].amount_net, -27.14);
+});
+
 test("fetchPayPalStatementEntriesFromMcp reports text/plain MCP token errors with status and excerpt", async () => {
   await assert.rejects(
     fetchPayPalStatementEntriesFromMcp({

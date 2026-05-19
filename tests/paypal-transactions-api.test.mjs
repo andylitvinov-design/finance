@@ -7,6 +7,7 @@ import handler, {
   fetchPayPalStatementEntriesFromMcp,
   getReadablePayPalCounterparty,
   normalizePayPalTransactionDetails,
+  parsePayPalManualActivityRows,
   summarizePayPalStatementEntries,
   splitDateRange,
 } from "../api/paypal-transactions.js";
@@ -165,6 +166,64 @@ test("normalizePayPalTransactionDetails does not set net without explicit fee", 
   assert.equal(income?.amountFee, null);
   assert.equal(income?.amountNet, null);
   assert.equal(income?.usdAmount, null);
+});
+
+test("parsePayPalManualActivityRows preserves personal PayPal expense amount without fee", () => {
+  const { entries } = parsePayPalManualActivityRows([
+    { date: "2026-05-13", name: "Booking.com BV", amount: "-€27.14", type: "Payment" }
+  ]);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].date, "2026-05-13");
+  assert.equal(entries[0].counterpartyName, "Booking.com BV");
+  assert.equal(entries[0].direction, "expense");
+  assert.equal(entries[0].currency, "EUR");
+  assert.equal(entries[0].source, "paypal_manual");
+  assert.equal(entries[0].amount_net, -27.14);
+  assert.equal(entries[0].amount_gross, -27.14);
+  assert.equal(entries[0].feeAmount, null);
+  assert.equal(entries[0].fee_missing, true);
+  assert.equal(entries[0].needs_provider_permission, true);
+});
+
+test("parsePayPalManualActivityRows keeps USD and CAD separate from EUR", () => {
+  const { entries, summary } = parsePayPalManualActivityRows([
+    { date: "2026-05-13", counterparty: "NEXCESS.NET", amount: "-US$42.44", type: "Payment" },
+    { date: "2026-04-21", counterparty: "Uber Holdings Canada", amount: "-$13 CAD", type: "Payment" }
+  ]);
+
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].currency, "USD");
+  assert.equal(entries[0].amount_net, -42.44);
+  assert.equal(entries[1].currency, "CAD");
+  assert.equal(entries[1].amount_net, -13);
+  assert.deepEqual(summary.totalsByCurrency.map((row) => row.currency), ["CAD", "USD"]);
+});
+
+test("parsePayPalManualActivityRows classifies refunds as expense corrections, not service income", () => {
+  const { entries } = parsePayPalManualActivityRows([
+    { date: "2026-05-11", counterparty: "BOOKING HOLDINGS", amount: "+€36", type: "Refund" }
+  ]);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].direction, "income");
+  assert.equal(entries[0].entryKind, "refund");
+  assert.equal(entries[0].operationType, "refund");
+  assert.equal(entries[0].suggestedCategory, "business");
+  assert.equal(entries[0].is_refund, true);
+  assert.equal(entries[0].amount_net, 36);
+});
+
+test("parsePayPalManualActivityRows de-duplicates stable manual PayPal rows", () => {
+  const rows = [
+    { date: "2026-05-13", counterparty: "Booking.com BV", amount: "-€27.14", type: "Payment" },
+    { date: "2026-05-13", counterparty: "Booking.com BV", amount: "-€27.14", type: "Payment" }
+  ];
+  const { entries, duplicateCount } = parsePayPalManualActivityRows(rows);
+
+  assert.equal(entries.length, 1);
+  assert.equal(duplicateCount, 1);
+  assert.equal(entries[0].sourceTransactionId, "paypal_manual:2026-05-13:booking-com-bv:-27-14:eur:payment");
 });
 
 test("normalizePayPalTransactionDetails classifies currency conversion legs as exchange", () => {

@@ -14,6 +14,7 @@ const SOURCE_KEYS = [
   "manual",
   "fact",
   "paypal",
+  "paypal_manual",
   "paypal_personal_manual",
   "wise",
   "monobank",
@@ -652,6 +653,9 @@ function buildPayPalSummary(operations) {
   let hasNet = false;
   let missingCounterpartyRows = 0;
   let missingFeeRows = 0;
+  let paypalManualRows = 0;
+  let paypalRefundRows = 0;
+  const paypalCurrencies = new Set();
   const warnings = [];
 
   for (const row of paypalRows) {
@@ -669,6 +673,11 @@ function buildPayPalSummary(operations) {
         ""
     ).trim();
     const manuallyConfirmed = isPayPalPersonalManualRow(row);
+    const manualFallback = isPayPalManualRow(row);
+    const currency = String(ledger.currency || row.currency || "").trim().toUpperCase();
+    if (manualFallback) paypalManualRows += 1;
+    if (currency) paypalCurrencies.add(currency);
+    if (isPayPalRefundRow(row)) paypalRefundRows += 1;
     if (grossValue !== null) {
       gross += Math.abs(grossValue);
       hasGross = true;
@@ -699,6 +708,10 @@ function buildPayPalSummary(operations) {
     permission_status: "needs verification",
     net_status: hasNet && missingFeeRows ? "mixed_provider_and_manual" : hasNet ? "provider_proven" : "missing_net",
     personal_manual_confirmed_rows: paypalRows.filter(isPayPalPersonalManualRow).length,
+    paypal_manual_rows: paypalManualRows,
+    paypal_fee_missing_rows: missingFeeRows,
+    paypal_currencies: Array.from(paypalCurrencies).sort(),
+    paypal_refund_rows: paypalRefundRows,
     warning_status: paypalRows.some(isPayPalPersonalManualRow) ? "fee_unavailable_personal_account" : null,
     warnings: unique(warnings),
   };
@@ -781,19 +794,30 @@ function isExchangeRow(row) {
 function isPayPalRow(row) {
   const source = normalizeSource(row);
   const channel = `${row?.fromChannel || ""} ${row?.toChannel || ""} ${row?.ledgerV2?.from_channel || ""} ${row?.ledgerV2?.to_channel || ""}`.toLowerCase();
-  return source === "paypal" || source === "paypal_personal_manual" || /paypal|пейпал/.test(channel);
+  return source === "paypal" || source === "paypal_manual" || source === "paypal_personal_manual" || /paypal|пейпал/.test(channel);
+}
+
+function isPayPalManualRow(row) {
+  const source = normalizeSource(row);
+  return source === "paypal_manual" || source === "paypal_personal_manual";
 }
 
 function isPayPalPersonalManualRow(row) {
   const source = normalizeSource(row);
   const marker = `${row?.comment || ""} ${row?.description || ""} ${row?.ledgerV2?.comment || ""}`.toLowerCase();
-  return source === "paypal_personal_manual" || /paypal_personal_manual|manual_provider_confirmed|fee_unavailable_personal_account/.test(marker);
+  return source === "paypal_manual" || source === "paypal_personal_manual" || /paypal_manual|paypal_personal_manual|manual_provider_confirmed|fee_unavailable_personal_account/.test(marker);
+}
+
+function isPayPalRefundRow(row) {
+  const marker = `${row?.entryKind || ""} ${row?.operationType || ""} ${row?.operation_type || ""} ${row?.comment || ""} ${row?.description || ""} ${row?.ledgerV2?.comment || ""} ${row?.rawSourceId || ""} ${row?.raw_source_id || ""} ${row?.ledgerV2?.external_id || ""}`.toLowerCase();
+  return /\brefund\b|возврат|expense correction/.test(marker);
 }
 
 function normalizeSource(row) {
   const raw = String(row?.source || row?.ledgerV2?.source || "").trim().toLowerCase();
   if (raw === "privat_bank") return "privatbank";
   if (raw === "tdbank") return "td_bank";
+  if (raw === "paypal_manual") return "paypal_manual";
   if (raw === "paypal_personal" || raw === "manual_provider_confirmed") return "paypal_personal_manual";
   if (raw === "mcp" || raw === "photo" || raw === "provider" || raw === "import") return "unknown";
   if (SOURCE_KEYS.includes(raw)) return raw;

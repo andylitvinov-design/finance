@@ -414,6 +414,74 @@ test("audit snapshot does not count PayPal net as exact when fee is missing", as
   assert.match(response.warnings.join("\n"), /PayPal warning: missing fee for TXN-NOFEE/);
 });
 
+test("audit snapshot exposes PayPal manual diagnostics", async () => {
+  const response = await buildAuditSnapshot({
+    query: { from: "2026-05-11", to: "2026-05-13" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          date: "2026-05-13",
+          fromChannel: "пейпал евр",
+          amount: "27.14",
+          amountGross: "-27.14",
+          amountFee: "",
+          amountNet: "-27.14",
+          currency: "EUR",
+          source: "paypal_manual",
+          rawSourceId: "paypal_manual:2026-05-13:booking-com-bv:-27-14:eur:payment",
+          ledgerV2: {
+            operation: "expense",
+            from_channel: "пейпал евр",
+            amount: "27.14",
+            amount_gross: "-27.14",
+            amount_fee: "",
+            amount_net: "-27.14",
+            balance_amount: -27.14,
+            currency: "EUR",
+            source: "paypal_manual",
+            external_id: "paypal_manual:2026-05-13:booking-com-bv:-27-14:eur:payment",
+            comment: "fee_missing=true; needs_provider_permission=true",
+          },
+        }),
+        ledgerOperation({
+          date: "2026-05-11",
+          toChannel: "пейпал евр",
+          amount: "36",
+          amountGross: "36",
+          amountFee: "",
+          amountNet: "36",
+          currency: "EUR",
+          category: "business",
+          source: "paypal_manual",
+          rawSourceId: "paypal_manual:2026-05-11:booking-holdings:36:eur:refund",
+          ledgerV2: {
+            operation: "income",
+            to_channel: "пейпал евр",
+            amount: "36",
+            amount_gross: "36",
+            amount_fee: "",
+            amount_net: "36",
+            balance_amount: 36,
+            currency: "EUR",
+            source: "paypal_manual",
+            external_id: "paypal_manual:2026-05-11:booking-holdings:36:eur:refund",
+            comment: "PayPal manual refund expense correction; fee_missing=true; needs_provider_permission=true",
+          },
+        }),
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.paypal.paypal_manual_rows, 2);
+  assert.equal(response.paypal.paypal_fee_missing_rows, 2);
+  assert.equal(response.paypal.paypal_refund_rows, 1);
+  assert.deepEqual(response.paypal.paypal_currencies, ["EUR"]);
+  assert.equal(response.sources.paypal_manual, 2);
+});
+
 test("audit snapshot classifies missing PayPal amount_net as provider-permission incomplete", async () => {
   const response = await buildAuditSnapshot({
     repositoryLoader: async () => ({

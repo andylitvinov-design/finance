@@ -1208,9 +1208,9 @@ function getLedgerIncomeChannel(row) {
 function isLedgerProviderIncomeSource(row) {
   const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
   if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
-  if (["paypal", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider", "file_import", "csv_import", "xlsx_import", "pdf_import"].includes(source)) return true;
+  if (["paypal", "paypal_manual", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider", "file_import", "csv_import", "xlsx_import", "pdf_import"].includes(source)) return true;
   const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim().toLowerCase();
-  return /^(paypal|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
+  return /^(paypal|paypal_manual|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
 }
 
 function normalizeLedgerProviderIncomeClassifier(value) {
@@ -1535,7 +1535,7 @@ function renderProviderSummaryCard(label, totalsByCurrency, key) {
 
 function getActivePayPalSummary() {
   if (hasProviderSummaryData(state.expenseAccounting.paypalSummary)) return state.expenseAccounting.paypalSummary;
-  const paypalEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "paypal");
+  const paypalEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "paypal" || entry.source === "paypal_manual");
   return buildProviderExpenseSummary(paypalEntries);
 }
 
