@@ -1,5 +1,11 @@
 import { fetchWiseBalances } from "../api/wise-transactions.js";
 import { fetchMonobankClientInfo } from "../api/monobank-transactions.js";
+import { fetchPayPalCurrentBalances } from "../api/paypal-transactions.js";
+import { fetchYooMoneyCurrentBalance } from "../api/yoomoney-transactions.js";
+import {
+  fetchBinanceCurrentBalances,
+  getBinanceProviderConfigFromEnv,
+} from "./binance-transactions.js";
 import {
   MANUAL_SPREADSHEET_ID,
   SHEETS_API_BASE_URL,
@@ -49,10 +55,21 @@ export function getProviderCurrentBalanceCapabilities(env = process.env) {
       provider: "monobank",
       provider_current_balance_status: String(env.MONOBANK_API_TOKEN || "").trim() ? "available" : "needs_permission",
     },
-    { provider: "paypal", provider_current_balance_status: "not_implemented" },
+    {
+      provider: "paypal",
+      provider_current_balance_status: String(env.PAYPAL_CLIENT_ID || "").trim() && String(env.PAYPAL_CLIENT_SECRET || "").trim()
+        ? "available"
+        : "needs_permission",
+    },
     { provider: "privatbank", provider_current_balance_status: "not_implemented" },
-    { provider: "yoomoney", provider_current_balance_status: "not_implemented" },
-    { provider: "binance", provider_current_balance_status: "not_implemented" },
+    {
+      provider: "yoomoney",
+      provider_current_balance_status: String(env.YOOMONEY_ACCESS_TOKEN || "").trim() ? "available" : "needs_permission",
+    },
+    {
+      provider: "binance",
+      provider_current_balance_status: getBinanceProviderConfigFromEnv(env) ? "available" : "needs_permission",
+    },
     { provider: "tdbank", provider_current_balance_status: "not_implemented" },
     { provider: "payoneer", provider_current_balance_status: "not_implemented" },
     { provider: "revolut", provider_current_balance_status: "not_implemented" },
@@ -155,10 +172,10 @@ export async function collectProviderBalanceRows({ date, env = process.env, fetc
   return [
     await collectWiseBalanceRows({ date, env, fetchImpl }),
     await collectMonobankBalanceRows({ date, env, fetchImpl }),
-    buildUnavailableProviderResult("paypal", "not_implemented", "PayPal current-balance endpoint is not wired yet.", date),
+    await collectPayPalBalanceRows({ date, env, fetchImpl }),
     buildUnavailableProviderResult("privatbank", "not_implemented", "PrivatBank current-balance endpoint is not wired yet.", date),
-    buildUnavailableProviderResult("yoomoney", "not_implemented", "YooMoney current-balance endpoint is not wired yet.", date),
-    buildUnavailableProviderResult("binance", "not_implemented", "Binance current-balance snapshot endpoint is not wired yet.", date),
+    await collectYooMoneyBalanceRows({ date, env, fetchImpl }),
+    await collectBinanceBalanceRows({ date, env, fetchImpl }),
     buildUnavailableProviderResult("tdbank", "not_implemented", "TD Bank current-balance snapshot endpoint is not wired yet.", date),
     buildUnavailableProviderResult("payoneer", "not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet.", date),
     buildUnavailableProviderResult("revolut", "not_implemented", "Revolut current-balance snapshot endpoint is not wired yet.", date),
@@ -233,6 +250,133 @@ async function collectMonobankBalanceRows({ date, env, fetchImpl }) {
   }
 }
 
+async function collectPayPalBalanceRows({ date, env, fetchImpl }) {
+  const provider = "paypal";
+  try {
+    if (!String(env.PAYPAL_CLIENT_ID || "").trim() || !String(env.PAYPAL_CLIENT_SECRET || "").trim()) {
+      return buildUnavailableProviderResult(provider, "needs_permission", "PayPal current balance requires PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET with balances/reporting permission.", date);
+    }
+    const balances = await fetchPayPalCurrentBalances({
+      clientId: env.PAYPAL_CLIENT_ID,
+      clientSecret: env.PAYPAL_CLIENT_SECRET,
+      environment: env.PAYPAL_ENVIRONMENT || "live",
+      baseUrl: env.PAYPAL_API_BASE,
+      date,
+      fetchImpl,
+    });
+    const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
+    const skipped_rows = [];
+    for (const balance of balances || []) {
+      const currency = String(balance?.currency || "").trim().toUpperCase();
+      const expected = findExpectedProviderBalance(provider, currency);
+      if (!expected) {
+        skipped_rows.push({ provider, currency, reason: "missing_configured_channel" });
+        continue;
+      }
+      replaceExpectedRow(rows, buildSnapshotRow({
+        ...expected,
+        date,
+        amount: balance.amount,
+        rawSourceId: String(balance.id || `${provider}:${currency}`).trim(),
+        status: Number(balance.amount) === 0 ? "zero_balance" : "ok",
+        comment: SNAPSHOT_COMMENT,
+      }));
+    }
+    return { provider, provider_current_balance_status: "available", rows, skipped_rows };
+  } catch (error) {
+    const status = isPermissionError(error) ? "needs_permission" : (isNotSupportedAccountError(error) ? "not_supported_for_account" : "error");
+    return {
+      provider,
+      provider_current_balance_status: status,
+      rows: buildExpectedProviderRows({
+        provider,
+        date,
+        status: status === "error" ? "provider_error" : status,
+        comment: String(error?.message || error),
+      }),
+      skipped_rows: [],
+      error: String(error?.message || error),
+    };
+  }
+}
+
+async function collectYooMoneyBalanceRows({ date, env, fetchImpl }) {
+  const provider = "yoomoney";
+  try {
+    if (!String(env.YOOMONEY_ACCESS_TOKEN || "").trim()) {
+      return buildUnavailableProviderResult(provider, "needs_permission", "YOOMONEY_ACCESS_TOKEN is not configured.", date);
+    }
+    const balance = await fetchYooMoneyCurrentBalance({
+      accessToken: env.YOOMONEY_ACCESS_TOKEN,
+      baseUrl: env.YOOMONEY_API_BASE,
+      currency: env.YOOMONEY_CURRENCY || "RUB",
+      fetchImpl,
+    });
+    const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
+    const expected = findExpectedProviderBalance(provider, balance.currency);
+    if (expected) {
+      replaceExpectedRow(rows, buildSnapshotRow({
+        ...expected,
+        date,
+        amount: balance.amount,
+        rawSourceId: String(balance.id || `${provider}:${balance.currency}`).trim(),
+        status: Number(balance.amount) === 0 ? "zero_balance" : "ok",
+        comment: SNAPSHOT_COMMENT,
+      }));
+    }
+    return { provider, provider_current_balance_status: "available", rows, skipped_rows: expected ? [] : [{ provider, currency: balance.currency, reason: "missing_configured_channel" }] };
+  } catch (error) {
+    return {
+      provider,
+      provider_current_balance_status: isPermissionError(error) ? "needs_permission" : "error",
+      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_permission" : "provider_error", comment: String(error?.message || error) }),
+      skipped_rows: [],
+      error: String(error?.message || error),
+    };
+  }
+}
+
+async function collectBinanceBalanceRows({ date, env, fetchImpl }) {
+  const provider = "binance";
+  try {
+    const config = getBinanceProviderConfigFromEnv(env);
+    if (!config) {
+      return buildUnavailableProviderResult(provider, "needs_permission", "BINANCE_API_KEY and BINANCE_API_SECRET are not configured.", date);
+    }
+    const balances = await fetchBinanceCurrentBalances({ ...config, fetchImpl });
+    const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
+    const spotUsdt = balances.find((balance) => balance.wallet === "spot" && balance.currency === "USDT");
+    if (spotUsdt) {
+      replaceExpectedRow(rows, buildSnapshotRow({
+        ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "Бинанс spot" && row.currency === "USDT"),
+        date,
+        amount: spotUsdt.amount,
+        rawSourceId: spotUsdt.id,
+        status: Number(spotUsdt.amount) === 0 ? "zero_balance" : "ok",
+        comment: SNAPSHOT_COMMENT,
+      }));
+    }
+    replaceExpectedRow(rows, buildSnapshotRow({
+      ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
+      date,
+      amount: "",
+      amountUsd: "",
+      rawSourceId: "binance:binance save:USDT",
+      status: "provider_not_implemented",
+      comment: "Binance savings/Earn current balance endpoint is not wired in this app yet.",
+    }));
+    return { provider, provider_current_balance_status: "available", rows, skipped_rows: [] };
+  } catch (error) {
+    return {
+      provider,
+      provider_current_balance_status: isPermissionError(error) ? "needs_permission" : "error",
+      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_permission" : "provider_error", comment: String(error?.message || error) }),
+      skipped_rows: [],
+      error: String(error?.message || error),
+    };
+  }
+}
+
 function collectMonobankRawAccounts(clientInfo) {
   return [
     ...(Array.isArray(clientInfo?.accounts) ? clientInfo.accounts : []),
@@ -272,6 +416,7 @@ function buildUnavailableProviderResult(provider, status, warning, date = "") {
 function mapUnavailableStatus(status) {
   if (status === "needs_permission") return "needs_provider_permission";
   if (status === "not_implemented") return "provider_not_implemented";
+  if (status === "not_supported_for_account") return "not_supported_for_account";
   return status || "missing_provider_balance";
 }
 
@@ -479,9 +624,9 @@ function normalizeProvider(value) {
 
 function normalizeAutoSource(value, provider) {
   const raw = String(value || "").trim().toLowerCase();
-  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeProvider(provider);
-  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
   return "provider_auto";
 }
 
@@ -523,6 +668,18 @@ function isTruthy(value) {
 
 function unique(values) {
   return [...new Set((values || []).filter(Boolean))];
+}
+
+function isPermissionError(error) {
+  const text = String(error?.message || error || "").toLowerCase();
+  const status = Number(error?.paypalStatus || error?.status || 0);
+  return status === 401 || status === 403 || /permission|unauthori[sz]ed|forbidden|auth|credential|token|scope|access_denied|not configured/.test(text);
+}
+
+function isNotSupportedAccountError(error) {
+  const text = String(error?.message || error || "").toLowerCase();
+  const status = Number(error?.paypalStatus || error?.status || 0);
+  return status === 404 || /not supported|unsupported|not enabled|not available|personal account|business account required/.test(text);
 }
 
 function buildStructuredError(code, message) {

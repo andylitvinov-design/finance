@@ -79,12 +79,23 @@ test("provider unavailable creates dated status rows instead of fake zero rows",
   assert.ok(result.rows_preview.length > 0);
   assert.equal(result.provider_current_balance_status.wise, "needs_permission");
   assert.equal(result.provider_current_balance_status.monobank, "needs_permission");
+  assert.deepEqual(Object.keys(result.provider_current_balance_status).sort(), [
+    "binance",
+    "monobank",
+    "payoneer",
+    "paypal",
+    "privatbank",
+    "revolut",
+    "tdbank",
+    "wise",
+    "yoomoney",
+  ]);
 
   const paypalRows = result.rows_preview.filter((row) => row.provider === "paypal");
   assert.deepEqual(paypalRows.map((row) => `${row.channel}|${row.currency}|${row.status}|${row.amount}`), [
-    "пейпал дол|USD|provider_not_implemented|",
-    "пейпал евр|EUR|provider_not_implemented|",
-    "пейпал сad|CAD|provider_not_implemented|",
+    "пейпал дол|USD|needs_provider_permission|",
+    "пейпал евр|EUR|needs_provider_permission|",
+    "пейпал сad|CAD|needs_provider_permission|",
   ]);
   assert.equal(paypalRows.every((row) => row.date === "2026-05-17"), true);
 });
@@ -152,6 +163,125 @@ test("Wise and Monobank balances produce complete expected provider rows, includ
   ]);
   assert.equal(results.find((result) => result.provider === "monobank")?.skipped_rows.length, 1);
   assert.equal(results.find((result) => result.provider === "wise")?.skipped_rows.length, 1);
+});
+
+test("Binance, YooMoney, and PayPal current balance APIs produce provider snapshot rows", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    const value = String(url);
+    calls.push({ url: value, method: options.method || "GET" });
+    if (value.includes("/api/v3/account")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            balances: [
+              { asset: "USDT", free: "100.25", locked: "2.75" },
+              { asset: "BTC", free: "1", locked: "0" },
+            ],
+          });
+        },
+      };
+    }
+    if (value.endsWith("/api/account-info")) {
+      return jsonResponse({ account: "4100", balance: "1234.56", currency: "RUB" });
+    }
+    if (value.endsWith("/v1/oauth2/token")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ access_token: "paypal-token" });
+        },
+      };
+    }
+    if (value.includes("/v1/reporting/balances")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            balances: [
+              { available_balance: { value: "10.50", currency_code: "USD" } },
+              { available_balance: { value: "0", currency_code: "EUR" } },
+            ],
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected URL ${value}`);
+  };
+
+  const results = await collectProviderBalanceRows({
+    date: "2026-05-19",
+    env: {
+      BINANCE_API_KEY: "binance-key",
+      BINANCE_API_SECRET: "binance-secret",
+      YOOMONEY_ACCESS_TOKEN: "yoomoney-token",
+      PAYPAL_CLIENT_ID: "paypal-client",
+      PAYPAL_CLIENT_SECRET: "paypal-secret",
+    },
+    fetchImpl,
+  });
+  const rows = results.flatMap((result) => result.rows);
+
+  assert.ok(calls.some((call) => call.url.includes("/api/v3/account")));
+  assert.ok(calls.some((call) => call.url.endsWith("/api/account-info")));
+  assert.ok(calls.some((call) => call.url.includes("/v1/reporting/balances")));
+  assert.deepEqual(rows.filter((row) => row.provider === "binance").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "Бинанс spot|USDT|103|ok",
+    "binance save|USDT||provider_not_implemented",
+  ]);
+  assert.deepEqual(rows.filter((row) => row.provider === "yoomoney").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "Яндекс руб|RUB|1234,56|ok",
+  ]);
+  assert.deepEqual(rows.filter((row) => row.provider === "paypal").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "пейпал дол|USD|10,5|ok",
+    "пейпал евр|EUR|0|zero_balance",
+    "пейпал сad|CAD||missing_provider_balance",
+  ]);
+});
+
+test("PayPal balances permission errors become structured status rows", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-05-19",
+    env: {
+      PAYPAL_CLIENT_ID: "paypal-client",
+      PAYPAL_CLIENT_SECRET: "paypal-secret",
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/v1/oauth2/token")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ access_token: "paypal-token" });
+          },
+        };
+      }
+      if (value.includes("/v1/reporting/balances")) {
+        return {
+          ok: false,
+          status: 403,
+          async text() {
+            return "<html>Forbidden</html>";
+          },
+        };
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+  const paypal = results.find((result) => result.provider === "paypal");
+
+  assert.equal(paypal.provider_current_balance_status, "needs_permission");
+  assert.deepEqual(paypal.rows.map((row) => row.status), [
+    "needs_permission",
+    "needs_permission",
+    "needs_permission",
+  ]);
+  assert.match(paypal.error, /PayPal balances request failed \(403\)/);
 });
 
 test("non-JSON provider response becomes structured JSON error rows", async () => {
@@ -253,7 +383,7 @@ test("auto snapshot save writes merged Авто Остатки values through Go
     assert.equal(writes[0][0][0], "date");
     assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз дол" && row[3] === "120,45" && row[10] === "ok"));
     assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз евро" && row[10] === "missing_provider_balance"));
-    assert.ok(writes[0].some((row) => row[1] === "paypal" && row[2] === "пейпал дол" && row[10] === "provider_not_implemented"));
+    assert.ok(writes[0].some((row) => row[1] === "paypal" && row[2] === "пейпал дол" && row[10] === "needs_provider_permission"));
   } finally {
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);

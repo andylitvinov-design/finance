@@ -149,6 +149,56 @@ export async function fetchPayPalStatementEntries(options = {}) {
   };
 }
 
+export async function fetchPayPalCurrentBalances(options = {}) {
+  const clientId = String(options.clientId || "").trim();
+  const clientSecret = String(options.clientSecret || "").trim();
+  if (!clientId || !clientSecret) {
+    throw new Error("PayPal REST credentials are not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET.");
+  }
+  const fetchImpl = options.fetchImpl || fetch;
+  const baseUrl = getPayPalBaseUrl(options.environment, options.baseUrl);
+  const accessToken = await getPayPalAccessToken({ fetchImpl, baseUrl, clientId, clientSecret });
+  const url = new URL(`${baseUrl}/v1/reporting/balances`);
+  const asOfTime = normalizePayPalAsOfTime(options.asOfTime || options.date);
+  if (asOfTime) url.searchParams.set("as_of_time", asOfTime);
+  const upstream = await fetchImpl(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      "Accept-Language": "en_US",
+      "Content-Type": "application/json"
+    }
+  });
+  const payload = await readJsonOrTextResponse(upstream, "PayPal balances request failed");
+  if (!upstream.ok) {
+    throw createPayPalApiError(
+      formatPayPalUpstreamError("PayPal balances request failed", upstream.status, payload),
+      { status: upstream.status, payload, phase: "balances" }
+    );
+  }
+  return normalizePayPalCurrentBalances(payload);
+}
+
+export function normalizePayPalCurrentBalances(payload = {}) {
+  const details = Array.isArray(payload?.balances)
+    ? payload.balances
+    : (Array.isArray(payload?.items) ? payload.items : []);
+  return details
+    .map((item) => {
+      const candidates = [
+        item?.available_balance,
+        item?.availableBalance,
+        item?.total_balance,
+        item?.totalBalance,
+        item?.balance,
+        item?.amount,
+      ].filter(Boolean);
+      return candidates.length ? normalizePayPalBalanceAmount(candidates[0], item) : null;
+    })
+    .filter((balance) => balance?.currency && Number.isFinite(balance.amount));
+}
+
 export async function fetchPayPalStatementEntriesFromMcp(options = {}) {
   const startDate = normalizeIsoDate(options.startDate);
   const endDate = normalizeIsoDate(options.endDate);
@@ -1159,6 +1209,30 @@ function getPayPalBaseUrl(environment, explicitBaseUrl) {
 
 function toPayPalDateTime(date, endOfDay) {
   return `${date}T${endOfDay ? "23:59:59" : "00:00:00"}Z`;
+}
+
+function normalizePayPalAsOfTime(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T23:59:59Z`;
+  return raw && !Number.isNaN(Date.parse(raw)) ? new Date(raw).toISOString() : "";
+}
+
+function normalizePayPalBalanceAmount(amountValue = {}, parent = {}) {
+  const value = typeof amountValue === "object"
+    ? firstNonEmpty(amountValue.value, amountValue.amount)
+    : amountValue;
+  const currency = String(
+    typeof amountValue === "object"
+      ? firstNonEmpty(amountValue.currency_code, amountValue.currency, parent.currency_code, parent.currency)
+      : firstNonEmpty(parent.currency_code, parent.currency)
+  ).trim().toUpperCase();
+  const amount = Number.parseFloat(String(value ?? "").replace(",", "."));
+  return {
+    id: String(firstNonEmpty(parent.account_id, parent.accountId, parent.currency_code, currency, "paypal-balance")).trim(),
+    currency,
+    amount: Number.isFinite(amount) ? roundPayPalSummaryAmount(amount) : NaN,
+    raw: parent,
+  };
 }
 
 function normalizeIsoDate(value) {

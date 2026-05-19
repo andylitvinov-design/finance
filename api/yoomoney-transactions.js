@@ -90,6 +90,37 @@ export async function fetchYooMoneyStatementEntries(options = {}) {
   };
 }
 
+export async function fetchYooMoneyCurrentBalance(options = {}) {
+  const accessToken = String(options.accessToken || "").trim();
+  if (!accessToken) throw new Error("YooMoney credentials are not configured. Set YOOMONEY_ACCESS_TOKEN.");
+  const fetchImpl = options.fetchImpl || fetch;
+  const baseUrl = String(options.baseUrl || YOOMONEY_BASE_URL).replace(/\/+$/, "");
+  const upstream = await fetchImpl(`${baseUrl}/api/account-info`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json"
+    },
+    body: ""
+  });
+  const payload = await upstream.json().catch(() => null);
+  if (!upstream.ok || payload?.error) {
+    throw new Error(payload?.error_description || payload?.error || `YooMoney account-info request failed (${upstream.status}).`);
+  }
+  const amount = Number.parseFloat(String(payload?.balance ?? "").replace(",", "."));
+  if (!Number.isFinite(amount)) {
+    throw new Error("YooMoney account-info did not return a numeric balance.");
+  }
+  const currency = String(payload?.currency || options.currency || YOOMONEY_DEFAULT_CURRENCY).trim().toUpperCase();
+  return {
+    id: String(payload?.account || payload?.account_number || "yoomoney-account").trim(),
+    amount: roundYooMoneyAmount(amount),
+    currency,
+    raw: payload
+  };
+}
+
 async function fetchYooMoneyOperationHistory(options = {}) {
   const body = new URLSearchParams({
     type: "deposition payment",
