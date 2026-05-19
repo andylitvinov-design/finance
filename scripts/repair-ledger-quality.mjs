@@ -19,6 +19,8 @@ import {
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const LEDGER_RANGE_COLUMNS = "A:V";
+const MANUAL_BALANCE_SHEET_NAME = "Остатки";
+const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
 const TASKS = new Set(["all", "missing-amount-net", "mismatches", "balance-corrections", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
 const TASK_ALIASES = new Map([
   ["mismatch-report", "mismatches"],
@@ -35,6 +37,8 @@ export function parseArgs(argv = process.argv.slice(2)) {
     task: "all",
     from: "",
     to: "",
+    onlyConfirmed: false,
+    maxApply: 10,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -45,6 +49,8 @@ export function parseArgs(argv = process.argv.slice(2)) {
     else if (arg === "--from") options.from = normalizeDate(argv[++index] || "");
     else if (arg === "--to") options.to = normalizeDate(argv[++index] || "");
     else if (arg === "--confirm-file") options.confirmFile = argv[++index] || "";
+    else if (arg === "--only-confirmed") options.onlyConfirmed = true;
+    else if (arg === "--max-apply") options.maxApply = parseMaxApply(argv[++index] || "");
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -77,7 +83,7 @@ export function buildLedgerQualityRepairReport({
     ? buildMismatchReport({ operations, balances })
     : emptyTaskReport();
   const balanceCorrections = shouldRun(task, "balance-corrections")
-    ? buildBalanceCorrectionsReport({ operations, balances, autoBalances, mergedBalances })
+    ? buildBalanceCorrectionsReport({ operations, balances, autoBalances, mergedBalances, confirmations, now })
     : emptyBalanceCorrectionsReport();
   const missingBalances = shouldRun(task, "missing-balances")
     ? buildMissingBalancesReport({ operations, balances, autoBalances, mergedBalances })
@@ -253,7 +259,7 @@ export function buildMismatchReport({ operations = [], balances = [] } = {}) {
   };
 }
 
-export function buildBalanceCorrectionsReport({ operations = [], balances = [], autoBalances = [], mergedBalances = [] } = {}) {
+export function buildBalanceCorrectionsReport({ operations = [], balances = [], autoBalances = [], mergedBalances = [], confirmations = {}, now = new Date().toISOString() } = {}) {
   const merged = mergedBalances.length
     ? mergedBalances
     : (mergeManualAndAutoBalances(balances, autoBalances).rows || []);
@@ -261,48 +267,89 @@ export function buildBalanceCorrectionsReport({ operations = [], balances = [], 
   const rows = (daily.rows || [])
     .filter((row) => row.status && row.status !== "ok")
     .sort(compareMismatchRows)
-    .map((row) => buildBalanceCorrectionRow({ row, balances, autoBalances, mergedBalances: merged }));
+    .map((row) => buildBalanceCorrectionRow({ row, operations, balances, autoBalances, mergedBalances: merged, confirmations, now }));
   const conflicts = buildManualAutoBalanceConflicts({ balances, autoBalances });
+  const wouldUpdate = rows.filter((row) => Array.isArray(row.after) && row.after.length).length;
   return {
     rows,
     conflicts,
     summary: {
       detected: rows.length,
       conflicts: conflicts.length,
-      wouldUpdate: 0,
+      wouldUpdate,
       updated: 0,
-      skipped: rows.length,
-      needsManualVerification: rows.length + conflicts.length,
+      skipped: rows.length - wouldUpdate,
+      needsManualVerification: rows.filter((row) => row.needs_provider_confirmation).length + conflicts.length,
     },
   };
 }
 
-function buildBalanceCorrectionRow({ row, balances = [], autoBalances = [], mergedBalances = [] }) {
+function buildBalanceCorrectionRow({ row, operations = [], balances = [], autoBalances = [], mergedBalances = [], confirmations = {}, now }) {
   const exactManual = findExactBalanceCandidate({ balances, row });
   const exactAuto = findExactBalanceCandidate({ balances: autoBalances, row });
   const exactMerged = findExactBalanceCandidate({ balances: mergedBalances, row });
   const current = exactManual || exactAuto || exactMerged || null;
   const currentSourceType = getBalanceSourceType(current);
   const computedBalance = row.closing_balance ?? row.computed_closing_balance ?? null;
+  const opening = findOpeningBalanceRow({ balances: mergedBalances, date: row.date, channel: row.channel, currency: row.currency });
+  const movements = movementsForRange({
+    operations,
+    channel: row.channel,
+    currency: row.currency,
+    fromExclusive: opening?.date || "",
+    toInclusive: row.date,
+  });
+  const missingNetRows = operations
+    .filter((operation) => !hasText(operation?.ledgerV2?.amount_net ?? operation?.amountNet ?? operation?.amount_net))
+    .filter((operation) => normalizeDate(operation?.date ?? operation?.ledgerV2?.date) > (opening?.date || ""))
+    .filter((operation) => normalizeDate(operation?.date ?? operation?.ledgerV2?.date) <= row.date)
+    .filter((operation) => getCurrency(operation) === row.currency)
+    .filter((operation) => getFromChannel(operation) === row.channel || getToChannel(operation) === row.channel);
+  const classification = classifyBalanceCorrection({ row, movements, missingNetRows, current, currentSourceType });
+  const confirmedCorrection = buildConfirmedBalanceCorrection({ row, current, movements, classification, confirmations, now });
+  const needsProviderConfirmation = !confirmedCorrection.after.length;
+  const target = confirmedCorrection.target || resolveBalanceCorrectionTargetSheet({ row, current });
+  const action = confirmedCorrection.action || buildBalanceCorrectionAction({ row, currentSourceType, computedBalance, classification });
   return {
     date: row.date,
     channel: row.channel,
     currency: row.currency,
     status: row.status,
+    classification,
     opening_balance: row.opening_balance,
     provider_balance: row.provider_reported_balance,
     computed_balance: computedBalance,
     diff: row.difference,
     current_source: formatBalanceSource(current),
     current_source_type: currentSourceType,
-    recommended_action: buildBalanceCorrectionAction({ row, currentSourceType, computedBalance }),
+    recommended_action: action,
+    target,
     target_sheet: resolveBalanceCorrectionTargetSheet({ row, current }),
     conflict: buildExactConflict({ manual: exactManual, auto: exactAuto }),
-    after: null,
+    evidence: {
+      opening_balance_row: compactBalanceRow(opening),
+      factual_balance_row: compactBalanceRow(current),
+      movements: movements.map(compactMovementRow),
+      missing_amount_net_rows: missingNetRows.map(compactLedgerRow),
+    },
+    confidence: confirmedCorrection.confidence,
+    needs_provider_confirmation: needsProviderConfirmation,
+    source_reference: confirmedCorrection.source_reference || formatBalanceSource(current),
+    before: {
+      status: row.status,
+      opening_balance: row.opening_balance,
+      inflow: row.inflow,
+      outflow: row.outflow,
+      computed_balance: computedBalance,
+      provider_balance: row.provider_reported_balance,
+      diff: row.difference,
+    },
+    after: confirmedCorrection.after.length ? confirmedCorrection.after : null,
+    skippedReason: confirmedCorrection.after.length ? "" : "needs_provider_confirmation",
   };
 }
 
-function buildBalanceCorrectionAction({ row, currentSourceType, computedBalance }) {
+function buildBalanceCorrectionAction({ row, currentSourceType, computedBalance, classification }) {
   if (row.status === "missing_opening_balance") {
     return "Add factual provider/manual opening balance before this movement date in Остатки; do not derive it from computed ledger movement.";
   }
@@ -312,10 +359,138 @@ function buildBalanceCorrectionAction({ row, currentSourceType, computedBalance 
   if (currentSourceType === "provider_auto") {
     return "Verify provider auto snapshot against statement/import; do not copy computed balance into Остатки unless manually confirmed.";
   }
+  if (classification === "wrong_sign") {
+    return "Correct the proven Ledger sign/direction only when provider evidence uniquely explains the difference.";
+  }
   if (row.status === "mismatch") {
     return "Verify provider/manual statement before changing data; if provider_balance is factual, correct Ledger movement, otherwise correct the Остатки row.";
   }
   return "Verify factual balance source before changing Ledger or balance rows.";
+}
+
+function classifyBalanceCorrection({ row, movements = [], missingNetRows = [], current, currentSourceType }) {
+  if (missingNetRows.some(isPayPalRow)) return "paypal_manual_confirmation_needed";
+  if (row.status === "missing_opening_balance") return "missing_opening_balance";
+  if (row.status === "missing_provider_balance") return "missing_provider_balance";
+  const diff = Math.abs(row.difference || 0);
+  const movementAbs = round((movements || []).reduce((sum, movement) => sum + Math.abs(movement.balanceAmount || 0), 0));
+  if (currentSourceType === "provider_auto" && movements.length && Math.abs((movementAbs * 2) - diff) <= 0.01) {
+    return "wrong_sign";
+  }
+  if (!movements.length) return "missing_ledger_operation";
+  if (!current) return "missing_provider_balance";
+  return currentSourceType === "provider_auto" ? "provider_import_or_ledger_gap" : "wrong_factual_balance";
+}
+
+function buildConfirmedBalanceCorrection({ row, current, movements = [], classification, confirmations = {}, now }) {
+  const manualConfirmation = findBalanceCorrectionConfirmation(row, confirmations);
+  if (manualConfirmation) return buildManualConfirmedBalanceCorrection({ row, confirmation: manualConfirmation, now });
+  const wiseSignFix = buildWiseNegativeCardSignFix({ row, current, movements, classification, now });
+  if (wiseSignFix) return wiseSignFix;
+  return { after: [], confidence: "low", target: "", action: "", source_reference: "" };
+}
+
+function buildWiseNegativeCardSignFix({ row, current, movements = [], classification, now }) {
+  if (classification !== "wrong_sign") return null;
+  if (getBalanceSourceType(current) !== "provider_auto") return null;
+  if (normalizeTargetSource(current?.provider || current?.source || "") !== "wise") return null;
+  if (!movements.length || !movements.every(isWiseNegativeCardExpense)) return null;
+  const providerBalance = parseAmount(row.provider_reported_balance);
+  const computedBalance = parseAmount(row.closing_balance ?? row.computed_closing_balance);
+  if (providerBalance === null || computedBalance === null) return null;
+  const movementAbs = round(movements.reduce((sum, movement) => sum + Math.abs(movement.balanceAmount || 0), 0));
+  if (Math.abs(providerBalance - round(computedBalance + movementAbs * 2)) > 0.01) return null;
+  return {
+    confidence: "high",
+    target: "Ledger",
+    action: "Flip Wise negative card rows from expense/outflow to income/inflow; provider_auto balance proves these card rows increase the Wise balance.",
+    source_reference: formatBalanceSource(current),
+    after: movements.map((movement) => ({
+      target: "Ledger",
+      action: "update",
+      sheetRowNumber: movement.sheetRowNumber,
+      raw_source_id: movement.raw_source_id,
+      before: movement,
+      patch: {
+        operation: "income",
+        from_channel: "",
+        to_channel: row.channel,
+        direction: "in",
+        comment: appendCommentMarker(movement.comment, "balance_correction_provider_auto_sign_fix"),
+        updated_at: now,
+      },
+    })),
+  };
+}
+
+function isWiseNegativeCardExpense(movement = {}) {
+  return movement.source === "wise"
+    && movement.operation === "expense"
+    && movement.from_channel
+    && !movement.to_channel
+    && /card transaction of\s*-/i.test(movement.comment || "")
+    && Number(movement.sheetRowNumber) > 0;
+}
+
+function findBalanceCorrectionConfirmation(row, confirmations = {}) {
+  const entries = Array.isArray(confirmations.balanceCorrections) ? confirmations.balanceCorrections : [];
+  return entries.find((entry) =>
+    normalizeDate(entry.date) === row.date
+    && String(entry.channel || "").trim() === row.channel
+    && String(entry.currency || "").trim().toUpperCase() === row.currency
+  ) || null;
+}
+
+function buildManualConfirmedBalanceCorrection({ row, confirmation, now }) {
+  const target = String(confirmation.target || "").trim();
+  const confidence = String(confirmation.confidence || "").trim().toLowerCase();
+  const sourceReference = String(confirmation.source_reference || confirmation.sourceReference || "").trim();
+  if (confidence !== "high" || !sourceReference || !["Ledger", MANUAL_BALANCE_SHEET_NAME, AUTO_BALANCE_SHEET_NAME, "PayPal manual confirmation"].includes(target)) {
+    return { after: [], confidence: confidence || "low", target, action: "", source_reference: sourceReference };
+  }
+  if (target === "Ledger") {
+    const patches = Array.isArray(confirmation.patches) ? confirmation.patches : [];
+    return {
+      confidence: "high",
+      target,
+      action: String(confirmation.action || "Apply explicitly confirmed Ledger patch.").trim(),
+      source_reference: sourceReference,
+      after: patches
+        .filter((patch) => Number(patch.sheetRowNumber || patch.sheet_row_number || 0) > 0)
+        .map((patch) => ({
+          target: "Ledger",
+          action: "update",
+          sheetRowNumber: Number(patch.sheetRowNumber || patch.sheet_row_number),
+          raw_source_id: String(patch.raw_source_id || patch.rawSourceId || "").trim(),
+          before: null,
+          patch: {
+            ...patch.patch,
+            updated_at: patch.patch?.updated_at || now,
+          },
+        })),
+    };
+  }
+  const amount = parseAmount(confirmation.amount ?? confirmation.balanceAmount);
+  if (amount === null) return { after: [], confidence: "low", target, action: "", source_reference: sourceReference };
+  return {
+    confidence: "high",
+    target,
+    action: String(confirmation.action || `Apply confirmed ${target} balance row.`).trim(),
+    source_reference: sourceReference,
+    after: [{
+      target,
+      action: "append_or_update",
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      amount,
+      provider: String(confirmation.provider || "").trim(),
+      source: String(confirmation.source || "").trim(),
+      raw_source_id: String(confirmation.raw_source_id || confirmation.rawSourceId || "").trim(),
+      status: String(confirmation.status || "ok").trim(),
+      comment: appendCommentMarker(String(confirmation.comment || "").trim(), "balance_correction_confirmed"),
+    }],
+  };
 }
 
 function resolveBalanceCorrectionTargetSheet({ row, current }) {
@@ -556,26 +731,57 @@ export function buildUpdatedLedgerRow({ header = [], currentRow = [], patch = {}
   return values;
 }
 
-export async function applyLedgerQualityRepairs({ report, task = "all", fetchImpl = fetch } = {}) {
-  const updates = collectUpdates(report, task);
-  if (!updates.length) return { updated: 0, skipped: 0, updates: [] };
-  const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
-  const header = await readLedgerHeader({ accessToken, fetchImpl });
-  let updated = 0;
-  const applied = [];
-  for (const update of updates) {
-    const currentRow = await readLedgerRow({ sheetRowNumber: update.sheetRowNumber, accessToken, fetchImpl });
-    const nextRow = buildUpdatedLedgerRow({ header, currentRow, patch: update.patch });
-    await writeLedgerRow({ sheetRowNumber: update.sheetRowNumber, row: nextRow, accessToken, fetchImpl });
-    updated += 1;
-    applied.push({
-      sheetRowNumber: update.sheetRowNumber,
-      patch: update.patch,
-      before: update.before || null,
-      after: update.after || update.patch,
-    });
+export async function applyLedgerQualityRepairs({ report, task = "all", onlyConfirmed = false, maxApply = 10, fetchImpl = fetch, accessToken = "" } = {}) {
+  if (!onlyConfirmed) {
+    throw new Error("--apply requires --only-confirmed");
   }
-  return { updated, skipped: 0, updates: applied };
+  const updates = collectUpdates(report, task);
+  const unsafe = updates.filter((update) => update.confidence !== "high" || update.needs_provider_confirmation);
+  if (unsafe.length) {
+    throw new Error(`Refusing to apply ${unsafe.length} unconfirmed balance correction row(s).`);
+  }
+  if (updates.length > maxApply) {
+    throw new Error(`Refusing to apply ${updates.length} row(s); --max-apply is ${maxApply}.`);
+  }
+  if (!updates.length) return { updated: 0, skipped: 0, updates: [] };
+  const token = accessToken || await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  const header = await readLedgerHeader({ accessToken: token, fetchImpl });
+  let updated = 0;
+  let skipped = 0;
+  const applied = [];
+  const skippedRows = [];
+  for (const update of updates) {
+    if (update.target === "Ledger") {
+      const currentRow = await readLedgerRow({ sheetRowNumber: update.sheetRowNumber, accessToken: token, fetchImpl });
+      const nextRow = buildUpdatedLedgerRow({ header, currentRow, patch: update.patch });
+      if (rowsEqual(currentRow, nextRow)) {
+        skipped += 1;
+        skippedRows.push({ ...update, skippedReason: "idempotent" });
+        continue;
+      }
+      await writeLedgerRow({ sheetRowNumber: update.sheetRowNumber, row: nextRow, accessToken: token, fetchImpl });
+      updated += 1;
+      applied.push({
+        target: update.target,
+        rowKey: update.rowKey || "",
+        sheetRowNumber: update.sheetRowNumber,
+        raw_source_id: update.raw_source_id || "",
+        patch: update.patch,
+        before: update.before || null,
+        after: update.after || update.patch,
+      });
+      continue;
+    }
+    const result = await applyBalanceSheetCorrection({ update, accessToken: token, fetchImpl });
+    if (result.skippedReason) {
+      skipped += 1;
+      skippedRows.push({ ...update, skippedReason: result.skippedReason });
+      continue;
+    }
+    updated += 1;
+    applied.push(result);
+  }
+  return { updated, skipped, updates: applied, skippedRows };
 }
 
 function collectUpdates(report, task) {
@@ -602,6 +808,19 @@ function collectUpdates(report, task) {
       });
     }
   }
+  if (shouldRun(task, "balance-corrections")) {
+    for (const row of report?.balanceCorrections?.rows || []) {
+      for (const correction of arrayValue(row.after)) {
+        updates.push({
+          ...correction,
+          confidence: row.confidence,
+          needs_provider_confirmation: row.needs_provider_confirmation,
+          source_reference: row.source_reference || "",
+          rowKey: `${row.date}|${row.channel}|${row.currency}`,
+        });
+      }
+    }
+  }
   if (shouldRun(task, "normalize-sources")) {
     for (const row of report?.normalizeSources?.rows || []) {
       if (!row.after) continue;
@@ -614,6 +833,79 @@ function collectUpdates(report, task) {
     }
   }
   return updates;
+}
+
+async function applyBalanceSheetCorrection({ update, accessToken, fetchImpl }) {
+  const sheetName = update.target;
+  if (![MANUAL_BALANCE_SHEET_NAME, AUTO_BALANCE_SHEET_NAME, "PayPal manual confirmation"].includes(sheetName)) {
+    throw new Error(`Unsupported balance correction target: ${sheetName || "(empty)"}`);
+  }
+  if (sheetName === "PayPal manual confirmation") {
+    throw new Error("PayPal manual confirmation must be represented as a confirmed Ledger patch.");
+  }
+  const existing = await readSheetValues({ sheetName, columns: sheetName === AUTO_BALANCE_SHEET_NAME ? "A:L" : "A:G", accessToken, fetchImpl });
+  if (hasExistingBalanceSheetRow(existing, update)) {
+    return { target: sheetName, rowKey: update.rowKey, skippedReason: "idempotent" };
+  }
+  const row = sheetName === AUTO_BALANCE_SHEET_NAME
+    ? [
+        update.date,
+        update.provider || inferProviderFromChannel(update.channel),
+        update.channel,
+        formatValue(update.amount),
+        update.currency,
+        "",
+        "",
+        update.source || "provider_auto",
+        update.raw_source_id || "",
+        update.status || "ok",
+        update.comment || "",
+      ]
+    : [
+        update.date,
+        update.channel,
+        formatValue(update.amount),
+        update.currency,
+        "",
+        "",
+        update.comment || "",
+      ];
+  const range = `'${escapeSheetName(sheetName)}'!${sheetName === AUTO_BALANCE_SHEET_NAME ? "A:L" : "A:G"}`;
+  await sheetsFetchJson({
+    range,
+    method: "POST",
+    accessToken,
+    fetchImpl,
+    searchParams: { valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS" },
+    append: true,
+    body: { values: [row] },
+  });
+  return { target: sheetName, rowKey: update.rowKey, after: update };
+}
+
+async function readSheetValues({ sheetName, columns, accessToken, fetchImpl }) {
+  const payload = await sheetsFetchJson({
+    range: `'${escapeSheetName(sheetName)}'!${columns}`,
+    method: "GET",
+    accessToken,
+    fetchImpl,
+  });
+  return payload.values || [];
+}
+
+function hasExistingBalanceSheetRow(values = [], update = {}) {
+  const { header, rows } = splitHeaderRows(values);
+  const dateIndex = findHeaderIndex(header, ["date", "дата"]);
+  const channelIndex = findHeaderIndex(header, ["channel", "канал", "account"]);
+  const currencyIndex = findHeaderIndex(header, ["currency", "валюта"]);
+  const amountIndex = findHeaderIndex(header, ["amount", "сумма"]);
+  if (dateIndex === -1 || channelIndex === -1 || currencyIndex === -1 || amountIndex === -1) return false;
+  return rows.some((row) =>
+    normalizeDate(row[dateIndex]) === update.date
+    && String(row[channelIndex] || "").trim() === update.channel
+    && String(row[currencyIndex] || "").trim().toUpperCase() === update.currency
+    && Math.abs((parseAmount(row[amountIndex]) ?? NaN) - Number(update.amount)) <= 0.0001
+  );
 }
 
 async function main() {
@@ -633,11 +925,17 @@ async function main() {
   }
   const report = buildLedgerQualityRepairReport({ repository, confirmations, task: options.task, period: { from: options.from, to: options.to } });
   if (options.apply) {
-    const applyResult = await applyLedgerQualityRepairs({ report, task: options.task });
+    const applyResult = await applyLedgerQualityRepairs({
+      report,
+      task: options.task,
+      onlyConfirmed: options.onlyConfirmed,
+      maxApply: options.maxApply,
+    });
     report.apply = applyResult;
     report.dryRun = false;
     report.missingAmountNet.summary.updated = countApplied(applyResult, report.missingAmountNet.rows);
     report.mismatchReport.summary.updated = countApplied(applyResult, report.mismatchReport.rows);
+    report.balanceCorrections.summary.updated = countAppliedBalanceCorrections(applyResult, report.balanceCorrections.rows);
     report.missingBalances.summary.updated = countApplied(applyResult, report.missingBalances.rows);
     report.normalizeSources.summary.updated = countApplied(applyResult, report.normalizeSources.rows);
   }
@@ -697,8 +995,9 @@ async function writeLedgerRow({ sheetRowNumber, row, accessToken, fetchImpl }) {
   });
 }
 
-async function sheetsFetchJson({ range, method, accessToken, fetchImpl, body, searchParams = {} }) {
-  const url = new URL(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${encodeURIComponent(range)}`);
+async function sheetsFetchJson({ range, method, accessToken, fetchImpl, body, searchParams = {}, append = false }) {
+  const suffix = append ? ":append" : "";
+  const url = new URL(`${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${encodeURIComponent(range)}${suffix}`);
   Object.entries(searchParams).forEach(([key, value]) => url.searchParams.set(key, value));
   const response = await fetchImpl(url.toString(), {
     method,
@@ -724,6 +1023,21 @@ function buildLedgerRowRange(sheetRowNumber) {
 
 function escapeSheetName(value) {
   return String(value || "").replace(/'/g, "''");
+}
+
+function splitHeaderRows(values) {
+  const rows = values || [];
+  const headerIndex = rows.findIndex((row) => (row || []).some((cell) => ["date", "дата"].includes(normalizeText(cell))));
+  if (headerIndex === -1) return { header: [], rows: [] };
+  return {
+    header: rows[headerIndex] || [],
+    rows: rows.slice(headerIndex + 1).filter((row) => (row || []).some((cell) => String(cell || "").trim())),
+  };
+}
+
+function findHeaderIndex(header, aliases) {
+  const normalizedAliases = new Set((aliases || []).map(normalizeText));
+  return (header || []).findIndex((cell) => normalizedAliases.has(normalizeText(cell)));
 }
 
 function buildBalancesSummary(operations) {
@@ -926,9 +1240,22 @@ function countApplied(applyResult, rows) {
   return (rows || []).filter((row) => applied.has(Number(row.sheetRowNumber))).length;
 }
 
+function countAppliedBalanceCorrections(applyResult, rows) {
+  const applied = new Set((applyResult?.updates || []).map((row) => String(row.rowKey || "")));
+  return (rows || []).filter((row) => applied.has(`${row.date}|${row.channel}|${row.currency}`)).length;
+}
+
 function normalizeTaskName(task) {
   const normalized = String(task || "").trim();
   return TASK_ALIASES.get(normalized) || normalized;
+}
+
+function parseMaxApply(value) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid --max-apply: ${value || "(empty)"}`);
+  }
+  return parsed;
 }
 
 function shouldRun(task, target) {
@@ -1070,6 +1397,29 @@ function round(value) {
 
 function formatValue(value) {
   return value === null || value === undefined ? "null" : String(value);
+}
+
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function rowsEqual(left = [], right = []) {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (String(left[index] ?? "") !== String(right[index] ?? "")) return false;
+  }
+  return true;
+}
+
+function inferProviderFromChannel(channel) {
+  const text = normalizeText(channel);
+  if (/wise|transferwise|трансервайз/.test(text)) return "wise";
+  if (/paypal|пейпал/.test(text)) return "paypal";
+  if (/mono|monobank|монобанк/.test(text)) return "monobank";
+  if (/binance|бинанс/.test(text)) return "binance";
+  if (/privat|приват/.test(text)) return "privatbank";
+  if (/яндекс|yoomoney/.test(text)) return "yoomoney";
+  return "provider";
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

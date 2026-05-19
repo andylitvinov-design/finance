@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyLedgerQualityRepairs,
   buildBalanceCorrectionsReport,
   buildMissingBalancesReport,
   buildLedgerQualityRepairReport,
@@ -59,6 +60,8 @@ test("parseArgs defaults to dry-run all tasks", () => {
     confirmFile: "",
     from: "",
     json: false,
+    maxApply: 10,
+    onlyConfirmed: false,
     task: "all",
     to: "",
   });
@@ -73,6 +76,10 @@ test("parseArgs supports required task names and legacy mismatch alias", () => {
   assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).from, "2026-05-01");
   assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).to, "2026-05-19");
   assert.equal(parseArgs(["--task", "mismatch-report"]).task, "mismatches");
+  assert.equal(parseArgs(["--apply", "--only-confirmed", "--max-apply", "2"]).apply, true);
+  assert.equal(parseArgs(["--apply", "--only-confirmed", "--max-apply", "2"]).onlyConfirmed, true);
+  assert.equal(parseArgs(["--apply", "--only-confirmed", "--max-apply", "2"]).maxApply, 2);
+  assert.throws(() => parseArgs(["--max-apply", "-1"]), /Invalid --max-apply/);
 });
 
 test("PayPal Personal missing fee is not converted into fake net", () => {
@@ -352,7 +359,22 @@ test("balance correction diagnostics output exact mismatch row and never write c
   assert.equal(report.balanceCorrections.summary.detected, 1);
   assert.equal(report.balanceCorrections.summary.wouldUpdate, 0);
   assert.equal(report.balanceCorrections.summary.needsManualVerification, 1);
-  assert.deepEqual(report.balanceCorrections.rows[0], {
+  assert.deepEqual({
+    date: report.balanceCorrections.rows[0].date,
+    channel: report.balanceCorrections.rows[0].channel,
+    currency: report.balanceCorrections.rows[0].currency,
+    status: report.balanceCorrections.rows[0].status,
+    opening_balance: report.balanceCorrections.rows[0].opening_balance,
+    provider_balance: report.balanceCorrections.rows[0].provider_balance,
+    computed_balance: report.balanceCorrections.rows[0].computed_balance,
+    diff: report.balanceCorrections.rows[0].diff,
+    current_source: report.balanceCorrections.rows[0].current_source,
+    current_source_type: report.balanceCorrections.rows[0].current_source_type,
+    recommended_action: report.balanceCorrections.rows[0].recommended_action,
+    target_sheet: report.balanceCorrections.rows[0].target_sheet,
+    conflict: report.balanceCorrections.rows[0].conflict,
+    after: report.balanceCorrections.rows[0].after,
+  }, {
     date: "2026-05-04",
     channel: "монобанк грн",
     currency: "UAH",
@@ -368,6 +390,8 @@ test("balance correction diagnostics output exact mismatch row and never write c
     conflict: null,
     after: null,
   });
+  assert.equal(report.balanceCorrections.rows[0].confidence, "low");
+  assert.equal(report.balanceCorrections.rows[0].needs_provider_confirmation, true);
 });
 
 test("balance correction diagnostics report manual-over-auto conflicts without hiding them", () => {
@@ -556,3 +580,221 @@ test("missing balance report emits amount_hint but no factual write without sour
   assert.equal(rows.rows[0].after, null);
   assert.match(rows.rows[0].manual_action, /amount_hint=1206/);
 });
+
+test("balance correction dry-run proves Wise negative card sign fix without mutating", () => {
+  const report = buildLedgerQualityRepairReport({
+    task: "balance-corrections",
+    now: "2026-05-19T12:00:00.000Z",
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 310,
+          date: "2026-05-19",
+          operation: "expense",
+          fromChannel: "трансервайз евро",
+          toChannel: "",
+          currency: "EUR",
+          amount: "55.6",
+          amountNet: "55.6",
+          balanceAmount: -55.6,
+          source: "wise",
+          rawSourceId: "CARD-3806683062",
+          comment: "Card transaction of -55.60 EUR issued by Yellowsquare Greece Ike Athens",
+        }),
+        operation({
+          sheetRowNumber: 311,
+          date: "2026-05-19",
+          operation: "expense",
+          fromChannel: "трансервайз евро",
+          toChannel: "",
+          currency: "EUR",
+          amount: "102.96",
+          amountNet: "102.96",
+          balanceAmount: -102.96,
+          source: "wise",
+          rawSourceId: "CARD-3806680329",
+          comment: "Card transaction of -102.96 EUR issued by Yellowsquare Greece Ike Athens",
+        }),
+      ],
+      balances: [],
+      autoBalances: [
+        { date: "2026-05-18", channel: "трансервайз евро", currency: "EUR", amount: "0", balanceAmount: "0", sourceSheet: "Авто Остатки", sourceRow: 11, provider: "wise", source: "wise_auto", rawSourceId: "4920195", status: "zero_balance" },
+        { date: "2026-05-19", channel: "трансервайз евро", currency: "EUR", amount: "158.56", balanceAmount: "158.56", sourceSheet: "Авто Остатки", sourceRow: 13, provider: "wise", source: "wise_auto", rawSourceId: "4920195", status: "ok" },
+      ],
+    },
+  });
+
+  const row = report.balanceCorrections.rows[0];
+  assert.equal(report.balanceCorrections.summary.wouldUpdate, 1);
+  assert.equal(row.classification, "wrong_sign");
+  assert.equal(row.confidence, "high");
+  assert.equal(row.needs_provider_confirmation, false);
+  assert.equal(row.target, "Ledger");
+  assert.equal(row.source_reference, "Авто Остатки row 13");
+  assert.equal(row.after.length, 2);
+  assert.deepEqual(row.after.map((entry) => entry.sheetRowNumber), [310, 311]);
+  assert.equal(row.after[0].patch.operation, "income");
+  assert.equal(row.after[0].patch.to_channel, "трансервайз евро");
+  assert.match(row.after[0].patch.comment, /balance_correction_provider_auto_sign_fix/);
+  assert.equal(report.summary.fallback_amount_rows, 0);
+  assert.equal(report.summary.unknown_source_rows, 0);
+});
+
+test("balance correction dry-run keeps ambiguous known rows as needs_provider_confirmation", () => {
+  const report = buildLedgerQualityRepairReport({
+    task: "balance-corrections",
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 175,
+          date: "2026-05-04",
+          operation: "income",
+          toChannel: "монобанк грн",
+          currency: "UAH",
+          amount: "4305",
+          amountNet: "4305",
+          balanceAmount: 4305,
+          source: "monobank",
+          rawSourceId: "Re-m6Z1uX6oq-5D0eg",
+        }),
+      ],
+      balances: [
+        { date: "2026-05-03", channel: "монобанк грн", currency: "UAH", amount: "26670", balanceAmount: "26670", sourceSheet: "Остатки", sourceRow: 57 },
+        { date: "2026-05-04", channel: "монобанк грн", currency: "UAH", amount: "31975", balanceAmount: "31975", sourceSheet: "Остатки", sourceRow: 58 },
+      ],
+      autoBalances: [],
+    },
+  });
+
+  const row = report.balanceCorrections.rows[0];
+  assert.equal(row.date, "2026-05-04");
+  assert.equal(row.channel, "монобанк грн");
+  assert.equal(row.confidence, "low");
+  assert.equal(row.needs_provider_confirmation, true);
+  assert.equal(row.after, null);
+});
+
+test("apply refuses without --only-confirmed and refuses low-confidence rows", async () => {
+  await assert.rejects(
+    () => applyLedgerQualityRepairs({ report: { balanceCorrections: { rows: [] } }, task: "balance-corrections" }),
+    /--apply requires --only-confirmed/
+  );
+
+  await assert.rejects(
+    () => applyLedgerQualityRepairs({
+      onlyConfirmed: true,
+      task: "balance-corrections",
+      report: {
+        balanceCorrections: {
+          rows: [{
+            date: "2026-05-04",
+            channel: "монобанк грн",
+            currency: "UAH",
+            confidence: "low",
+            needs_provider_confirmation: true,
+            after: [{ target: "Ledger", sheetRowNumber: 10, patch: { operation: "income" } }],
+          }],
+        },
+      },
+      accessToken: "test",
+      fetchImpl: async () => { throw new Error("should not fetch"); },
+    }),
+    /Refusing to apply 1 unconfirmed/
+  );
+});
+
+test("apply is idempotent for already-updated Ledger rows", async () => {
+  const header = ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_gross", "amount_fee", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "updated_at"];
+  const current = ["2026-05-19", "income", "", "трансервайз евро", "55.6", "EUR", "", "55.6", "", "55.6", "", "", "in", "Card transaction of -55.60 EUR issued by Yellowsquare; balance_correction_provider_auto_sign_fix", "wise", "CARD-3806683062", "2026-05-19T12:00:00.000Z"];
+  let putCalls = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).includes("A1%3AV1")) return jsonResponse({ values: [header] });
+    if (String(url).includes("A310%3AV310")) return jsonResponse({ values: [current] });
+    if (options.method === "PUT") putCalls += 1;
+    return jsonResponse({});
+  };
+
+  const result = await applyLedgerQualityRepairs({
+    onlyConfirmed: true,
+    task: "balance-corrections",
+    accessToken: "test",
+    fetchImpl,
+    report: {
+      balanceCorrections: {
+        rows: [{
+          date: "2026-05-19",
+          channel: "трансервайз евро",
+          currency: "EUR",
+          confidence: "high",
+          needs_provider_confirmation: false,
+          after: [{
+            target: "Ledger",
+            sheetRowNumber: 310,
+            raw_source_id: "CARD-3806683062",
+            patch: {
+              operation: "income",
+              from_channel: "",
+              to_channel: "трансервайз евро",
+              direction: "in",
+              comment: "Card transaction of -55.60 EUR issued by Yellowsquare; balance_correction_provider_auto_sign_fix",
+              updated_at: "2026-05-19T12:00:00.000Z",
+            },
+          }],
+        }],
+      },
+    },
+  });
+
+  assert.equal(result.updated, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.skippedRows[0].skippedReason, "idempotent");
+  assert.equal(putCalls, 0);
+});
+
+test("confirmed provider auto balance requires source metadata and is not computed truth", () => {
+  const unconfirmed = buildLedgerQualityRepairReport({
+    task: "balance-corrections",
+    repository: {
+      operations: [operation({ date: "2026-05-02", toChannel: "wise usd", currency: "USD", amountNet: "206", amount: "206", balanceAmount: 206, source: "wise" })],
+      balances: [{ date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 }],
+      autoBalances: [],
+    },
+  });
+  assert.equal(unconfirmed.balanceCorrections.rows[0].computed_balance, 1206);
+  assert.equal(unconfirmed.balanceCorrections.rows[0].after, null);
+
+  const confirmed = buildLedgerQualityRepairReport({
+    task: "balance-corrections",
+    confirmations: {
+      balanceCorrections: [{
+        date: "2026-05-02",
+        channel: "wise usd",
+        currency: "USD",
+        target: "Авто Остатки",
+        amount: "1207",
+        provider: "wise",
+        source: "wise_auto",
+        raw_source_id: "wise-balance-1",
+        source_reference: "Wise balance API balance id wise-balance-1",
+        confidence: "high",
+      }],
+    },
+    repository: {
+      operations: [operation({ date: "2026-05-02", toChannel: "wise usd", currency: "USD", amountNet: "206", amount: "206", balanceAmount: 206, source: "wise" })],
+      balances: [{ date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 }],
+      autoBalances: [],
+    },
+  });
+  assert.equal(confirmed.balanceCorrections.rows[0].confidence, "high");
+  assert.equal(confirmed.balanceCorrections.rows[0].target, "Авто Остатки");
+  assert.equal(confirmed.balanceCorrections.rows[0].after[0].amount, 1207);
+  assert.notEqual(confirmed.balanceCorrections.rows[0].after[0].amount, confirmed.balanceCorrections.rows[0].computed_balance);
+});
+
+function jsonResponse(payload) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payload,
+  };
+}
