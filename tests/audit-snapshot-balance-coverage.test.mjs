@@ -143,7 +143,10 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 1);
   assert.equal(snapshot.balance_coverage.weekly_summary.status, "needs_verification");
   assert.equal(snapshot.balance_coverage.weekly_summary.missing_provider_balance, 1);
-  assert.match(snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows, /2026-05-02\twise usd\tUSD\t1206/);
+  assert.match(
+    snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows,
+    /2026-05-02\twise usd\tUSD\t\t1206\tProvider closing balance for this exact date\/channel\/currency\ttrue/
+  );
   assert.equal(snapshot.balance_coverage.actionable_accounts[0].status, "missing_provider_balance");
   assert.match(snapshot.balance_coverage.actionable_accounts[0].diagnosis, /Нет фактического остатка/);
   assert.match(snapshot.balance_coverage.actionable_accounts[0].fix_action, /Добавить фактический остаток закрытия/);
@@ -742,11 +745,13 @@ test("audit snapshot returns copyable missing Остатки rows from balance c
       channel: "монобанк грн",
       currency: "UAH",
       computed_closing_balance: 17363,
-      action: "Add factual closing balance to Остатки",
+      amount_hint: 17363,
+      do_not_apply_automatically: true,
+      action: "Confirm provider closing balance, then add factual balance to Остатки",
     },
   ]);
   assert.equal(
     snapshot.balance_fixes.copyable_ostatki_rows,
-    "date\tchannel\tcurrency\tamount\n2026-04-30\tмонобанк грн\tUAH\t17363"
+    "date\tchannel\tcurrency\tcurrent_ostatki_amount\tcomputed_amount_hint\trequired_provider_evidence\tdo_not_apply_automatically\n2026-04-30\tмонобанк грн\tUAH\t\t17363\tProvider closing balance for this exact date/channel/currency\ttrue"
   );
 });

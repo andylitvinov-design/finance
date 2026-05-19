@@ -177,6 +177,95 @@ test("extra YooMoney ledger rows are quarantined separately from matched monthly
   assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 5).status, "manual_migration_needs_confirmation");
 });
 
+test("extra YooMoney ledger rows expose full cleanup evidence and manual request", () => {
+  const providerEvidence = [
+    { date: "2026-04-25", signedAmount: 2755.86, description: "provider payment", raw_source_id: "provider-1" },
+    { date: "2026-05-05", signedAmount: -74771.5, description: "May transfer", raw_source_id: "provider-may" },
+  ];
+  const ledgerRows = [
+    ledgerRow({ sheetRowNumber: 54, date: "2026-04-25", signedAmount: 2755.86, rawSourceId: "provider-1", comment: "matched" }),
+    ledgerRow({ sheetRowNumber: 57, date: "2026-04-07", signedAmount: 9376.54, source: "yoomoney", rawSourceId: "extra-57", comment: "Перевод от 4100116698313680 | 000002548" }),
+  ];
+
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence,
+    ledgerRows,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+  });
+
+  const extra = report.row_level.extra_ledger_rows[0];
+  assert.equal(extra.sheetRowNumber, 57);
+  assert.equal(extra.operation, "income");
+  assert.equal(extra.from_channel, "");
+  assert.equal(extra.to_channel, "Яндекс руб");
+  assert.equal(extra.amount_net, 9376.54);
+  assert.equal(extra.counterparty, "Перевод от 4100116698313680");
+  assert.equal(extra.classification, "needs_manual_confirmation");
+  assert.equal(extra.evidence_checks.april_provider_rows.length, 0);
+  assert.equal(extra.evidence_checks.may_provider_rows.length, 0);
+  assert.equal(extra.evidence_checks.nearby_provider_rows.length, 0);
+  assert.equal(extra.evidence_checks.same_amount_opposite_sign_rows.length, 0);
+  assert.equal(extra.evidence_checks.same_source_id_ledger_rows.length, 0);
+  assert.match(extra.manual_request, /Confirm whether Ledger row 57 \/ raw_source_id extra-57 is a real YooMoney operation/);
+});
+
+test("manual migration rows expose quarantine details and stay out of provider totals", () => {
+  const providerEvidence = [
+    { date: "2026-04-24", signedAmount: -12920, description: "provider expense" },
+  ];
+  const ledgerRows = [
+    ledgerRow({ sheetRowNumber: 41, date: "2026-04-24", signedAmount: -12920, source: "yoomoney", rawSourceId: "provider-row" }),
+    {
+      ...ledgerRow({ sheetRowNumber: 2, date: "2026-04-24", signedAmount: -11287, source: "manual", rawSourceId: "migration:2026-04-24:12:2" }),
+      transferGroupId: "migration-group",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-02T00:00:00.000Z",
+      ledgerV2: {
+        date: "2026-04-24",
+        operation: "expense",
+        from_channel: "Яндекс руб",
+        to_channel: "",
+        amount: "11287",
+        amount_net: "11287",
+        balance_amount: "-11287",
+        currency: "RUB",
+        source: "manual",
+        raw_source_id: "migration:2026-04-24:12:2",
+        external_id: "migration:2026-04-24:12:2",
+        transfer_group_id: "migration-group",
+        comment: "manual migration",
+        created_at: "2026-05-01T00:00:00.000Z",
+        updated_at: "2026-05-02T00:00:00.000Z",
+      },
+    },
+  ];
+
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence,
+    ledgerRows,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+  });
+
+  const migration = report.row_level.manual_migration_rows[0];
+  assert.equal(report.provider_net, -12920);
+  assert.equal(report.confirmed_matched_ledger_net, -12920);
+  assert.equal(report.manual_migration_total.net, -11287);
+  assert.equal(migration.sheetRowNumber, 2);
+  assert.equal(migration.amount, 11287);
+  assert.equal(migration.amount_net, 11287);
+  assert.equal(migration.transfer_group_id, "migration-group");
+  assert.equal(migration.created_at, "2026-05-01T00:00:00.000Z");
+  assert.equal(migration.updated_at, "2026-05-02T00:00:00.000Z");
+  assert.equal(migration.classification, "needs_manual_confirmation");
+  assert.match(migration.manual_request, /Confirm whether Ledger row 2 \/ raw_source_id migration:2026-04-24:12:2 is a real YooMoney operation/);
+});
+
 test("matching provider operations keeps stale Остатки mismatch out of transaction layer", () => {
   const providerEvidence = buildYooMoneyProviderEvidenceFixture()
     .filter((row) => row.date >= "2026-05-01" && row.date <= "2026-05-19");
@@ -209,6 +298,9 @@ test("matching provider operations keeps stale Остатки mismatch out of tr
   assert.equal(report.transaction_reconciliation_status, "ok");
   assert.equal(report.balance_diagnostics.rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
   assert.equal(report.balance_diagnostics.copyable_rows[0].amount_hint, -73049.5);
+  assert.equal(report.balance_diagnostics.copyable_rows[0].computed_amount_hint, -73049.5);
+  assert.equal(report.balance_diagnostics.copyable_rows[0].current_ostatki_amount, 68087.38);
+  assert.match(report.balance_diagnostics.copyable_rows[0].required_provider_evidence, /provider balance after operation/i);
   assert.equal(report.balance_diagnostics.copyable_rows[0].needs_provider_confirmation, true);
   assert.equal(report.balance_diagnostics.copyable_rows[0].do_not_apply_automatically, true);
 });

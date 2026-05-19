@@ -58,8 +58,10 @@ export function buildProviderLedgerReconciliation({
   const normalizedSource = normalizeSource(source);
   const normalizedChannel = String(channel || "").trim();
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
-  const providerRows = providerEvidence
+  const allProviderRows = providerEvidence
     .map((row, index) => normalizeProviderRow(row, index, { source: normalizedSource, channel: normalizedChannel, currency: normalizedCurrency }))
+    .filter((row) => row.source === normalizedSource && row.currency === normalizedCurrency && row.channel === normalizedChannel);
+  const providerRows = allProviderRows
     .filter((row) => isInPeriod(row.date, period));
   const ledger = ledgerRows
     .map((row, index) => normalizeLedgerRow(row, index))
@@ -113,14 +115,29 @@ export function buildProviderLedgerReconciliation({
   const ledgerResultRows = providerLedgerRows.map((row) => {
     if (usedLedgerIndexes.has(row.index)) {
       const matchedProvider = providerResultRows.find((provider) => provider.matched_ledger?.index === row.index);
-      return ledgerResult(row, matchedProvider?.status === "matched_wrong_date" ? "date_correction_candidate" : "confirmed_by_provider", matchedProvider);
+      return ledgerResult(row, matchedProvider?.status === "matched_wrong_date" ? "date_correction_candidate" : "confirmed_by_provider", matchedProvider, {
+        providerRows,
+        allProviderRows,
+        providerLedgerRows,
+        period,
+      });
     }
     const duplicateOfProvider = providerRows.find((provider) => sameOperation(provider, row) && Math.abs(daysBetween(provider.date, row.date)) <= 1);
-    return ledgerResult(row, duplicateOfProvider ? "duplicate_candidate" : "not_in_provider_statement", null);
+    return ledgerResult(row, duplicateOfProvider ? "duplicate_candidate" : "not_in_provider_statement", null, {
+      providerRows,
+      allProviderRows,
+      providerLedgerRows,
+      period,
+    });
   });
 
   const migrationLedgerRows = manualMigrationRows.map((row) =>
-    ledgerResult(row, "manual_migration_needs_confirmation", null)
+    ledgerResult(row, "manual_migration_needs_confirmation", null, {
+      providerRows,
+      allProviderRows,
+      providerLedgerRows: ledger,
+      period,
+    })
   );
   const allLedgerResultRows = [...ledgerResultRows, ...migrationLedgerRows].sort(compareResultRows);
   const confirmedLedgerRows = ledgerResultRows.filter((row) =>
@@ -234,18 +251,31 @@ function normalizeProviderRow(row, index, fallback) {
 function normalizeLedgerRow(row, index) {
   const ledger = row?.ledgerV2 || {};
   const signedAmount = parseAmount(ledger.balance_amount ?? row.balanceAmount ?? row.balance_amount);
+  const amountNet = parseAmount(ledger.amount_net ?? row.amountNet ?? row.amount_net);
+  const amount = parseAmount(ledger.amount ?? row.amount);
   const source = normalizeSource(row.source ?? ledger.source);
+  const comment = String(ledger.comment ?? row.comment ?? "").trim();
   return {
     index,
     sheetRowNumber: Number(row.sheetRowNumber || row.sheet_row_number || 0) || null,
     date: normalizeDate(ledger.date ?? row.date),
+    operation: String(ledger.operation ?? row.operation ?? (signedAmount < 0 ? "expense" : "income")).trim(),
     source,
+    from_channel: String(ledger.from_channel ?? row.fromChannel ?? row.from_channel ?? "").trim(),
+    to_channel: String(ledger.to_channel ?? row.toChannel ?? row.to_channel ?? "").trim(),
     channel: getLedgerChannel(row, signedAmount),
     currency: String(ledger.currency ?? row.currency ?? "").trim().toUpperCase(),
+    amount: amount ?? (amountNet ?? Math.abs(signedAmount || 0)),
+    amount_net: amountNet ?? Math.abs(signedAmount || 0),
     signed_amount: round(signedAmount || 0),
     raw_source_id: String(ledger.raw_source_id ?? row.rawSourceId ?? row.raw_source_id ?? "").trim(),
     external_id: String(ledger.external_id ?? row.externalId ?? row.external_id ?? "").trim(),
-    comment: String(ledger.comment ?? row.comment ?? "").trim(),
+    transfer_group_id: String(ledger.transfer_group_id ?? row.transferGroupId ?? row.transfer_group_id ?? "").trim(),
+    comment,
+    counterparty: String(ledger.counterparty ?? row.counterparty ?? parseCounterparty(comment)).trim(),
+    description: String(ledger.description ?? row.description ?? comment).trim(),
+    created_at: String(ledger.created_at ?? row.createdAt ?? row.created_at ?? "").trim(),
+    updated_at: String(ledger.updated_at ?? row.updatedAt ?? row.updated_at ?? "").trim(),
   };
 }
 
@@ -281,19 +311,33 @@ function providerResult(provider, status, ledgerRow, extra = {}) {
   };
 }
 
-function ledgerResult(row, status, provider) {
+function ledgerResult(row, status, provider, context = {}) {
+  const classification = classifyLedgerRow(row, status, context);
   return {
     index: row.index,
     sheetRowNumber: row.sheetRowNumber,
     date: row.date,
+    operation: row.operation,
+    from_channel: row.from_channel,
+    to_channel: row.to_channel,
+    amount: row.amount,
+    amount_net: row.amount_net,
     source: row.source,
     channel: row.channel,
     currency: row.currency,
     signed_amount: row.signed_amount,
     raw_source_id: row.raw_source_id,
     external_id: row.external_id,
+    transfer_group_id: row.transfer_group_id,
     comment: row.comment,
+    counterparty: row.counterparty,
+    description: row.description,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
     status,
+    classification,
+    evidence_checks: buildLedgerEvidenceChecks(row, context),
+    manual_request: buildManualRequest(row),
     matched_provider: provider ? {
       evidence_id: provider.evidence_id,
       date: provider.date,
@@ -301,6 +345,78 @@ function ledgerResult(row, status, provider) {
       status: provider.status,
     } : null,
   };
+}
+
+function classifyLedgerRow(row, status, context = {}) {
+  if (status === "confirmed_by_provider") return "real_provider_operation_missing_from_screenshots";
+  if (status === "date_correction_candidate") return "wrong_date_outside_provider_window";
+  const checks = buildLedgerEvidenceChecks(row, context);
+  if (checks.same_source_id_ledger_rows.length) return "duplicate_of_existing_provider_row";
+  if (status === "duplicate_candidate") return "duplicate_of_existing_provider_row";
+  if (normalizeSource(row.source) !== normalizeSource(context.source || row.source)) return "wrong_source";
+  if (row.channel !== (context.channel || row.channel)) return "wrong_channel";
+  return "needs_manual_confirmation";
+}
+
+function buildLedgerEvidenceChecks(row, {
+  providerRows = [],
+  allProviderRows = providerRows,
+  providerLedgerRows = [],
+  period = {},
+} = {}) {
+  const aprilProviderRows = allProviderRows.filter((provider) => provider.date >= "2026-04-01" && provider.date <= "2026-04-30" && sameOperation(provider, row));
+  const mayProviderRows = allProviderRows.filter((provider) => provider.date >= "2026-05-01" && provider.date <= "2026-05-31" && sameOperation(provider, row));
+  const nearbyProviderRows = allProviderRows.filter((provider) =>
+    sameOperation(provider, row) && Math.abs(daysBetween(provider.date, row.date)) <= 3
+  );
+  const sameAmountOppositeSignRows = allProviderRows.filter((provider) =>
+    provider.currency === row.currency && Math.abs(provider.signed_amount + row.signed_amount) <= 0.0001
+  );
+  const rowIds = new Set([row.raw_source_id, row.external_id].filter(Boolean));
+  const sameSourceIdLedgerRows = providerLedgerRows
+    .filter((candidate) => candidate.index !== row.index)
+    .filter((candidate) => [candidate.raw_source_id, candidate.external_id].some((id) => rowIds.has(id)))
+    .map(compactLedgerEvidenceRow);
+
+  return {
+    april_provider_rows: aprilProviderRows.map(compactProviderEvidenceRow),
+    may_provider_rows: mayProviderRows.map(compactProviderEvidenceRow),
+    nearby_provider_rows: nearbyProviderRows.map(compactProviderEvidenceRow),
+    same_amount_opposite_sign_rows: sameAmountOppositeSignRows.map(compactProviderEvidenceRow),
+    same_source_id_ledger_rows: sameSourceIdLedgerRows,
+    period: {
+      from: normalizeDate(period.from) || null,
+      to: normalizeDate(period.to) || null,
+    },
+  };
+}
+
+function compactProviderEvidenceRow(row) {
+  return {
+    evidence_id: row.evidence_id,
+    date: row.date,
+    signed_amount: row.signed_amount,
+    currency: row.currency,
+    description: row.description,
+    source_id: row.source_id,
+  };
+}
+
+function compactLedgerEvidenceRow(row) {
+  return {
+    sheetRowNumber: row.sheetRowNumber,
+    date: row.date,
+    signed_amount: row.signed_amount,
+    currency: row.currency,
+    source: row.source,
+    raw_source_id: row.raw_source_id,
+    external_id: row.external_id,
+    comment: row.comment,
+  };
+}
+
+function buildManualRequest(row) {
+  return `Confirm whether Ledger row ${row.sheetRowNumber || "unknown"} / raw_source_id ${row.raw_source_id || row.external_id || "missing"} is a real YooMoney operation; provide screenshot/detail.`;
 }
 
 function buildProviderTotals(rows) {
@@ -439,6 +555,9 @@ function buildBalanceDiagnostics(rows, transactionStatus) {
       amount_hint: computed,
       provider_reported_balance: row.provider_reported_balance ?? row.manual_provider_closing_balance ?? null,
       sourceRow: row.sourceRow ?? row.source_row ?? null,
+      current_ostatki_amount: row.provider_reported_balance ?? row.manual_provider_closing_balance ?? null,
+      computed_amount_hint: computed,
+      required_provider_evidence: "Provider balance after operation for the exact date/channel/currency; computed amount is a hint, not factual balance.",
       needs_provider_confirmation: true,
       do_not_apply_automatically: true,
     };
@@ -453,6 +572,9 @@ function buildBalanceDiagnostics(rows, transactionStatus) {
       currency: row.currency,
       amount: null,
       amount_hint: row.amount_hint,
+      current_ostatki_amount: row.current_ostatki_amount,
+      computed_amount_hint: row.computed_amount_hint,
+      required_provider_evidence: row.required_provider_evidence,
       needs_provider_confirmation: true,
       do_not_apply_automatically: true,
       reason: row.classification,
@@ -499,6 +621,12 @@ function compareResultRows(left, right) {
 
 function isManualMigration(row) {
   return normalizeSource(row.source) === "migration" || /^migration[:_-]/i.test(row.raw_source_id || "");
+}
+
+function parseCounterparty(comment) {
+  const raw = String(comment || "").trim();
+  if (!raw) return "";
+  return raw.split("|")[0].trim();
 }
 
 function isInPeriod(date, period = {}) {
