@@ -521,6 +521,39 @@ test("audit snapshot counts migration rows separately from unknown", async () =>
   assert.equal(response.sources.unknown, 0);
 });
 
+test("audit snapshot counts YooMoney and Binance sources separately from unknown", async () => {
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        ledgerOperation({
+          source: "yoomoney",
+          fromChannel: "Яндекс руб",
+          ledgerV2: {
+            source: "yoomoney",
+            from_channel: "Яндекс руб",
+          },
+        }),
+        ledgerOperation({
+          source: "binance",
+          fromChannel: "Бинанс spot",
+          ledgerV2: {
+            source: "binance",
+            from_channel: "Бинанс spot",
+          },
+        }),
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(response.sources.yoomoney, 1);
+  assert.equal(response.sources.binance, 1);
+  assert.equal(response.sources.unknown, 0);
+  assert.equal(response.summary.unknown_source_rows, 0);
+});
+
 test("audit snapshot includeRows=false does not expose raw rows", async () => {
   const response = await buildFixtureSnapshot({ includeRows: "0" });
 
