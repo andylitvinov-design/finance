@@ -36,6 +36,10 @@ export default async function handler(request, response) {
     const clientSecret = String(process.env.PAYPAL_CLIENT_SECRET || "").trim();
     const mcpClientId = String(process.env.PAYPAL_MCP_CLIENT_ID || "").trim();
     const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
+    if (isPayPalManualImportPayload(payload)) {
+      const result = parsePayPalManualActivityRows(payload.manualRows || payload.rows || payload.activityRows || payload.activityText || payload.text);
+      return response.status(200).json({ ok: true, ...result });
+    }
     let result;
     if (clientId && clientSecret) {
       const environment = process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT;
@@ -376,6 +380,202 @@ export function summarizePayPalStatementEntries(entries = []) {
       })),
     totalsByCurrency: serializePayPalCurrencyTotals(totalLookup)
   };
+}
+
+export function parsePayPalManualActivityRows(input = []) {
+  const rows = normalizePayPalManualInputRows(input);
+  const entries = [];
+  const warnings = [];
+  let duplicateCount = 0;
+  const seen = new Set();
+  rows.forEach((row, index) => {
+    const entry = normalizePayPalManualActivityRow(row, index);
+    if (!entry) return;
+    if (seen.has(entry.sourceTransactionId)) {
+      duplicateCount += 1;
+      return;
+    }
+    seen.add(entry.sourceTransactionId);
+    entries.push(entry);
+  });
+  return {
+    entries,
+    warnings,
+    summary: summarizePayPalManualEntries(entries),
+    transactionCount: rows.length,
+    duplicateCount,
+    duplicate_count: duplicateCount,
+    source: "paypal_manual"
+  };
+}
+
+function isPayPalManualImportPayload(payload = {}) {
+  const source = String(payload?.source || payload?.provider || payload?.mode || "").trim().toLowerCase();
+  return source === "paypal_manual" ||
+    source === "paypal-personal-manual" ||
+    source === "paypal_personal_manual" ||
+    Array.isArray(payload?.manualRows) ||
+    Array.isArray(payload?.activityRows) ||
+    typeof payload?.activityText === "string";
+}
+
+function normalizePayPalManualInputRows(input = []) {
+  if (Array.isArray(input)) return input;
+  const text = String(input || "").trim();
+  if (!text) return [];
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const rows = lines.map((line) => parsePayPalManualDelimitedLine(line));
+  const header = rows[0]?.map((cell) => normalizePayPalManualHeader(cell)) || [];
+  if (!header.includes("date") || !header.includes("amount")) return [];
+  return rows.slice(1).map((cells) => Object.fromEntries(header.map((key, index) => [key || `col_${index}`, cells[index] || ""])));
+}
+
+function parsePayPalManualDelimitedLine(line) {
+  const delimiter = line.includes("\t") ? "\t" : ",";
+  const cells = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === delimiter && !quoted) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function normalizePayPalManualHeader(value) {
+  const token = String(value || "").trim().toLowerCase().replace(/[^0-9a-z]+/g, " ").replace(/\s+/g, " ").trim();
+  if (["date", "transaction date", "posted date"].includes(token)) return "date";
+  if (["name", "counterparty", "merchant", "description", "details"].includes(token)) return token === "name" ? "counterparty" : token;
+  if (["amount", "net", "total"].includes(token)) return "amount";
+  if (["currency", "cur"].includes(token)) return "currency";
+  if (["type", "transaction type"].includes(token)) return "type";
+  return token.replace(/\s+/g, "_");
+}
+
+function normalizePayPalManualActivityRow(row = {}, index = 0) {
+  const date = normalizeIsoDate(String(firstNonEmpty(row.date, row.transactionDate, row.transaction_date)).slice(0, 10));
+  const counterparty = firstNonEmpty(row.counterparty, row.name, row.merchant, row.description, row.details, "PayPal manual row");
+  const type = String(firstNonEmpty(row.type, row.transactionType, row.transaction_type, "")).trim();
+  const parsedAmount = parsePayPalManualSignedAmount(firstNonEmpty(row.amount, row.net, row.total), row.currency);
+  if (!date || !parsedAmount || !parsedAmount.currency || !parsedAmount.value) return null;
+  const signedAmount = round(parsedAmount.value);
+  const isRefund = signedAmount > 0 && /refund|refunded|возврат/i.test(`${type} ${counterparty}`);
+  const direction = signedAmount < 0 ? "expense" : "income";
+  const entryKind = isRefund ? "refund" : "payment";
+  const stableType = isRefund ? "refund" : (type || direction);
+  const sourceTransactionId = `paypal_manual:${date}:${stableIdPart(counterparty)}:${stableIdPart(signedAmount)}:${parsedAmount.currency.toLowerCase()}:${stableIdPart(stableType)}`;
+  const channel = getPayPalChannel(parsedAmount.currency);
+  return {
+    id: sourceTransactionId,
+    date,
+    channel,
+    direction,
+    ledgerDirection: signedAmount < 0 ? "out" : "in",
+    ledger_direction: signedAmount < 0 ? "out" : "in",
+    localAmount: Math.abs(signedAmount),
+    currency: parsedAmount.currency,
+    usdAmount: parsedAmount.currency === "USD" ? signedAmount : null,
+    grossAmount: signedAmount,
+    amountGross: signedAmount,
+    amount_gross: signedAmount,
+    feeAmount: null,
+    amountFee: "",
+    amount_fee: "",
+    feeCurrency: parsedAmount.currency,
+    netAmount: signedAmount,
+    amountNet: signedAmount,
+    amount_net: signedAmount,
+    suggestedCategory: isRefund ? "business" : getPayPalSuggestedCategory(direction),
+    organization: counterparty,
+    counterparty,
+    counterpartyName: counterparty,
+    counterpartyLabel: `${signedAmount < 0 ? "Кому" : "От"}: ${counterparty}`,
+    description: counterparty,
+    transactionSubject: type,
+    entryKind,
+    operationType: isRefund ? "refund" : (signedAmount < 0 ? "payout" : "service_in"),
+    operation_type: isRefund ? "refund" : (signedAmount < 0 ? "payout" : "service_in"),
+    is_refund: isRefund,
+    fee_missing: true,
+    needs_provider_permission: true,
+    confidence: 0.9,
+    source: "paypal_manual",
+    sourceTransactionId,
+    externalId: sourceTransactionId,
+    external_id: sourceTransactionId,
+    rawSourceId: sourceTransactionId,
+    raw_source_id: sourceTransactionId,
+    rawMetadata: "PayPal personal manual import; fee_missing=true; needs_provider_permission=true"
+  };
+}
+
+function parsePayPalManualSignedAmount(value, explicitCurrency = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const upper = raw.toUpperCase();
+  const currency = String(explicitCurrency || "").trim().toUpperCase() ||
+    (upper.includes("US$") || /\bUSD\b/.test(upper) ? "USD" :
+      upper.includes("€") || /\bEUR\b/.test(upper) ? "EUR" :
+        /\bCAD\b/.test(upper) ? "CAD" :
+          upper.includes("$") ? "USD" : "");
+  const negative = /[-−]/.test(raw) || /^\s*\(/.test(raw);
+  const positive = /\+/.test(raw);
+  const numeric = Number.parseFloat(raw.replace(/,/g, "").replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(numeric)) return null;
+  return {
+    value: negative ? -numeric : (positive ? numeric : numeric),
+    currency
+  };
+}
+
+function summarizePayPalManualEntries(entries = []) {
+  const totals = new Map();
+  for (const entry of entries || []) {
+    const currency = String(entry.currency || "").trim().toUpperCase();
+    const amount = Number(entry.amount_net ?? entry.amountNet ?? 0);
+    if (!currency || !Number.isFinite(amount)) continue;
+    const row = totals.get(currency) || { currency, in: 0, out: 0, rows: 0 };
+    if (amount < 0) row.out += Math.abs(amount);
+    else row.in += amount;
+    row.rows += 1;
+    totals.set(currency, row);
+  }
+  return {
+    totalsByCurrency: Array.from(totals.values())
+      .sort((left, right) => left.currency.localeCompare(right.currency))
+      .map((row) => ({ ...row, in: round(row.in), out: round(row.out) }))
+  };
+}
+
+function round(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 10000) / 10000;
+}
+
+function stableIdPart(value) {
+  const negativeNumber = typeof value === "number" && value < 0;
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  if (!normalized) return "blank";
+  return negativeNumber ? `-${normalized}` : normalized;
 }
 
 function collectPayPalFeeWarnings(entries = [], options = {}) {

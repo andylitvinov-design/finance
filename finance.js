@@ -1764,13 +1764,14 @@ function normalizeExpenseAnalysisIncomeSource(value) {
   if (token === "td_bank" || token === "tdbank") return "tdbank";
   if (token === "privat24" || token === "privat_24") return "privatbank";
   if (token === "paypal_mcp") return "paypal";
+  if (token === "paypal_manual") return "paypal_manual";
   if (token === "mcp_import") return "mcp";
   if (token === "photo_parsing") return "photo";
   return token;
 }
 
 function isExpenseAnalysisAutoIncomeSource(source) {
-  return ["wise", "paypal", "monobank", "privatbank", "yoomoney", "tdbank", "provider", "mcp", "import"].includes(source);
+  return ["wise", "paypal", "paypal_manual", "monobank", "privatbank", "yoomoney", "tdbank", "provider", "mcp", "import"].includes(source);
 }
 
 function isExpenseAnalysisManualIncomeSource(source) {
