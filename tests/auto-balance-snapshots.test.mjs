@@ -185,7 +185,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
       };
     }
     if (value.endsWith("/api/account-info")) {
-      return jsonResponse({ account: "4100", balance: "1234.56", currency: "RUB" });
+      return jsonResponse({ account: "4100", balance: "1234.56", currency: "643" });
     }
     if (value.endsWith("/v1/oauth2/token")) {
       return {

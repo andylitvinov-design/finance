@@ -112,7 +112,7 @@ export async function fetchYooMoneyCurrentBalance(options = {}) {
   if (!Number.isFinite(amount)) {
     throw new Error("YooMoney account-info did not return a numeric balance.");
   }
-  const currency = String(payload?.currency || options.currency || YOOMONEY_DEFAULT_CURRENCY).trim().toUpperCase();
+  const currency = normalizeYooMoneyBalanceCurrency(payload?.currency || options.currency || YOOMONEY_DEFAULT_CURRENCY);
   return {
     id: String(payload?.account || payload?.account_number || "yoomoney-account").trim(),
     amount: roundYooMoneyAmount(amount),
@@ -307,6 +307,14 @@ function parseUtcDate(value) {
 
 function getYooMoneyChannel(currency) {
   return YOOMONEY_CHANNEL_BY_CURRENCY[String(currency || "").toUpperCase()] || "Яндекс руб";
+}
+
+function normalizeYooMoneyBalanceCurrency(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw === "643") return "RUB";
+  if (raw === "840") return "USD";
+  if (raw === "978") return "EUR";
+  return raw || YOOMONEY_DEFAULT_CURRENCY;
 }
 
 function roundYooMoneyAmount(value) {
