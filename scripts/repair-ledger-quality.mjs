@@ -19,7 +19,7 @@ import {
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const LEDGER_RANGE_COLUMNS = "A:V";
-const TASKS = new Set(["all", "missing-amount-net", "mismatches", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
+const TASKS = new Set(["all", "missing-amount-net", "mismatches", "balance-corrections", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
 const TASK_ALIASES = new Map([
   ["mismatch-report", "mismatches"],
   ["mismatch", "mismatches"],
@@ -76,6 +76,9 @@ export function buildLedgerQualityRepairReport({
   const mismatchReport = shouldRun(task, "mismatches")
     ? buildMismatchReport({ operations, balances })
     : emptyTaskReport();
+  const balanceCorrections = shouldRun(task, "balance-corrections")
+    ? buildBalanceCorrectionsReport({ operations, balances, autoBalances, mergedBalances })
+    : emptyBalanceCorrectionsReport();
   const missingBalances = shouldRun(task, "missing-balances")
     ? buildMissingBalancesReport({ operations, balances, autoBalances, mergedBalances })
     : emptyTaskReport();
@@ -99,6 +102,7 @@ export function buildLedgerQualityRepairReport({
     balances: balancesSummary,
     missingAmountNet,
     mismatchReport,
+    balanceCorrections,
     missingBalances,
     normalizeSources,
     yoomoneyReconcile,
@@ -247,6 +251,136 @@ export function buildMismatchReport({ operations = [], balances = [] } = {}) {
       needsManualVerification: rows.filter((row) => !row.after).length,
     },
   };
+}
+
+export function buildBalanceCorrectionsReport({ operations = [], balances = [], autoBalances = [], mergedBalances = [] } = {}) {
+  const merged = mergedBalances.length
+    ? mergedBalances
+    : (mergeManualAndAutoBalances(balances, autoBalances).rows || []);
+  const daily = buildDailyCurrencyBalances(operations, merged);
+  const rows = (daily.rows || [])
+    .filter((row) => row.status && row.status !== "ok")
+    .sort(compareMismatchRows)
+    .map((row) => buildBalanceCorrectionRow({ row, balances, autoBalances, mergedBalances: merged }));
+  const conflicts = buildManualAutoBalanceConflicts({ balances, autoBalances });
+  return {
+    rows,
+    conflicts,
+    summary: {
+      detected: rows.length,
+      conflicts: conflicts.length,
+      wouldUpdate: 0,
+      updated: 0,
+      skipped: rows.length,
+      needsManualVerification: rows.length + conflicts.length,
+    },
+  };
+}
+
+function buildBalanceCorrectionRow({ row, balances = [], autoBalances = [], mergedBalances = [] }) {
+  const exactManual = findExactBalanceCandidate({ balances, row });
+  const exactAuto = findExactBalanceCandidate({ balances: autoBalances, row });
+  const exactMerged = findExactBalanceCandidate({ balances: mergedBalances, row });
+  const current = exactManual || exactAuto || exactMerged || null;
+  const currentSourceType = getBalanceSourceType(current);
+  const computedBalance = row.closing_balance ?? row.computed_closing_balance ?? null;
+  return {
+    date: row.date,
+    channel: row.channel,
+    currency: row.currency,
+    status: row.status,
+    opening_balance: row.opening_balance,
+    provider_balance: row.provider_reported_balance,
+    computed_balance: computedBalance,
+    diff: row.difference,
+    current_source: formatBalanceSource(current),
+    current_source_type: currentSourceType,
+    recommended_action: buildBalanceCorrectionAction({ row, currentSourceType, computedBalance }),
+    target_sheet: resolveBalanceCorrectionTargetSheet({ row, current }),
+    conflict: buildExactConflict({ manual: exactManual, auto: exactAuto }),
+    after: null,
+  };
+}
+
+function buildBalanceCorrectionAction({ row, currentSourceType, computedBalance }) {
+  if (row.status === "missing_opening_balance") {
+    return "Add factual provider/manual opening balance before this movement date in Остатки; do not derive it from computed ledger movement.";
+  }
+  if (row.status === "missing_provider_balance") {
+    return `Add factual provider/manual closing balance to Остатки; computed_balance=${formatValue(computedBalance)} is only a hint until verified.`;
+  }
+  if (currentSourceType === "provider_auto") {
+    return "Verify provider auto snapshot against statement/import; do not copy computed balance into Остатки unless manually confirmed.";
+  }
+  if (row.status === "mismatch") {
+    return "Verify provider/manual statement before changing data; if provider_balance is factual, correct Ledger movement, otherwise correct the Остатки row.";
+  }
+  return "Verify factual balance source before changing Ledger or balance rows.";
+}
+
+function resolveBalanceCorrectionTargetSheet({ row, current }) {
+  const sourceSheet = String(current?.sourceSheet || "").trim();
+  if (sourceSheet === "Авто Остатки" && row.status !== "missing_provider_balance") return "Авто Остатки";
+  return "Остатки";
+}
+
+function buildManualAutoBalanceConflicts({ balances = [], autoBalances = [] } = {}) {
+  const conflicts = [];
+  for (const manual of balances || []) {
+    const auto = findExactBalanceCandidate({ balances: autoBalances, row: normalizeBalanceCandidateAsRow(manual) });
+    if (!auto) continue;
+    const manualAmount = parseAmount(manual.balanceAmount ?? manual.amount);
+    const autoAmount = parseAmount(auto.balanceAmount ?? auto.amount);
+    if (manualAmount === null || autoAmount === null || Math.abs(manualAmount - autoAmount) <= 0.0001) continue;
+    conflicts.push({
+      date: normalizeDate(manual.date),
+      channel: String(manual.channel || manual.accountName || manual.account || "").trim(),
+      currency: String(manual.currency || "").trim().toUpperCase(),
+      manual_source: formatBalanceSource(manual),
+      manual_amount: manualAmount,
+      auto_source: formatBalanceSource(auto),
+      auto_amount: autoAmount,
+      diff: round(autoAmount - manualAmount),
+      resolution: "manual Остатки wins; keep auto row ignored unless provider evidence proves manual row is wrong",
+    });
+  }
+  return conflicts.sort(compareMismatchRows);
+}
+
+function buildExactConflict({ manual, auto }) {
+  if (!manual || !auto) return null;
+  const manualAmount = parseAmount(manual.balanceAmount ?? manual.amount);
+  const autoAmount = parseAmount(auto.balanceAmount ?? auto.amount);
+  if (manualAmount === null || autoAmount === null || Math.abs(manualAmount - autoAmount) <= 0.0001) return null;
+  return {
+    manual_source: formatBalanceSource(manual),
+    manual_amount: manualAmount,
+    auto_source: formatBalanceSource(auto),
+    auto_amount: autoAmount,
+    diff: round(autoAmount - manualAmount),
+    resolution: "manual Остатки wins",
+  };
+}
+
+function normalizeBalanceCandidateAsRow(candidate = {}) {
+  return {
+    date: normalizeDate(candidate.date),
+    channel: String(candidate.channel || candidate.accountName || candidate.account || "").trim(),
+    currency: String(candidate.currency || "").trim().toUpperCase(),
+  };
+}
+
+function formatBalanceSource(row) {
+  if (!row) return "missing";
+  const sheet = row.sourceSheet || (getBalanceSourceType(row) === "provider_auto" ? "Авто Остатки" : "Остатки");
+  return row.sourceRow ? `${sheet} row ${row.sourceRow}` : sheet;
+}
+
+function getBalanceSourceType(row) {
+  if (!row) return "missing";
+  const text = normalizeText([row.sourceSheet, row.source, row.fact_source, row.provider, row.comment].join(" "));
+  if (/авто остатки|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
+  return "manual_fact";
 }
 
 function enrichMismatchRow({ row, operations, balances }) {
@@ -486,7 +620,7 @@ async function main() {
   const options = parseArgs();
   if (options.help) {
     console.log([
-      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|missing-balances|normalize-sources|yoomoney-reconcile] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run|--apply] [--confirm-file file.json] [--json]",
+      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|balance-corrections|missing-balances|normalize-sources|yoomoney-reconcile] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run|--apply] [--confirm-file file.json] [--json]",
       "",
       "Dry-run is the default. --apply writes only explicit Ledger row patches.",
     ].join("\n"));
@@ -516,6 +650,7 @@ function printHumanReport(report) {
   console.log(`Summary: ${JSON.stringify(report.summary)}`);
   printTaskSummary("missing-amount-net", report.missingAmountNet);
   printTaskSummary("mismatches", report.mismatchReport);
+  printTaskSummary("balance-corrections", report.balanceCorrections);
   printTaskSummary("missing-balances", report.missingBalances);
   printTaskSummary("normalize-sources", report.normalizeSources);
   if (report.yoomoneyReconcile?.source) printTaskSummary("yoomoney-reconcile", report.yoomoneyReconcile);
@@ -772,6 +907,14 @@ function summarizeRows(rows) {
 
 function emptyTaskReport() {
   return { rows: [], summary: { detected: 0, wouldUpdate: 0, updated: 0, skipped: 0, needsManualVerification: 0 } };
+}
+
+function emptyBalanceCorrectionsReport() {
+  return {
+    rows: [],
+    conflicts: [],
+    summary: { detected: 0, conflicts: 0, wouldUpdate: 0, updated: 0, skipped: 0, needsManualVerification: 0 },
+  };
 }
 
 function filterPatch(patch, allowed) {

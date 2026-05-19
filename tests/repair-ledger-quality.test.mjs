@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildBalanceCorrectionsReport,
   buildMissingBalancesReport,
   buildLedgerQualityRepairReport,
   buildUpdatedLedgerRow,
@@ -65,6 +66,7 @@ test("parseArgs defaults to dry-run all tasks", () => {
 
 test("parseArgs supports required task names and legacy mismatch alias", () => {
   assert.equal(parseArgs(["--task", "mismatches"]).task, "mismatches");
+  assert.equal(parseArgs(["--task", "balance-corrections"]).task, "balance-corrections");
   assert.equal(parseArgs(["--task", "missing-balances"]).task, "missing-balances");
   assert.equal(parseArgs(["--task", "normalize-sources"]).task, "normalize-sources");
   assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).task, "yoomoney-reconcile");
@@ -304,6 +306,169 @@ test("mismatch report distinguishes wrong sign, wrong channel, and wrong factual
   assert.equal(wrongChannel.after, null);
   assert.equal(report.mismatchReport.summary.wouldUpdate, 0);
   assert.equal(report.mismatchReport.summary.needsManualVerification, 3);
+});
+
+test("balance correction diagnostics output exact mismatch row and never write computed balance as fact", () => {
+  const report = buildLedgerQualityRepairReport({
+    task: "balance-corrections",
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 41,
+          date: "2026-05-04",
+          operation: "income",
+          toChannel: "монобанк грн",
+          currency: "UAH",
+          amountNet: "4305",
+          amount: "4305",
+          balanceAmount: 4305,
+          source: "monobank",
+        }),
+      ],
+      balances: [
+        {
+          date: "2026-05-03",
+          channel: "монобанк грн",
+          currency: "UAH",
+          amount: "26670",
+          balanceAmount: "26670",
+          sourceSheet: "Остатки",
+          sourceRow: 12,
+        },
+        {
+          date: "2026-05-04",
+          channel: "монобанк грн",
+          currency: "UAH",
+          amount: "31975",
+          balanceAmount: "31975",
+          sourceSheet: "Остатки",
+          sourceRow: 13,
+        },
+      ],
+      autoBalances: [],
+    },
+  });
+
+  assert.equal(report.balanceCorrections.summary.detected, 1);
+  assert.equal(report.balanceCorrections.summary.wouldUpdate, 0);
+  assert.equal(report.balanceCorrections.summary.needsManualVerification, 1);
+  assert.deepEqual(report.balanceCorrections.rows[0], {
+    date: "2026-05-04",
+    channel: "монобанк грн",
+    currency: "UAH",
+    status: "mismatch",
+    opening_balance: 26670,
+    provider_balance: 31975,
+    computed_balance: 30975,
+    diff: 1000,
+    current_source: "Остатки row 13",
+    current_source_type: "manual_fact",
+    recommended_action: "Verify provider/manual statement before changing data; if provider_balance is factual, correct Ledger movement, otherwise correct the Остатки row.",
+    target_sheet: "Остатки",
+    conflict: null,
+    after: null,
+  });
+});
+
+test("balance correction diagnostics report manual-over-auto conflicts without hiding them", () => {
+  const report = buildBalanceCorrectionsReport({
+    operations: [
+      operation({
+        sheetRowNumber: 51,
+        date: "2026-05-02",
+        operation: "income",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "206",
+        amount: "206",
+        balanceAmount: 206,
+        source: "wise",
+      }),
+    ],
+    balances: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 },
+      { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206", balanceAmount: "1206", sourceSheet: "Остатки", sourceRow: 3 },
+    ],
+    autoBalances: [
+      { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "999", balanceAmount: "999", sourceSheet: "Авто Остатки", sourceRow: 8, provider: "wise" },
+    ],
+  });
+
+  assert.equal(report.rows.length, 0);
+  assert.equal(report.summary.conflicts, 1);
+  assert.deepEqual(report.conflicts[0], {
+    date: "2026-05-02",
+    channel: "wise usd",
+    currency: "USD",
+    manual_source: "Остатки row 3",
+    manual_amount: 1206,
+    auto_source: "Авто Остатки row 8",
+    auto_amount: 999,
+    diff: -207,
+    resolution: "manual Остатки wins; keep auto row ignored unless provider evidence proves manual row is wrong",
+  });
+});
+
+test("balance correction diagnostics use Авто Остатки only as existing fallback source", () => {
+  const report = buildBalanceCorrectionsReport({
+    operations: [
+      operation({
+        sheetRowNumber: 61,
+        date: "2026-05-02",
+        operation: "income",
+        toChannel: "wise eur",
+        currency: "EUR",
+        amountNet: "50",
+        amount: "50",
+        balanceAmount: 50,
+        source: "wise",
+      }),
+    ],
+    balances: [
+      { date: "2026-05-01", channel: "wise eur", currency: "EUR", amount: "100", balanceAmount: "100", sourceSheet: "Остатки", sourceRow: 4 },
+    ],
+    autoBalances: [
+      { date: "2026-05-02", channel: "wise eur", currency: "EUR", amount: "140", balanceAmount: "140", sourceSheet: "Авто Остатки", sourceRow: 9, provider: "wise" },
+    ],
+  });
+
+  assert.equal(report.summary.detected, 1);
+  assert.equal(report.rows[0].current_source, "Авто Остатки row 9");
+  assert.equal(report.rows[0].current_source_type, "provider_auto");
+  assert.equal(report.rows[0].target_sheet, "Авто Остатки");
+  assert.equal(report.rows[0].recommended_action, "Verify provider auto snapshot against statement/import; do not copy computed balance into Остатки unless manually confirmed.");
+  assert.equal(report.rows[0].after, null);
+});
+
+test("balance correction diagnostics emit exact missing Остатки row with computed amount as hint only", () => {
+  const report = buildBalanceCorrectionsReport({
+    operations: [
+      operation({
+        sheetRowNumber: 71,
+        date: "2026-05-02",
+        operation: "income",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "206",
+        amount: "206",
+        balanceAmount: 206,
+        source: "wise",
+      }),
+    ],
+    balances: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 },
+    ],
+    autoBalances: [],
+  });
+
+  assert.equal(report.rows[0].status, "missing_provider_balance");
+  assert.equal(report.rows[0].current_source, "missing");
+  assert.equal(report.rows[0].target_sheet, "Остатки");
+  assert.equal(report.rows[0].computed_balance, 1206);
+  assert.equal(report.rows[0].provider_balance, null);
+  assert.match(report.rows[0].recommended_action, /Add factual provider\/manual closing balance/);
+  assert.match(report.rows[0].recommended_action, /computed_balance=1206 is only a hint/);
+  assert.equal(report.rows[0].after, null);
 });
 
 test("missing balance report keeps manual Остатки ahead of Авто Остатки", () => {
