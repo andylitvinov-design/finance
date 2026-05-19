@@ -56,8 +56,10 @@ test("parseArgs defaults to dry-run all tasks", () => {
   assert.deepEqual(parseArgs([]), {
     apply: false,
     confirmFile: "",
+    from: "",
     json: false,
     task: "all",
+    to: "",
   });
 });
 
@@ -65,6 +67,9 @@ test("parseArgs supports required task names and legacy mismatch alias", () => {
   assert.equal(parseArgs(["--task", "mismatches"]).task, "mismatches");
   assert.equal(parseArgs(["--task", "missing-balances"]).task, "missing-balances");
   assert.equal(parseArgs(["--task", "normalize-sources"]).task, "normalize-sources");
+  assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).task, "yoomoney-reconcile");
+  assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).from, "2026-05-01");
+  assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).to, "2026-05-19");
   assert.equal(parseArgs(["--task", "mismatch-report"]).task, "mismatches");
 });
 

@@ -2,6 +2,10 @@ import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.j
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
+import {
+  buildProviderLedgerReconciliation,
+  buildYooMoneyProviderEvidenceFixture,
+} from "./provider-ledger-reconciliation-engine.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
@@ -76,6 +80,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   });
   annotateReconciliationSources(reconciliation, balanceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
+  annotateProviderLedgerReconciliation(reconciliation, repository.operations || [], period);
   reconciliation.diagnostics = {
     ...(reconciliation.diagnostics || {}),
     manual_balance_snapshot_rows_loaded: manualBalances.length,
@@ -100,6 +105,42 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period,
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
+  };
+}
+
+function annotateProviderLedgerReconciliation(reconciliation, operations = [], period = {}) {
+  const yoomoneyBalanceDiagnostics = (reconciliation.by_channel_currency || [])
+    .filter((row) => row.channel === "Яндекс руб" && row.currency === "RUB")
+    .filter((row) => row.status && row.status !== "ok" && row.status !== "no_data")
+    .map((row) => ({
+      date: row.manual_provider_closing_balance_date || period.to || "",
+      channel: row.channel,
+      currency: row.currency,
+      status: row.status,
+      computed_closing_balance: row.calculated_closing_balance,
+      provider_reported_balance: row.manual_provider_closing_balance,
+      sourceRow: row.sourceRow || row.source_row || null,
+    }));
+  const yoomoney = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence: buildYooMoneyProviderEvidenceFixture(),
+    ledgerRows: operations,
+    balanceDiagnostics: yoomoneyBalanceDiagnostics,
+    period,
+  });
+  reconciliation.provider_ledger_reconciliation = { yoomoney };
+  reconciliation.summary = {
+    ...(reconciliation.summary || {}),
+    transaction_reconciliation_status: yoomoney.transaction_reconciliation_status,
+    provider_evidence_total: yoomoney.provider_evidence_total,
+    ledger_provider_total: yoomoney.ledger_provider_total,
+    ledger_manual_migration_total: yoomoney.ledger_manual_migration_total,
+    transaction_delta: yoomoney.transaction_delta,
+    manual_migration_delta: yoomoney.manual_migration_delta,
+    stale_ostatki_rows: yoomoney.stale_ostatki_rows,
+    manual_confirmation_required_rows: yoomoney.manual_confirmation_required_rows,
   };
 }
 

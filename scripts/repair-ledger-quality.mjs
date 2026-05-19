@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import {
+  buildProviderLedgerReconciliation,
+  buildYooMoneyProviderEvidenceFixture,
+} from "../server/provider-ledger-reconciliation-engine.js";
+import {
   getManualGoogleSheetsAccessToken,
   MANUAL_LEDGER_SHEET_NAME,
   MANUAL_SPREADSHEET_ID,
@@ -15,7 +19,7 @@ import {
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const LEDGER_RANGE_COLUMNS = "A:V";
-const TASKS = new Set(["all", "missing-amount-net", "mismatches", "missing-balances", "normalize-sources"]);
+const TASKS = new Set(["all", "missing-amount-net", "mismatches", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
 const TASK_ALIASES = new Map([
   ["mismatch-report", "mismatches"],
   ["mismatch", "mismatches"],
@@ -29,6 +33,8 @@ export function parseArgs(argv = process.argv.slice(2)) {
     confirmFile: "",
     json: false,
     task: "all",
+    from: "",
+    to: "",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -36,6 +42,8 @@ export function parseArgs(argv = process.argv.slice(2)) {
     else if (arg === "--dry-run") options.apply = false;
     else if (arg === "--json") options.json = true;
     else if (arg === "--task") options.task = normalizeTaskName(argv[++index] || "");
+    else if (arg === "--from") options.from = normalizeDate(argv[++index] || "");
+    else if (arg === "--to") options.to = normalizeDate(argv[++index] || "");
     else if (arg === "--confirm-file") options.confirmFile = argv[++index] || "";
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -51,6 +59,7 @@ export function buildLedgerQualityRepairReport({
   confirmations = {},
   now = new Date().toISOString(),
   task = "all",
+  period = {},
 } = {}) {
   task = normalizeTaskName(task);
   const operations = Array.isArray(repository.operations) ? repository.operations : [];
@@ -69,6 +78,9 @@ export function buildLedgerQualityRepairReport({
     : emptyTaskReport();
   const missingBalances = shouldRun(task, "missing-balances")
     ? buildMissingBalancesReport({ operations, balances, autoBalances, mergedBalances })
+    : emptyTaskReport();
+  const yoomoneyReconcile = shouldRun(task, "yoomoney-reconcile")
+    ? buildYooMoneyReconciliationReport({ operations, balances: mergedBalances, period })
     : emptyTaskReport();
   const balancesSummary = buildBalancesSummary(operations);
 
@@ -89,6 +101,35 @@ export function buildLedgerQualityRepairReport({
     mismatchReport,
     missingBalances,
     normalizeSources,
+    yoomoneyReconcile,
+  };
+}
+
+export function buildYooMoneyReconciliationReport({ operations = [], balances = [], period = {} } = {}) {
+  const from = normalizeDate(period.from) || "2026-04-01";
+  const to = normalizeDate(period.to) || "2026-05-19";
+  const daily = buildDailyCurrencyBalances(operations, balances);
+  const balanceDiagnostics = (daily.rows || [])
+    .filter((row) => row.channel === "Яндекс руб" && row.currency === "RUB")
+    .filter((row) => row.status && row.status !== "ok");
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence: buildYooMoneyProviderEvidenceFixture(),
+    ledgerRows: operations,
+    balanceDiagnostics,
+    period: { from, to },
+  });
+  return {
+    ...report,
+    summary: {
+      detected: report.row_level.provider_rows.length + report.row_level.ledger_rows.length,
+      wouldUpdate: 0,
+      updated: 0,
+      skipped: report.manual_confirmation_required_rows.length,
+      needsManualVerification: report.manual_confirmation_required_rows.length,
+    },
   };
 }
 
@@ -445,7 +486,7 @@ async function main() {
   const options = parseArgs();
   if (options.help) {
     console.log([
-      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|missing-balances|normalize-sources] [--dry-run|--apply] [--confirm-file file.json] [--json]",
+      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|missing-balances|normalize-sources|yoomoney-reconcile] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run|--apply] [--confirm-file file.json] [--json]",
       "",
       "Dry-run is the default. --apply writes only explicit Ledger row patches.",
     ].join("\n"));
@@ -456,7 +497,7 @@ async function main() {
   if (!repository?.ok) {
     throw new Error(repository?.warning || "Manual repository could not be loaded.");
   }
-  const report = buildLedgerQualityRepairReport({ repository, confirmations, task: options.task });
+  const report = buildLedgerQualityRepairReport({ repository, confirmations, task: options.task, period: { from: options.from, to: options.to } });
   if (options.apply) {
     const applyResult = await applyLedgerQualityRepairs({ report, task: options.task });
     report.apply = applyResult;
@@ -477,6 +518,7 @@ function printHumanReport(report) {
   printTaskSummary("mismatches", report.mismatchReport);
   printTaskSummary("missing-balances", report.missingBalances);
   printTaskSummary("normalize-sources", report.normalizeSources);
+  if (report.yoomoneyReconcile?.source) printTaskSummary("yoomoney-reconcile", report.yoomoneyReconcile);
 }
 
 function printTaskSummary(name, taskReport) {
