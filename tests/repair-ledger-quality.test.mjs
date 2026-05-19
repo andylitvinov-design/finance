@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyLedgerQualityRepairs,
   buildBalanceCorrectionsReport,
+  buildFactBalanceGapsReport,
   buildMissingBalancesReport,
   buildLedgerQualityRepairReport,
   buildUpdatedLedgerRow,
@@ -70,6 +71,7 @@ test("parseArgs defaults to dry-run all tasks", () => {
 test("parseArgs supports required task names and legacy mismatch alias", () => {
   assert.equal(parseArgs(["--task", "mismatches"]).task, "mismatches");
   assert.equal(parseArgs(["--task", "balance-corrections"]).task, "balance-corrections");
+  assert.equal(parseArgs(["--task", "fact-balance-gaps"]).task, "fact-balance-gaps");
   assert.equal(parseArgs(["--task", "missing-balances"]).task, "missing-balances");
   assert.equal(parseArgs(["--task", "normalize-sources"]).task, "normalize-sources");
   assert.equal(parseArgs(["--task", "yoomoney-reconcile", "--from", "2026-05-01", "--to", "2026-05-19"]).task, "yoomoney-reconcile");
@@ -493,6 +495,70 @@ test("balance correction diagnostics emit exact missing Остатки row with 
   assert.match(report.rows[0].recommended_action, /Add factual provider\/manual closing balance/);
   assert.match(report.rows[0].recommended_action, /computed_balance=1206 is only a hint/);
   assert.equal(report.rows[0].after, null);
+});
+
+test("fact balance gaps report lists missing, auto pending, mismatch, and missing opening rows", () => {
+  const rows = buildFactBalanceGapsReport({
+    period: { from: "2026-05-01", to: "2026-05-19" },
+    operations: [
+      operation({
+        date: "2026-05-03",
+        operation: "business_expense",
+        fromChannel: "трансервайз дол",
+        toChannel: "",
+        currency: "USD",
+        amountNet: "1848.82",
+        amount: "1848.82",
+        balanceAmount: -1848.82,
+        source: "wise",
+      }),
+      operation({
+        date: "2026-05-05",
+        operation: "income",
+        fromChannel: "",
+        toChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "103",
+        amount: "103",
+        balanceAmount: 103,
+        source: "binance",
+      }),
+      operation({
+        date: "2026-05-05",
+        operation: "business_expense",
+        fromChannel: "paypal usd",
+        toChannel: "",
+        currency: "USD",
+        amountNet: "25",
+        amount: "25",
+        balanceAmount: -25,
+        source: "paypal",
+      }),
+    ],
+    balances: [
+      { date: "2026-04-30", channel: "трансервайз дол", currency: "USD", amount: "2704.25", sourceSheet: "Остатки", sourceRow: 2 },
+      { date: "2026-04-30", channel: "paypal usd", currency: "USD", amount: "100", sourceSheet: "Остатки", sourceRow: 3 },
+    ],
+    autoBalances: [
+      { date: "2026-05-19", channel: "трансервайз дол", currency: "USD", amount: "849.66", sourceSheet: "Авто Остатки", sourceRow: 12, provider: "wise" },
+    ],
+  }).rows;
+
+  const wise = rows.find((row) => row.channel === "трансервайз дол");
+  const binance = rows.find((row) => row.channel === "Бинанс spot");
+  const paypal = rows.find((row) => row.channel === "paypal usd");
+  assert.equal(wise.factStatus, "auto_pending");
+  assert.equal(wise.factBalance, 849.66);
+  assert.equal(wise.sourceSheet, "Авто Остатки");
+  assert.equal(wise.sourceRow, 12);
+  assert.equal(wise.difference, -5.77);
+  assert.match(wise.recommendedAction, /confirm provider auto balance/);
+  assert.equal(binance.openingStatus, "missing_opening_balance");
+  assert.equal(binance.factStatus, "missing");
+  assert.match(binance.recommendedAction, /opening balance/);
+  assert.equal(paypal.factStatus, "missing");
+  assert.match(paypal.recommendedAction, /add fact balance/);
+  assert.equal(rows.every((row) => row.after === null), true);
 });
 
 test("missing balance report keeps manual Остатки ahead of Авто Остатки", () => {

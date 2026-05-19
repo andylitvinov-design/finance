@@ -204,7 +204,7 @@ test("period balance UI clarifies closing fact date source and hides unavailable
   const yandex = rows.find((row) => row[0] === "Яндекс руб");
   const wise = rows.find((row) => row[0] === "трансервайз евро");
   assert.equal(yandex[3], "—");
-  assert.equal(yandex[7], "—");
+  assert.equal(yandex[7], "missing fact");
   assert.equal(yandex[8], "—");
   assert.equal(yandex[10], "—");
   assert.match(yandex.at(-1), /Нет факта на конец периода\. Есть ближайший факт: 2026-05-05 68087\.38\./);

@@ -312,13 +312,13 @@
       ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
-        formatNumber(row.opening_fact_balance ?? row.opening_balance),
+        formatOpeningBalance(row),
         formatPlannedNumber(row.planned_delta, row, summary),
         formatPlannedNumber(row.planned_closing_balance, row, summary),
         formatNumber(row.real_delta),
-        formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
-        formatNumber(row.manual_provider_closing_balance),
-        row.manual_provider_closing_balance_date || row.factual_closing_balance_date || "—",
+        formatComputedBalance(row),
+        formatFactBalance(row),
+        formatFactDate(row),
         getFactSourceLabel(row),
         getFactSourceRowLabel(row),
         formatNumber(getCarriedForwardComparisonFact(row)),
@@ -335,6 +335,42 @@
       ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ НА КОНЕЦ ПЕРИОДА", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
+  }
+
+  function formatOpeningBalance(row) {
+    const value = row?.opening_fact_balance ?? row?.opening_balance;
+    if (hasNumber(value)) return formatNumber(value);
+    if (String(row?.computedStatus || row?.computed_status || row?.status || "").trim() === "missing_opening_balance") {
+      return "missing_opening_balance";
+    }
+    return "—";
+  }
+
+  function formatComputedBalance(row) {
+    const value = row?.calculated_closing_balance ?? row?.computed_real_closing_balance;
+    if (hasNumber(value)) return formatNumber(value);
+    if (String(row?.computedStatus || row?.computed_status || "").trim() === "missing_opening_balance") {
+      return "missing_opening_balance";
+    }
+    return "—";
+  }
+
+  function formatFactBalance(row) {
+    const factStatus = String(row?.factStatus || row?.fact_status || "").trim();
+    const value = row?.manual_provider_closing_balance ?? (
+      factStatus === "confirmed" || factStatus === "auto_pending"
+        ? row?.factual_closing_balance
+        : null
+    );
+    if (hasNumber(value)) return formatNumber(value);
+    if (factStatus === "missing" || String(row?.balanceSource || row?.balance_source || "").trim() === "missing") {
+      return "missing fact";
+    }
+    return "—";
+  }
+
+  function formatFactDate(row) {
+    return row?.factDate || row?.fact_date || row?.manual_provider_closing_balance_date || row?.factual_closing_balance_date || "—";
   }
 
   function renderRequiredManualFactRows(doc, rows) {

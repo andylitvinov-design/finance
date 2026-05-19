@@ -169,9 +169,11 @@ test("carried-forward opening row is not labeled as closing manual fact", async 
   });
 
   const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "трансервайз дол");
-  assert.equal(row.status, "carried_forward_conditional");
-  assert.equal(row.closing_balance_source, "carried_forward");
+  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.closing_balance_source, "missing");
   assert.equal(row.balanceSource, "missing");
   assert.equal(row.needsManualConfirmation, true);
   assert.equal(row.sourceSheet, "");
+  assert.equal(row.factStatus, "missing");
+  assert.match(row.repairHint, /add fact balance/);
 });
