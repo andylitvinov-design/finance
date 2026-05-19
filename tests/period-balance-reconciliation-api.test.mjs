@@ -82,6 +82,49 @@ test("period balance reconciliation uses manual fact before auto fallback", asyn
   assert.equal(row.sourceSheet, "Остатки");
 });
 
+test("period balance reconciliation uses exact Yandex manual fact on period end date", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-19" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        {
+          date: "2026-05-10",
+          fromChannel: "Яндекс руб",
+          currency: "RUB",
+          amountNet: "72655.37",
+          balanceAmount: -72655.37,
+          ledgerV2: { date: "2026-05-10", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "72655.37", balance_amount: "-72655.37" },
+        },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [
+        { date: "2026-04-28", channel: "Яндекс руб", currency: "RUB", amount: "142858.88", balanceSource: "manual_fact", sourceSheet: "Остатки", sourceRow: 26 },
+        { date: "2026-05-19", channel: "Яндекс руб", currency: "RUB", amount: "70203.51", balanceSource: "manual_fact", sourceSheet: "Остатки", sourceRow: 67 },
+      ],
+      autoBalances: [
+        { date: "2026-05-19", provider: "wise", channel: "трансервайз евро", currency: "EUR", amount: "158.56", balanceSource: "provider_auto", sourceSheet: "Авто Остатки", sourceRow: 13, comment: "wise auto snapshot" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  const yandex = snapshot.period_balance_reconciliation.by_channel_currency.find((row) => row.channel === "Яндекс руб" && row.currency === "RUB");
+  const wise = snapshot.period_balance_reconciliation.by_channel_currency.find((row) => row.channel === "трансервайз евро" && row.currency === "EUR");
+
+  assert.equal(yandex.manual_provider_closing_balance, 70203.51);
+  assert.equal(yandex.manual_provider_closing_balance_date, "2026-05-19");
+  assert.equal(yandex.balanceSource, "manual_fact");
+  assert.equal(yandex.needsManualConfirmation, false);
+  assert.equal(yandex.sourceSheet, "Остатки");
+  assert.equal(yandex.sourceRow, 67);
+  assert.equal(yandex.status, "ok");
+  assert.equal(wise.manual_provider_closing_balance, 158.56);
+  assert.equal(wise.sourceSheet, "Авто Остатки");
+});
+
 test("period balance reconciliation falls back to auto and marks missing facts", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },

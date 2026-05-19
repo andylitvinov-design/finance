@@ -2896,6 +2896,14 @@ async function saveManualFinanceSheet() {
   renderTabs();
   try {
     const response = await saveManualSheetDirect(payload);
+    if (balanceRows.length) {
+      const balanceResponse = await saveBalanceSnapshotRowsDirect(balanceRows);
+      const savedCount = resolveManualFinanceBalanceSavedCount(balanceResponse, balanceRows.length);
+      if (savedCount < balanceRows.length) {
+        throw new Error(`Остатки сохранены не полностью: сохранено ${savedCount} из ${balanceRows.length} строк.`);
+      }
+      state.manualFinance.data.balanceRows = balanceRows;
+    }
     await syncMainAnalyticsFactImportFromMoneyRows(state.manualFinance.data.moneyRows, state.manualFinance.data.transferRows);
     await loadDashboardData();
     setManualFinanceStatus(`Fact за период сохранён в репозиторий. ${response?.savedAt || ""}`.trim(), false);

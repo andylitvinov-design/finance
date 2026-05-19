@@ -431,6 +431,55 @@ test("saving legacy fact range carries current balance rows into manual finance 
   ]);
 });
 
+test("saving legacy fact range also writes non-empty balance rows to Остатки", async () => {
+  const context = buildFinanceContext();
+  context.state.manualFinance.activeInnerTab = "legacy";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-01",
+    periodEnd: "2026-05-19",
+    moneyRows: [],
+    transferRows: [],
+    balanceRows: [
+      { date: "2026-05-19", channel: "Яндекс руб", amount: "70203.51", currency: "RUB", comment: "typed via legacy fact" },
+      { date: "2026-05-19", channel: "монобанк грн", amount: "", currency: "UAH", comment: "" },
+    ],
+    cashRows: [],
+    expenseRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.deepEqual(plain(context.savedBalanceRows), [
+    { date: "2026-05-19", channel: "Яндекс руб", amount: "70203,51", currency: "RUB", rate: "", usdAmount: "", comment: "typed via legacy fact" },
+  ]);
+  assert.equal(context.lastStatus.isError, false);
+});
+
+test("saving legacy fact range reports partial Остатки write as an error", async () => {
+  const context = buildFinanceContext();
+  context.saveBalanceSnapshotRowsDirect = async (rows) => {
+    context.savedBalanceRows = rows;
+    return { rowCount: 0, savedAt: "partial" };
+  };
+  context.state.manualFinance.activeInnerTab = "legacy";
+  context.state.manualFinance.data = {
+    periodStart: "2026-05-01",
+    periodEnd: "2026-05-19",
+    moneyRows: [],
+    transferRows: [],
+    balanceRows: [
+      { date: "2026-05-19", channel: "Яндекс руб", amount: "70203.51", currency: "RUB", comment: "typed via legacy fact" },
+    ],
+    cashRows: [],
+    expenseRows: [],
+  };
+
+  await context.saveManualFinanceSheet();
+
+  assert.equal(context.lastStatus.isError, true);
+  assert.equal(context.lastStatus.message, "Остатки сохранены не полностью: сохранено 0 из 1 строк.");
+});
+
 test("balance snapshot editor expands every configured channel as target-date input rows", () => {
   const context = buildFinanceContext();
   context.state.manualFinance.data = {
