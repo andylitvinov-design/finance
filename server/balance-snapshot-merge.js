@@ -1,0 +1,70 @@
+const MANUAL_BALANCE_SHEET_NAME = "Остатки";
+const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
+
+export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
+  const manualRows = (manualBalances || []).map((row) => {
+    const source = normalizeBalanceSource(row, "manual_fact");
+    return {
+      ...row,
+      source,
+      fact_source: source,
+      sourceSheet: row.sourceSheet || MANUAL_BALANCE_SHEET_NAME,
+    };
+  });
+  const manualFactKeys = new Set(manualRows
+    .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
+    .map(balanceKey));
+  const autoFallbackRows = [];
+  let autoIgnored = 0;
+
+  for (const row of autoBalances || []) {
+    if (manualFactKeys.has(balanceKey(row))) {
+      autoIgnored += 1;
+      continue;
+    }
+    autoFallbackRows.push({
+      ...row,
+      source: "provider_auto",
+      fact_source: "provider_auto",
+      sourceSheet: row.sourceSheet || AUTO_BALANCE_SHEET_NAME,
+    });
+  }
+
+  const rows = [...manualRows, ...autoFallbackRows];
+  return {
+    rows,
+    merged: rows,
+    autoUsed: autoFallbackRows.length,
+    autoIgnored,
+    auto_balance_rows_used_as_fallback: autoFallbackRows.length,
+    auto_balance_rows_ignored_due_to_manual: autoIgnored,
+  };
+}
+
+function balanceKey(row = {}) {
+  return [
+    normalizeDate(row.date),
+    String(row.channel || row.accountName || row.account || "").trim(),
+    String(row.currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
+  return fallback;
+}
+
+function normalizeDate(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const displayMatch = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (displayMatch) return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
+  return "";
+}

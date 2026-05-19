@@ -260,6 +260,22 @@ test("audit snapshot never falls back to amount when amount_net is missing", asy
   assert.match(response.warnings.join("\n"), /amount_net.*balance was not calculated/i);
 });
 
+test("audit snapshot excludes missing amount_net rows even when auto balances exist", async () => {
+  const repository = repositoryFixture();
+  const response = await buildAuditSnapshot({
+    repositoryLoader: async () => ({
+      ...repository,
+      autoBalances: [
+        { date: "2026-05-02", channel: "cash usd", currency: "USD", amount: "410", provider: "manual-test" },
+      ],
+    }),
+  });
+
+  assert.equal(response.balances.fallback_amount_rows, 0);
+  assert.equal(response.balances.excluded_missing_amount_net_rows, 1);
+  assert.equal(response.daily_balances.summary.excluded_missing_amount_net_rows, 1);
+});
+
 test("audit snapshot exposes additive daily currency balances without changing by_channel", async () => {
   const response = await buildFixtureSnapshot();
 
@@ -276,6 +292,11 @@ test("audit snapshot exposes additive daily currency balances without changing b
     "fallback_amount_rows",
     "missing_amount_net_rows",
     "excluded_missing_amount_net_rows",
+    "manual_balance_rows",
+    "auto_balance_rows",
+    "merged_balance_rows",
+    "auto_balance_rows_used_as_fallback",
+    "auto_balance_rows_ignored_due_to_manual",
   ]);
   assert.ok(response.balances.by_channel.some((row) => row.channel === "пейпал дол" && row.balance_amount === 311.06));
   assert.ok(response.daily_balances.rows.some((row) =>

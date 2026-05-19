@@ -1,4 +1,5 @@
 import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
+import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 
@@ -40,7 +41,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     warnings.push("needs verification: manual Google Sheets read access is unavailable.");
     if (repository.warning) warnings.push(toSafeWarning(repository.warning));
     warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
-    const balanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+    const balanceRows = mergeManualAndAutoBalances([], Array.isArray(autoBalances.balances) ? autoBalances.balances : []).rows;
     const reconciliation = buildPeriodBalanceReconciliation({
       operations: [],
       balanceRows,
@@ -64,7 +65,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const plannedSourceStatus = resolvePlannedSourceStatus(repository, plannedRows);
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
-  const balanceRows = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
+  const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
+  const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
     balanceRows,
@@ -99,32 +101,6 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
-}
-
-function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
-  const manualRows = (manualBalances || []).map((row) => {
-    const source = normalizeBalanceSource(row, "manual_fact");
-    return {
-      ...row,
-      source,
-      fact_source: source,
-      sourceSheet: row.sourceSheet || MANUAL_BALANCE_SHEET_NAME,
-    };
-  });
-  const manualFactKeys = new Set(manualRows
-    .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
-    .map(balanceKey));
-  return [
-    ...manualRows,
-    ...(autoBalances || [])
-      .filter((row) => !manualFactKeys.has(balanceKey(row)))
-      .map((row) => ({
-        ...row,
-        source: "provider_auto",
-        fact_source: "provider_auto",
-        sourceSheet: row.sourceSheet || AUTO_BALANCE_SHEET_NAME,
-      })),
-  ];
 }
 
 function annotateReconciliationSources(reconciliation, balanceRows = []) {
@@ -241,14 +217,6 @@ function balanceDatedKey(date, channel, currency) {
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
   if (!normalizedDate || !normalizedChannel || !normalizedCurrency) return "";
   return [normalizedDate, normalizedChannel, normalizedCurrency].join("|");
-}
-
-function balanceKey(row = {}) {
-  return [
-    normalizeDate(row.date),
-    String(row.channel || row.accountName || row.account || "").trim(),
-    String(row.currency || "").trim().toUpperCase(),
-  ].join("|");
 }
 
 function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
