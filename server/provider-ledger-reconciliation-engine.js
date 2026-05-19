@@ -127,7 +127,7 @@ export function buildProviderLedgerReconciliation({
   const ledgerTotals = buildLedgerTotals(providerLedgerRows, manualMigrationRows);
   const differences = buildDifferences(providerTotals, ledgerTotals);
   const statusCounts = countBy(providerResultRows, "status");
-  const transactionStatus = resolveTransactionStatus(providerResultRows);
+  const transactionStatus = resolveTransactionStatus(providerResultRows, ledgerResultRows);
   const balanceDiag = buildBalanceDiagnostics(balanceDiagnostics, transactionStatus);
 
   return {
@@ -408,9 +408,13 @@ function buildBalanceDiagnostics(rows, transactionStatus) {
   };
 }
 
-function resolveTransactionStatus(rows) {
-  const failing = new Set(["missing_in_ledger", "duplicate_in_ledger", "extra_in_ledger", "amount_mismatch", "sign_mismatch", "channel_mismatch"]);
-  return rows.some((row) => failing.has(row.status)) ? "mismatch" : "ok";
+function resolveTransactionStatus(providerRows, ledgerRows) {
+  const failingProvider = new Set(["missing_in_ledger", "duplicate_in_ledger", "extra_in_ledger", "amount_mismatch", "sign_mismatch", "channel_mismatch"]);
+  const failingLedger = new Set(["duplicate_candidate", "not_in_provider_statement", "unsafe_to_mutate"]);
+  return providerRows.some((row) => failingProvider.has(row.status))
+    || ledgerRows.some((row) => failingLedger.has(row.status))
+    ? "mismatch"
+    : "ok";
 }
 
 function stripInternalMatch(row) {

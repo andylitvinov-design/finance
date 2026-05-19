@@ -131,6 +131,31 @@ test("manual migration rows are quarantined separately from provider totals", ()
   );
 });
 
+test("extra YooMoney ledger rows make transaction status mismatch separately from migration rows", () => {
+  const providerEvidence = [
+    { date: "2026-04-25", signedAmount: 2755.86, description: "provider payment" },
+  ];
+  const ledgerRows = [
+    ledgerRow({ sheetRowNumber: 43, date: "2026-04-25", signedAmount: 2755.86 }),
+    ledgerRow({ sheetRowNumber: 99, date: "2026-04-25", signedAmount: -21507.46, source: "yoomoney" }),
+    ledgerRow({ sheetRowNumber: 5, date: "2026-04-24", signedAmount: -74669, source: "migration", rawSourceId: "migration:2026-04-24:5" }),
+  ];
+
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence,
+    ledgerRows,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+  });
+
+  assert.equal(report.transaction_reconciliation_status, "mismatch");
+  assert.equal(report.differences.by_month["2026-04"].provider_vs_yoomoney, -21507.46);
+  assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 99).status, "not_in_provider_statement");
+  assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 5).status, "manual_migration_needs_confirmation");
+});
+
 test("matching provider operations keeps stale Остатки mismatch out of transaction layer", () => {
   const providerEvidence = buildYooMoneyProviderEvidenceFixture()
     .filter((row) => row.date >= "2026-05-01" && row.date <= "2026-05-19");
