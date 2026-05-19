@@ -10,7 +10,20 @@ import {
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const PUBLIC_SUMMARY_ONLY_WARNING =
   "includeRows is disabled in Phase 1 public summary-only mode; raw and sanitized rows are not returned.";
-const SOURCE_KEYS = ["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "migration", "unknown"];
+const SOURCE_KEYS = [
+  "manual",
+  "fact",
+  "paypal",
+  "paypal_personal_manual",
+  "wise",
+  "monobank",
+  "privatbank",
+  "td_bank",
+  "yoomoney",
+  "binance",
+  "migration",
+  "unknown",
+];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
