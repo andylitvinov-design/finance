@@ -120,7 +120,7 @@
     const meaningfulRows = positionRows.filter(isMeaningfulReconciliationRow);
     const emptyRows = positionRows.filter((row) => !isMeaningfulReconciliationRow(row));
     section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, positionRows));
-    section.appendChild(renderPositionTable(doc, meaningfulRows));
+    section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}));
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
     const requiredManualFactRows = reconciliation.required_manual_fact_rows || [];
@@ -307,30 +307,32 @@
     return result;
   }
 
-  function renderPositionTable(doc, rows) {
+  function renderPositionTable(doc, rows, summary = {}) {
     const tableRows = [
       ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
         formatNumber(row.opening_fact_balance ?? row.opening_balance),
-        formatNumber(row.planned_delta),
-        formatNumber(row.planned_closing_balance),
+        formatPlannedNumber(row.planned_delta, row, summary),
+        formatPlannedNumber(row.planned_closing_balance, row, summary),
         formatNumber(row.real_delta),
         formatNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance),
         formatNumber(row.manual_provider_closing_balance),
-        formatNumber(getCarriedForwardComparisonFact(row)),
+        row.manual_provider_closing_balance_date || row.factual_closing_balance_date || "—",
         getFactSourceLabel(row),
+        getFactSourceRowLabel(row),
+        formatNumber(getCarriedForwardComparisonFact(row)),
         formatNumber(row.real_difference),
-        formatNumber(row.plan_vs_real_delta),
+        formatPlanVsRealDelta(row, summary),
         getStatusLabel(row.status),
-        row.missing_fact_reason || row.diagnosis || "—",
+        getFactDiagnosis(row),
       ]),
-      ...buildChannelCurrencyTotalRows(rows),
+      ...buildChannelCurrencyTotalRows(rows, summary),
     ];
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ РУЧНОЙ/ПРОВАЙДЕР", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "ФАКТ ИСТОЧНИК", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ НА КОНЕЦ ПЕРИОДА", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
   }
@@ -426,7 +428,39 @@
     return row.displayed_fact_balance ?? row.carried_forward_balance;
   }
 
-  function buildChannelCurrencyTotalRows(rows) {
+  function shouldShowPlannedValues(row, summary = {}) {
+    if (hasPositiveNumber(row?.planned_rows)) return true;
+    if (hasPositiveNumber(summary?.planned_rows)) return true;
+    return String(summary?.planned_source_status || "").trim() === "ok";
+  }
+
+  function formatPlannedNumber(value, row, summary = {}) {
+    return shouldShowPlannedValues(row, summary) ? formatNumber(value) : "—";
+  }
+
+  function formatPlanVsRealDelta(row, summary = {}) {
+    return shouldShowPlannedValues(row, summary) ? formatNumber(row?.plan_vs_real_delta) : "—";
+  }
+
+  function getFactSourceRowLabel(row) {
+    const sourceRow = row?.sourceRow ?? row?.source_row;
+    const sourceSheet = String(row?.sourceSheet || row?.source_sheet || "").trim();
+    if (!sourceRow) return "—";
+    return `${sourceSheet || "source"} #${sourceRow}`;
+  }
+
+  function getFactDiagnosis(row) {
+    if (!row) return "—";
+    if (!row.manual_provider_closing_balance_date && row.nearest_manual_provider_fact_date) {
+      return `Нет факта на конец периода. Есть ближайший факт: ${row.nearest_manual_provider_fact_date} ${formatNumber(row.nearest_manual_provider_fact_amount)}.`;
+    }
+    if (!row.manual_provider_closing_balance_date && row.last_observed_closing_balance_date) {
+      return `Факт есть на начало/ближайшую дату, нет факта на конец периода. Ближайшая дата: ${row.last_observed_closing_balance_date} ${formatNumber(row.last_observed_closing_balance)}.`;
+    }
+    return row.missing_fact_reason || row.diagnosis || "—";
+  }
+
+  function buildChannelCurrencyTotalRows(rows, summary = {}) {
     const totalsByCurrency = new Map();
     (rows || []).forEach((row) => {
       const currency = String(row?.currency || "").trim().toUpperCase();
@@ -446,14 +480,18 @@
       }
       const totals = totalsByCurrency.get(currency);
       addNumeric(totals, "opening_balance", row.opening_fact_balance ?? row.opening_balance);
-      addNumeric(totals, "planned_delta", row.planned_delta);
-      addNumeric(totals, "planned_closing_balance", row.planned_closing_balance);
+      if (shouldShowPlannedValues(row, summary)) {
+        addNumeric(totals, "planned_delta", row.planned_delta);
+        addNumeric(totals, "planned_closing_balance", row.planned_closing_balance);
+      }
       addNumeric(totals, "real_delta", row.real_delta);
       addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
       addNumeric(totals, "manual_provider_closing_balance", row.manual_provider_closing_balance);
       addNumeric(totals, "carried_forward_comparison_fact", getCarriedForwardComparisonFact(row));
       addNumeric(totals, "real_difference", row.real_difference);
-      addNumeric(totals, "plan_vs_real_delta", row.plan_vs_real_delta);
+      if (shouldShowPlannedValues(row, summary)) {
+        addNumeric(totals, "plan_vs_real_delta", row.plan_vs_real_delta);
+      }
     });
     return Array.from(totalsByCurrency.entries())
       .sort(([left], [right]) => left.localeCompare(right))
@@ -466,8 +504,10 @@
         formatTotalBucket(totals.real_delta),
         formatTotalBucket(totals.calculated_closing_balance),
         formatTotalBucket(totals.manual_provider_closing_balance),
-        formatTotalBucket(totals.carried_forward_comparison_fact),
         "—",
+        "—",
+        "—",
+        formatTotalBucket(totals.carried_forward_comparison_fact),
         formatTotalBucket(totals.real_difference),
         formatTotalBucket(totals.plan_vs_real_delta),
         "Итого по валюте",
