@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildMissingBalancesReport,
   buildLedgerQualityRepairReport,
   buildUpdatedLedgerRow,
   inferSafeSource,
@@ -58,6 +59,13 @@ test("parseArgs defaults to dry-run all tasks", () => {
     json: false,
     task: "all",
   });
+});
+
+test("parseArgs supports required task names and legacy mismatch alias", () => {
+  assert.equal(parseArgs(["--task", "mismatches"]).task, "mismatches");
+  assert.equal(parseArgs(["--task", "missing-balances"]).task, "missing-balances");
+  assert.equal(parseArgs(["--task", "normalize-sources"]).task, "normalize-sources");
+  assert.equal(parseArgs(["--task", "mismatch-report"]).task, "mismatches");
 });
 
 test("PayPal Personal missing fee is not converted into fake net", () => {
@@ -120,6 +128,30 @@ test("PayPal Personal manual confirmation fills amount_net while fee remains una
   assert.equal(row.after.source, "paypal_personal_manual");
   assert.match(row.after.comment, /manual_provider_confirmed/);
   assert.equal(report.missingAmountNet.summary.wouldUpdate, 1);
+});
+
+test("PayPal gross is never used as net without manual confirmation", () => {
+  const report = buildLedgerQualityRepairReport({
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 93,
+          amount: "200",
+          amountGross: "200",
+          amountFee: "",
+          amountNet: "",
+          rawSourceId: "51J71784GD5986719",
+        }),
+      ],
+      balances: [],
+    },
+  });
+
+  const row = report.missingAmountNet.rows[0];
+  assert.equal(row.amount_gross, "200");
+  assert.equal(row.recommended_amount_net, null);
+  assert.equal(row.after, null);
+  assert.equal(row.skippedReason, "amount_net is not manually/provider confirmed");
 });
 
 test("source=unknown with valid amount_net remains included in balance", () => {
@@ -260,4 +292,97 @@ test("mismatch report distinguishes wrong sign, wrong channel, and wrong factual
   assert.equal(classifications["2026-05-02|Яндекс руб"], "wrong_sign");
   assert.equal(classifications["2026-05-03|Яндекс руб"], "wrong_channel");
   assert.equal(classifications["2026-05-04|монобанк грн"], "wrong_factual_balance");
+
+  const wrongSign = report.mismatchReport.rows.find((row) => row.classification === "wrong_sign");
+  const wrongChannel = report.mismatchReport.rows.find((row) => row.classification === "wrong_channel");
+  assert.equal(wrongSign.after, null);
+  assert.equal(wrongChannel.after, null);
+  assert.equal(report.mismatchReport.summary.wouldUpdate, 0);
+  assert.equal(report.mismatchReport.summary.needsManualVerification, 3);
+});
+
+test("missing balance report keeps manual Остатки ahead of Авто Остатки", () => {
+  const report = buildLedgerQualityRepairReport({
+    task: "missing-balances",
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 20,
+          date: "2026-05-02",
+          operation: "income",
+          toChannel: "wise usd",
+          currency: "USD",
+          amountNet: "206",
+          amount: "206",
+          balanceAmount: 206,
+          source: "wise",
+        }),
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 },
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206", balanceAmount: "1206", sourceSheet: "Остатки", sourceRow: 3 },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "9999", balanceAmount: "9999", sourceSheet: "Авто Остатки", sourceRow: 7, provider: "wise" },
+      ],
+    },
+  });
+
+  assert.equal(report.missingBalances.summary.detected, 0);
+});
+
+test("Авто Остатки remains fallback only for missing provider balances", () => {
+  const report = buildLedgerQualityRepairReport({
+    task: "missing-balances",
+    repository: {
+      operations: [
+        operation({
+          sheetRowNumber: 20,
+          date: "2026-05-02",
+          operation: "income",
+          toChannel: "wise usd",
+          currency: "USD",
+          amountNet: "206",
+          amount: "206",
+          balanceAmount: 206,
+          source: "wise",
+        }),
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206", balanceAmount: "1206", sourceSheet: "Авто Остатки", sourceRow: 7, provider: "wise" },
+      ],
+    },
+  });
+
+  assert.equal(report.missingBalances.summary.detected, 0);
+});
+
+test("missing balance report emits amount_hint but no factual write without source", () => {
+  const rows = buildMissingBalancesReport({
+    operations: [
+      operation({
+        sheetRowNumber: 20,
+        date: "2026-05-02",
+        operation: "income",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "206",
+        amount: "206",
+        balanceAmount: 206,
+        source: "wise",
+      }),
+    ],
+    balances: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", balanceAmount: "1000", sourceSheet: "Остатки", sourceRow: 2 },
+    ],
+  });
+
+  assert.equal(rows.summary.detected, 1);
+  assert.equal(rows.rows[0].status, "missing_provider_balance");
+  assert.equal(rows.rows[0].amount_hint, 1206);
+  assert.equal(rows.rows[0].after, null);
+  assert.match(rows.rows[0].manual_action, /amount_hint=1206/);
 });

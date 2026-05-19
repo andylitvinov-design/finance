@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
+import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import {
   getManualGoogleSheetsAccessToken,
   MANUAL_LEDGER_SHEET_NAME,
@@ -14,7 +15,11 @@ import {
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const LEDGER_RANGE_COLUMNS = "A:V";
-const TASKS = new Set(["all", "missing-amount-net", "mismatch-report", "normalize-sources"]);
+const TASKS = new Set(["all", "missing-amount-net", "mismatches", "missing-balances", "normalize-sources"]);
+const TASK_ALIASES = new Map([
+  ["mismatch-report", "mismatches"],
+  ["mismatch", "mismatches"],
+]);
 const SOURCE_ONLY_FIELDS = new Set(["source", "updated_at"]);
 const MISSING_NET_FIELDS = new Set(["amount_net", "source", "comment", "updated_at"]);
 
@@ -30,7 +35,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
     if (arg === "--apply") options.apply = true;
     else if (arg === "--dry-run") options.apply = false;
     else if (arg === "--json") options.json = true;
-    else if (arg === "--task") options.task = argv[++index] || "";
+    else if (arg === "--task") options.task = normalizeTaskName(argv[++index] || "");
     else if (arg === "--confirm-file") options.confirmFile = argv[++index] || "";
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -47,16 +52,23 @@ export function buildLedgerQualityRepairReport({
   now = new Date().toISOString(),
   task = "all",
 } = {}) {
+  task = normalizeTaskName(task);
   const operations = Array.isArray(repository.operations) ? repository.operations : [];
   const balances = Array.isArray(repository.balances) ? repository.balances : [];
+  const autoBalances = Array.isArray(repository.autoBalances) ? repository.autoBalances : [];
+  const mergedBalanceResult = mergeManualAndAutoBalances(balances, autoBalances);
+  const mergedBalances = mergedBalanceResult.rows || mergedBalanceResult.merged || [];
   const missingAmountNet = shouldRun(task, "missing-amount-net")
     ? buildMissingAmountNetReport({ operations, confirmations, now })
     : emptyTaskReport();
   const normalizeSources = shouldRun(task, "normalize-sources")
     ? buildNormalizeSourcesReport({ operations, confirmations, now })
     : emptyTaskReport();
-  const mismatchReport = shouldRun(task, "mismatch-report")
+  const mismatchReport = shouldRun(task, "mismatches")
     ? buildMismatchReport({ operations, balances })
+    : emptyTaskReport();
+  const missingBalances = shouldRun(task, "missing-balances")
+    ? buildMissingBalancesReport({ operations, balances, autoBalances, mergedBalances })
     : emptyTaskReport();
   const balancesSummary = buildBalancesSummary(operations);
 
@@ -75,6 +87,7 @@ export function buildLedgerQualityRepairReport({
     balances: balancesSummary,
     missingAmountNet,
     mismatchReport,
+    missingBalances,
     normalizeSources,
   };
 }
@@ -190,7 +203,7 @@ export function buildMismatchReport({ operations = [], balances = [] } = {}) {
       wouldUpdate: 0,
       updated: 0,
       skipped: rows.length,
-      needsManualVerification: rows.filter((row) => row.classification === "needs_manual_verification").length,
+      needsManualVerification: rows.filter((row) => !row.after).length,
     },
   };
 }
@@ -234,8 +247,86 @@ function enrichMismatchRow({ row, operations, balances }) {
     nearby_other_channel_rows: nearbyOtherChannelRows.map(compactMovementRow),
     missing_amount_net_rows: missingNetRows.map(compactLedgerRow),
     classification,
+    confidence: "medium",
+    before: {
+      status: row.status,
+      opening_balance: row.opening_balance,
+      inflow: row.inflow,
+      outflow: row.outflow,
+      computed_closing_balance: row.closing_balance ?? row.computed_closing_balance,
+      provider_reported_balance: row.provider_reported_balance,
+      difference: row.difference,
+    },
+    after: null,
     correction: buildMismatchCorrection(classification),
+    manual_action: buildMismatchManualAction({ row, factual }),
   };
+}
+
+export function buildMissingBalancesReport({ operations = [], balances = [], autoBalances = [], mergedBalances = [] } = {}) {
+  const merged = mergedBalances.length
+    ? mergedBalances
+    : (mergeManualAndAutoBalances(balances, autoBalances).rows || []);
+  const daily = buildDailyCurrencyBalances(operations, merged);
+  const rows = (daily.rows || [])
+    .filter((row) => row.status === "missing_opening_balance" || row.status === "missing_provider_balance")
+    .sort(compareMismatchRows)
+    .map((row) => buildMissingBalanceRow({ row, balances, autoBalances }));
+  return {
+    rows,
+    summary: summarizeRows(rows),
+  };
+}
+
+function buildMissingBalanceRow({ row, balances = [], autoBalances = [] }) {
+  const exactManual = findExactBalanceCandidate({ balances, row });
+  const exactAuto = findExactBalanceCandidate({ balances: autoBalances, row });
+  const nearbyManual = findNearbyBalanceCandidates({ balances, row });
+  const nearbyAuto = findNearbyBalanceCandidates({ balances: autoBalances, row });
+  const amountHint = row.status === "missing_provider_balance" ? row.closing_balance : null;
+  return {
+    date: row.date,
+    channel: row.channel,
+    currency: row.currency,
+    status: row.status,
+    opening_balance: row.opening_balance,
+    inflow: row.inflow,
+    outflow: row.outflow,
+    computed_closing_balance: row.closing_balance,
+    provider_reported_balance: row.provider_reported_balance,
+    difference: row.difference,
+    exact_manual_source: compactBalanceRow(exactManual),
+    exact_auto_source: compactBalanceRow(exactAuto),
+    nearby_manual_sources: nearbyManual.map(compactBalanceRow),
+    nearby_auto_sources: nearbyAuto.map(compactBalanceRow),
+    amount_hint: amountHint,
+    before: {
+      status: row.status,
+      opening_balance: row.opening_balance,
+      provider_reported_balance: row.provider_reported_balance,
+    },
+    after: null,
+    skippedReason: "no exact factual manual/provider balance row available for safe automatic correction",
+    manual_action: buildMissingBalanceManualAction({ row, amountHint }),
+  };
+}
+
+function findExactBalanceCandidate({ balances = [], row }) {
+  return (balances || []).find((candidate) =>
+    normalizeDate(candidate?.date) === row.date
+    && String(candidate?.channel || candidate?.accountName || candidate?.account || "").trim() === row.channel
+    && String(candidate?.currency || "").trim().toUpperCase() === row.currency
+    && parseAmount(candidate?.balanceAmount ?? candidate?.amount) !== null
+  );
+}
+
+function findNearbyBalanceCandidates({ balances = [], row }) {
+  return (balances || [])
+    .filter((candidate) => String(candidate?.channel || candidate?.accountName || candidate?.account || "").trim() === row.channel)
+    .filter((candidate) => String(candidate?.currency || "").trim().toUpperCase() === row.currency)
+    .filter((candidate) => Math.abs(daysBetween(normalizeDate(candidate?.date), row.date)) <= 3)
+    .sort((left, right) => normalizeDate(left?.date).localeCompare(normalizeDate(right?.date)))
+    .slice(0, 5);
 }
 
 function classifyMismatch({ row, movements, nearbyOtherChannelRows, missingNetRows }) {
@@ -263,6 +354,21 @@ function buildMismatchCorrection(classification) {
   return corrections[classification] || corrections.needs_manual_verification;
 }
 
+function buildMismatchManualAction({ row, factual }) {
+  const sourceRow = factual?.sourceRow ? `Остатки row ${factual.sourceRow}` : "the matching Остатки row";
+  return [
+    `Verify ${sourceRow} against the provider/manual statement for ${row.date} ${row.channel} ${row.currency}.`,
+    `If factual balance is ${formatValue(row.closing_balance ?? row.computed_closing_balance)}, update Остатки; otherwise add/fix the missing Ledger movement that explains difference ${formatValue(row.difference)}.`,
+  ].join(" ");
+}
+
+function buildMissingBalanceManualAction({ row, amountHint }) {
+  if (row.status === "missing_opening_balance") {
+    return `Add a factual opening Остатки row before ${row.date} for ${row.channel} ${row.currency}; do not use computed balances as facts.`;
+  }
+  return `Confirm provider closing balance for ${row.date} ${row.channel} ${row.currency}; optional amount_hint=${formatValue(amountHint)} must stay a hint until verified.`;
+}
+
 export function buildUpdatedLedgerRow({ header = [], currentRow = [], patch = {} } = {}) {
   const normalizedHeader = header.map((cell) => String(cell || "").trim().toLowerCase());
   const values = currentRow.slice(0, normalizedHeader.length);
@@ -287,7 +393,12 @@ export async function applyLedgerQualityRepairs({ report, task = "all", fetchImp
     const nextRow = buildUpdatedLedgerRow({ header, currentRow, patch: update.patch });
     await writeLedgerRow({ sheetRowNumber: update.sheetRowNumber, row: nextRow, accessToken, fetchImpl });
     updated += 1;
-    applied.push({ sheetRowNumber: update.sheetRowNumber, patch: update.patch });
+    applied.push({
+      sheetRowNumber: update.sheetRowNumber,
+      patch: update.patch,
+      before: update.before || null,
+      after: update.after || update.patch,
+    });
   }
   return { updated, skipped: 0, updates: applied };
 }
@@ -300,6 +411,19 @@ function collectUpdates(report, task) {
       updates.push({
         sheetRowNumber: row.sheetRowNumber,
         patch: filterPatch(row.after, MISSING_NET_FIELDS),
+        before: row.before || null,
+        after: filterPatch(row.after, MISSING_NET_FIELDS),
+      });
+    }
+  }
+  if (shouldRun(task, "mismatches")) {
+    for (const row of report?.mismatchReport?.rows || []) {
+      if (!row.after) continue;
+      updates.push({
+        sheetRowNumber: row.sheetRowNumber,
+        patch: row.after,
+        before: row.before || null,
+        after: row.after,
       });
     }
   }
@@ -309,6 +433,8 @@ function collectUpdates(report, task) {
       updates.push({
         sheetRowNumber: row.sheetRowNumber,
         patch: filterPatch(row.after, SOURCE_ONLY_FIELDS),
+        before: row.before || null,
+        after: filterPatch(row.after, SOURCE_ONLY_FIELDS),
       });
     }
   }
@@ -319,7 +445,7 @@ async function main() {
   const options = parseArgs();
   if (options.help) {
     console.log([
-      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatch-report|normalize-sources] [--dry-run|--apply] [--confirm-file file.json] [--json]",
+      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|missing-balances|normalize-sources] [--dry-run|--apply] [--confirm-file file.json] [--json]",
       "",
       "Dry-run is the default. --apply writes only explicit Ledger row patches.",
     ].join("\n"));
@@ -336,6 +462,8 @@ async function main() {
     report.apply = applyResult;
     report.dryRun = false;
     report.missingAmountNet.summary.updated = countApplied(applyResult, report.missingAmountNet.rows);
+    report.mismatchReport.summary.updated = countApplied(applyResult, report.mismatchReport.rows);
+    report.missingBalances.summary.updated = countApplied(applyResult, report.missingBalances.rows);
     report.normalizeSources.summary.updated = countApplied(applyResult, report.normalizeSources.rows);
   }
   if (options.json) console.log(JSON.stringify(report, null, 2));
@@ -346,7 +474,8 @@ function printHumanReport(report) {
   console.log(`Ledger quality repair ${report.dryRun ? "dry-run" : "apply"} (${report.generatedAt})`);
   console.log(`Summary: ${JSON.stringify(report.summary)}`);
   printTaskSummary("missing-amount-net", report.missingAmountNet);
-  printTaskSummary("mismatch-report", report.mismatchReport);
+  printTaskSummary("mismatches", report.mismatchReport);
+  printTaskSummary("missing-balances", report.missingBalances);
   printTaskSummary("normalize-sources", report.normalizeSources);
 }
 
@@ -497,6 +626,7 @@ function compactMovementRow(row) {
     currency: row.currency,
     source: row.source,
     raw_source_id: row.raw_source_id,
+    comment: row.comment,
   };
 }
 
@@ -611,8 +741,13 @@ function countApplied(applyResult, rows) {
   return (rows || []).filter((row) => applied.has(Number(row.sheetRowNumber))).length;
 }
 
+function normalizeTaskName(task) {
+  const normalized = String(task || "").trim();
+  return TASK_ALIASES.get(normalized) || normalized;
+}
+
 function shouldRun(task, target) {
-  return task === "all" || task === target;
+  return normalizeTaskName(task) === "all" || normalizeTaskName(task) === target;
 }
 
 function isUnknownSource(row) {
@@ -716,6 +851,14 @@ function parseAmount(value) {
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function daysBetween(left, right) {
+  if (!left || !right) return Number.POSITIVE_INFINITY;
+  const leftMs = Date.parse(`${left}T00:00:00Z`);
+  const rightMs = Date.parse(`${right}T00:00:00Z`);
+  if (!Number.isFinite(leftMs) || !Number.isFinite(rightMs)) return Number.POSITIVE_INFINITY;
+  return Math.round((leftMs - rightMs) / 86400000);
 }
 
 function normalizeText(value) {
