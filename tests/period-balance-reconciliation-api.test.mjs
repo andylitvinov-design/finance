@@ -159,8 +159,12 @@ test("period balance reconciliation exposes YooMoney provider-vs-ledger status w
 
   const summary = snapshot.period_balance_reconciliation.summary;
   assert.equal(summary.transaction_reconciliation_status, "ok");
+  assert.equal(summary.monthly_total_status, "ok");
   assert.equal(summary.provider_evidence_total.expense, 86583.5);
   assert.equal(summary.ledger_provider_total.expense, 86583.5);
+  assert.equal(summary.raw_ledger_yoomoney_net, -72655.37);
+  assert.equal(summary.confirmed_matched_ledger_net, -72655.37);
+  assert.equal(summary.transaction_monthly_delta, 0);
   assert.equal(summary.transaction_delta, 0);
   assert.equal(summary.stale_ostatki_rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
   assert.equal(summary.manual_confirmation_required_rows[0].amount_hint !== undefined, true);

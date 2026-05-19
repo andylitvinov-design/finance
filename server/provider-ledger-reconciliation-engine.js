@@ -123,11 +123,36 @@ export function buildProviderLedgerReconciliation({
     ledgerResult(row, "manual_migration_needs_confirmation", null)
   );
   const allLedgerResultRows = [...ledgerResultRows, ...migrationLedgerRows].sort(compareResultRows);
+  const confirmedLedgerRows = ledgerResultRows.filter((row) =>
+    row.status === "confirmed_by_provider" || row.status === "date_correction_candidate"
+  );
+  const extraLedgerRows = ledgerResultRows.filter((row) =>
+    row.status === "duplicate_candidate" || row.status === "not_in_provider_statement" || row.status === "unsafe_to_mutate"
+  );
+  const wrongDateRows = providerResultRows.filter((row) => row.status === "matched_wrong_date");
+  const extraProviderRows = providerResultRows.filter((row) =>
+    row.status === "missing_in_ledger"
+      || row.status === "amount_mismatch"
+      || row.status === "sign_mismatch"
+      || row.status === "channel_mismatch"
+  );
   const providerTotals = buildProviderTotals(providerRows);
-  const ledgerTotals = buildLedgerTotals(providerLedgerRows, manualMigrationRows);
+  const ledgerTotals = buildLedgerTotals(confirmedLedgerRows, manualMigrationRows);
+  const legacySourceYooMoneyTotal = buildLedgerOnlyTotal(providerLedgerRows);
+  const extraLedgerTotal = buildLedgerOnlyTotal(extraLedgerRows);
+  const confirmedMatchedLedgerTotal = ledgerTotals.total.yoomoney;
+  const manualMigrationTotal = ledgerTotals.total.manual_migration;
+  const combinedTotal = ledgerTotals.total.combined;
   const differences = buildDifferences(providerTotals, ledgerTotals);
   const statusCounts = countBy(providerResultRows, "status");
-  const transactionStatus = resolveTransactionStatus(providerResultRows, ledgerResultRows);
+  const monthlyTotalStatus = resolveMonthlyTotalStatus(providerTotals.total, confirmedMatchedLedgerTotal);
+  const dateAlignmentStatus = wrongDateRows.length ? "needs_source_id_confirmation" : "ok";
+  const extraLedgerStatus = extraLedgerRows.length ? "needs_confirmation" : "ok";
+  const manualMigrationStatus = migrationLedgerRows.length ? "manual_migration_needs_confirmation" : "ok";
+  const transactionStatus = resolveTransactionStatus({
+    providerRows: providerResultRows,
+    monthlyTotalStatus,
+  });
   const balanceDiag = buildBalanceDiagnostics(balanceDiagnostics, transactionStatus);
 
   return {
@@ -139,17 +164,38 @@ export function buildProviderLedgerReconciliation({
       to: normalizeDate(period.to) || null,
     },
     transaction_reconciliation_status: transactionStatus,
+    monthly_total_status: monthlyTotalStatus,
+    date_alignment_status: dateAlignmentStatus,
+    extra_ledger_status: extraLedgerStatus,
+    manual_migration_status: manualMigrationStatus,
     provider_evidence_total: providerTotals.total,
-    ledger_provider_total: ledgerTotals.total.yoomoney,
-    ledger_manual_migration_total: ledgerTotals.total.manual_migration,
-    transaction_delta: round(ledgerTotals.total.yoomoney.net - providerTotals.total.net),
-    manual_migration_delta: round(ledgerTotals.total.combined.net - providerTotals.total.net),
+    ledger_provider_total: confirmedMatchedLedgerTotal,
+    raw_ledger_yoomoney_total: confirmedMatchedLedgerTotal,
+    confirmed_matched_ledger_total: confirmedMatchedLedgerTotal,
+    legacy_source_yoomoney_total: legacySourceYooMoneyTotal.total,
+    extra_ledger_total: extraLedgerTotal.total,
+    ledger_manual_migration_total: manualMigrationTotal,
+    manual_migration_total: manualMigrationTotal,
+    combined_total: combinedTotal,
+    provider_net: providerTotals.total.net,
+    raw_ledger_yoomoney_net: confirmedMatchedLedgerTotal.net,
+    confirmed_matched_ledger_net: confirmedMatchedLedgerTotal.net,
+    transaction_monthly_delta: round(confirmedMatchedLedgerTotal.net - providerTotals.total.net),
+    transaction_delta: round(confirmedMatchedLedgerTotal.net - providerTotals.total.net),
+    manual_migration_delta: round(combinedTotal.net - providerTotals.total.net),
     provider_totals: providerTotals,
     ledger_totals: ledgerTotals,
     differences,
     row_level: {
       provider_rows: providerResultRows.map(stripInternalMatch),
       ledger_rows: allLedgerResultRows.map(stripInternalMatch),
+      provider_total_rows: providerRows.map(stripInternalMatch),
+      ledger_yoomoney_total_rows: confirmedLedgerRows.map(stripInternalMatch),
+      excluded_ledger_rows: [...extraLedgerRows, ...migrationLedgerRows].sort(compareResultRows).map(stripInternalMatch),
+      extra_provider_rows: extraProviderRows.map(stripInternalMatch),
+      extra_ledger_rows: extraLedgerRows.map(stripInternalMatch),
+      wrong_date_rows: wrongDateRows.map(stripInternalMatch),
+      manual_migration_rows: migrationLedgerRows.map(stripInternalMatch),
       provider_status_counts: statusCounts,
       ledger_status_counts: countBy(allLedgerResultRows, "status"),
       matched_exact: providerResultRows.filter((row) => row.status === "matched_exact"),
@@ -293,6 +339,12 @@ function buildLedgerTotals(providerRows, migrationRows) {
   };
 }
 
+function buildLedgerOnlyTotal(rows) {
+  const byMonth = {};
+  for (const row of rows) addSignedAmount(byMonth, row.date.slice(0, 7), row.signed_amount);
+  return finalizeTotals(byMonth);
+}
+
 function buildDifferences(providerTotals, ledgerTotals) {
   const months = new Set([...Object.keys(providerTotals.by_month), ...Object.keys(ledgerTotals.by_month)]);
   const byMonth = {};
@@ -408,11 +460,16 @@ function buildBalanceDiagnostics(rows, transactionStatus) {
   };
 }
 
-function resolveTransactionStatus(providerRows, ledgerRows) {
+function resolveMonthlyTotalStatus(providerTotal, ledgerTotal) {
+  return Math.abs(round(Number(ledgerTotal?.net || 0) - Number(providerTotal?.net || 0))) <= 0.0001
+    ? "ok"
+    : "mismatch";
+}
+
+function resolveTransactionStatus({ providerRows, monthlyTotalStatus }) {
   const failingProvider = new Set(["missing_in_ledger", "duplicate_in_ledger", "extra_in_ledger", "amount_mismatch", "sign_mismatch", "channel_mismatch"]);
-  const failingLedger = new Set(["duplicate_candidate", "not_in_provider_statement", "unsafe_to_mutate"]);
-  return providerRows.some((row) => failingProvider.has(row.status))
-    || ledgerRows.some((row) => failingLedger.has(row.status))
+  return monthlyTotalStatus !== "ok"
+    || providerRows.some((row) => failingProvider.has(row.status))
     ? "mismatch"
     : "ok";
 }
