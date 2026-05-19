@@ -126,6 +126,45 @@ export async function fetchBinanceStatementEntries(options = {}) {
   };
 }
 
+export async function fetchBinanceCurrentBalances(options = {}) {
+  const apiKey = String(options.apiKey || "").trim();
+  const apiSecret = String(options.apiSecret || "").trim();
+  if (!apiKey || !apiSecret) {
+    throw new Error("Binance credentials are not configured. Set BINANCE_API_KEY and BINANCE_API_SECRET.");
+  }
+  const result = await fetchBinanceSignedJson({
+    fetchImpl: options.fetchImpl || fetch,
+    baseUrl: String(options.baseUrl || BINANCE_BASE_URL).replace(/\/+$/, ""),
+    apiKey,
+    apiSecret,
+    now: typeof options.now === "function" ? options.now : Date.now,
+    path: "/api/v3/account"
+  });
+  if (!result.ok) {
+    throw new Error(result.error || `Binance account request failed (${result.status || "unknown"}).`);
+  }
+  return normalizeBinanceCurrentBalances(result.payload);
+}
+
+export function normalizeBinanceCurrentBalances(account = {}) {
+  const balances = Array.isArray(account?.balances) ? account.balances : [];
+  return balances
+    .map((balance) => {
+      const currency = normalizeBinanceCurrency(balance.asset || balance.coin);
+      const free = parseBinanceSignedAmount(balance.free);
+      const locked = parseBinanceSignedAmount(balance.locked);
+      const amount = roundBinanceAmount(free + locked);
+      return {
+        id: `binance-spot-${currency}`,
+        currency,
+        amount,
+        wallet: "spot",
+        raw: balance,
+      };
+    })
+    .filter((balance) => balance.currency && Number.isFinite(balance.amount));
+}
+
 export async function fetchBinanceSignedJson(options = {}) {
   const url = buildBinanceSignedUrl({
     baseUrl: options.baseUrl || BINANCE_BASE_URL,
@@ -327,6 +366,11 @@ function dateFromBinanceTime(value) {
 function parseBinanceAmount(value) {
   const parsed = Number.parseFloat(String(value ?? "").replace(",", "."));
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+}
+
+function parseBinanceSignedAmount(value) {
+  const parsed = Number.parseFloat(String(value ?? "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function normalizeBinanceCurrency(value) {
