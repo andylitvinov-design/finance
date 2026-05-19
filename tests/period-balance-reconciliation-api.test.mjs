@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
-import { buildPeriodBalanceReconciliationSnapshot } from "../server/period-balance-reconciliation-route.js";
+import {
+  buildPeriodBalanceReconciliationSnapshot,
+  convertYooMoneyEntriesToProviderEvidenceRows,
+} from "../server/period-balance-reconciliation-route.js";
+import { buildYooMoneyProviderEvidenceFixture } from "../server/provider-ledger-reconciliation-engine.js";
 
 test("period balance reconciliation API snapshot exposes planned and real period deltas", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
@@ -128,6 +133,11 @@ test("period balance reconciliation uses exact Yandex manual fact on period end 
 test("period balance reconciliation exposes YooMoney provider-vs-ledger status without factual balance mutation", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-19" },
+    yooMoneyProviderEvidenceLoader: async () => ({
+      source: "live_yoomoney",
+      rows: buildYooMoneyProviderEvidenceFixture(),
+      warning: null,
+    }),
     repositoryLoader: async () => ({
       ok: true,
       schema: "ledger-v2-compatible",
@@ -168,6 +178,166 @@ test("period balance reconciliation exposes YooMoney provider-vs-ledger status w
   assert.equal(summary.transaction_delta, 0);
   assert.equal(summary.stale_ostatki_rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
   assert.equal(summary.manual_confirmation_required_rows[0].amount_hint !== undefined, true);
+});
+
+test("production period reconciliation route does not call YooMoney fixture", () => {
+  const source = readFileSync(new URL("../server/period-balance-reconciliation-route.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /buildYooMoneyProviderEvidenceFixture/);
+  assert.match(source, /fetchYooMoneyStatementEntries/);
+});
+
+test("YooMoney live API entries are converted to signed provider evidence", () => {
+  const rows = convertYooMoneyEntriesToProviderEvidenceRows([
+    {
+      date: "2026-04-08",
+      direction: "income",
+      localAmount: 9350.24,
+      currency: "RUB",
+      operation_id: "income-1",
+      organization: "Перевод",
+      comment: "client",
+    },
+    {
+      date: "2026-04-09",
+      direction: "expense",
+      amount: 4297,
+      currency: "RUB",
+      sourceTransactionId: "expense-1",
+      counterpartyName: "RK*OOO_SALEBOT",
+    },
+  ]);
+
+  assert.deepEqual(rows.map((row) => ({
+    date: row.date,
+    signedAmount: row.signedAmount,
+    currency: row.currency,
+    channel: row.channel,
+    source: row.source,
+    source_id: row.source_id,
+  })), [
+    {
+      date: "2026-04-08",
+      signedAmount: 9350.24,
+      currency: "RUB",
+      channel: "Яндекс руб",
+      source: "yoomoney",
+      source_id: "income-1",
+    },
+    {
+      date: "2026-04-09",
+      signedAmount: -4297,
+      currency: "RUB",
+      channel: "Яндекс руб",
+      source: "yoomoney",
+      source_id: "expense-1",
+    },
+  ]);
+});
+
+test("period reconciliation uses fetchYooMoneyStatementEntries when YooMoney token is configured", async () => {
+  const requests = [];
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-04-01", to: "2026-04-30" },
+    yooMoneyAccessToken: "configured-token",
+    yooMoneyBaseUrl: "https://yoomoney.example",
+    yooMoneyFetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        json: async () => ({
+          operations: [
+            {
+              datetime: "2026-04-08T12:00:00Z",
+              direction: "in",
+              amount: "9350.24",
+              currency: "RUB",
+              operation_id: "op-income",
+              title: "Client income",
+            },
+            {
+              datetime: "2026-04-09T12:00:00Z",
+              direction: "out",
+              amount: "4297",
+              currency: "RUB",
+              operation_id: "op-expense",
+              title: "Provider expense",
+            },
+          ],
+        }),
+      };
+    },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        { date: "2026-04-08", toChannel: "Яндекс руб", currency: "RUB", amountNet: "9350.24", balanceAmount: 9350.24, source: "yoomoney", ledgerV2: { date: "2026-04-08", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "9350.24", balance_amount: "9350.24", source: "yoomoney", raw_source_id: "op-income" } },
+        { date: "2026-04-09", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "4297", balanceAmount: -4297, source: "yoomoney", ledgerV2: { date: "2026-04-09", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "4297", balance_amount: "-4297", source: "yoomoney", raw_source_id: "op-expense" } },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  const yoomoney = snapshot.period_balance_reconciliation.provider_ledger_reconciliation.yoomoney;
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://yoomoney.example/api/operation-history");
+  assert.match(String(requests[0].options.body), /from=2026-04-01T00%3A00%3A00Z/);
+  assert.equal(yoomoney.provider_evidence_source, "live_yoomoney");
+  assert.equal(yoomoney.row_level.provider_status_counts.matched_exact, 2);
+  assert.equal(yoomoney.provider_evidence_total.income, 9350.24);
+  assert.equal(yoomoney.provider_evidence_total.expense, 4297);
+});
+
+test("period reconciliation reports YooMoney not connected without Ledger safe fixes", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-04-01", to: "2026-04-30" },
+    yooMoneyAccessToken: "",
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        { date: "2026-04-08", toChannel: "Яндекс руб", currency: "RUB", amountNet: "999", balanceAmount: 999, source: "yoomoney", ledgerV2: { date: "2026-04-08", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "999", balance_amount: "999", source: "yoomoney" } },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  const yoomoney = snapshot.period_balance_reconciliation.provider_ledger_reconciliation.yoomoney;
+  assert.equal(yoomoney.status, "provider_not_connected");
+  assert.equal(yoomoney.provider_evidence_source, "not_connected");
+  assert.equal(yoomoney.provider_warning.code, "yoomoney_not_connected");
+  assert.deepEqual(yoomoney.safe_fixes_available, []);
+  assert.deepEqual(yoomoney.row_level.extra_ledger_rows, []);
+  assert.deepEqual(snapshot.period_balance_reconciliation.summary.safe_fixes_available, []);
+});
+
+test("fixture mismatch cannot mark Ledger as wrong when YooMoney API is not connected", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-04-01", to: "2026-04-30" },
+    yooMoneyAccessToken: "",
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        { date: "2026-04-03", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "74668.50", balanceAmount: -74668.5, source: "yoomoney", ledgerV2: { date: "2026-04-03", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "74668.50", balance_amount: "-74668.5", source: "yoomoney" } },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      balances: [],
+      warnings: [],
+    }),
+  });
+
+  const yoomoney = snapshot.period_balance_reconciliation.provider_ledger_reconciliation.yoomoney;
+  assert.equal(yoomoney.provider_evidence_source, "not_connected");
+  assert.equal(yoomoney.extra_ledger_status, "provider_not_connected");
+  assert.deepEqual(yoomoney.row_level.extra_ledger_rows, []);
+  assert.deepEqual(yoomoney.manual_confirmation_required_rows, []);
 });
 
 test("period balance reconciliation falls back to auto and marks missing facts", async () => {

@@ -2,10 +2,8 @@ import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.j
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
-import {
-  buildProviderLedgerReconciliation,
-  buildYooMoneyProviderEvidenceFixture,
-} from "./provider-ledger-reconciliation-engine.js";
+import { buildProviderLedgerReconciliation } from "./provider-ledger-reconciliation-engine.js";
+import { fetchYooMoneyStatementEntries } from "../api/yoomoney-transactions.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
@@ -80,7 +78,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   });
   annotateReconciliationSources(reconciliation, balanceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
-  annotateProviderLedgerReconciliation(reconciliation, repository.operations || [], period);
+  const yooMoneyProviderEvidence = await loadYooMoneyProviderEvidence(period, options);
+  annotateProviderLedgerReconciliation(reconciliation, repository.operations || [], period, yooMoneyProviderEvidence);
   reconciliation.diagnostics = {
     ...(reconciliation.diagnostics || {}),
     manual_balance_snapshot_rows_loaded: manualBalances.length,
@@ -108,7 +107,89 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   };
 }
 
-function annotateProviderLedgerReconciliation(reconciliation, operations = [], period = {}) {
+async function loadYooMoneyProviderEvidence(period = {}, options = {}) {
+  if (typeof options.yooMoneyProviderEvidenceLoader === "function") {
+    return options.yooMoneyProviderEvidenceLoader(period);
+  }
+
+  const accessToken = String(options.yooMoneyAccessToken ?? process.env.YOOMONEY_ACCESS_TOKEN ?? "").trim();
+  if (!accessToken) {
+    return {
+      source: "not_connected",
+      warning: {
+        code: "yoomoney_not_connected",
+        status: "provider_not_connected",
+        message: "YooMoney API token is not configured.",
+      },
+      rows: [],
+    };
+  }
+
+  try {
+    const result = await fetchYooMoneyStatementEntries({
+      startDate: period.from,
+      endDate: period.to,
+      accessToken,
+      currency: options.yooMoneyCurrency || process.env.YOOMONEY_CURRENCY || "RUB",
+      baseUrl: options.yooMoneyBaseUrl || process.env.YOOMONEY_API_BASE,
+      fetchImpl: options.yooMoneyFetchImpl || fetch,
+    });
+    return {
+      source: "live_yoomoney",
+      warning: null,
+      rows: convertYooMoneyEntriesToProviderEvidenceRows(result.entries || []),
+    };
+  } catch (error) {
+    return {
+      source: "provider_error",
+      warning: {
+        code: "yoomoney_provider_error",
+        status: "provider_error",
+        message: toSafeWarning(error?.message || error || "YooMoney provider request failed."),
+      },
+      rows: [],
+    };
+  }
+}
+
+export function convertYooMoneyEntriesToProviderEvidenceRows(entries = []) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry, index) => {
+      const currency = String(entry?.currency || "RUB").trim().toUpperCase() || "RUB";
+      const amount = Math.abs(Number(entry?.localAmount ?? entry?.amount ?? 0)) || 0;
+      const direction = String(entry?.direction || "").trim().toLowerCase();
+      const signedAmount = direction === "income" ? amount : -amount;
+      const sourceId = String(
+        entry?.source_id
+          || entry?.operation_id
+          || entry?.sourceTransactionId
+          || entry?.id
+          || ""
+      ).trim();
+      return {
+        date: String(entry?.date || "").slice(0, 10),
+        signedAmount,
+        signed_amount: signedAmount,
+        currency,
+        channel: "Яндекс руб",
+        source: "yoomoney",
+        provider: "yoomoney",
+        source_id: sourceId,
+        operation_id: sourceId,
+        evidence_id: sourceId ? `yoomoney-live-${sourceId}` : `yoomoney-live-${index + 1}`,
+        description: [
+          entry?.description,
+          entry?.organization,
+          entry?.comment,
+          entry?.counterpartyName,
+          entry?.counterparty,
+        ].map((part) => String(part || "").trim()).filter(Boolean).join(" | "),
+      };
+    })
+    .filter((row) => row.date && row.currency === "RUB" && Math.abs(row.signedAmount) > 0);
+}
+
+function annotateProviderLedgerReconciliation(reconciliation, operations = [], period = {}, providerEvidenceResult = {}) {
   const yoomoneyBalanceDiagnostics = (reconciliation.by_channel_currency || [])
     .filter((row) => row.channel === "Яндекс руб" && row.currency === "RUB")
     .filter((row) => row.status && row.status !== "ok" && row.status !== "no_data")
@@ -121,15 +202,29 @@ function annotateProviderLedgerReconciliation(reconciliation, operations = [], p
       provider_reported_balance: row.manual_provider_closing_balance,
       sourceRow: row.sourceRow || row.source_row || null,
     }));
-  const yoomoney = buildProviderLedgerReconciliation({
-    source: "yoomoney",
-    channel: "Яндекс руб",
-    currency: "RUB",
-    providerEvidence: buildYooMoneyProviderEvidenceFixture(),
-    ledgerRows: operations,
-    balanceDiagnostics: yoomoneyBalanceDiagnostics,
-    period,
-  });
+  const providerEvidenceSource = providerEvidenceResult.source || "not_connected";
+  const providerWarning = providerEvidenceResult.warning || null;
+  const providerEvidenceRows = Array.isArray(providerEvidenceResult.rows) ? providerEvidenceResult.rows : [];
+  const yoomoney = providerEvidenceSource === "live_yoomoney"
+    ? buildProviderLedgerReconciliation({
+      source: "yoomoney",
+      channel: "Яндекс руб",
+      currency: "RUB",
+      providerEvidence: providerEvidenceRows,
+      ledgerRows: operations,
+      balanceDiagnostics: yoomoneyBalanceDiagnostics,
+      period,
+    })
+    : buildDisconnectedProviderLedgerReconciliation({
+      source: "yoomoney",
+      channel: "Яндекс руб",
+      currency: "RUB",
+      period,
+      providerEvidenceSource,
+      providerWarning,
+    });
+  yoomoney.provider_evidence_source = providerEvidenceSource;
+  yoomoney.provider_warning = providerWarning;
   reconciliation.provider_ledger_reconciliation = { yoomoney };
   reconciliation.summary = {
     ...(reconciliation.summary || {}),
@@ -155,6 +250,86 @@ function annotateProviderLedgerReconciliation(reconciliation, operations = [], p
     manual_migration_delta: yoomoney.manual_migration_delta,
     stale_ostatki_rows: yoomoney.stale_ostatki_rows,
     manual_confirmation_required_rows: yoomoney.manual_confirmation_required_rows,
+    provider_evidence_source: yoomoney.provider_evidence_source,
+    provider_warning: yoomoney.provider_warning,
+    safe_fixes_available: yoomoney.safe_fixes_available,
+  };
+}
+
+function buildDisconnectedProviderLedgerReconciliation({
+  source = "",
+  channel = "",
+  currency = "",
+  period = {},
+  providerEvidenceSource = "not_connected",
+  providerWarning = null,
+} = {}) {
+  const emptyTotal = {
+    income: 0,
+    expense: 0,
+    net: 0,
+    income_display: "0.00",
+    expense_display: "0.00",
+    net_display: "0.00",
+  };
+  const status = providerEvidenceSource === "provider_error" ? "provider_error" : "provider_not_connected";
+  return {
+    source,
+    channel,
+    currency,
+    period: {
+      from: period.from || null,
+      to: period.to || null,
+    },
+    status,
+    transaction_reconciliation_status: status,
+    monthly_total_status: status,
+    date_alignment_status: status,
+    extra_ledger_status: status,
+    manual_migration_status: status,
+    provider_evidence_source: providerEvidenceSource,
+    provider_warning: providerWarning,
+    provider_evidence_total: emptyTotal,
+    ledger_provider_total: emptyTotal,
+    raw_ledger_yoomoney_total: emptyTotal,
+    confirmed_matched_ledger_total: emptyTotal,
+    legacy_source_yoomoney_total: emptyTotal,
+    extra_ledger_total: emptyTotal,
+    ledger_manual_migration_total: emptyTotal,
+    manual_migration_total: emptyTotal,
+    combined_total: emptyTotal,
+    provider_net: 0,
+    raw_ledger_yoomoney_net: 0,
+    confirmed_matched_ledger_net: 0,
+    transaction_monthly_delta: 0,
+    transaction_delta: 0,
+    manual_migration_delta: 0,
+    provider_totals: { by_month: {}, total: emptyTotal },
+    ledger_totals: { by_month: {}, total: { yoomoney: emptyTotal, manual_migration: emptyTotal, combined: emptyTotal } },
+    differences: { by_month: {} },
+    row_level: {
+      provider_rows: [],
+      ledger_rows: [],
+      provider_total_rows: [],
+      ledger_yoomoney_total_rows: [],
+      excluded_ledger_rows: [],
+      extra_provider_rows: [],
+      extra_ledger_rows: [],
+      wrong_date_rows: [],
+      manual_migration_rows: [],
+      provider_status_counts: {},
+      ledger_status_counts: {},
+      matched_exact: [],
+      matched_wrong_date: [],
+      missing_in_ledger: [],
+      duplicate_in_ledger: [],
+      extra_manual_migration: [],
+    },
+    safe_fixes_available: [],
+    manual_blockers: {},
+    balance_diagnostics: { rows: [], copyable_rows: [] },
+    stale_ostatki_rows: [],
+    manual_confirmation_required_rows: [],
   };
 }
 
