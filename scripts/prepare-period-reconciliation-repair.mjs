@@ -103,7 +103,7 @@ export function buildRepairReport({ repository, options }) {
     warnings: [
       "amount must stay blank unless the user has factual provider/manual balance",
       "expected_closing is a hint only; it is not a provider amount",
-      "--apply appends eligible carried-forward rows to Остатки only; Ledger is not changed by this script",
+      "--apply does not append carried-forward balances as period-end facts; Ledger is not changed by this script",
       "missing_provider_balance rows with movement require a manual provider fact; calculated closing is only a hint",
     ],
   };
@@ -189,25 +189,7 @@ function buildOstatkiRepairRows({ reconciliation, balanceRows, options }) {
       }
       continue;
     }
-    if (row.status === "carried_forward_conditional") {
-      existingKeys.add(key);
-      rows.push({
-        date: reconciliation.period?.to || options.to,
-        channel: row.channel,
-        currency: row.currency,
-        amount: row.carried_forward_balance,
-        factual_closing_balance_date: row.factual_closing_balance_date,
-        closing_balance_source: row.closing_balance_source,
-        fact_source: row.fact_source,
-        status: row.status,
-        movement_rows: row.movement_rows,
-        missing_amount_net_rows: row.missing_amount_net_rows,
-        action: "append_carried_forward_balance",
-        can_write_to_ostatki: true,
-        safe_fill: "eligible only after explicit confirmation: no movement, no missing amount_net, carried forward from last observed Остатки",
-        comment: `carried_forward_conditional from ${row.factual_closing_balance_date || "last observed"} via period reconciliation`,
-      });
-    } else if (row.status === "missing_provider_balance" && Number(row.movement_rows || 0) > 0) {
+    if (row.status === "missing_provider_balance" && Number(row.movement_rows || 0) > 0) {
       rows.push({
         date: reconciliation.period?.to || options.to,
         channel: row.channel,
@@ -345,7 +327,7 @@ export async function applyRequestedRepairs({ report, appendOstatkiRowsImpl = ap
     .filter((row) => row.action === "append_carried_forward_balance")
     .filter((row) => row.amount !== null && row.amount !== undefined && row.amount !== "");
   if (!rows.length) {
-    return { type: "ostatki_append", appended: [], skipped: [], appendRowCount: 0 };
+    return { type: "no_op", appended: [], skipped: [], appendRowCount: 0 };
   }
   const result = await appendOstatkiRowsImpl({ rows });
   return { type: "ostatki_append", ...result };

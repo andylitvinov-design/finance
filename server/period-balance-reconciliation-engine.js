@@ -93,19 +93,26 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
 
   const calculatedClosing = opening === null ? null : round(opening + realDelta);
   const plannedClosing = opening === null ? null : round(opening + plannedDelta);
-  const manualProviderClosing = closingSnapshot?.amount ?? null;
-  let closingSource = closingSnapshot ? "exact" : "missing";
+  const factBalance = resolveFactBalance({
+    channel,
+    currency,
+    targetDate: to,
+    balanceIndex,
+  });
+  const manualProviderClosing = factBalance.amount;
+  let closingSource = factBalance.status === "missing" ? "missing" : "exact";
   const canCarryForwardClosing = !closingSnapshot
     && !hasMovement
     && !missingAmountNetRows
     && calculatedClosing !== null
     && lastObservedClosingSnapshot;
   const carriedForwardClosing = canCarryForwardClosing ? lastObservedClosingSnapshot.amount : null;
-  const displayedFactClosing = manualProviderClosing ?? carriedForwardClosing;
-  if (canCarryForwardClosing) {
-    closingSource = "carried_forward";
-  }
-  const factSource = resolveFactSource({ closingSnapshot, canCarryForwardClosing });
+  const displayedFactClosing = manualProviderClosing;
+  const factSource = factBalance.status === "confirmed"
+    ? "manual"
+    : factBalance.status === "auto_pending"
+      ? "provider"
+      : "missing";
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
     ? round(displayedFactClosing - calculatedClosing)
     : null;
@@ -113,18 +120,12 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   let status = STATUS.OK;
   if (missingAmountNetRows) {
     status = STATUS.MISSING_AMOUNT_NET;
-  } else if (canCarryForwardClosing) {
-    status = realDifference !== null && Math.abs(realDifference) > 0.0001
-      ? STATUS.MISMATCH
-      : STATUS.CARRIED_FORWARD;
-  } else if (manualProviderClosing === null && hasMovement) {
-    status = STATUS.MISSING_PROVIDER;
   } else if (opening === null && (hasMovement || hasPlan)) {
     status = STATUS.MISSING_OPENING;
+  } else if (manualProviderClosing === null && (hasMovement || hasPlan || opening !== null)) {
+    status = STATUS.MISSING_PROVIDER;
   } else if (manualProviderClosing === null && !hasMovement && !hasPlan && opening === null) {
     status = STATUS.NO_DATA;
-  } else if (manualProviderClosing === null && hasPlan) {
-    status = STATUS.MISSING_PROVIDER;
   } else if (calculatedClosing !== null && manualProviderClosing !== null && Math.abs(round(manualProviderClosing - calculatedClosing)) > 0.0001) {
     status = STATUS.MISMATCH;
   }
@@ -152,28 +153,36 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     calculated_closing_balance: calculatedClosing,
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
-    manual_provider_closing_balance_date: closingSnapshot?.date || null,
+    manual_provider_closing_balance_date: factBalance.date,
     manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
-    balanceSource: closingSnapshot ? getResolvedBalanceSource(closingSnapshot) : "missing",
-    needsManualConfirmation: closingSnapshot ? getResolvedBalanceSource(closingSnapshot) !== "manual_fact" : true,
-    provider: closingSnapshot?.provider || null,
-    sourceSheet: closingSnapshot?.sourceSheet || "",
-    sourceRow: closingSnapshot?.sourceRow || null,
-    sourceComment: closingSnapshot?.comment || "",
+    fact_balance: factBalance,
+    factStatus: factBalance.status,
+    fact_status: factBalance.status,
+    factDate: factBalance.date,
+    fact_date: factBalance.date,
+    factSource: factBalance.sourceType,
+    fact_source_type: factBalance.sourceType,
+    repairHint: factBalance.repairHint,
+    repair_hint: factBalance.repairHint,
+    computedStatus: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
+    computed_status: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
+    balanceSource: factBalance.status === "confirmed" ? "manual_fact" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing"),
+    needsManualConfirmation: factBalance.status !== "confirmed",
+    provider: factBalance.provider || null,
+    sourceSheet: factBalance.sourceSheet || "",
+    sourceRow: factBalance.sourceRow || null,
+    sourceComment: factBalance.comment || "",
     carried_forward_balance: roundedCarriedForwardClosing,
     carried_forward_lookup_key: lastObservedClosingSnapshot
       ? makeLookupKey({ date: lastObservedClosingSnapshot.date, channel, currency })
       : null,
     displayed_fact_balance: roundedDisplayedFactClosing,
     factual_closing_balance: roundedDisplayedFactClosing,
-    factual_closing_balance_date: closingSnapshot?.date || (canCarryForwardClosing ? lastObservedClosingSnapshot.date : null),
+    factual_closing_balance_date: factBalance.date,
     closing_balance_source: closingSource,
     fact_source: factSource,
-    missing_fact_reason: buildMissingFactReason({
-      closingSnapshot,
-      nearestManualProviderFact,
-      to,
-    }),
+    missing_fact_reason: factBalance.status === "missing" ? factBalance.warning : null,
+    fact_warning: factBalance.warning,
     nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
     nearest_manual_provider_fact_amount: nearestManualProviderFact?.amount ?? null,
     last_observed_closing_balance: lastObservedClosingSnapshot?.amount ?? null,
@@ -219,10 +228,44 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   };
 }
 
-function resolveFactSource({ closingSnapshot, canCarryForwardClosing }) {
-  if (closingSnapshot) return getBalanceFactSource(closingSnapshot);
-  if (canCarryForwardClosing) return "carried_forward";
-  return "missing";
+export function resolveFactBalance({ channel, currency, targetDate, balanceIndex } = {}) {
+  const key = makeKey(String(channel || "").trim(), String(currency || "").trim().toUpperCase());
+  const normalizedTargetDate = normalizeDate(targetDate);
+  const snapshot = balanceIndex?.findClosing?.(key, { to: normalizedTargetDate }) || null;
+  if (!snapshot) {
+    const nearest = balanceIndex?.findNearest?.(key, normalizedTargetDate) || null;
+    const warning = nearest?.date
+      ? `manual/provider fact exists for ${nearest.date}, but period end is ${normalizedTargetDate || "selected date"}; exact date fact is missing.`
+      : `manual/provider fact is missing for period end ${normalizedTargetDate || "selected date"}.`;
+    return {
+      status: "missing",
+      amount: null,
+      date: null,
+      sourceSheet: null,
+      sourceRow: null,
+      sourceType: null,
+      provider: null,
+      comment: "",
+      warning,
+      repairHint: `add fact balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${normalizedTargetDate || "selected date"}`,
+    };
+  }
+  const balanceSource = getResolvedBalanceSource(snapshot);
+  const auto = balanceSource === "provider_auto";
+  return {
+    status: auto ? "auto_pending" : "confirmed",
+    amount: round(snapshot.amount),
+    date: snapshot.date,
+    sourceSheet: snapshot.sourceSheet || (auto ? "Авто Остатки" : "Остатки"),
+    sourceRow: snapshot.sourceRow || null,
+    sourceType: auto ? "auto" : "manual fact",
+    provider: snapshot.provider || null,
+    comment: snapshot.comment || "",
+    warning: auto ? "needs manual confirmation" : null,
+    repairHint: auto
+      ? `confirm auto balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date} in Остатки`
+      : null,
+  };
 }
 
 function makeLookupKey({ date, channel, currency }) {

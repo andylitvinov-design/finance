@@ -64,31 +64,33 @@ test("planned and real deltas are shown separately", () => {
   assert.equal(result.by_currency[0].planned_delta, 400);
 });
 
-test("no movement and last observed balance carries forward as conditional fact", () => {
+test("no movement with old observed balance requires target-date fact instead of using carry-forward as fact", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [], balanceRows: balances(null) });
   const row = result.by_channel_currency[0];
-  assert.equal(result.summary.status, "ok");
+  assert.equal(result.summary.status, "blocked");
   assert.equal(result.summary.status_counts.ok, 0);
   assert.equal(result.summary.status_counts.mismatch, 0);
-  assert.equal(result.summary.status_counts.carried_forward_conditional, 1);
-  assert.equal(result.summary.status_counts.missing_provider_balance, 0);
-  assert.equal(row.status, "carried_forward_conditional");
+  assert.equal(result.summary.status_counts.carried_forward_conditional, 0);
+  assert.equal(result.summary.status_counts.missing_provider_balance, 1);
+  assert.equal(row.status, "missing_provider_balance");
   assert.equal(row.manual_provider_closing_balance, null);
   assert.equal(row.carried_forward_balance, 1000);
-  assert.equal(row.displayed_fact_balance, 1000);
-  assert.equal(row.factual_closing_balance, 1000);
-  assert.equal(row.factual_closing_balance_date, "2026-05-10");
-  assert.equal(row.closing_balance_source, "carried_forward");
-  assert.equal(row.fact_source, "carried_forward");
+  assert.equal(row.displayed_fact_balance, null);
+  assert.equal(row.factual_closing_balance, null);
+  assert.equal(row.factual_closing_balance_date, null);
+  assert.equal(row.closing_balance_source, "missing");
+  assert.equal(row.fact_source, "missing");
+  assert.equal(row.factStatus, "missing");
+  assert.match(row.repairHint, /add fact balance/);
   assert.equal(row.can_write_to_ostatki, false);
-  assert.equal(row.repair_action, "confirm_carried_forward_before_append");
-  assert.equal(row.real_difference, 0);
+  assert.equal(row.repair_action, "enter_manual_provider_fact");
+  assert.equal(row.real_difference, null);
   assert.equal(row.last_observed_closing_balance, 1000);
   assert.equal(row.last_observed_closing_balance_date, "2026-05-10");
-  assert.match(row.fix_action, /Проверить позже/);
+  assert.match(row.fix_action, /фактический остаток/);
 });
 
-test("carried-forward with non-zero difference is mismatch, not conditional OK", () => {
+test("old in-period balance is reference-only when target-date fact is missing", () => {
   const result = buildPeriodBalanceReconciliation({
     period,
     operations: [],
@@ -98,16 +100,16 @@ test("carried-forward with non-zero difference is mismatch, not conditional OK",
     ],
   });
   const row = result.by_channel_currency[0];
-  assert.equal(result.summary.status, "failed");
-  assert.equal(row.status, "mismatch");
+  assert.equal(result.summary.status, "blocked");
+  assert.equal(row.status, "missing_provider_balance");
   assert.equal(row.calculated_closing_balance, 900);
   assert.equal(row.manual_provider_closing_balance, null);
   assert.equal(row.carried_forward_balance, 1000);
-  assert.equal(row.displayed_fact_balance, 1000);
-  assert.equal(row.fact_source, "carried_forward");
-  assert.equal(row.real_difference, 100);
+  assert.equal(row.displayed_fact_balance, null);
+  assert.equal(row.fact_source, "missing");
+  assert.equal(row.real_difference, null);
   assert.equal(row.can_write_to_ostatki, false);
-  assert.equal(row.repair_action, "investigate_mismatch");
+  assert.equal(row.repair_action, "enter_manual_provider_fact");
 });
 
 test("missing exact target-date provider balance with movements is blocked, not mismatch", () => {
@@ -249,6 +251,50 @@ test("Wise USD true mismatch remains visible when exact target provider balance 
   assert.deepEqual(row.diagnostics.categories, ["missing ledger movement", "fee/net mismatch", "sign/direction issue", "amount_net issue"]);
 });
 
+test("auto fact on target date is auto_pending and preserves mismatch diff", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-19" },
+    operations: [
+      {
+        date: "2026-05-03",
+        fromChannel: "трансервайз дол",
+        currency: "USD",
+        amountNet: "1848.82",
+        balanceAmount: -1848.82,
+        ledgerV2: { date: "2026-05-03", operation: "expense", from_channel: "трансервайз дол", currency: "USD", amount_net: "1848.82", balance_amount: -1848.82 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-04-30", channel: "трансервайз дол", currency: "USD", amount: "2704.25", source: "manual_fact" },
+      { date: "2026-05-19", channel: "трансервайз дол", currency: "USD", amount: "849.66", source: "provider_auto", sourceSheet: "Авто Остатки", sourceRow: 12 },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "mismatch");
+  assert.equal(row.factStatus, "auto_pending");
+  assert.equal(row.fact_balance.warning, "needs manual confirmation");
+  assert.equal(row.computed_real_closing_balance, 855.43);
+  assert.equal(row.factual_closing_balance, 849.66);
+  assert.equal(row.real_difference, -5.77);
+});
+
+test("manual fact on target date wins over old opening/start balance", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-19" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-04-30", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10107.92", source: "manual_fact" },
+      { date: "2026-05-19", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10107.92", source: "manual_fact" },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.factStatus, "confirmed");
+  assert.equal(row.factual_closing_balance, 10107.92);
+  assert.equal(row.factual_closing_balance_date, "2026-05-19");
+  assert.equal(row.real_difference, 0);
+});
+
 test("PayPal EUR missing amount_net blocks without gross-as-net substitution", () => {
   const result = buildPeriodBalanceReconciliation({
     period,
@@ -294,11 +340,13 @@ test("Binance spot USDT movement without manual/provider fact reports missing pr
   });
   const row = result.by_channel_currency[0];
   assert.equal(result.summary.status, "blocked");
-  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.status, "missing_opening_balance");
+  assert.equal(row.computedStatus, "missing_opening_balance");
+  assert.equal(row.factStatus, "missing");
   assert.equal(row.opening_fact_balance, null);
   assert.equal(row.manual_provider_closing_balance, null);
   assert.equal(row.fact_source, "missing");
-  assert.match(row.fix_action, /фактический остаток/);
+  assert.match(row.fix_action, /Остатки до начала/);
 });
 
 test("opening and closing reconciliation use native amount, not amount_usd", () => {

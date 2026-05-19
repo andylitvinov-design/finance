@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
+import { buildPeriodBalanceReconciliation } from "../server/period-balance-reconciliation-engine.js";
 import {
   buildProviderLedgerReconciliation,
   buildYooMoneyProviderEvidenceFixture,
@@ -21,7 +22,7 @@ const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const LEDGER_RANGE_COLUMNS = "A:V";
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
 const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
-const TASKS = new Set(["all", "missing-amount-net", "mismatches", "balance-corrections", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
+const TASKS = new Set(["all", "missing-amount-net", "mismatches", "balance-corrections", "fact-balance-gaps", "missing-balances", "normalize-sources", "yoomoney-reconcile"]);
 const TASK_ALIASES = new Map([
   ["mismatch-report", "mismatches"],
   ["mismatch", "mismatches"],
@@ -85,6 +86,9 @@ export function buildLedgerQualityRepairReport({
   const balanceCorrections = shouldRun(task, "balance-corrections")
     ? buildBalanceCorrectionsReport({ operations, balances, autoBalances, mergedBalances, confirmations, now })
     : emptyBalanceCorrectionsReport();
+  const factBalanceGaps = shouldRun(task, "fact-balance-gaps")
+    ? buildFactBalanceGapsReport({ operations, balances, autoBalances, mergedBalances, period })
+    : emptyTaskReport();
   const missingBalances = shouldRun(task, "missing-balances")
     ? buildMissingBalancesReport({ operations, balances, autoBalances, mergedBalances })
     : emptyTaskReport();
@@ -109,10 +113,70 @@ export function buildLedgerQualityRepairReport({
     missingAmountNet,
     mismatchReport,
     balanceCorrections,
+    factBalanceGaps,
     missingBalances,
     normalizeSources,
     yoomoneyReconcile,
   };
+}
+
+export function buildFactBalanceGapsReport({ operations = [], balances = [], autoBalances = [], mergedBalances = [], period = {} } = {}) {
+  const merged = mergedBalances.length
+    ? mergedBalances
+    : (mergeManualAndAutoBalances(balances, autoBalances).rows || []);
+  const reconciliation = buildPeriodBalanceReconciliation({
+    operations,
+    balanceRows: merged,
+    period,
+    plannedSourceStatus: "available",
+  });
+  const rows = (reconciliation.by_channel_currency || [])
+    .filter((row) => row.factStatus !== "confirmed" || row.status === "mismatch" || row.computedStatus === "missing_opening_balance")
+    .map((row) => ({
+      channel: row.channel,
+      currency: row.currency,
+      openingStatus: row.computedStatus === "missing_opening_balance" ? "missing_opening_balance" : "ok",
+      computedBalance: row.computed_real_closing_balance,
+      factStatus: row.factStatus || row.fact_status || "missing",
+      factBalance: row.factual_closing_balance,
+      factDate: row.factDate || row.fact_date || row.factual_closing_balance_date || null,
+      sourceSheet: row.sourceSheet || row.source_sheet || null,
+      sourceRow: row.sourceRow || row.source_row || null,
+      difference: row.real_difference,
+      recommendedAction: buildFactBalanceGapAction(row),
+      after: null,
+    }))
+    .sort((left, right) => {
+      if (left.factStatus !== right.factStatus) return left.factStatus.localeCompare(right.factStatus);
+      if (left.currency !== right.currency) return left.currency.localeCompare(right.currency);
+      return left.channel.localeCompare(right.channel);
+    });
+  return {
+    rows,
+    summary: {
+      detected: rows.length,
+      wouldUpdate: 0,
+      updated: 0,
+      skipped: rows.length,
+      needsManualVerification: rows.length,
+    },
+  };
+}
+
+function buildFactBalanceGapAction(row) {
+  if (row.computedStatus === "missing_opening_balance" || row.computed_status === "missing_opening_balance") {
+    return "add factual opening balance before the first period movement; do not derive it from computed balance";
+  }
+  if ((row.factStatus || row.fact_status) === "auto_pending") {
+    return "confirm provider auto balance in statement/import, then enter confirmed manual fact in Остатки";
+  }
+  if ((row.factStatus || row.fact_status) === "missing") {
+    return row.repairHint || row.repair_hint || "add fact balance for channel/currency/date";
+  }
+  if (row.status === "mismatch") {
+    return "investigate mismatch; keep auto/manual fact visible and verify Ledger amount_net before changing data";
+  }
+  return "manual/provider verification required before mutation";
 }
 
 export function buildYooMoneyReconciliationReport({ operations = [], balances = [], period = {} } = {}) {
@@ -912,7 +976,7 @@ async function main() {
   const options = parseArgs();
   if (options.help) {
     console.log([
-      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|balance-corrections|missing-balances|normalize-sources|yoomoney-reconcile] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run|--apply] [--confirm-file file.json] [--json]",
+      "Usage: node scripts/repair-ledger-quality.mjs [--task all|missing-amount-net|mismatches|balance-corrections|fact-balance-gaps|missing-balances|normalize-sources|yoomoney-reconcile] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--dry-run|--apply] [--confirm-file file.json] [--json]",
       "",
       "Dry-run is the default. --apply writes only explicit Ledger row patches.",
     ].join("\n"));
@@ -936,6 +1000,7 @@ async function main() {
     report.missingAmountNet.summary.updated = countApplied(applyResult, report.missingAmountNet.rows);
     report.mismatchReport.summary.updated = countApplied(applyResult, report.mismatchReport.rows);
     report.balanceCorrections.summary.updated = countAppliedBalanceCorrections(applyResult, report.balanceCorrections.rows);
+    report.factBalanceGaps.summary.updated = 0;
     report.missingBalances.summary.updated = countApplied(applyResult, report.missingBalances.rows);
     report.normalizeSources.summary.updated = countApplied(applyResult, report.normalizeSources.rows);
   }
@@ -949,6 +1014,7 @@ function printHumanReport(report) {
   printTaskSummary("missing-amount-net", report.missingAmountNet);
   printTaskSummary("mismatches", report.mismatchReport);
   printTaskSummary("balance-corrections", report.balanceCorrections);
+  printTaskSummary("fact-balance-gaps", report.factBalanceGaps);
   printTaskSummary("missing-balances", report.missingBalances);
   printTaskSummary("normalize-sources", report.normalizeSources);
   if (report.yoomoneyReconcile?.source) printTaskSummary("yoomoney-reconcile", report.yoomoneyReconcile);
