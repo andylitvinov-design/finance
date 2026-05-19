@@ -133,6 +133,135 @@ test("GET getDashboardData maps to calculatePeriod for Apps Script v2", async ()
   }
 });
 
+test("GET getDashboardData merges manual and auto balances before analytics normalization", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousServiceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-overlay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-05-01", endDate: "2026-05-19", timeZone: "Europe/Kyiv" },
+                tabs: {
+                  movement: { sheetName: "движение средства", values: [["NUMBER", "DATE", "BALANCE"]] },
+                  analytics: {
+                    sheetName: "аналитика",
+                    values: [
+                      ["Личные расходы"],
+                      ["валюта", "now", "приход от услуг", "spent for business", "затраты-мои", "обмен", "обмен_usd", "затраты-мои usd", "now_usd"],
+                      ["трансервайз дол", "0", "", "", "", "", "", "", ""],
+                      ["трансервайз евро", "0", "", "", "", "", "", "", ""],
+                      ["Итого", "0", "", "", "", "", "", "", ""],
+                      [],
+                      ["Plan"],
+                      ["валюта", "пришло в местной валюте", "пришло в долларах", "затраты-мои", "затраты-мои-дол", "ушло", "обмен", "обмен_usd", "план-рост", "plan-profit"],
+                      ["трансервайз дол", "0", "0", "0", "0", "0", "", "", "0", "0"],
+                      ["трансервайз евро", "0", "0", "0", "0", "0", "", "", "0", "0"],
+                      ["Итого", "0", "0", "0", "0", "0", "", "", "0", "0"],
+                      [],
+                      ["БАЛАНС"],
+                      ["валюта", "БЫЛО", "СТАЛО", "РОСТ", "Plan Profit", "разница1", "КОМИССИЯ", "доп расходы", "БАЛАНС", "Extra"],
+                      ["трансервайз дол", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                      ["трансервайз евро", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                      ["Итого", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+                    ]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+      if (value.includes("oauth2.googleapis.com/token")) {
+        return { ok: true, status: 200, async json() { return { access_token: "test-access-token" }; } };
+      }
+      if (value.includes("sheets.googleapis.com") && value.includes("values:batchGet")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              valueRanges: [
+                {
+                  range: "'Ledger'!A:Q",
+                  values: [
+                    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "amount_net", "category", "subcategory", "direction", "comment", "source", "raw_source_id", "transfer_group_id", "created_at", "updated_at"],
+                    ["2026-05-10", "income", "", "трансервайз дол", "20", "USD", "20", "20", "servicein", "", "in", "inside", "wise", "wise-income", "", "", ""]
+                  ]
+                },
+                { range: "'Расходы'!A1:Z10", values: [["дата", "категория", "трансервайз дол"]] },
+                {
+                  range: "'Остатки'",
+                  values: [
+                    ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
+                    ["2026-05-19", "трансервайз дол", "1000", "USD", "1", "1000", "manual fact"]
+                  ]
+                },
+                {
+                  range: "'Авто Остатки'",
+                  values: [
+                    ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+                    ["2026-05-19", "wise", "трансервайз дол", "999", "USD", "1", "999", "wise_auto", "2026-05-19T00:00:00Z", "wise-usd", "ok", "wise auto snapshot"],
+                    ["2026-05-19", "wise", "трансервайз евро", "158,56", "EUR", "1,16", "183,9296", "wise_auto", "2026-05-19T00:00:00Z", "wise-eur", "ok", "wise auto snapshot"]
+                  ]
+                },
+                { range: "'План'", values: [["date", "channel", "amount", "currency"]] },
+                { range: "'Переводы'", values: [["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"]] },
+                { range: "'Комиссии'", values: [["дата", "канал", "сумма в долларах", "комментарий"]] }
+              ]
+            };
+          }
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler(
+      { method: "GET", query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-19" } },
+      response
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+
+    const manual = response.body?.data?.manual || {};
+    assert.equal(manual.autoBalances.length, 2);
+    assert.equal(manual.balanceSnapshotMerge.auto_balance_rows_used_as_fallback, 1);
+    assert.equal(manual.balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual, 1);
+    assert.equal(manual.balanceRows.find((row) => row.channel === "трансервайз дол")?.amount, "1000");
+    assert.equal(manual.balanceRows.find((row) => row.channel === "трансервайз евро")?.sourceSheet, "Авто Остатки");
+
+    const analyticsRows = response.body?.data?.tabs?.analytics?.values || [];
+    const balanceIndex = analyticsRows.findIndex((row) => row?.[0] === "БАЛАНС");
+    const findBalanceRow = (channel) => analyticsRows.slice(balanceIndex + 2).find((row) => row?.[0] === channel);
+    assert.equal(findBalanceRow("трансервайз дол")?.[2], "1000,0000");
+    assert.equal(findBalanceRow("трансервайз евро")?.[2], "183,9296");
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    if (previousServiceEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousServiceEmail;
+    if (previousPrivateKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousPrivateKey;
+  }
+});
+
 test("GET getDashboardData forwards ISO dates and scopes manual ledger rows to the selected period", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;

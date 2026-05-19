@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import autoBalanceSnapshotsHandler from "../server/auto-balance-snapshots.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
+import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
 import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
@@ -398,6 +399,10 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
   const periodTransfers = filterByPeriod(manualRepository.transfers || []);
   const periodCommissionRows = filterByPeriod(manualRepository.commissionRows || []);
   const periodLedgerV2Rows = filterByPeriod(manualRepository.ledgerV2Rows || []);
+  const manualBalances = Array.isArray(manualRepository.balances) ? manualRepository.balances : [];
+  const autoBalances = Array.isArray(manualRepository.autoBalances) ? manualRepository.autoBalances : [];
+  const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalances);
+  const mergedBalanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
 
   const isLedgerRepository = /^ledger-v[12]/.test(String(manualRepository.schema || ""));
   const nextManual = {
@@ -405,8 +410,17 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
     schema: manualRepository.schema,
     warnings: manualRepository.warnings || [],
     expenseRows: periodExpenseRows,
-    balances: manualRepository.balances.length ? manualRepository.balances : (data.manual?.balances || []),
-    balanceRows: manualRepository.balances,
+    balances: mergedBalanceRows.length ? mergedBalanceRows : (data.manual?.balances || []),
+    balanceRows: mergedBalanceRows,
+    manualBalanceRows: manualBalances,
+    autoBalances,
+    balanceSnapshotMerge: {
+      manual_balance_rows: manualBalances.length,
+      auto_balance_rows: autoBalances.length,
+      merged_balance_rows: mergedBalanceRows.length,
+      auto_balance_rows_used_as_fallback: Number(balanceSnapshotMerge.auto_balance_rows_used_as_fallback || balanceSnapshotMerge.autoUsed || 0),
+      auto_balance_rows_ignored_due_to_manual: Number(balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual || balanceSnapshotMerge.autoIgnored || 0),
+    },
     transfers: periodTransfers,
     commissionRows: periodCommissionRows,
     views: manualRepository.views,
