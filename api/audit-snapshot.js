@@ -1,4 +1,5 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import { buildBalanceCoverage } from "../server/balance-coverage-engine.js";
 import {
@@ -58,9 +59,13 @@ export async function buildAuditSnapshot(options = {}) {
   const schema = buildSchema(repository);
   const summary = buildSummary(operations, repository);
   const balanceResult = buildBalances(operations);
-  const periodDailyBalanceResult = buildDailyCurrencyBalances(operations, repository.balances || []);
+  const manualBalanceRows = Array.isArray(repository.balances) ? repository.balances : [];
+  const autoBalanceRows = Array.isArray(repository.autoBalances) ? repository.autoBalances : [];
+  const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalanceRows, autoBalanceRows);
+  const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
+  const periodDailyBalanceResult = buildDailyCurrencyBalances(operations, balanceRows);
   const dailyBalanceResult = filterDailyBalanceResult(
-    buildDailyCurrencyBalances(repository.operations || [], repository.balances || []),
+    buildDailyCurrencyBalances(repository.operations || [], balanceRows),
     periodFilter,
     periodDailyBalanceResult.summary.excluded_missing_amount_net_rows
   );
@@ -134,6 +139,11 @@ export async function buildAuditSnapshot(options = {}) {
       fallback_amount_rows: balanceResult.fallback_amount_rows,
       missing_amount_net_rows: balanceResult.missing_amount_net_rows,
       excluded_missing_amount_net_rows: balanceResult.excluded_missing_amount_net_rows,
+      manual_balance_rows: manualBalanceRows.length,
+      auto_balance_rows: autoBalanceRows.length,
+      merged_balance_rows: balanceRows.length,
+      auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
+      auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
     },
     daily_balances: {
       uses_amount_net: true,
@@ -192,6 +202,11 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       fallback_amount_rows: 0,
       missing_amount_net_rows: 0,
       excluded_missing_amount_net_rows: 0,
+      manual_balance_rows: 0,
+      auto_balance_rows: 0,
+      merged_balance_rows: 0,
+      auto_balance_rows_used_as_fallback: null,
+      auto_balance_rows_ignored_due_to_manual: null,
     },
     daily_balances: {
       uses_amount_net: true,

@@ -151,6 +151,93 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "needs verification");
 });
 
+test("audit snapshot uses auto balance row as fallback when manual balance row is absent", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { period: "2026-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation()],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000" },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206", provider: "wise" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balances.manual_balance_rows, 1);
+  assert.equal(snapshot.balances.auto_balance_rows, 1);
+  assert.equal(snapshot.balances.merged_balance_rows, 2);
+  assert.equal(snapshot.balances.auto_balance_rows_used_as_fallback, 1);
+  assert.equal(snapshot.balances.auto_balance_rows_ignored_due_to_manual, 0);
+  assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 0);
+  assert.equal(snapshot.balance_coverage.summary.fully_reconciled_accounts, 1);
+  assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance, 1206);
+  assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
+});
+
+test("audit snapshot manual balance row overrides auto balance row for same date channel currency", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { period: "2026-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation()],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000" },
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206" },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "999", provider: "wise" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balances.manual_balance_rows, 2);
+  assert.equal(snapshot.balances.auto_balance_rows, 1);
+  assert.equal(snapshot.balances.merged_balance_rows, 2);
+  assert.equal(snapshot.balances.auto_balance_rows_used_as_fallback, 0);
+  assert.equal(snapshot.balances.auto_balance_rows_ignored_due_to_manual, 1);
+  assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance, 1206);
+  assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
+});
+
+test("audit snapshot daily balance coverage reduces missing opening balance when prior auto row exists", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-02", to: "2026-05-02" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation()],
+      balances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1206" },
+      ],
+      autoBalances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", provider: "wise" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_coverage.summary.missing_opening_balance, 0);
+  assert.equal(snapshot.balance_coverage.summary.fully_reconciled_accounts, 1);
+  assert.equal(snapshot.balance_coverage.accounts[0].opening_balance, 1000);
+  assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
+});
+
 test("audit snapshot exposes missing opening balance fix instructions without inventing amount", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-05-11", to: "2026-05-11" },
