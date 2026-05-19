@@ -5,7 +5,9 @@ import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
 
 const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;
+const DEFAULT_PAYPAL_MCP_TOOL_NAME = "list_transactions";
 const PAYPAL_ERROR_EXCERPT_LENGTH = 300;
+const PAYPAL_MCP_FALLBACK_ACTION = "Use PayPal REST permissions or PayPal statement file import.";
 export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
@@ -48,19 +50,35 @@ export default async function handler(request, response) {
         });
       } catch (error) {
         if (!mcpClientId || !mcpRefreshToken) throw error;
-        result = await fetchPayPalStatementEntriesFromMcp({
-          startDate: payload.startDate,
-          endDate: payload.endDate,
-          clientId: mcpClientId,
-          refreshToken: mcpRefreshToken,
-          restClientId: clientId,
-          restClientSecret: clientSecret,
-          environment,
-          fetchImpl: fetch
-        });
+        const restWarning = buildPayPalRestFallbackWarning(error);
+        try {
+          result = await fetchPayPalStatementEntriesFromMcp({
+            startDate: payload.startDate,
+            endDate: payload.endDate,
+            clientId: mcpClientId,
+            refreshToken: mcpRefreshToken,
+            restClientId: clientId,
+            restClientSecret: clientSecret,
+            environment,
+            fetchImpl: fetch
+          });
+        } catch (mcpError) {
+          if (isPayPalMcpFallbackUnavailableError(mcpError)) {
+            return response.status(400).json({
+              ok: false,
+              provider: mcpError.provider,
+              phase: mcpError.phase,
+              error: mcpError.userMessage,
+              warnings: uniquePayPalWarnings([restWarning]),
+              availableMcpTools: mcpError.availableMcpTools || []
+            });
+          }
+          throw mcpError;
+        }
         result = {
           ...result,
           warnings: uniquePayPalWarnings([
+            restWarning,
             buildPayPalProviderWarning(error, { environment }),
             ...(result.warnings || [])
           ])
@@ -87,7 +105,7 @@ export default async function handler(request, response) {
   } catch (error) {
     return response.status(400).json({
       ok: false,
-      error: String(error && error.message ? error.message : error)
+      error: getPayPalSafeErrorMessage(error)
     });
   }
 }
@@ -134,11 +152,12 @@ export async function fetchPayPalStatementEntriesFromMcp(options = {}) {
   const details = [];
   let page = 1;
   let totalPages = 1;
+  const toolName = getPayPalMcpToolName();
   do {
     const payload = await callPayPalMcpTool({
       fetchImpl,
       accessToken,
-      toolName: "list_transactions",
+      toolName,
       argumentsValue: {
         start_date: toPayPalDateTime(startDate, false),
         end_date: toPayPalDateTime(endDate, true),
@@ -207,10 +226,17 @@ async function callPayPalMcpTool(options = {}) {
       clientInfo: { name: "ezohata-incoming-ledger", version: "1.0.0" }
     });
     await client.notify("notifications/initialized", {});
-    const result = await client.request("tools/call", {
-      name: options.toolName,
-      arguments: options.argumentsValue || {}
-    });
+    let result;
+    try {
+      result = await client.request("tools/call", {
+        name: options.toolName,
+        arguments: options.argumentsValue || {}
+      });
+    } catch (error) {
+      if (!isPayPalMcpToolNotFound(error)) throw error;
+      const availableMcpTools = await listPayPalMcpTools(client).catch(() => []);
+      throw createPayPalMcpFallbackUnavailableError(options.toolName, availableMcpTools, error);
+    }
     const text = (result?.content || [])
       .filter((item) => item?.type === "text")
       .map((item) => item.text || "")
@@ -220,6 +246,13 @@ async function callPayPalMcpTool(options = {}) {
   } finally {
     client.close();
   }
+}
+
+async function listPayPalMcpTools(client) {
+  const result = await client.request("tools/list", {});
+  return (Array.isArray(result?.tools) ? result.tools : [])
+    .map((tool) => String(tool?.name || "").trim())
+    .filter(Boolean);
 }
 
 async function openPayPalMcpSession(options = {}) {
@@ -360,6 +393,43 @@ function collectPayPalFeeWarnings(entries = [], options = {}) {
     warnings.push(`${source} warning: missing fee on income transaction ${key}; net is not set.`);
   }
   return warnings;
+}
+
+function getPayPalMcpToolName() {
+  return String(process.env.PAYPAL_MCP_TOOL_NAME || "").trim() || DEFAULT_PAYPAL_MCP_TOOL_NAME;
+}
+
+export function getPayPalSafeErrorMessage(error) {
+  return getPayPalBodyExcerpt(error?.message || error) || "PayPal import failed.";
+}
+
+function buildPayPalRestFallbackWarning(error) {
+  return `PayPal REST import failed: ${getPayPalSafeErrorMessage(error)}`;
+}
+
+export function isPayPalMcpToolNotFound(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("tool list_transactions not found") ||
+    message.includes("mcp error -32602") ||
+    message.includes("tool not found") ||
+    message.includes("method not found");
+}
+
+function createPayPalMcpFallbackUnavailableError(toolName, availableMcpTools, cause) {
+  const selectedTool = String(toolName || DEFAULT_PAYPAL_MCP_TOOL_NAME).trim() || DEFAULT_PAYPAL_MCP_TOOL_NAME;
+  const message = `PayPal REST import failed and MCP fallback is unavailable because PayPal MCP tool ${selectedTool} is not exposed. ${PAYPAL_MCP_FALLBACK_ACTION}`;
+  const error = new Error(message);
+  error.provider = "paypal";
+  error.phase = "mcp_fallback";
+  error.userMessage = message;
+  error.availableMcpTools = Array.isArray(availableMcpTools) ? availableMcpTools : [];
+  error.causeMessage = getPayPalSafeErrorMessage(cause);
+  error.isPayPalMcpFallbackUnavailable = true;
+  return error;
+}
+
+function isPayPalMcpFallbackUnavailableError(error) {
+  return Boolean(error?.isPayPalMcpFallbackUnavailable);
 }
 
 export function buildPayPalProviderWarning(error, options = {}) {
