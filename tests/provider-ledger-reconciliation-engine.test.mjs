@@ -94,6 +94,15 @@ test("YooMoney fixture classifies wrong date without monthly mismatch", () => {
   });
 
   assert.equal(report.differences.by_month["2026-04"].provider_vs_yoomoney, 0);
+  assert.equal(report.monthly_total_status, "ok");
+  assert.equal(report.date_alignment_status, "needs_source_id_confirmation");
+  assert.equal(report.provider_net, 55753.62);
+  assert.equal(report.raw_ledger_yoomoney_net, 55753.62);
+  assert.equal(report.confirmed_matched_ledger_net, 55753.62);
+  assert.equal(report.transaction_monthly_delta, 0);
+  assert.equal(report.row_level.provider_total_rows.length, 16);
+  assert.equal(report.row_level.ledger_yoomoney_total_rows.length, 16);
+  assert.equal(report.row_level.wrong_date_rows.length, 1);
   assert.equal(report.row_level.provider_status_counts.matched_wrong_date, 1);
   assert.equal(report.row_level.provider_rows.find((row) => row.date === "2026-04-09" && row.signed_amount === 9350.24).status, "matched_wrong_date");
   assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 54).status, "confirmed_by_provider");
@@ -123,15 +132,21 @@ test("manual migration rows are quarantined separately from provider totals", ()
 
   assert.equal(report.ledger_totals.by_month["2026-04"].yoomoney.net, report.provider_totals.by_month["2026-04"].net);
   assert.equal(report.ledger_totals.by_month["2026-04"].manual_migration.net, -85956);
+  assert.equal(report.manual_migration_total.net, -85956);
+  assert.equal(report.combined_total.net, -30202.38);
   assert.equal(report.differences.by_month["2026-04"].provider_vs_yoomoney, 0);
   assert.equal(report.differences.by_month["2026-04"].provider_vs_combined, -85956);
+  assert.deepEqual(
+    report.row_level.manual_migration_rows.map((row) => row.sheetRowNumber).sort((a, b) => a - b),
+    [2, 5]
+  );
   assert.deepEqual(
     report.manual_blockers.manual_migration_confirmation_needed.map((row) => row.sheetRowNumber).sort((a, b) => a - b),
     [2, 5]
   );
 });
 
-test("extra YooMoney ledger rows make transaction status mismatch separately from migration rows", () => {
+test("extra YooMoney ledger rows are quarantined separately from matched monthly total", () => {
   const providerEvidence = [
     { date: "2026-04-25", signedAmount: 2755.86, description: "provider payment" },
   ];
@@ -150,9 +165,15 @@ test("extra YooMoney ledger rows make transaction status mismatch separately fro
     period: { from: "2026-04-01", to: "2026-04-30" },
   });
 
-  assert.equal(report.transaction_reconciliation_status, "mismatch");
-  assert.equal(report.differences.by_month["2026-04"].provider_vs_yoomoney, -21507.46);
+  assert.equal(report.transaction_reconciliation_status, "ok");
+  assert.equal(report.monthly_total_status, "ok");
+  assert.equal(report.extra_ledger_status, "needs_confirmation");
+  assert.equal(report.raw_ledger_yoomoney_net, 2755.86);
+  assert.equal(report.legacy_source_yoomoney_total.net, -18751.6);
+  assert.equal(report.extra_ledger_total.net, -21507.46);
+  assert.equal(report.differences.by_month["2026-04"].provider_vs_yoomoney, 0);
   assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 99).status, "not_in_provider_statement");
+  assert.deepEqual(report.row_level.extra_ledger_rows.map((row) => row.sheetRowNumber), [99]);
   assert.equal(report.row_level.ledger_rows.find((row) => row.sheetRowNumber === 5).status, "manual_migration_needs_confirmation");
 });
 
