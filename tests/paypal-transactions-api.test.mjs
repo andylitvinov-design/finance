@@ -168,7 +168,7 @@ test("normalizePayPalTransactionDetails does not set net without explicit fee", 
   assert.equal(income?.usdAmount, null);
 });
 
-test("parsePayPalManualActivityRows preserves personal PayPal expense amount without fee", () => {
+test("parsePayPalManualActivityRows keeps generic manual PayPal net unconfirmed", () => {
   const { entries } = parsePayPalManualActivityRows([
     { date: "2026-05-13", name: "Booking.com BV", amount: "-€27.14", type: "Payment" }
   ]);
@@ -179,11 +179,28 @@ test("parsePayPalManualActivityRows preserves personal PayPal expense amount wit
   assert.equal(entries[0].direction, "expense");
   assert.equal(entries[0].currency, "EUR");
   assert.equal(entries[0].source, "paypal_manual");
-  assert.equal(entries[0].amount_net, -27.14);
+  assert.equal(entries[0].amount_net, null);
   assert.equal(entries[0].amount_gross, -27.14);
   assert.equal(entries[0].feeAmount, null);
   assert.equal(entries[0].fee_missing, true);
   assert.equal(entries[0].needs_provider_permission, true);
+  assert.equal(entries[0].net_source, "unconfirmed");
+});
+
+test("parsePayPalManualActivityRows sets net only with explicit manual confirmation marker", () => {
+  const { entries } = parsePayPalManualActivityRows([
+    { date: "2026-05-13", name: "Booking.com BV", amount: "-€27.14", type: "Payment", net_source: "manual_confirmed" },
+    { date: "2026-05-11", counterparty: "Client", amount: "+€36", type: "Refund", source: "paypal_personal_manual" }
+  ]);
+
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].source, "paypal_personal_manual");
+  assert.equal(entries[0].amount_net, -27.14);
+  assert.equal(entries[0].net_source, "manual_confirmed");
+  assert.equal(entries[0].manual_confirmation_marker, "manual_confirmed");
+  assert.equal(entries[1].source, "paypal_personal_manual");
+  assert.equal(entries[1].amount_net, 36);
+  assert.equal(entries[1].net_source, "manual_confirmed");
 });
 
 test("parsePayPalManualActivityRows keeps USD and CAD separate from EUR", () => {
@@ -194,9 +211,11 @@ test("parsePayPalManualActivityRows keeps USD and CAD separate from EUR", () => 
 
   assert.equal(entries.length, 2);
   assert.equal(entries[0].currency, "USD");
-  assert.equal(entries[0].amount_net, -42.44);
+  assert.equal(entries[0].amount_gross, -42.44);
+  assert.equal(entries[0].amount_net, null);
   assert.equal(entries[1].currency, "CAD");
-  assert.equal(entries[1].amount_net, -13);
+  assert.equal(entries[1].amount_gross, -13);
+  assert.equal(entries[1].amount_net, null);
   assert.deepEqual(summary.totalsByCurrency.map((row) => row.currency), ["CAD", "USD"]);
 });
 
@@ -211,7 +230,8 @@ test("parsePayPalManualActivityRows classifies refunds as expense corrections, n
   assert.equal(entries[0].operationType, "refund");
   assert.equal(entries[0].suggestedCategory, "business");
   assert.equal(entries[0].is_refund, true);
-  assert.equal(entries[0].amount_net, 36);
+  assert.equal(entries[0].amount_gross, 36);
+  assert.equal(entries[0].amount_net, null);
 });
 
 test("parsePayPalManualActivityRows de-duplicates stable manual PayPal rows", () => {

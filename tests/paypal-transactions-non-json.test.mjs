@@ -151,7 +151,9 @@ test("handler imports manual PayPal rows without calling provider credentials", 
   assert.equal(response.body.source, "paypal_manual");
   assert.equal(response.body.entries.length, 1);
   assert.equal(response.body.entries[0].source, "paypal_manual");
-  assert.equal(response.body.entries[0].amount_net, -27.14);
+  assert.equal(response.body.entries[0].amount_gross, -27.14);
+  assert.equal(response.body.entries[0].amount_net, null);
+  assert.equal(response.body.entries[0].net_source, "unconfirmed");
 });
 
 test("fetchPayPalStatementEntriesFromMcp reports text/plain MCP token errors with status and excerpt", async () => {

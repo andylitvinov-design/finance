@@ -37,7 +37,13 @@ export default async function handler(request, response) {
     const mcpClientId = String(process.env.PAYPAL_MCP_CLIENT_ID || "").trim();
     const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
     if (isPayPalManualImportPayload(payload)) {
-      const result = parsePayPalManualActivityRows(payload.manualRows || payload.rows || payload.activityRows || payload.activityText || payload.text);
+      const result = parsePayPalManualActivityRows(
+        payload.manualRows || payload.rows || payload.activityRows || payload.activityText || payload.text,
+        {
+          source: payload.source || payload.provider || payload.mode,
+          netSource: payload.net_source || payload.netSource,
+        }
+      );
       return response.status(200).json({ ok: true, ...result });
     }
     let result;
@@ -382,14 +388,14 @@ export function summarizePayPalStatementEntries(entries = []) {
   };
 }
 
-export function parsePayPalManualActivityRows(input = []) {
+export function parsePayPalManualActivityRows(input = [], options = {}) {
   const rows = normalizePayPalManualInputRows(input);
   const entries = [];
   const warnings = [];
   let duplicateCount = 0;
   const seen = new Set();
   rows.forEach((row, index) => {
-    const entry = normalizePayPalManualActivityRow(row, index);
+    const entry = normalizePayPalManualActivityRow(row, index, options);
     if (!entry) return;
     if (seen.has(entry.sourceTransactionId)) {
       duplicateCount += 1;
@@ -466,19 +472,22 @@ function normalizePayPalManualHeader(value) {
   return token.replace(/\s+/g, "_");
 }
 
-function normalizePayPalManualActivityRow(row = {}, index = 0) {
+function normalizePayPalManualActivityRow(row = {}, index = 0, options = {}) {
   const date = normalizeIsoDate(String(firstNonEmpty(row.date, row.transactionDate, row.transaction_date)).slice(0, 10));
   const counterparty = firstNonEmpty(row.counterparty, row.name, row.merchant, row.description, row.details, "PayPal manual row");
   const type = String(firstNonEmpty(row.type, row.transactionType, row.transaction_type, "")).trim();
   const parsedAmount = parsePayPalManualSignedAmount(firstNonEmpty(row.amount, row.net, row.total), row.currency);
   if (!date || !parsedAmount || !parsedAmount.currency || !parsedAmount.value) return null;
   const signedAmount = round(parsedAmount.value);
+  const manuallyConfirmed = hasPayPalManualNetConfirmation(row, options);
   const isRefund = signedAmount > 0 && /refund|refunded|возврат/i.test(`${type} ${counterparty}`);
   const direction = signedAmount < 0 ? "expense" : "income";
   const entryKind = isRefund ? "refund" : "payment";
   const stableType = isRefund ? "refund" : (type || direction);
   const sourceTransactionId = `paypal_manual:${date}:${stableIdPart(counterparty)}:${stableIdPart(signedAmount)}:${parsedAmount.currency.toLowerCase()}:${stableIdPart(stableType)}`;
   const channel = getPayPalChannel(parsedAmount.currency);
+  const confirmedNet = manuallyConfirmed ? signedAmount : null;
+  const source = manuallyConfirmed ? "paypal_personal_manual" : "paypal_manual";
   return {
     id: sourceTransactionId,
     date,
@@ -488,7 +497,7 @@ function normalizePayPalManualActivityRow(row = {}, index = 0) {
     ledger_direction: signedAmount < 0 ? "out" : "in",
     localAmount: Math.abs(signedAmount),
     currency: parsedAmount.currency,
-    usdAmount: parsedAmount.currency === "USD" ? signedAmount : null,
+    usdAmount: parsedAmount.currency === "USD" && manuallyConfirmed ? signedAmount : null,
     grossAmount: signedAmount,
     amountGross: signedAmount,
     amount_gross: signedAmount,
@@ -496,9 +505,12 @@ function normalizePayPalManualActivityRow(row = {}, index = 0) {
     amountFee: "",
     amount_fee: "",
     feeCurrency: parsedAmount.currency,
-    netAmount: signedAmount,
-    amountNet: signedAmount,
-    amount_net: signedAmount,
+    netAmount: confirmedNet,
+    amountNet: confirmedNet,
+    amount_net: confirmedNet,
+    netSource: manuallyConfirmed ? "manual_confirmed" : "unconfirmed",
+    net_source: manuallyConfirmed ? "manual_confirmed" : "unconfirmed",
+    manual_confirmation_marker: manuallyConfirmed ? "manual_confirmed" : "",
     suggestedCategory: isRefund ? "business" : getPayPalSuggestedCategory(direction),
     organization: counterparty,
     counterparty,
@@ -513,14 +525,25 @@ function normalizePayPalManualActivityRow(row = {}, index = 0) {
     fee_missing: true,
     needs_provider_permission: true,
     confidence: 0.9,
-    source: "paypal_manual",
+    source,
     sourceTransactionId,
     externalId: sourceTransactionId,
     external_id: sourceTransactionId,
     rawSourceId: sourceTransactionId,
     raw_source_id: sourceTransactionId,
-    rawMetadata: "PayPal personal manual import; fee_missing=true; needs_provider_permission=true"
+    rawMetadata: manuallyConfirmed
+      ? "PayPal personal manual import; fee_missing=true; needs_provider_permission=true; net_source=manual_confirmed"
+      : "PayPal manual import; fee_missing=true; needs_provider_permission=true; net_source=unconfirmed"
   };
+}
+
+function hasPayPalManualNetConfirmation(row = {}, options = {}) {
+  const source = String(firstNonEmpty(row.source, options.source)).trim().toLowerCase().replace(/[-\s]+/g, "_");
+  const netSource = String(firstNonEmpty(row.net_source, row.netSource, row.manual_confirmation_marker, options.netSource)).trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return source === "paypal_personal_manual" ||
+    source === "personal_manual" ||
+    netSource === "manual_confirmed" ||
+    netSource === "manual_provider_confirmed";
 }
 
 function parsePayPalManualSignedAmount(value, explicitCurrency = "") {

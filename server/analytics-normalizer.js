@@ -118,8 +118,11 @@ export function normalizeServerAnalyticsPayload(data) {
 
   const values = data.tabs.analytics.values;
   const manualRows = buildManualRowsForPeriod(extractManualRows(values), data.manual || {}, data.period || {});
+  const balanceRows = Array.isArray(data.manual?.balanceRows) && data.manual.balanceRows.length
+    ? data.manual.balanceRows
+    : (Array.isArray(data.manual?.balances) ? data.manual.balances : []);
   const existingBalances = getPeriodBalanceRows(
-    Array.isArray(data.manual?.balances) ? data.manual.balances : [],
+    balanceRows,
     data.period || {}
   );
   const fallbackBalances = existingBalances.length ? existingBalances : buildBalancesFromManualRows(manualRows, data.period);
@@ -767,8 +770,8 @@ function deriveUsdAmount(amount, currency, options = {}) {
   if (!numeric) return 0;
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
   if (normalizedCurrency === "USD") return numeric;
-  if (options.localPerUsd) return numeric / options.localPerUsd;
   if (options.usdAmount && Math.abs(options.usdAmount - numeric) > 0.0001) return options.usdAmount;
+  if (options.localPerUsd) return numeric / options.localPerUsd;
   const rate = FALLBACK_USD_RATES[normalizedCurrency] || FALLBACK_USD_RATES.LOCAL;
   return numeric * rate;
 }
