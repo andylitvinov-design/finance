@@ -125,6 +125,47 @@ test("period balance reconciliation uses exact Yandex manual fact on period end 
   assert.equal(wise.sourceSheet, "Авто Остатки");
 });
 
+test("period balance reconciliation exposes YooMoney provider-vs-ledger status without factual balance mutation", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-19" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        { date: "2026-05-05", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "74771.50", balanceAmount: -74771.5, source: "yoomoney", ledgerV2: { date: "2026-05-05", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "74771.50", balance_amount: "-74771.5", source: "yoomoney" } },
+        { date: "2026-05-06", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "25", balanceAmount: -25, source: "yoomoney", ledgerV2: { date: "2026-05-06", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "25", balance_amount: "-25", source: "yoomoney" } },
+        { date: "2026-05-07", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "500", balanceAmount: -500, source: "yoomoney", ledgerV2: { date: "2026-05-07", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "500", balance_amount: "-500", source: "yoomoney" } },
+        { date: "2026-05-08", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8674.29", balanceAmount: 8674.29, source: "yoomoney", ledgerV2: { date: "2026-05-08", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8674.29", balance_amount: "8674.29", source: "yoomoney" } },
+        { date: "2026-05-08", toChannel: "Яндекс руб", currency: "RUB", amountNet: "4337.15", balanceAmount: 4337.15, source: "yoomoney", ledgerV2: { date: "2026-05-08", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "4337.15", balance_amount: "4337.15", source: "yoomoney" } },
+        { date: "2026-05-09", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "4297", balanceAmount: -4297, source: "yoomoney", ledgerV2: { date: "2026-05-09", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "4297", balance_amount: "-4297", source: "yoomoney" } },
+        { date: "2026-05-09", toChannel: "Яндекс руб", currency: "RUB", amountNet: "431.82", balanceAmount: 431.82, source: "yoomoney", ledgerV2: { date: "2026-05-09", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "431.82", balance_amount: "431.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8.82", balanceAmount: 8.82, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8.82", balance_amount: "8.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8.82", balanceAmount: 8.82, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8.82", balance_amount: "8.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8.82", balanceAmount: 8.82, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8.82", balance_amount: "8.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8.82", balanceAmount: 8.82, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8.82", balance_amount: "8.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "8.82", balanceAmount: 8.82, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "8.82", balance_amount: "8.82", source: "yoomoney" } },
+        { date: "2026-05-10", toChannel: "Яндекс руб", currency: "RUB", amountNet: "440.77", balanceAmount: 440.77, source: "yoomoney", ledgerV2: { date: "2026-05-10", operation: "income", to_channel: "Яндекс руб", currency: "RUB", amount_net: "440.77", balance_amount: "440.77", source: "yoomoney" } },
+        { date: "2026-05-14", fromChannel: "Яндекс руб", currency: "RUB", amountNet: "6990", balanceAmount: -6990, source: "yoomoney", ledgerV2: { date: "2026-05-14", operation: "expense", from_channel: "Яндекс руб", currency: "RUB", amount_net: "6990", balance_amount: "-6990", source: "yoomoney" } },
+      ],
+      balances: [
+        { date: "2026-04-30", channel: "Яндекс руб", currency: "RUB", amount: "1722", balanceSource: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-19", channel: "Яндекс руб", currency: "RUB", amount: "1", balanceSource: "manual_fact", sourceSheet: "Остатки", sourceRow: 63 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const summary = snapshot.period_balance_reconciliation.summary;
+  assert.equal(summary.transaction_reconciliation_status, "ok");
+  assert.equal(summary.provider_evidence_total.expense, 86583.5);
+  assert.equal(summary.ledger_provider_total.expense, 86583.5);
+  assert.equal(summary.transaction_delta, 0);
+  assert.equal(summary.stale_ostatki_rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
+  assert.equal(summary.manual_confirmation_required_rows[0].amount_hint !== undefined, true);
+});
+
 test("period balance reconciliation falls back to auto and marks missing facts", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
