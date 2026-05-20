@@ -96,9 +96,10 @@
   const LEDGER_V2_SOURCES = [
     "manual",
     "fact",
-      "paypal",
-      "paypal_manual",
-      "paypal_personal_manual",
+    "paypal",
+    "paypal_manual",
+    "paypal_personal_manual",
+    "payoneer",
     "binance",
     "monobank",
     "privatbank",

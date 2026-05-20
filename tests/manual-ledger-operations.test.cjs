@@ -505,6 +505,40 @@ test("buildLedgerRowsFromAccountingEntries preserves Wise source and stable ids"
   assert.equal(rows[0].rawSourceId, "wise:WISE-TXN-1");
 });
 
+test("buildLedgerRowsFromAccountingEntries preserves Payoneer gross fee net and ids", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-14",
+      channel: "Payoneer - dol",
+      localAmount: 970,
+      currency: "USD",
+      usdAmount: 970,
+      amountGross: 1000,
+      amountFee: 30,
+      amountNet: 970,
+      feeAmount: 30,
+      netAmount: 970,
+      category: "servicein",
+      direction: "income",
+      source: "payoneer",
+      sourceTransactionId: "PYO-REAL-1",
+      externalId: "PYO-REAL-1",
+      description: "Payment from client"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "payoneer");
+  assert.equal(rows[0].toChannel, "Payoneer - dol");
+  assert.equal(rows[0].amount, "970,0000");
+  assert.equal(rows[0].amountGross, "1000,0000");
+  assert.equal(rows[0].amountFee, "30,0000");
+  assert.equal(rows[0].amountNet, "970,0000");
+  assert.equal(rows[0].rawSourceId, "PYO-REAL-1");
+  assert.equal(rows[0].externalId, "PYO-REAL-1");
+});
+
 test("buildLedgerRowsFromAccountingEntries keeps Wise expense net equal to balance debit when fee is informational", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
