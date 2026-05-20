@@ -38,11 +38,13 @@ function createContext() {
   vm.runInContext(
     `${extractFunction(uiJs, "getShortPayPalResponseExcerpt")}\n` +
     `${extractFunction(uiJs, "readPayPalExpenseStatementPayload")}\n` +
+    `${extractFunction(uiJs, "normalizeExpenseAccountingWarning")}\n` +
     `${extractFunction(uiJs, "getPayPalManualImportMessage")}\n` +
-    "this.readPayPalExpenseStatementPayload = readPayPalExpenseStatementPayload;",
+    "this.readPayPalExpenseStatementPayload = readPayPalExpenseStatementPayload;\n" +
+    "this.normalizeExpenseAccountingWarning = normalizeExpenseAccountingWarning;\n" +
+    "this.getPayPalManualImportMessage = getPayPalManualImportMessage;",
     context
   );
-  context.getPayPalManualImportMessage = context.getPayPalManualImportMessage || vm.runInContext("getPayPalManualImportMessage", context);
   return context;
 }
 
@@ -57,6 +59,26 @@ test("readPayPalExpenseStatementPayload preserves structured PayPal API errors",
 
   assert.equal(payload.ok, false);
   assert.equal(payload.error, "PayPal OAuth failed (401): Failed to authenticate");
+});
+
+test("PayPal auth diagnostics show credentials and environment hint", () => {
+  const context = createContext();
+
+  assert.equal(
+    context.getPayPalManualImportMessage({
+      ok: false,
+      provider: "paypal",
+      phase: "oauth",
+      providerStatus: "auth_failed",
+      shortExcerpt: "PayPal OAuth failed (401): Client Authentication failed"
+    }),
+    "PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env. phase: oauth · details: PayPal OAuth failed (401): Client Authentication failed"
+  );
+
+  assert.equal(
+    context.normalizeExpenseAccountingWarning("PayPal fee unavailable due to API permissions/auth (environment: live; verify live vs sandbox app credentials)."),
+    "PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env."
+  );
 });
 
 test("readPayPalExpenseStatementPayload converts non-JSON provider text into contextual UI error", async () => {
