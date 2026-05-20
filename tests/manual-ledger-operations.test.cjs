@@ -71,7 +71,7 @@ function buildLedgerTestContext() {
       "created_at",
       "updated_at"
     ],
-    MANUAL_FINANCE_CHANNELS: ["Яндекс руб", "пейпал дол", "Бинанс spot", "binance save", "монобанк грн", "приват 24-грн"],
+    MANUAL_FINANCE_CHANNELS: ["Яндекс руб", "пейпал дол", "Бинанс spot", "binance save", "монобанк грн", "приват 24-грн", "трансервайз дол", "трансервайз евро"],
     MANUAL_FINANCE_FALLBACK_USD_RATES: { UAH: 1 / 43.86, RUB: 1 / 84.5563, LOCAL: 1 / 18 },
     MANUAL_NOW_CATEGORY: "now",
     canonicalManualFinanceChannel(value) {
@@ -116,6 +116,8 @@ function buildLedgerTestContext() {
         "binance save": "USD",
         "монобанк грн": "UAH",
         "приват 24-грн": "UAH",
+        "трансервайз дол": "USD",
+        "трансервайз евро": "EUR",
       };
       return map[channel] || "USD";
     },
@@ -371,6 +373,31 @@ test("expense accounting imports write Ledger only and do not update legacy Ра
   assert.doesNotMatch(saveFunction, /parseIncomingExpenseSheetValues\(await getSheetValuesByTitle\(getManualExpensesSheetName\(\)\)/);
 });
 
+test("expense accounting direction counts show Wise import spent and received tabs separately", () => {
+  const context = {
+    state: {
+      expenseAccounting: {
+        entries: [
+          ...Array.from({ length: 21 }, (_, index) => ({ id: `wise-expense-${index}`, direction: "expense" })),
+          { id: "CARD-3806683062", direction: "income" },
+          { id: "CARD-3806680329", direction: "income" }
+        ]
+      }
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getExpenseAccountingDirectionCounts")}\n` +
+    "this.getExpenseAccountingDirectionCounts = getExpenseAccountingDirectionCounts;",
+    context
+  );
+
+  assert.deepEqual(plain(context.getExpenseAccountingDirectionCounts()), {
+    spent: 21,
+    received: 2
+  });
+});
+
 test("manual cash income creates Ledger income row with cash toChannel and amount_net", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
@@ -503,6 +530,35 @@ test("buildLedgerRowsFromAccountingEntries keeps Wise expense net equal to balan
   assert.equal(rows[0].amountFee, "0,4100");
   assert.equal(rows[0].amountNet, "142,7100");
   assert.equal(rows[0].rawSourceId, "CARD-3800823225");
+});
+
+test("Wise refund income saves as Ledger income into Wise channel", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-19",
+      channel: "трансервайз евро",
+      direction: "income",
+      localAmount: 55.6,
+      currency: "EUR",
+      usdAmount: null,
+      netAmount: 55.6,
+      category: "servicein",
+      source: "wise",
+      sourceTransactionId: "CARD-3806683062",
+      description: "Card transaction of -55.60 EUR issued by Yellowsquare Greece Ike Athens"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, "income");
+  assert.equal(rows[0].fromChannel, "");
+  assert.equal(rows[0].toChannel, "трансервайз евро");
+  assert.equal(rows[0].direction, "in");
+  assert.equal(rows[0].source, "wise");
+  assert.equal(rows[0].amount, "55,6000");
+  assert.equal(rows[0].amountNet, "55,6000");
+  assert.equal(rows[0].rawSourceId, "CARD-3806683062");
 });
 
 test("duplicate screenshot income is skipped and reported in save summary", () => {

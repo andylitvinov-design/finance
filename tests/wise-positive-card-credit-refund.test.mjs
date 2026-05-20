@@ -20,7 +20,7 @@ test("Wise positive CARD credit without purchase wording is refund income", () =
 
   assert.equal(entry.direction, "income");
   assert.equal(entry.localAmount, 55.6);
-  assert.equal(entry.suggestedCategory, "serviceIncome");
+  assert.equal(entry.suggestedCategory, "servicein");
 });
 
 test("Wise positive CARD credit with purchase wording remains expense", () => {
