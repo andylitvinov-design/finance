@@ -120,6 +120,9 @@
     const meaningfulRows = positionRows.filter(isMeaningfulReconciliationRow);
     const emptyRows = positionRows.filter((row) => !isMeaningfulReconciliationRow(row));
     section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, positionRows));
+    if (reconciliation.binance_wallet_diagnostics) {
+      section.appendChild(renderBinanceWalletDiagnostics(doc, reconciliation.binance_wallet_diagnostics));
+    }
     section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}));
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
@@ -156,6 +159,33 @@
       section.appendChild(note);
     }
     return section;
+  }
+
+  function renderBinanceWalletDiagnostics(doc, diagnostics) {
+    const rows = [
+      ...(diagnostics.wallets || []).map((row) => [
+        row.channel || "—",
+        formatNumber(row.opening),
+        formatNumber(row.movement),
+        formatNumber(row.closing_fact),
+        formatNumber(row.difference),
+        Object.entries(row.statuses || {}).map(([status, count]) => `${getStatusLabel(status)}: ${count}`).join(", ") || "—",
+      ]),
+      [
+        "Binance total",
+        formatNumber(diagnostics.total?.opening),
+        formatNumber(diagnostics.total?.movement),
+        formatNumber(diagnostics.total?.closing_fact),
+        formatNumber(diagnostics.total?.difference),
+        `Unmapped: ${diagnostics.unmapped_operations || 0}; needs verification: ${diagnostics.skipped_needs_verification || 0}`,
+      ],
+    ];
+    return renderSubsection(
+      doc,
+      "Binance diagnostics",
+      ["Wallet", "Opening", "Movement", "Closing fact", "Difference", "Status"],
+      rows
+    );
   }
 
   function createSection(doc) {

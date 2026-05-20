@@ -60,6 +60,7 @@ const REAL_INCOME_CHANNELS = [
   "Payoneer - dol",
   "Payoneer - eur",
   "Бинанс spot",
+  "Binance funding",
   "binance save",
 ];
 const REAL_INCOME_CHANNEL_CURRENCY = {
@@ -78,6 +79,7 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "Payoneer - dol": "USD",
   "Payoneer - eur": "EUR",
   "Бинанс spot": "USD",
+  "Binance funding": "USD",
   "binance save": "USD",
 };
 const REAL_INCOME_FALLBACK_USD_RATES = {
@@ -1184,11 +1186,14 @@ function getLedgerIncomeChannel(row) {
     if (["wise", "transferwise", "трансервайз"].includes(normalized)) {
       return currency === "EUR" ? "трансервайз евро" : "трансервайз дол";
     }
+    if (["binance funding", "funding", "funding wallet", "binance pay", "бинанс funding", "бинанс фандинг"].includes(normalized)) {
+      return "Binance funding";
+    }
+    if (["binance save", "binance savings", "бинанс save", "бинанс сейв", "earn", "simple earn", "flexible earn", "locked earn"].includes(normalized)) {
+      return "binance save";
+    }
     if (["binance", "бинанс", "binance spot", "бинанс spot", "crypto", "крипт", "usdt", "usdc"].includes(normalized)) {
       return "Бинанс spot";
-    }
-    if (["binance save", "binance savings", "бинанс save", "бинанс сейв"].includes(normalized)) {
-      return "binance save";
     }
   }
 
@@ -1209,6 +1214,9 @@ function getLedgerIncomeChannel(row) {
   if (["wise", "transferwise"].includes(normalizedSource)) {
     if (currency === "EUR") return "трансервайз евро";
     if (currency === "USD") return "трансервайз дол";
+  }
+  if (["binance_pay"].includes(normalizedSource)) {
+    return "Binance funding";
   }
   if (normalizedSource === "binance") {
     return "Бинанс spot";
@@ -1428,6 +1436,7 @@ function resolvePaymentChannel(value) {
   if (!raw) return "";
   const normalized = normalizeLookupText(raw);
   if (normalized === normalizeLookupText("binance save")) return "binance save";
+  if (normalized === normalizeLookupText("Binance funding")) return "Binance funding";
   const exact = REAL_INCOME_CHANNELS.find((channel) => normalizeLookupText(channel) === normalized);
   if (exact) return exact;
   if (/^(приват|privat)( 24)? fop( uah)?$|^privat24 fop$|^(приват|privat) фоп$|^фоп (приват|privat)$/.test(normalized)) {
@@ -1449,6 +1458,7 @@ function resolvePaymentChannel(value) {
   if (/payoneer.*(?:eur|евр|euro)|(?:eur|евр|euro).*payoneer/.test(normalized)) return "Payoneer - eur";
   if (/(revolut|револют).*(usd|дол)|(usd|дол).*(revolut|револют)|^revolut$|^револют$/.test(normalized)) return "REVOLUT дол";
   if (/binance.*sav|бинанс.*сейв/.test(normalized)) return "binance save";
+  if (/binance.*fund|funding|бинанс.*фандинг|binance pay/.test(normalized)) return "Binance funding";
   if (/(binance|бинанс|crypto|крипт|usdt|usdc)/.test(normalized)) return "Бинанс spot";
   if (/(mono|monobank|монобанк).*(uah|грн|грив)|(?:uah|грн|грив).*(mono|monobank|монобанк)/.test(normalized)) {
     return "монобанк грн";

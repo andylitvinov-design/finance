@@ -4,6 +4,10 @@ const BINANCE_BASE_URL = "https://api.binance.com";
 const BINANCE_RECV_WINDOW = 5000;
 const BINANCE_MAX_RANGE_DAYS = 90;
 const BINANCE_ENDPOINT_WARNING = "Binance real income: endpoint/permission needs verification";
+export const BINANCE_SPOT_CHANNEL = "Бинанс spot";
+export const BINANCE_FUNDING_CHANNEL = "Binance funding";
+export const BINANCE_SAVE_CHANNEL = "binance save";
+const BINANCE_WALLET_CHANNELS = new Set([BINANCE_SPOT_CHANNEL, BINANCE_FUNDING_CHANNEL, BINANCE_SAVE_CHANNEL]);
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -23,6 +27,8 @@ export default async function handler(request, response) {
     const result = await fetchBinanceStatementEntries({
       startDate: payload.startDate,
       endDate: payload.endDate,
+      csvText: payload.csvText || payload.csv || payload.transactionHistoryCsv,
+      emailText: payload.emailText || payload.gmailText,
       apiKey: process.env.BINANCE_API_KEY,
       apiSecret: process.env.BINANCE_API_SECRET,
       baseUrl: process.env.BINANCE_API_BASE_URL || BINANCE_BASE_URL,
@@ -54,7 +60,8 @@ export async function fetchBinanceStatementEntries(options = {}) {
   validateDateRange(startDate, endDate);
   const apiKey = String(options.apiKey || "").trim();
   const apiSecret = String(options.apiSecret || "").trim();
-  if (!apiKey || !apiSecret) {
+  const hasFallbackInput = Boolean(String(options.csvText || options.emailText || "").trim());
+  if ((!apiKey || !apiSecret) && !hasFallbackInput) {
     throw new Error("Binance credentials are not configured. Set BINANCE_API_KEY and BINANCE_API_SECRET.");
   }
 
@@ -63,12 +70,12 @@ export async function fetchBinanceStatementEntries(options = {}) {
   const clock = typeof options.now === "function" ? options.now : Date.now;
   const signedOptions = { fetchImpl, baseUrl, apiKey, apiSecret, now: clock };
   const warnings = [];
-  const raw = { account: null, deposits: [], withdrawals: [], pay: [] };
+  const raw = { account: null, deposits: [], withdrawals: [], pay: [], csv: [], email: [] };
 
-  const account = await fetchBinanceSignedJson({
+  const account = apiKey && apiSecret ? await fetchBinanceSignedJson({
     ...signedOptions,
     path: "/api/v3/account"
-  });
+  }) : { ok: false, skipped: true, error: "Binance API credentials are not configured; using import fallback." };
   if (account.ok) {
     raw.account = account.payload || {};
   } else {
@@ -79,33 +86,33 @@ export async function fetchBinanceStatementEntries(options = {}) {
     startTime: String(toBinanceTime(startDate, false)),
     endTime: String(toBinanceTime(endDate, true))
   };
-  const deposits = await fetchBinanceSignedJson({
+  const deposits = apiKey && apiSecret ? await fetchBinanceSignedJson({
     ...signedOptions,
     path: "/sapi/v1/capital/deposit/hisrec",
     query: rangeQuery
-  });
+  }) : { ok: false, skipped: true, error: "Binance API credentials are not configured; using import fallback." };
   if (deposits.ok) {
     raw.deposits = Array.isArray(deposits.payload) ? deposits.payload : [];
   } else {
     warnings.push(formatBinanceWarning("/sapi/v1/capital/deposit/hisrec", deposits));
   }
 
-  const withdrawals = await fetchBinanceSignedJson({
+  const withdrawals = apiKey && apiSecret ? await fetchBinanceSignedJson({
     ...signedOptions,
     path: "/sapi/v1/capital/withdraw/history",
     query: rangeQuery
-  });
+  }) : { ok: false, skipped: true, error: "Binance API credentials are not configured; using import fallback." };
   if (withdrawals.ok) {
     raw.withdrawals = Array.isArray(withdrawals.payload) ? withdrawals.payload : [];
   } else {
     warnings.push(formatBinanceWarning("/sapi/v1/capital/withdraw/history", withdrawals));
   }
 
-  const pay = await fetchBinanceSignedJson({
+  const pay = apiKey && apiSecret ? await fetchBinanceSignedJson({
     ...signedOptions,
     path: "/sapi/v1/pay/transactions",
     query: { ...rangeQuery, limit: "100" }
-  });
+  }) : { ok: false, skipped: true, error: "Binance API credentials are not configured; using import fallback." };
   if (pay.ok) {
     raw.pay = extractBinancePayloadRows(pay.payload);
   } else {
@@ -117,16 +124,26 @@ export async function fetchBinanceStatementEntries(options = {}) {
     warnings.unshift(BINANCE_ENDPOINT_WARNING);
   }
 
+  if (String(options.csvText || "").trim()) {
+    raw.csv = parseBinanceTransactionHistoryCsv(options.csvText);
+  }
+  if (String(options.emailText || "").trim()) {
+    raw.email = parseBinanceTransactionalEmailText(options.emailText);
+  }
+
   const entries = [
     ...raw.deposits.map((deposit, index) => normalizeBinanceDeposit(deposit, index)),
     ...raw.withdrawals.map((withdrawal, index) => normalizeBinanceWithdrawal(withdrawal, index)),
-    ...raw.pay.map((payTransaction, index) => normalizeBinancePayTransaction(payTransaction, index))
+    ...raw.pay.map((payTransaction, index) => normalizeBinancePayTransaction(payTransaction, index)),
+    ...raw.csv.flatMap((csvRow, index) => normalizeBinanceCsvTransaction(csvRow, index)),
+    ...raw.email.flatMap((emailRow, index) => normalizeBinanceCsvTransaction(emailRow, index))
   ].filter((entry) => entry.date && entry.localAmount > 0);
+  const dedupedEntries = dedupeBinanceEntries(entries);
 
   return {
-    entries,
-    summary: summarizeBinanceStatementEntries(entries),
-    transactionCount: raw.deposits.length + raw.withdrawals.length + raw.pay.length,
+    entries: dedupedEntries,
+    summary: summarizeBinanceStatementEntries(dedupedEntries),
+    transactionCount: raw.deposits.length + raw.withdrawals.length + raw.pay.length + raw.csv.length + raw.email.length,
     periodStart: startDate,
     periodEnd: endDate,
     source: "binance",
@@ -135,7 +152,9 @@ export async function fetchBinanceStatementEntries(options = {}) {
       account: account.ok ? "ok" : "warning",
       deposits: deposits.ok ? "ok" : "warning",
       withdrawals: withdrawals.ok ? "ok" : "warning",
-      pay: pay.ok ? "ok" : "warning"
+      pay: pay.ok ? "ok" : "warning",
+      csv: raw.csv.length ? "ok" : "not_provided",
+      email: raw.email.length ? "ok" : "not_provided"
     }
   };
 }
@@ -315,7 +334,9 @@ export function normalizeBinanceDeposit(deposit = {}, index = 0) {
   return {
     id: `binance-deposit-${id}`,
     date,
-    channel: getBinanceChannel(deposit),
+    channel: BINANCE_SPOT_CHANNEL,
+    toChannel: BINANCE_SPOT_CHANNEL,
+    operation: "income",
     direction: "income",
     currency,
     localAmount: amount,
@@ -327,8 +348,10 @@ export function normalizeBinanceDeposit(deposit = {}, index = 0) {
     counterparty: firstNonEmpty(deposit.address, deposit.sourceAddress, "Binance spot deposit"),
     description,
     organization: description,
-    source: "binance",
-    sourceTransactionId: String(id),
+    source: "binance_deposit",
+    sourceTransactionId: buildBinanceGenericRawSourceId("binance_deposit", { dateTime: deposit.completeTime || deposit.insertTime, amount, currency, detail: id }),
+    externalId: buildBinanceGenericRawSourceId("binance_deposit", { dateTime: deposit.completeTime || deposit.insertTime, amount, currency, detail: id }),
+    rawSourceId: buildBinanceGenericRawSourceId("binance_deposit", { dateTime: deposit.completeTime || deposit.insertTime, amount, currency, detail: id }),
     suggestedCategory: "serviceIncome",
     needsVerification: !isUsdLikeCurrency(currency),
     raw: deposit
@@ -352,7 +375,9 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
   return {
     id: `binance-withdrawal-${id}`,
     date,
-    channel: getBinanceChannel(withdrawal),
+    channel: BINANCE_SPOT_CHANNEL,
+    fromChannel: BINANCE_SPOT_CHANNEL,
+    operation: "expense",
     direction: "out",
     currency,
     localAmount: amount,
@@ -364,8 +389,10 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
     counterparty: firstNonEmpty(withdrawal.address, "Binance spot withdrawal"),
     description,
     organization: description,
-    source: "binance",
-    sourceTransactionId: String(id),
+    source: "binance_withdrawal",
+    sourceTransactionId: buildBinanceGenericRawSourceId("binance_withdrawal", { dateTime: withdrawal.completeTime || withdrawal.applyTime, amount: netAmount || amount, currency, detail: id }),
+    externalId: buildBinanceGenericRawSourceId("binance_withdrawal", { dateTime: withdrawal.completeTime || withdrawal.applyTime, amount: netAmount || amount, currency, detail: id }),
+    rawSourceId: buildBinanceGenericRawSourceId("binance_withdrawal", { dateTime: withdrawal.completeTime || withdrawal.applyTime, amount: netAmount || amount, currency, detail: id }),
     suggestedCategory: "exchange",
     needsVerification: !isUsdLikeCurrency(currency),
     raw: withdrawal
@@ -379,6 +406,7 @@ export function normalizeBinancePayTransaction(transaction = {}, index = 0) {
   const transactionTime = firstNonEmpty(transaction.transactionTime, transaction.time, transaction.createTime);
   const date = dateFromBinanceTime(transactionTime);
   const direction = signedAmount >= 0 ? "income" : "out";
+  const channel = direction === "income" ? BINANCE_FUNDING_CHANNEL : getBinanceChannel(transaction, { fallback: BINANCE_SPOT_CHANNEL });
   const counterparty = getBinancePayCounterparty(transaction, direction);
   const id = firstNonEmpty(
     transaction.transactionId,
@@ -404,7 +432,10 @@ export function normalizeBinancePayTransaction(transaction = {}, index = 0) {
   return {
     id: `binance-pay-${id}`,
     date,
-    channel: getBinanceChannel(transaction),
+    channel,
+    fromChannel: direction === "out" ? channel : "",
+    toChannel: direction === "income" ? channel : "",
+    operation: direction === "income" ? "income" : "expense",
     direction,
     currency,
     localAmount: amount,
@@ -424,6 +455,249 @@ export function normalizeBinancePayTransaction(transaction = {}, index = 0) {
     needsVerification: !counterparty || !isUsdLikeCurrency(currency),
     raw: transaction
   };
+}
+
+export function parseBinanceTransactionHistoryCsv(text = "") {
+  const rows = parseDelimitedRows(text);
+  if (rows.length < 2) return [];
+  const header = rows[0].map(normalizeHeaderName);
+  return rows.slice(1)
+    .map((cells, index) => {
+      const row = {};
+      header.forEach((key, cellIndex) => {
+        if (key) row[key] = String(cells[cellIndex] || "").trim();
+      });
+      row.__rowIndex = index;
+      row.__rowHash = hashSourceRow(cells.join("|"));
+      return row;
+    })
+    .filter((row) => row.date || row.time || row.datetime || row.operation || row.change || row.amount);
+}
+
+export function parseBinanceTransactionalEmailText(text = "") {
+  const raw = String(text || "");
+  if (!/binance/i.test(raw)) return [];
+  if (/security|login|password|device|marketing|newsletter|promotion/i.test(raw)) return [];
+  const match = raw.match(/(receive|received|send|sent|deposit|withdrawal|interest)[\s\S]{0,160}?([+-]?\d+(?:[.,]\d+)?)\s*(USDT|USDC|USD|BUSD|FDUSD|TUSD)/i);
+  if (!match) return [];
+  const dateMatch = raw.match(/20\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?/);
+  return [{
+    account: /funding|pay/i.test(raw) ? "Funding" : "",
+    operation: match[1],
+    change: match[2],
+    coin: match[3],
+    time: dateMatch ? dateMatch[0] : "",
+    remark: raw.replace(/\s+/g, " ").slice(0, 240),
+    status: "email_evidence",
+    __rowIndex: 0,
+    __rowHash: hashSourceRow(raw),
+  }];
+}
+
+export function normalizeBinanceCsvTransaction(row = {}, index = 0) {
+  const operationRaw = firstNonEmpty(row.operation, row.type, row.action);
+  let operation = normalizeBinanceOperation(operationRaw);
+  const currency = normalizeBinanceCurrency(firstNonEmpty(row.coin, row.asset, row.currency));
+  const signedAmount = parseBinanceSignedAmount(firstNonEmpty(row.change, row.amount, row.value));
+  const amount = Math.abs(signedAmount);
+  if (operation === "pay") operation = signedAmount >= 0 ? "pay_receive" : "pay_send";
+  const time = firstNonEmpty(row.time, row.datetime, row.date);
+  const date = dateFromBinanceTime(time);
+  const accountChannel = resolveBinanceAccountChannel(firstNonEmpty(row.account, row.wallet, row.wallet_type));
+  const remark = firstNonEmpty(row.remark, row.notes, row.description, row.status);
+  const rowHash = row.__rowHash || hashSourceRow(JSON.stringify(row));
+  const counterparty = extractCounterparty(remark);
+
+  if (!date || !currency || !amount || !operation) {
+    return buildAmbiguousBinanceEntry({ row, index, date, currency, amount, operation, reason: "missing required Binance CSV fields" });
+  }
+
+  if (operation === "pay_receive") {
+    const channel = accountChannel === BINANCE_SPOT_CHANNEL ? BINANCE_SPOT_CHANNEL : BINANCE_FUNDING_CHANNEL;
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_pay_receive", { dateTime: time, amount, currency, detail: counterparty || rowHash });
+    return buildBinanceEntry({
+      id: rawSourceId,
+      date,
+      operation: "income",
+      direction: "income",
+      channel,
+      toChannel: channel,
+      amount,
+      currency,
+      source: "binance_pay",
+      rawSourceId,
+      category: "serviceIncome",
+      counterparty,
+      description: compactDescription(["Binance Pay Receive", remark]),
+      needsVerification: !counterparty || !accountChannel,
+      comment: accountChannel ? `wallet evidence: ${accountChannel}` : "needs wallet evidence: defaulted Binance Pay Receive to Funding"
+    });
+  }
+
+  if (operation === "pay_send") {
+    const channel = accountChannel || BINANCE_SPOT_CHANNEL;
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_pay_send", { dateTime: time, amount, currency, detail: counterparty || rowHash });
+    return buildBinanceEntry({
+      id: rawSourceId,
+      date,
+      operation: "expense",
+      direction: "out",
+      channel,
+      fromChannel: channel,
+      amount,
+      currency,
+      source: "binance_pay",
+      rawSourceId,
+      category: "business",
+      counterparty,
+      description: compactDescription(["Binance Pay Send", remark]),
+      needsVerification: !accountChannel,
+      comment: accountChannel ? `wallet evidence: ${accountChannel}` : "needs wallet evidence: defaulted Binance Pay Send to Spot"
+    });
+  }
+
+  if (operation === "deposit") {
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_deposit", { dateTime: time, amount, currency, detail: firstNonEmpty(row.txid, row.tx_id, rowHash) });
+    return buildBinanceEntry({
+      id: rawSourceId,
+      date,
+      operation: "income",
+      direction: "income",
+      channel: BINANCE_SPOT_CHANNEL,
+      toChannel: BINANCE_SPOT_CHANNEL,
+      amount,
+      currency,
+      source: "binance_deposit",
+      rawSourceId,
+      category: "serviceIncome",
+      description: compactDescription(["Binance Deposit", remark]),
+      comment: "wallet evidence: deposit to Spot"
+    });
+  }
+
+  if (operation === "withdrawal") {
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_withdrawal", { dateTime: time, amount, currency, detail: firstNonEmpty(row.txid, row.tx_id, rowHash) });
+    return buildBinanceEntry({
+      id: rawSourceId,
+      date,
+      operation: "expense",
+      direction: "out",
+      channel: BINANCE_SPOT_CHANNEL,
+      fromChannel: BINANCE_SPOT_CHANNEL,
+      amount,
+      currency,
+      source: "binance_withdrawal",
+      rawSourceId,
+      category: "exchange",
+      description: compactDescription(["Binance Withdrawal", remark]),
+      comment: "wallet evidence: withdrawal from Spot"
+    });
+  }
+
+  if (operation === "earn_subscribe") {
+    const fromChannel = accountChannel && accountChannel !== BINANCE_SAVE_CHANNEL ? accountChannel : "";
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_earn_subscribe", { dateTime: time, amount, currency, detail: rowHash });
+    return [
+      buildBinanceEntry({
+        id: `${rawSourceId}:out`,
+        date,
+        operation: "transfer",
+        direction: "out",
+        channel: fromChannel || "",
+        fromChannel,
+        amount,
+        currency,
+        source: "binance_csv",
+        rawSourceId: `${rawSourceId}:out`,
+        transferGroupId: rawSourceId,
+        category: "exchange",
+        description: compactDescription(["Simple Earn Subscribe out", remark]),
+        needsVerification: !fromChannel,
+        comment: fromChannel ? `wallet evidence: ${fromChannel} -> ${BINANCE_SAVE_CHANNEL}` : "needs wallet evidence: Earn Subscribe source wallet missing"
+      }),
+      buildBinanceEntry({
+        id: `${rawSourceId}:in`,
+        date,
+        operation: "transfer",
+        direction: "income",
+        channel: BINANCE_SAVE_CHANNEL,
+        toChannel: BINANCE_SAVE_CHANNEL,
+        amount,
+        currency,
+        source: "binance_csv",
+        rawSourceId: `${rawSourceId}:in`,
+        transferGroupId: rawSourceId,
+        category: "exchange",
+        description: compactDescription(["Simple Earn Subscribe in", remark]),
+        needsVerification: !fromChannel,
+        comment: fromChannel ? `wallet evidence: ${fromChannel} -> ${BINANCE_SAVE_CHANNEL}` : "needs wallet evidence: Earn Subscribe source wallet missing"
+      })
+    ];
+  }
+
+  if (operation === "earn_redemption") {
+    const toChannel = accountChannel && accountChannel !== BINANCE_SAVE_CHANNEL ? accountChannel : "";
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_earn_redemption", { dateTime: time, amount, currency, detail: rowHash });
+    return [
+      buildBinanceEntry({
+        id: `${rawSourceId}:out`,
+        date,
+        operation: "transfer",
+        direction: "out",
+        channel: BINANCE_SAVE_CHANNEL,
+        fromChannel: BINANCE_SAVE_CHANNEL,
+        amount,
+        currency,
+        source: "binance_csv",
+        rawSourceId: `${rawSourceId}:out`,
+        transferGroupId: rawSourceId,
+        category: "exchange",
+        description: compactDescription(["Simple Earn Redemption out", remark]),
+        needsVerification: !toChannel,
+        comment: toChannel ? `wallet evidence: ${BINANCE_SAVE_CHANNEL} -> ${toChannel}` : "needs wallet evidence: Earn Redemption target wallet missing"
+      }),
+      buildBinanceEntry({
+        id: `${rawSourceId}:in`,
+        date,
+        operation: "transfer",
+        direction: "income",
+        channel: toChannel || "",
+        toChannel,
+        amount,
+        currency,
+        source: "binance_csv",
+        rawSourceId: `${rawSourceId}:in`,
+        transferGroupId: rawSourceId,
+        category: "exchange",
+        description: compactDescription(["Simple Earn Redemption in", remark]),
+        needsVerification: !toChannel,
+        comment: toChannel ? `wallet evidence: ${BINANCE_SAVE_CHANNEL} -> ${toChannel}` : "needs wallet evidence: Earn Redemption target wallet missing"
+      })
+    ];
+  }
+
+  if (operation === "earn_interest") {
+    const channel = accountChannel || BINANCE_SAVE_CHANNEL;
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_earn_interest", { dateTime: time, amount, currency, detail: rowHash });
+    return buildBinanceEntry({
+      id: rawSourceId,
+      date,
+      operation: "income",
+      direction: "income",
+      channel,
+      toChannel: channel,
+      amount,
+      currency,
+      source: "binance_earn_interest",
+      rawSourceId,
+      category: "serviceIncome",
+      description: compactDescription(["Simple Earn Interest", remark]),
+      needsVerification: !accountChannel,
+      comment: accountChannel ? `wallet evidence: interest credited to ${accountChannel}` : "needs wallet evidence: defaulted Earn interest to Save"
+    });
+  }
+
+  return buildAmbiguousBinanceEntry({ row, index, date, currency, amount, operation, reason: `unmapped Binance operation: ${operationRaw}` });
 }
 
 export function summarizeBinanceStatementEntries(entries = []) {
@@ -473,6 +747,88 @@ function getBinancePayCounterparty(transaction = {}, direction = "") {
   );
 }
 
+function buildBinanceEntry({
+  id,
+  date,
+  operation,
+  direction,
+  channel,
+  fromChannel = "",
+  toChannel = "",
+  amount,
+  currency,
+  source,
+  rawSourceId,
+  transferGroupId = "",
+  category = "",
+  counterparty = "",
+  description = "",
+  needsVerification = false,
+  comment = "",
+}) {
+  const signedNet = direction === "out" ? -Math.abs(amount) : Math.abs(amount);
+  return {
+    id,
+    date,
+    operation,
+    channel,
+    fromChannel,
+    toChannel,
+    direction,
+    currency,
+    localAmount: Math.abs(amount),
+    grossAmount: Math.abs(amount),
+    netAmount: signedNet,
+    amountNet: signedNet,
+    amount_net: signedNet,
+    realNetUsd: direction === "income" && isUsdLikeCurrency(currency) ? Math.abs(amount) : null,
+    feeAmount: 0,
+    feeCurrency: currency,
+    counterparty,
+    description,
+    organization: description,
+    source,
+    sourceTransactionId: rawSourceId,
+    externalId: rawSourceId,
+    rawSourceId,
+    transferGroupId,
+    transfer_group_id: transferGroupId,
+    suggestedCategory: category,
+    category,
+    needsVerification,
+    reviewStatus: needsVerification ? "needs_verification" : "",
+    comment,
+  };
+}
+
+function buildAmbiguousBinanceEntry({ row = {}, index = 0, date = "", currency = "", amount = 0, operation = "", reason = "" }) {
+  const rawSourceId = `binance_needs_verification:${date || "no-date"}:${currency || "no-currency"}:${row.__rowHash || index}`;
+  return {
+    id: rawSourceId,
+    date,
+    operation: "needs_verification",
+    channel: "",
+    fromChannel: "",
+    toChannel: "",
+    direction: "neutral",
+    currency,
+    localAmount: Math.abs(amount),
+    grossAmount: Math.abs(amount),
+    netAmount: 0,
+    feeAmount: 0,
+    source: "binance_csv",
+    sourceTransactionId: rawSourceId,
+    externalId: rawSourceId,
+    rawSourceId,
+    suggestedCategory: "extra",
+    needsVerification: true,
+    reviewStatus: "needs_verification",
+    description: reason,
+    comment: reason,
+    raw: row,
+  };
+}
+
 function buildBinancePayRawSourceId({ direction, transactionTime, amount, currency, counterparty, fallbackId }) {
   const type = direction === "income" ? "receive" : "send";
   const timestamp = isoTimestampFromBinanceTime(transactionTime);
@@ -481,6 +837,12 @@ function buildBinancePayRawSourceId({ direction, transactionTime, amount, curren
     return `binance_pay_${type}:${timestamp}:${roundBinanceAmount(amount)}:${currency}:${normalizedCounterparty}`;
   }
   return `binance_pay_${type}:${fallbackId}`;
+}
+
+function buildBinanceGenericRawSourceId(prefix, { dateTime, amount, currency, detail }) {
+  const timestamp = isoTimestampFromBinanceTime(dateTime) || String(dateTime || "").trim() || "unknown-time";
+  const normalizedDetail = String(detail || "unknown").trim().replace(/\s+/g, " ");
+  return `${prefix}:${timestamp}:${roundBinanceAmount(amount)}:${currency}:${normalizedDetail}`;
 }
 
 function formatBinanceWarning(path, result) {
@@ -556,11 +918,125 @@ function isUsdLikeCurrency(currency) {
   return ["USD", "USDT", "USDC", "BUSD", "FDUSD", "TUSD"].includes(String(currency || "").trim().toUpperCase());
 }
 
-function getBinanceChannel(row = {}) {
-  const walletType = String(row.walletType ?? row.transferType ?? row.type ?? "").trim().toLowerCase();
-  const description = `${row.sourceAddress || ""} ${row.address || ""} ${row.info || ""}`.toLowerCase();
-  if (walletType === "5" || walletType.includes("earn") || walletType.includes("saving") || description.includes("save")) return "binance save";
-  return "Бинанс spot";
+function getBinanceChannel(row = {}, options = {}) {
+  const accountChannel = resolveBinanceAccountChannel(firstNonEmpty(row.account, row.accountType, row.wallet, row.walletType, row.transferType, row.type));
+  if (accountChannel) return accountChannel;
+  const description = `${row.sourceAddress || ""} ${row.address || ""} ${row.info || ""} ${row.remark || ""}`.toLowerCase();
+  if (/earn|saving|savings|simple earn|flexible|locked|save/.test(description)) return BINANCE_SAVE_CHANNEL;
+  if (/funding|pay wallet|binance pay/.test(description)) return BINANCE_FUNDING_CHANNEL;
+  return options.fallback || BINANCE_SPOT_CHANNEL;
+}
+
+function resolveBinanceAccountChannel(value) {
+  const token = normalizeLookupText(value);
+  if (!token) return "";
+  if (["spot", "api", "account", "binance spot", "main"].includes(token)) return BINANCE_SPOT_CHANNEL;
+  if (["funding", "funding wallet", "binance funding", "pay", "pay wallet", "binance pay", "2"].includes(token)) return BINANCE_FUNDING_CHANNEL;
+  if (["earn", "simple earn", "flexible earn", "locked earn", "saving", "savings", "save", "5"].includes(token)) return BINANCE_SAVE_CHANNEL;
+  return "";
+}
+
+function normalizeBinanceOperation(value) {
+  const token = normalizeLookupText(value);
+  if (!token) return "";
+  if (/pay/.test(token) && /\b(receive|received|in)\b/.test(token)) return "pay_receive";
+  if (/pay/.test(token) && /\b(send|sent|out)\b/.test(token)) return "pay_send";
+  if (/pay/.test(token)) return "pay";
+  if (/deposit/.test(token)) return "deposit";
+  if (/withdraw|withdrawal/.test(token)) return "withdrawal";
+  if (/subscribe|subscription|purchase/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_subscribe";
+  if (/redeem|redemption/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_redemption";
+  if (/interest|reward|distribution/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_interest";
+  if (/simple earn flexible subscription|simple earn locked subscription/.test(token)) return "earn_subscribe";
+  if (/simple earn flexible redemption|simple earn locked redemption/.test(token)) return "earn_redemption";
+  if (/simple earn flexible interest|simple earn locked interest/.test(token)) return "earn_interest";
+  return token;
+}
+
+function extractCounterparty(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/(?:from|to|counterparty|контрагент)[:\s]+([^|,;]+)/i);
+  return String(match?.[1] || "").trim();
+}
+
+function parseDelimitedRows(text = "") {
+  const raw = String(text || "").replace(/^\uFEFF/, "");
+  const delimiter = raw.split(/\r?\n/, 1)[0]?.includes("\t") ? "\t" : ",";
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    const next = raw[index + 1];
+    if (char === "\"" && inQuotes && next === "\"") {
+      cell += "\"";
+      index += 1;
+      continue;
+    }
+    if (char === "\"") {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && char === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => String(value || "").trim())) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell);
+  if (row.some((value) => String(value || "").trim())) rows.push(row);
+  return rows;
+}
+
+function normalizeHeaderName(value) {
+  const token = normalizeLookupText(value);
+  if (["time", "utc time"].includes(token)) return "time";
+  if (["date", "datetime", "date time"].includes(token)) return token === "date" ? "date" : "datetime";
+  if (["account", "wallet", "wallet type"].includes(token)) return token.replace(/\s+/g, "_");
+  if (["coin", "asset", "currency"].includes(token)) return token === "asset" ? "coin" : token;
+  if (["operation", "type", "action"].includes(token)) return token;
+  if (["change", "amount", "value"].includes(token)) return token;
+  if (["remark", "remarks", "note", "notes", "description"].includes(token)) return token.replace(/s$/, "");
+  if (["status"].includes(token)) return token;
+  if (["txid", "tx id", "transaction id"].includes(token)) return token.replace(/\s+/g, "_");
+  return token.replace(/\s+/g, "_");
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[_-]+/g, " ")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hashSourceRow(value) {
+  return createHmac("sha256", "binance-row").update(String(value || "")).digest("hex").slice(0, 16);
+}
+
+function dedupeBinanceEntries(entries = []) {
+  const seen = new Set();
+  const output = [];
+  for (const entry of entries || []) {
+    const key = String(entry.rawSourceId || entry.sourceTransactionId || entry.id || "").trim();
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    output.push(entry);
+  }
+  return output;
 }
 
 function firstNonEmpty(...values) {

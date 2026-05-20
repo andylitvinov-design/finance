@@ -1,7 +1,7 @@
 (function installBinanceOneClickImport(root) {
   const BINANCE_API_PATH = "./api/binance-transactions";
   const PROVIDER = "binance";
-  const BINANCE_ENTRY_SOURCES = new Set(["binance", "binance_pay", "binance_email", "binance_csv"]);
+  const BINANCE_ENTRY_SOURCES = new Set(["binance", "binance_pay", "binance_deposit", "binance_withdrawal", "binance_earn_interest", "binance_email", "binance_csv"]);
 
   function getState() {
     try {

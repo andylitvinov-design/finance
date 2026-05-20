@@ -75,7 +75,8 @@ const DEFAULT_MANUAL_CHANNEL_MAP = MANUAL_LEDGER_CONTRACT.CHANNEL_MAP || {
   "трансервайз дол": ["wise usd", "transferwise usd"],
   "трансервайз евро": ["wise eur", "transferwise eur"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс"],
-  "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"]
+  "Binance funding": ["binance funding", "funding", "funding wallet", "binance pay", "бинанс funding", "бинанс фандинг"],
+  "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings", "earn", "simple earn", "flexible earn", "locked earn"]
 };
 const MANUAL_TRANSFER_MIN_ROWS = 3;
 const ANALYTICS_PAYOUTS_HELPER = window.EzohataAnalyticsPayoutsHelper || {};
@@ -124,12 +125,22 @@ const ANALYTICS_PAYMENT_RULES = {
   },
   "Бинанс spot": {
     currency: "USD",
-    localPatterns: [/крипта, дол|binance save/i],
-    usdPatterns: [/крипта, дол|binance save/i]
+    localPatterns: [/крипта, дол|binance spot/i],
+    usdPatterns: [/крипта, дол|binance spot/i]
+  },
+  "Binance funding": {
+    currency: "USD",
+    localPatterns: [/binance funding|funding wallet|binance pay/i],
+    usdPatterns: [/binance funding|funding wallet|binance pay/i]
+  },
+  "binance save": {
+    currency: "USD",
+    localPatterns: [/binance save|binance savings|simple earn|flexible earn|locked earn/i],
+    usdPatterns: [/binance save|binance savings|simple earn|flexible earn|locked earn/i]
   }
 };
 const MANUAL_FINANCE_MONEY_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
   "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
-  "Бинанс spot","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
+  "Бинанс spot","Binance funding","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];

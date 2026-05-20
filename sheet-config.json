@@ -63,6 +63,7 @@
       "Payoneer - eur",
       "Payoneer - dol",
       "Бинанс spot",
+      "Binance funding",
       "binance save",
       "Налично -я-евр",
       "местная валюты",
@@ -97,7 +98,9 @@
       "REVOLUT дол": ["revolut", "revolut usd", "револют", "револют дол"],
       "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
       "Payoneer - dol": ["payoneer usd", "payoneer dol", "payoneer - dol"],
-      "Бинанс spot": ["binance save", "бинанс save", "binance spot", "бинанс spot", "бинанс"]
+      "Бинанс spot": ["binance spot", "бинанс spot", "бинанс"],
+      "Binance funding": ["binance funding", "funding", "funding wallet", "binance pay", "бинанс funding", "бинанс фандинг"],
+      "binance save": ["binance save", "бинанс save", "binance savings", "бинанс сейв", "earn", "simple earn", "flexible earn", "locked earn"]
     }
   },
   "manualOrders": {

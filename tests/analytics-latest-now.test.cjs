@@ -321,7 +321,7 @@ test("normalizeManualExpenseCategory maps study into travel and keeps fun separa
 test("provider accounting save keeps income and exchange categories", () => {
   assert.match(configJs, /const MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES = MANUAL_INPUT_CATEGORIES\.slice\(\);/);
   assert.match(uiJs, /MANUAL_EXPENSE_ACCOUNTING_SAVE_CATEGORIES\.forEach\(\(category\) =>/);
-  assert.match(uiJs, /entry\.direction === "income" \|\| entry\.direction === "exchange"/);
+  assert.match(uiJs, /\["income", "exchange", "transfer", "neutral"\]\.includes\(entry\.direction\)/);
   assert.doesNotMatch(
     uiJs,
     /state\.expenseAccounting\.entries\.filter\(\(entry\) => entry\.direction !== "income"/

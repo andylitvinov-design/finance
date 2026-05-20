@@ -81,7 +81,8 @@ function canonicalManualFinanceChannel(value) {
     { pattern: /^(приват|privat)( 24)?( грн| uah)?$/, channel: "приват 24-грн" },
     { pattern: /^(transferwise|wise|трансервайз)( дол| usd| dollar| dollars)?$/, channel: "трансервайз дол" },
     { pattern: /^(transferwise|wise|трансервайз)( евр| евро| eur| euro| euros)$/, channel: "трансервайз евро" },
-    { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв)$/, channel: "binance save" },
+    { pattern: /^(binance funding|funding|funding wallet|binance pay|бинанс funding|бинанс фандинг)$/, channel: "Binance funding" },
+    { pattern: /^(binance save|бинанс save|binance savings|бинанс сейв|earn|simple earn|flexible earn|locked earn)$/, channel: "binance save" },
   ];
   const match = aliases.find((entry) => entry.pattern.test(normalized));
   return match?.channel || raw;
@@ -140,7 +141,7 @@ function canonicalManualExpenseChannel(value) {
 const MANUAL_FINANCE_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
   "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
-  "Бинанс spot","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
+  "Бинанс spot","Binance funding","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];
 
 export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch } = {}) {
