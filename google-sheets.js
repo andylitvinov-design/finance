@@ -396,6 +396,7 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (!raw) return "";
   if (/^migration:/i.test(raw)) return "migration";
   if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
+  if (/^payoneer[:_-]/i.test(raw)) return "payoneer";
   if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
@@ -415,6 +416,7 @@ function inferManualLedgerSourceFromChannels(...values) {
     .join(" ");
   if (!normalized) return "";
   if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+  if (/payoneer/.test(normalized)) return "payoneer";
   if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
   if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
   if (/(privat|приват)/.test(normalized)) return "privatbank";
@@ -425,7 +427,7 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
   if (["paypal_personal", "manual_provider_confirmed"].includes(token)) return "paypal_personal_manual";
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
@@ -442,7 +444,7 @@ function normalizeManualLedgerSource(value, fallback = "") {
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
   else if (["paypal_personal", "manual_provider_confirmed"].includes(token)) normalized = "paypal_personal_manual";
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
@@ -1316,6 +1318,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     if (entry.direction === "income") {
       const feeAmount = Math.abs(parseLooseNumber(entry.feeAmount));
       const netAmount = parseLooseNumber(entry.netAmount);
+      const grossAmount = parseLooseNumber(entry.amountGross ?? entry.amount_gross ?? entry.grossAmount);
       const currency = String(entry.currency || inferManualFinanceChannelCurrency(channel)).trim().toUpperCase();
       const externalId = String(entry.externalId || entry.external_id || rawSourceId).trim();
       rows.push({
@@ -1326,7 +1329,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
         amount: formatSheetNumber(amount),
         currency,
         amountUsd: normalizeLedgerAmountUsdForSave({ ...entry, amount, amountUsd: entry.usdAmount, currency }, { amountNumber: amount, currency, operation: "income", category }),
-        amountGross: formatSheetNumber(amount),
+        amountGross: formatSheetNumber(grossAmount || amount),
         amountFee: feeAmount ? formatSheetNumber(feeAmount) : "",
         amountNet: Number.isFinite(netAmount) && netAmount ? formatSheetNumber(Math.abs(netAmount)) : (feeAmount ? formatSheetNumber(Math.max(0, amount - feeAmount)) : ""),
         category: category === "extra" ? "servicein" : category,
