@@ -50,6 +50,8 @@ const state = {
     loading: false,
     paypalLoading: false,
     paypalSummary: null,
+    payoneerLoading: false,
+    payoneerSummary: null,
     wiseLoading: false,
     wiseSummary: null,
     wiseBalanceSnapshotKeys: new Set(),

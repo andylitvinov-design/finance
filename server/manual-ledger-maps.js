@@ -41,6 +41,7 @@ export const MANUAL_LEDGER_SOURCES = [
   "paypal",
   "paypal_manual",
   "paypal_personal_manual",
+  "payoneer",
   "wise",
   "binance",
   "monobank",
@@ -88,8 +89,8 @@ const DEFAULT_CHANNEL_MAP = {
   "трансервайз дол": ["wise usd", "transferwise usd", "трансервайз дол", "wise дол"],
   "трансервайз евро": ["wise eur", "wise euro", "transferwise eur", "трансервайз евро", "трансервайз евр"],
   "REVOLUT дол": ["revolut", "revolut usd", "револют", "револют дол"],
-  "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
-  "Payoneer - dol": ["payoneer usd", "payoneer dol", "payoneer - dol"],
+  "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur", "payoneer euro account"],
+  "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer - dol", "payoneer dollar", "payoneer dollar account"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],
   "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"],
   "Налично -я-евр": ["налично я евр", "налично -я-евр", "cash eur"],
@@ -204,6 +205,7 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["manual_fact", "manual_finance"].includes(normalizedToken)) return "manual";
   if (["paypal_manual", "paypal_personal", "paypal_personal_manual", "manual_provider_confirmed"].includes(normalizedToken)) return normalizedToken === "paypal_manual" ? "paypal_manual" : "paypal_personal_manual";
   if (["paypal", "paypal_mcp"].includes(normalizedToken)) return "paypal";
+  if (["payoneer"].includes(normalizedToken)) return "payoneer";
   if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
   if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";
   if (["monobank", "mono"].includes(normalizedToken)) return "monobank";

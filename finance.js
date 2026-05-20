@@ -514,6 +514,8 @@ function resolveManualFinanceChannelAlias(value, channels = getManualFinanceChan
     "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
     "приват-фоп": ["приват фоп", "фоп приват", "privat fop", "privat24 fop", "privat 24 fop", "privat fop uah", "приват24 фоп", "приват 24 фоп"],
     "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
+    "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer dollar", "payoneer - dol"],
+    "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
     "Бинанс spot": ["binance spot", "бинанс spot", "бинанс"],
     "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"]
   };
