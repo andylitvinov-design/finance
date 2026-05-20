@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   normalizeBinanceCsvTransaction,
@@ -16,11 +17,10 @@ import {
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const execFileAsync = promisify(execFile);
-const LEDGER_HEADERS = [
+export const LEDGER_HEADERS = [
   "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd",
-  "amount_gross", "amount_fee", "amount_net", "category",
-  "subcategory", "direction", "comment", "counterparty", "description", "source", "external_id",
-  "raw_source_id", "transfer_group_id", "created_at", "updated_at"
+  "category", "subcategory", "direction", "comment", "source", "raw_source_id",
+  "transfer_group_id", "created_at", "updated_at", "amount_gross", "amount_fee", "amount_net"
 ];
 
 function parseArgs(argv = []) {
@@ -188,7 +188,7 @@ async function appendLedgerRows(entries = [], { fetchImpl = fetch } = {}) {
   };
 }
 
-function buildLedgerRow(entry = {}, now = new Date().toISOString()) {
+export function buildLedgerRow(entry = {}, now = new Date().toISOString()) {
   const amount = Math.abs(Number(entry.localAmount ?? entry.amount ?? 0));
   const amountNet = Number(entry.netAmount ?? entry.amountNet ?? entry.amount_net ?? 0);
   const currency = String(entry.currency || "USDT").trim() || "USDT";
@@ -206,21 +206,18 @@ function buildLedgerRow(entry = {}, now = new Date().toISOString()) {
     amount,
     currency,
     amount_usd: isUsdLike(currency) ? amountNet : "",
-    amount_gross: amount,
-    amount_fee: entry.feeAmount || 0,
-    amount_net: amountNet,
     category,
     subcategory: "",
     direction: operation === "transfer" ? "neutral" : entry.direction === "out" ? "out" : "in",
     comment: entry.comment || entry.description || "",
-    counterparty: entry.counterparty || "",
-    description: entry.description || entry.organization || "",
-    source: entry.source || "binance_csv",
-    external_id: entry.externalId || entry.sourceTransactionId || entry.rawSourceId || "",
+    source: "binance",
     raw_source_id: entry.rawSourceId || entry.sourceTransactionId || "",
     transfer_group_id: entry.transferGroupId || entry.transfer_group_id || "",
     created_at: now,
     updated_at: now,
+    amount_gross: amount,
+    amount_fee: entry.feeAmount || 0,
+    amount_net: amountNet,
   };
   return LEDGER_HEADERS.map((header) => String(row[header] ?? ""));
 }
@@ -233,7 +230,9 @@ function escapeSheetName(value) {
   return String(value || "").replace(/'/g, "''");
 }
 
-main().catch((error) => {
-  console.error(error.message || String(error));
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  main().catch((error) => {
+    console.error(error.message || String(error));
+    process.exitCode = 1;
+  });
+}
