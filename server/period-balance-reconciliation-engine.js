@@ -560,7 +560,7 @@ function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = [])
     })),
     ...(autoBalanceRows || []).map((row) => ({
       ...row,
-      balanceSource: "provider_auto",
+      balanceSource: isManualBalanceSource(row) ? "manual_fact" : getResolvedBalanceSource(row),
       source: row?.source || "provider_auto",
       sourceSheet: row?.sourceSheet || "Авто Остатки",
     })),
@@ -580,11 +580,18 @@ function balanceSourcePriority(row) {
 function getResolvedBalanceSource(row = {}) {
   const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
   if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "missing") return explicit;
+  if (isManualBalanceSource(row)) return "manual_fact";
   const source = normalizeText(`${row?.source || ""} ${row?.fact_source || ""} ${row?.provider || ""} ${row?.comment || ""}`);
+  if (/manual confirmed|manual balance|manual fact|paypal manual balance|paypal manual confirmed|paypal_manual_balance|paypal_manual_confirmed_balance/.test(source)) return "manual_fact";
   if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(source)) return "provider_auto";
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
   if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider_auto";
   return "manual_fact";
+}
+
+function isManualBalanceSource(row = {}) {
+  const raw = String(`${row?.source || ""} ${row?.fact_source || ""} ${row?.comment || ""}`).trim().toLowerCase();
+  return /paypal_manual_balance|paypal_manual_confirmed_balance|manual PayPal balance|manual confirmed|manual fact/i.test(raw);
 }
 
 function normalizeProviderBalanceStatus(value) {

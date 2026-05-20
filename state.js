@@ -50,6 +50,15 @@ const state = {
     loading: false,
     paypalLoading: false,
     paypalSummary: null,
+    paypalManualBalanceRequired: false,
+    paypalManualBalanceSaving: false,
+    paypalManualBalance: {
+      date: "",
+      USD: "",
+      EUR: "",
+      CAD: "",
+      comment: ""
+    },
     payoneerLoading: false,
     payoneerSummary: null,
     wiseLoading: false,

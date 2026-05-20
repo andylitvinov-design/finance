@@ -17,6 +17,8 @@ const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 export const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
 export const AUTO_BALANCE_HEADERS = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
 const SNAPSHOT_COMMENT = "auto daily provider snapshot";
+const PAYPAL_MANUAL_BALANCE_SOURCE = "paypal_manual_balance";
+const PAYPAL_MANUAL_BALANCE_COMMENT = "manual PayPal balance because REST balance API unavailable for personal account";
 const FALLBACK_USD_RATES = {
   USD: 1,
   EUR: 1.16,
@@ -540,6 +542,93 @@ export async function saveAutoBalanceSnapshotRows(rows, { fetchImpl = fetch } = 
   const mergedRows = mergeBalanceRowsByDateChannelCurrency(existingRows, snapshotRows);
   await putBalanceSheetValues(buildBalanceSheetValues(mergedRows), { accessToken, fetchImpl });
   return { rowCount: snapshotRows.length, savedAt: new Date().toISOString(), sheetName: AUTO_BALANCE_SHEET_NAME };
+}
+
+export function buildPayPalManualBalanceRows(input = {}) {
+  const date = normalizeIsoDate(input.date);
+  if (!date) throw new Error("date must be YYYY-MM-DD.");
+  const fetchedAt = normalizeTimestamp(input.fetchedAt || input.fetched_at) || new Date().toISOString();
+  const comment = [PAYPAL_MANUAL_BALANCE_COMMENT, String(input.comment || input.note || "").trim()]
+    .filter(Boolean)
+    .join(" | ");
+  return [
+    { currency: "USD", channel: "пейпал дол", value: input.USD ?? input.usd ?? input.usdBalance },
+    { currency: "EUR", channel: "пейпал евр", value: input.EUR ?? input.eur ?? input.eurBalance },
+    { currency: "CAD", channel: "пейпал сad", value: input.CAD ?? input.cad ?? input.cadBalance },
+  ].map(({ currency, channel, value }) => {
+    const amount = parseRequiredManualBalanceAmount(value, currency);
+    return buildSnapshotRow({
+      date,
+      provider: "paypal",
+      channel,
+      amount,
+      currency,
+      source: PAYPAL_MANUAL_BALANCE_SOURCE,
+      fetchedAt,
+      rawSourceId: `${PAYPAL_MANUAL_BALANCE_SOURCE}:${date}:${currency}`,
+      status: amount === 0 ? "zero_balance" : "ok",
+      comment,
+    });
+  });
+}
+
+export async function savePayPalManualBalanceRows(input = {}, { fetchImpl = fetch } = {}) {
+  const snapshotRows = buildPayPalManualBalanceRows(input);
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  await ensureBalanceSheetExists({ accessToken, fetchImpl });
+  const existingValues = await getBalanceSheetValues({ accessToken, fetchImpl });
+  const existingRows = parseBalanceSheetValues(existingValues);
+  const merge = mergePayPalManualBalanceRows(existingRows, snapshotRows);
+  await putBalanceSheetValues(buildBalanceSheetValues(merge.rows), { accessToken, fetchImpl });
+  return {
+    rowCount: snapshotRows.length,
+    inserted: merge.inserted,
+    updated: merge.updated,
+    skipped: 0,
+    sheetName: AUTO_BALANCE_SHEET_NAME,
+    rows: snapshotRows,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function parseRequiredManualBalanceAmount(value, currency) {
+  const raw = String(value ?? "").trim();
+  if (!raw) throw new Error(`${currency} balance is required.`);
+  const numeric = parseSheetNumber(raw);
+  if (!Number.isFinite(numeric)) throw new Error(`${currency} balance must be numeric.`);
+  return numeric;
+}
+
+function mergePayPalManualBalanceRows(existingRows = [], replacementRows = []) {
+  const replacementByRawSourceId = new Map(
+    (replacementRows || []).map((row) => [String(row.rawSourceId || "").trim(), row]).filter(([rawSourceId]) => rawSourceId)
+  );
+  let inserted = 0;
+  let updated = 0;
+  const rows = (existingRows || []).map((row) => {
+    const rawSourceId = String(row?.rawSourceId || "").trim();
+    const replacement = replacementByRawSourceId.get(rawSourceId);
+    if (!replacement) return row;
+    updated += 1;
+    replacementByRawSourceId.delete(rawSourceId);
+    return replacement;
+  });
+  for (const row of replacementByRawSourceId.values()) {
+    inserted += 1;
+    rows.push(row);
+  }
+  rows.sort((left, right) => {
+    const dateDiff = String(left.date || "").localeCompare(String(right.date || ""));
+    if (dateDiff) return dateDiff;
+    const providerDiff = String(left.provider || "").localeCompare(String(right.provider || ""));
+    if (providerDiff) return providerDiff;
+    const channelDiff = String(left.channel || "").localeCompare(String(right.channel || ""));
+    if (channelDiff) return channelDiff;
+    const currencyDiff = String(left.currency || "").localeCompare(String(right.currency || ""));
+    if (currencyDiff) return currencyDiff;
+    return String(left.rawSourceId || "").localeCompare(String(right.rawSourceId || ""));
+  });
+  return { rows, inserted, updated };
 }
 
 function normalizeSnapshotRows(rows) {
