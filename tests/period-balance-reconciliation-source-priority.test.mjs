@@ -152,6 +152,111 @@ test("display date input is normalized with padded month and day", async () => {
   });
 });
 
+test("provider fact outranks planned balance and exposes variance", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-02", to: "2026-05-02" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [{
+        date: "2026-05-02",
+        fromChannel: "wise usd",
+        currency: "USD",
+        amountNet: "20",
+        balanceAmount: -20,
+        ledgerV2: { date: "2026-05-02", operation: "expense", from_channel: "wise usd", currency: "USD", amount_net: "20", balance_amount: -20 },
+      }],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", provider: "planned", channel: "wise usd", currency: "USD", amount: "80", source: "planned_daily_balance", status: "planned", rawSourceId: "planned_daily_balance:2026-05-02:wise_usd:USD", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-02", provider: "wise", channel: "wise usd", currency: "USD", amount: "82", source: "wise_auto", status: "ok", rawSourceId: "wise-fact", sourceSheet: "Авто Остатки" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency[0];
+  assert.equal(row.factual_closing_balance, 82);
+  assert.equal(row.balanceSource, "provider_auto");
+  assert.equal(row.fact_status, "auto_pending");
+  assert.equal(row.planned_balance, 80);
+  assert.equal(row.variance_to_fact, 2);
+});
+
+test("manual fact outranks provider and planned balances", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-02", to: "2026-05-02" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [{
+        date: "2026-05-02",
+        fromChannel: "wise usd",
+        currency: "USD",
+        amountNet: "20",
+        balanceAmount: -20,
+        ledgerV2: { date: "2026-05-02", operation: "expense", from_channel: "wise usd", currency: "USD", amount_net: "20", balance_amount: -20 },
+      }],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "81", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", provider: "planned", channel: "wise usd", currency: "USD", amount: "80", source: "planned_daily_balance", status: "planned", rawSourceId: "planned_daily_balance:2026-05-02:wise_usd:USD", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-02", provider: "wise", channel: "wise usd", currency: "USD", amount: "82", source: "wise_auto", status: "ok", rawSourceId: "wise-fact", sourceSheet: "Авто Остатки" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency[0];
+  assert.equal(row.factual_closing_balance, 81);
+  assert.equal(row.balanceSource, "manual_fact");
+  assert.equal(row.fact_status, "confirmed");
+  assert.equal(row.planned_balance, 80);
+  assert.equal(row.variance_to_fact, 1);
+});
+
+test("planned balance is visible when factual balance is missing", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-02", to: "2026-05-02" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [{
+        date: "2026-05-02",
+        fromChannel: "wise usd",
+        currency: "USD",
+        amountNet: "20",
+        balanceAmount: -20,
+        ledgerV2: { date: "2026-05-02", operation: "expense", from_channel: "wise usd", currency: "USD", amount_net: "20", balance_amount: -20 },
+      }],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-02", provider: "planned", channel: "wise usd", currency: "USD", amount: "80", source: "planned_daily_balance", status: "planned", rawSourceId: "planned_daily_balance:2026-05-02:wise_usd:USD", sourceSheet: "Авто Остатки" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency[0];
+  assert.equal(row.factual_closing_balance, 80);
+  assert.equal(row.factual_balance, null);
+  assert.equal(row.balanceSource, "planned_daily_balance");
+  assert.equal(row.fact_status, "planned");
+  assert.equal(row.fact_source, "planned_daily_balance");
+  assert.equal(row.needsManualConfirmation, true);
+  assert.equal(row.status, "planned");
+  assert.equal(snapshot.period_balance_reconciliation.summary.balance_source_counts.planned_daily_balance, 1);
+});
+
 test("carried-forward opening row is not labeled as closing manual fact", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-17" },

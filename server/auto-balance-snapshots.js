@@ -21,6 +21,7 @@ const SNAPSHOT_COMMENT = "auto daily provider snapshot";
 const PAYPAL_MANUAL_BALANCE_SOURCE = "paypal_manual_balance";
 const PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE = "paypal_manual_confirmed_balance";
 const PAYPAL_DERIVED_BALANCE_SOURCE = "paypal_derived_balance";
+const PLANNED_DAILY_BALANCE_SOURCE = "planned_daily_balance";
 const PAYPAL_MANUAL_BALANCE_COMMENT = "manual PayPal balance because REST balance API unavailable for personal account";
 const PAYPAL_DERIVED_BALANCE_COMMENT_PREFIX = "Derived from latest confirmed PayPal balance";
 const PAYPAL_DERIVED_BALANCE_COMMENT_SUFFIX = "plus Ledger amount_net movements because PayPal REST balance API is unavailable for this account.";
@@ -943,7 +944,7 @@ export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replace
 }
 
 function balanceRowKey(row) {
-  if (isPayPalDerivedBalanceRow(row)) {
+  if (isRawSourceIdKeyedBalanceRow(row)) {
     return [
       normalizeIsoDate(row?.date),
       normalizeProvider(row?.provider),
@@ -958,9 +959,9 @@ function balanceRowKey(row) {
   ].join("|");
 }
 
-function isPayPalDerivedBalanceRow(row = {}) {
-  return normalizeProvider(row?.provider) === "paypal" &&
-    String(row?.source || "").trim().toLowerCase() === PAYPAL_DERIVED_BALANCE_SOURCE &&
+function isRawSourceIdKeyedBalanceRow(row = {}) {
+  const source = String(row?.source || "").trim().toLowerCase();
+  return [PAYPAL_DERIVED_BALANCE_SOURCE, PLANNED_DAILY_BALANCE_SOURCE].includes(source) &&
     String(row?.rawSourceId || row?.raw_source_id || "").trim();
 }
 
@@ -1055,7 +1056,7 @@ function normalizeProvider(value) {
 
 function normalizeAutoSource(value, provider) {
   const raw = String(value || "").trim().toLowerCase();
-  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYPAL_DERIVED_BALANCE_SOURCE].includes(raw)) return raw;
+  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYPAL_DERIVED_BALANCE_SOURCE, PLANNED_DAILY_BALANCE_SOURCE].includes(raw)) return raw;
   if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeProvider(provider);
   if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;

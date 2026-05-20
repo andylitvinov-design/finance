@@ -192,6 +192,7 @@
       ["Без amount_net", summary.missing_amount_net_rows],
       ["Факт из Остатки", summary.balance_source_counts?.manual_fact ?? summary.manual_fact_rows],
       ["Авто факт к подтверждению", summary.balance_source_counts?.provider_auto ?? summary.provider_auto_rows],
+      ["Плановые остатки", summary.balance_source_counts?.planned_daily_balance ?? summary.planned_daily_balance_rows],
       ["Нужно ввести факт", summary.balance_source_counts?.missing ?? summary.missing_fact_rows],
       ["Заблокировано", summary.blocked],
     ].forEach(([text, value]) => {
@@ -358,7 +359,7 @@
   function formatFactBalance(row) {
     const factStatus = String(row?.factStatus || row?.fact_status || "").trim();
     const value = row?.manual_provider_closing_balance ?? (
-      factStatus === "confirmed" || factStatus === "auto_pending"
+      factStatus === "confirmed" || factStatus === "auto_pending" || factStatus === "planned"
         ? row?.factual_closing_balance
         : null
     );
@@ -607,6 +608,7 @@
     if (normalized === "missing_closing_balance") return "Нет конечного остатка";
     if (normalized === "carried_forward_conditional") return "Условно перенесено";
     if (normalized === "missing_amount_net") return "Нет amount_net";
+    if (normalized === "planned") return "Плановый остаток";
     if (normalized === "no_data") return "Нет данных";
     return "Проверить";
   }
@@ -616,10 +618,12 @@
     const normalizedBalanceSource = String(row?.balanceSource || row?.balance_source || "").trim();
     if (normalizedBalanceSource === "manual_fact") return "manual fact";
     if (normalizedBalanceSource === "provider_auto") return "auto, needs manual confirmation";
+    if (normalizedBalanceSource === "planned_daily_balance") return "Плановый остаток";
     if (normalizedBalanceSource === "missing") return "add manual fact balance";
     const normalized = String(row ? row.fact_source : rowOrSource || "").trim();
     if (normalized === "manual") return "manual fact";
     if (normalized === "provider") return "auto, needs manual confirmation";
+    if (normalized === "planned_daily_balance") return "Плановый остаток";
     if (normalized === "carried_forward") return "перенесён";
     if (normalized === "missing") return "add manual fact balance";
     return normalized || "—";
