@@ -8,6 +8,7 @@ import {
   fetchBinanceSignedJson,
   getBinanceProviderConfigFromEnv,
   normalizeBinanceDeposit,
+  normalizeBinancePayTransaction,
   normalizeBinanceWithdrawal,
 } from "../server/binance-transactions.js";
 import apiHandler from "../api/index.js";
@@ -112,7 +113,8 @@ test("Binance API error and non-JSON response become structured warnings", async
   const responses = [
     { ok: false, status: 401, body: JSON.stringify({ code: -2015, msg: "Invalid API-key" }) },
     { ok: false, status: 403, body: "<html>blocked</html>" },
-    { ok: false, status: 418, body: JSON.stringify({ code: -1003, msg: "Too many requests" }) }
+    { ok: false, status: 418, body: JSON.stringify({ code: -1003, msg: "Too many requests" }) },
+    { ok: false, status: 403, body: JSON.stringify({ code: -2015, msg: "Pay unavailable" }) }
   ];
   const result = await fetchBinanceStatementEntries({
     startDate: "2026-05-01",
@@ -138,6 +140,7 @@ test("Binance API error and non-JSON response become structured warnings", async
   assert.match(result.warnings.join("\n"), /endpoint\/permission needs verification/);
   assert.match(result.warnings.join("\n"), /Invalid API-key/);
   assert.match(result.warnings.join("\n"), /non-JSON response/);
+  assert.match(result.warnings.join("\n"), /Binance Pay operations may be missing; use Gmail\/CSV fallback/);
 });
 
 test("Binance deposit response normalizes to spot income with positive net USD", () => {
@@ -188,7 +191,57 @@ test("Binance withdrawal response normalizes to out direction and is excluded fr
   assert.equal(entry.realNetUsd, 24);
 });
 
-test("fetchBinanceStatementEntries reads account, deposits, and withdrawals endpoints", async () => {
+test("Binance Pay receive normalizes to spot income with deterministic source id", () => {
+  const entry = normalizeBinancePayTransaction({
+    orderType: "C2C",
+    transactionId: "pay-receive-1",
+    transactionTime: 1778247050000,
+    amount: "915.5",
+    currency: "USDT",
+    walletType: 2,
+    payerInfo: { name: "Arsenchios", binanceId: "payer-1" },
+    receiverInfo: { binanceId: "me" }
+  });
+
+  assert.equal(entry.source, "binance_pay");
+  assert.equal(entry.sourceTransactionId, "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios");
+  assert.equal(entry.date, "2026-05-08");
+  assert.equal(entry.channel, "Бинанс spot");
+  assert.equal(entry.direction, "income");
+  assert.equal(entry.counterparty, "Arsenchios");
+  assert.equal(entry.localAmount, 915.5);
+  assert.equal(entry.netAmount, 915.5);
+  assert.equal(entry.realNetUsd, 915.5);
+  assert.equal(entry.suggestedCategory, "serviceIncome");
+  assert.match(entry.description, /Binance Pay Receive Crypto from Arsenchios/);
+});
+
+test("Binance Pay send normalizes to spot outflow with negative net amount", () => {
+  const entry = normalizeBinancePayTransaction({
+    orderType: "C2C",
+    transactionId: "pay-send-1",
+    transactionTime: 1777645137000,
+    amount: "-700",
+    currency: "USDT",
+    walletType: 2,
+    payerInfo: { binanceId: "me" },
+    receiverInfo: { name: "RudGard", binanceId: "receiver-1" }
+  });
+
+  assert.equal(entry.source, "binance_pay");
+  assert.equal(entry.sourceTransactionId, "binance_pay_send:2026-05-01T14:18:57Z:700:USDT:RudGard");
+  assert.equal(entry.date, "2026-05-01");
+  assert.equal(entry.channel, "Бинанс spot");
+  assert.equal(entry.direction, "out");
+  assert.equal(entry.counterparty, "RudGard");
+  assert.equal(entry.localAmount, 700);
+  assert.equal(entry.netAmount, -700);
+  assert.equal(entry.realNetUsd, null);
+  assert.equal(entry.suggestedCategory, "business");
+  assert.match(entry.description, /Binance Pay Send Crypto to RudGard/);
+});
+
+test("fetchBinanceStatementEntries reads account, deposits, withdrawals, and pay endpoints", async () => {
   const requests = [];
   const result = await fetchBinanceStatementEntries({
     startDate: "2026-05-01",
@@ -221,6 +274,39 @@ test("fetchBinanceStatementEntries reads account, deposits, and withdrawals endp
           }
         };
       }
+      if (pathname === "/sapi/v1/pay/transactions") {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              code: "000000",
+              message: "success",
+              success: true,
+              data: [
+                {
+                  transactionId: "pay-in",
+                  transactionTime: 1778247050000,
+                  amount: "915.5",
+                  currency: "USDT",
+                  walletType: 2,
+                  payerInfo: { name: "Arsenchios" },
+                  receiverInfo: { binanceId: "me" }
+                },
+                {
+                  transactionId: "pay-out",
+                  transactionTime: 1777645137000,
+                  amount: "-700",
+                  currency: "USDT",
+                  walletType: 2,
+                  payerInfo: { binanceId: "me" },
+                  receiverInfo: { name: "RudGard" }
+                }
+              ]
+            });
+          }
+        };
+      }
       throw new Error(`Unexpected URL: ${url}`);
     }
   });
@@ -228,12 +314,69 @@ test("fetchBinanceStatementEntries reads account, deposits, and withdrawals endp
   assert.deepEqual(requests.map((request) => new URL(request.url).pathname), [
     "/api/v3/account",
     "/sapi/v1/capital/deposit/hisrec",
-    "/sapi/v1/capital/withdraw/history"
+    "/sapi/v1/capital/withdraw/history",
+    "/sapi/v1/pay/transactions"
   ]);
-  assert.equal(result.transactionCount, 2);
-  assert.equal(result.entries.length, 2);
+  assert.equal(result.transactionCount, 4);
+  assert.equal(result.entries.length, 4);
   assert.equal(result.entries[0].source, "binance");
   assert.equal(result.entries[0].direction, "income");
   assert.equal(result.entries[1].direction, "out");
-  assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok" });
+  assert.equal(result.entries[2].source, "binance_pay");
+  assert.equal(result.entries[2].sourceTransactionId, "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios");
+  assert.equal(result.entries[3].sourceTransactionId, "binance_pay_send:2026-05-01T14:18:57Z:700:USDT:RudGard");
+  assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok", pay: "ok" });
+  assert.equal(result.summary.totalsByCurrency.USDT.income, 925.5);
+  assert.equal(result.summary.totalsByCurrency.USDT.out, 703);
+  assert.equal(result.summary.totalsByCurrency.USDT.net, 222.5);
+});
+
+test("Binance Pay duplicate imports are idempotent by raw source id and do not duplicate deposits", async () => {
+  const responseByPath = {
+    "/api/v3/account": { balances: [] },
+    "/sapi/v1/capital/deposit/hisrec": [
+      { id: "dep-103", amount: "103", coin: "USDT", insertTime: 1778763453000, status: 1 }
+    ],
+    "/sapi/v1/capital/withdraw/history": [],
+    "/sapi/v1/pay/transactions": {
+      data: [
+        {
+          transactionId: "pay-in",
+          transactionTime: 1778247050000,
+          amount: "915.5",
+          currency: "USDT",
+          payerInfo: { name: "Arsenchios" }
+        },
+        {
+          transactionId: "pay-in-duplicate",
+          transactionTime: 1778247050000,
+          amount: "915.5",
+          currency: "USDT",
+          payerInfo: { name: "Arsenchios" }
+        }
+      ]
+    }
+  };
+  const result = await fetchBinanceStatementEntries({
+    startDate: "2026-05-01",
+    endDate: "2026-05-20",
+    apiKey: "api-key",
+    apiSecret: "api-secret",
+    baseUrl: "https://binance.example",
+    now: () => 1710000000000,
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify(responseByPath[new URL(url).pathname]);
+      }
+    })
+  });
+
+  const sourceIds = result.entries.map((entry) => entry.sourceTransactionId);
+  assert.equal(sourceIds.filter((id) => id === "dep-103").length, 1);
+  assert.equal(
+    sourceIds.filter((id) => id === "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios").length,
+    2
+  );
 });

@@ -57,7 +57,11 @@ function createContext(fetchImpl) {
   vm.runInContext(`
     const state = {
       expenseAccounting: {
-        entries: [{ source: "binance", sourceTransactionId: "old" }, { source: "paypal", sourceTransactionId: "keep" }],
+        entries: [
+          { source: "binance", sourceTransactionId: "old" },
+          { source: "binance_pay", sourceTransactionId: "old-pay" },
+          { source: "paypal", sourceTransactionId: "keep" }
+        ],
         activeSubtab: "list",
         warnings: []
       }
@@ -107,9 +111,14 @@ test("Binance one-click posts selected dates and merges Binance entries into exp
       text: async () => JSON.stringify({
         ok: true,
         transactionCount: 1,
-        warnings: ["sample warning"],
+        warnings: ["Binance Pay operations may be missing; use Gmail/CSV fallback."],
+        endpointStatus: { account: "ok", deposits: "ok", withdrawals: "ok", pay: "warning" },
         summary: { rows: 1 },
-        entries: [{ source: "binance", sourceTransactionId: "new", amount: 12 }]
+        entries: [
+          { source: "binance", sourceTransactionId: "dep-103", amount: 103 },
+          { source: "binance_pay", sourceTransactionId: "pay-send", amount: 700, direction: "out" },
+          { source: "binance_pay", sourceTransactionId: "pay-receive", amount: 915.5, direction: "income" }
+        ]
       })
     };
   });
@@ -126,9 +135,11 @@ test("Binance one-click posts selected dates and merges Binance entries into exp
     startDate: "2026-05-01",
     endDate: "2026-05-03"
   });
-  assert.deepEqual(appState.entries.map((entry) => entry.sourceTransactionId), ["keep", "new"]);
+  assert.deepEqual(appState.entries.map((entry) => entry.sourceTransactionId), ["keep", "dep-103", "pay-send", "pay-receive"]);
   assert.equal(appState.entries[1].source, "binance");
-  assert.deepEqual(appState.warnings, ["sample warning"]);
+  assert.equal(appState.entries[2].source, "binance_pay");
+  assert.deepEqual(appState.warnings, ["Binance Pay operations may be missing; use Gmail/CSV fallback."]);
+  assert.match(appState.status, /pay: warning/);
   assert.equal(appState.resultTab, "spent");
   assert.equal(appState.binanceLoading, false);
 });

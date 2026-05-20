@@ -63,7 +63,7 @@ export async function fetchBinanceStatementEntries(options = {}) {
   const clock = typeof options.now === "function" ? options.now : Date.now;
   const signedOptions = { fetchImpl, baseUrl, apiKey, apiSecret, now: clock };
   const warnings = [];
-  const raw = { account: null, deposits: [], withdrawals: [] };
+  const raw = { account: null, deposits: [], withdrawals: [], pay: [] };
 
   const account = await fetchBinanceSignedJson({
     ...signedOptions,
@@ -101,19 +101,32 @@ export async function fetchBinanceStatementEntries(options = {}) {
     warnings.push(formatBinanceWarning("/sapi/v1/capital/withdraw/history", withdrawals));
   }
 
-  if (!raw.deposits.length && !raw.withdrawals.length && warnings.length) {
+  const pay = await fetchBinanceSignedJson({
+    ...signedOptions,
+    path: "/sapi/v1/pay/transactions",
+    query: { ...rangeQuery, limit: "100" }
+  });
+  if (pay.ok) {
+    raw.pay = extractBinancePayloadRows(pay.payload);
+  } else {
+    warnings.push(formatBinanceWarning("/sapi/v1/pay/transactions", pay));
+    warnings.push("Binance Pay operations may be missing; use Gmail/CSV fallback.");
+  }
+
+  if (!raw.deposits.length && !raw.withdrawals.length && !raw.pay.length && warnings.length) {
     warnings.unshift(BINANCE_ENDPOINT_WARNING);
   }
 
   const entries = [
     ...raw.deposits.map((deposit, index) => normalizeBinanceDeposit(deposit, index)),
-    ...raw.withdrawals.map((withdrawal, index) => normalizeBinanceWithdrawal(withdrawal, index))
+    ...raw.withdrawals.map((withdrawal, index) => normalizeBinanceWithdrawal(withdrawal, index)),
+    ...raw.pay.map((payTransaction, index) => normalizeBinancePayTransaction(payTransaction, index))
   ].filter((entry) => entry.date && entry.localAmount > 0);
 
   return {
     entries,
     summary: summarizeBinanceStatementEntries(entries),
-    transactionCount: raw.deposits.length + raw.withdrawals.length,
+    transactionCount: raw.deposits.length + raw.withdrawals.length + raw.pay.length,
     periodStart: startDate,
     periodEnd: endDate,
     source: "binance",
@@ -121,7 +134,8 @@ export async function fetchBinanceStatementEntries(options = {}) {
     endpointStatus: {
       account: account.ok ? "ok" : "warning",
       deposits: deposits.ok ? "ok" : "warning",
-      withdrawals: withdrawals.ok ? "ok" : "warning"
+      withdrawals: withdrawals.ok ? "ok" : "warning",
+      pay: pay.ok ? "ok" : "warning"
     }
   };
 }
@@ -226,6 +240,7 @@ export function normalizeBinanceEarnCurrentBalances(payload = {}) {
 
 function extractBinancePayloadRows(payload = {}) {
   if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload?.rows)) return payload.rows;
   return [];
 }
@@ -255,7 +270,8 @@ export async function fetchBinanceSignedJson(options = {}) {
       code: "NON_JSON"
     };
   }
-  if (!upstream.ok || payload?.code) {
+  const hasErrorCode = payload?.code !== undefined && payload?.code !== null && String(payload.code) !== "000000";
+  if (!upstream.ok || hasErrorCode || payload?.success === false) {
     return {
       ok: false,
       status: upstream.status,
@@ -356,6 +372,60 @@ export function normalizeBinanceWithdrawal(withdrawal = {}, index = 0) {
   };
 }
 
+export function normalizeBinancePayTransaction(transaction = {}, index = 0) {
+  const signedAmount = parseBinanceSignedAmount(firstNonEmpty(transaction.amount, transaction.orderAmount));
+  const amount = Math.abs(signedAmount);
+  const currency = normalizeBinanceCurrency(transaction.currency || transaction.asset || transaction.coin);
+  const transactionTime = firstNonEmpty(transaction.transactionTime, transaction.time, transaction.createTime);
+  const date = dateFromBinanceTime(transactionTime);
+  const direction = signedAmount >= 0 ? "income" : "out";
+  const counterparty = getBinancePayCounterparty(transaction, direction);
+  const id = firstNonEmpty(
+    transaction.transactionId,
+    transaction.orderId,
+    transaction.payId,
+    transaction.merchantTradeNo,
+    `${direction}:${transactionTime}:${amount}:${currency}:${counterparty || index}`
+  );
+  const operationLabel = direction === "income" ? "Receive Crypto" : "Send Crypto";
+  const description = compactDescription([
+    `Binance Pay ${operationLabel}${counterparty ? ` ${direction === "income" ? "from" : "to"} ${counterparty}` : ""}`,
+    transaction.orderType ? `type ${transaction.orderType}` : "",
+    transaction.status ? `status ${transaction.status}` : ""
+  ]);
+  const rawSourceId = buildBinancePayRawSourceId({
+    direction,
+    transactionTime,
+    amount,
+    currency,
+    counterparty,
+    fallbackId: id
+  });
+  return {
+    id: `binance-pay-${id}`,
+    date,
+    channel: getBinanceChannel(transaction),
+    direction,
+    currency,
+    localAmount: amount,
+    grossAmount: amount,
+    netAmount: direction === "income" ? amount : -amount,
+    realNetUsd: direction === "income" && isUsdLikeCurrency(currency) ? amount : null,
+    feeAmount: 0,
+    feeCurrency: currency,
+    counterparty: counterparty || (direction === "income" ? "Binance Pay sender" : "Binance Pay recipient"),
+    description,
+    organization: description,
+    source: "binance_pay",
+    sourceTransactionId: rawSourceId,
+    externalId: rawSourceId,
+    rawSourceId,
+    suggestedCategory: direction === "income" ? "serviceIncome" : "business",
+    needsVerification: !counterparty || !isUsdLikeCurrency(currency),
+    raw: transaction
+  };
+}
+
 export function summarizeBinanceStatementEntries(entries = []) {
   const totalsByCurrency = new Map();
   for (const entry of entries || []) {
@@ -383,6 +453,34 @@ export function summarizeBinanceStatementEntries(entries = []) {
         }])
     )
   };
+}
+
+function getBinancePayCounterparty(transaction = {}, direction = "") {
+  const payer = transaction.payerInfo || {};
+  const receiver = transaction.receiverInfo || {};
+  const counterparty = direction === "income" ? payer : receiver;
+  return firstNonEmpty(
+    counterparty.name,
+    counterparty.nickname,
+    counterparty.email,
+    counterparty.accountId,
+    counterparty.binanceId,
+    transaction.counterparty,
+    transaction.counterpartyName,
+    transaction.from,
+    transaction.to,
+    transaction.note
+  );
+}
+
+function buildBinancePayRawSourceId({ direction, transactionTime, amount, currency, counterparty, fallbackId }) {
+  const type = direction === "income" ? "receive" : "send";
+  const timestamp = isoTimestampFromBinanceTime(transactionTime);
+  const normalizedCounterparty = String(counterparty || "unknown").trim().replace(/\s+/g, " ");
+  if (timestamp && amount && currency) {
+    return `binance_pay_${type}:${timestamp}:${roundBinanceAmount(amount)}:${currency}:${normalizedCounterparty}`;
+  }
+  return `binance_pay_${type}:${fallbackId}`;
 }
 
 function formatBinanceWarning(path, result) {
@@ -428,6 +526,18 @@ function dateFromBinanceTime(value) {
   return normalizeIsoDate(String(value || "").slice(0, 10));
 }
 
+function isoTimestampFromBinanceTime(value) {
+  if (typeof value === "number" || /^\d+$/.test(String(value || "").trim())) {
+    const parsed = new Date(Number(value));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().replace(".000Z", "Z");
+  }
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const parsed = new Date(/Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().replace(".000Z", "Z");
+}
+
 function parseBinanceAmount(value) {
   const parsed = Number.parseFloat(String(value ?? "").replace(",", "."));
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
@@ -449,7 +559,7 @@ function isUsdLikeCurrency(currency) {
 function getBinanceChannel(row = {}) {
   const walletType = String(row.walletType ?? row.transferType ?? row.type ?? "").trim().toLowerCase();
   const description = `${row.sourceAddress || ""} ${row.address || ""} ${row.info || ""}`.toLowerCase();
-  if (walletType.includes("earn") || walletType.includes("saving") || description.includes("save")) return "binance save";
+  if (walletType === "5" || walletType.includes("earn") || walletType.includes("saving") || description.includes("save")) return "binance save";
   return "Бинанс spot";
 }
 
