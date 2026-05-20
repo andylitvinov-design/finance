@@ -148,12 +148,9 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   const amount = normalizeWiseMoney(transaction?.amount);
   const explicitUsdAmount = parseExplicitWiseUsdAmount(transaction);
   const fee = normalizeWiseMoney(transaction?.totalFees);
-  const details = transaction?.details || {};
   const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
   const reference = String(transaction?.referenceNumber || "").trim();
-  const direction = isWiseCardTransaction(transaction)
-    ? "expense"
-    : (String(transaction?.type || "").toUpperCase() === "CREDIT" ? "income" : "expense");
+  const direction = resolveWiseTransactionDirection(transaction, amount);
   const counterparty = buildWiseCounterparty(transaction, direction);
   return {
     id: `wise-${reference || balance?.balanceId || balance?.id || index}`,
@@ -175,12 +172,18 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   };
 }
 
-function isWiseCardTransaction(transaction = {}) {
+function resolveWiseTransactionDirection(transaction = {}, amount = {}) {
+  const numericAmount = Number(amount?.value || 0);
+  if (numericAmount > 0) return "income";
+  if (numericAmount < 0) return "expense";
+
+  const transactionType = String(transaction?.type || "").trim().toUpperCase();
   const details = transaction?.details || {};
-  const type = String(details.type || transaction?.type || "").trim().toUpperCase();
-  const reference = String(transaction?.referenceNumber || "").trim().toUpperCase();
   const description = String(details.description || "").trim().toLowerCase();
-  return type === "CARD" || reference.startsWith("CARD-") || /\bcard (transaction|payment)\b/.test(description);
+  if (transactionType === "CREDIT" || /\b(refund|refunded|reversal|chargeback)\b/.test(description)) {
+    return "income";
+  }
+  return "expense";
 }
 
 export function summarizeWiseStatementEntries(entries = []) {
