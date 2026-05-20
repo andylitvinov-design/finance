@@ -5,7 +5,7 @@ import handler, {
   normalizePayoneerTransaction,
   parsePayoneerStatementRows,
   summarizePayoneerStatementEntries,
-} from "../api/payoneer-transactions.js";
+} from "../server/payoneer-transactions.js";
 
 function createResponseRecorder() {
   return {
