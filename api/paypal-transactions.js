@@ -37,6 +37,8 @@ export default async function handler(request, response) {
     const clientSecret = String(process.env.PAYPAL_CLIENT_SECRET || "").trim();
     const mcpClientId = String(process.env.PAYPAL_MCP_CLIENT_ID || "").trim();
     const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
+    const environment = process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT;
+    const restConfig = { environment, clientId, clientSecret };
     if (isPayPalManualImportPayload(payload)) {
       const result = parsePayPalManualActivityRows(
         payload.manualRows || payload.rows || payload.activityRows || payload.activityText || payload.text,
@@ -49,7 +51,6 @@ export default async function handler(request, response) {
     }
     let result;
     if (clientId && clientSecret) {
-      const environment = process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT;
       try {
         result = await fetchPayPalStatementEntries({
           startDate: payload.startDate,
@@ -64,10 +65,12 @@ export default async function handler(request, response) {
           return response.status(200).json(buildPayPalManualImportRequiredPayload(error, {
             phase: getPayPalFailurePhase(error, "missing_credentials"),
             providerStatus: getPayPalProviderStatus(error),
-            warnings: [buildPayPalRestFallbackWarning(error)]
+            warnings: [buildPayPalRestFallbackWarning(error)],
+            restConfig
           }));
         }
         const restWarning = buildPayPalRestFallbackWarning(error);
+        const restDiagnostics = buildPayPalRestDiagnostics(error, restConfig);
         try {
           result = await fetchPayPalStatementEntriesFromMcp({
             startDate: payload.startDate,
@@ -84,11 +87,15 @@ export default async function handler(request, response) {
             phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
             providerStatus: getPayPalProviderStatus(mcpError),
             warnings: [restWarning],
-            availableMcpTools: mcpError.availableMcpTools || []
+            availableMcpTools: mcpError.availableMcpTools || [],
+            restConfig
           }));
         }
         result = {
           ...result,
+          providerStatus: restDiagnostics.providerStatus,
+          phase: restDiagnostics.phase,
+          paypalRest: restDiagnostics,
           warnings: uniquePayPalWarnings([
             restWarning,
             buildPayPalProviderWarning(error, { environment }),
@@ -100,7 +107,7 @@ export default async function handler(request, response) {
       if (!mcpClientId || !mcpRefreshToken) {
         return response.status(200).json(buildPayPalManualImportRequiredPayload(
           "PayPal credentials are not configured. Set PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET or PAYPAL_MCP_CLIENT_ID/PAYPAL_MCP_REFRESH_TOKEN.",
-          { phase: "missing_credentials", providerStatus: "credentials_missing" }
+          { phase: "missing_credentials", providerStatus: "credentials_missing", restConfig }
         ));
       }
       try {
@@ -118,7 +125,8 @@ export default async function handler(request, response) {
         return response.status(200).json(buildPayPalManualImportRequiredPayload(mcpError, {
           phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
           providerStatus: getPayPalProviderStatus(mcpError),
-          availableMcpTools: mcpError.availableMcpTools || []
+          availableMcpTools: mcpError.availableMcpTools || [],
+          restConfig
         }));
       }
     }
@@ -740,9 +748,31 @@ function buildPayPalManualImportRequiredPayload(error, options = {}) {
     fallback: "manual_activity_import",
     canUseManualImport: true,
     providerStatus: String(options.providerStatus || getPayPalProviderStatus(error)).trim() || "provider_unavailable",
+    paypalRest: buildPayPalRestDiagnostics(error, options.restConfig || {}),
     shortExcerpt,
     ...(Array.isArray(options.warnings) && options.warnings.length ? { warnings: uniquePayPalWarnings(options.warnings) } : {}),
     ...(Array.isArray(options.availableMcpTools) && options.availableMcpTools.length ? { availableMcpTools: options.availableMcpTools } : {})
+  };
+}
+
+function maskPayPalClientId(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (normalized.length <= 8) return `${normalized.slice(0, 2)}...${normalized.slice(-2)}`;
+  return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+}
+
+function buildPayPalRestDiagnostics(error, options = {}) {
+  const environment = String(options.environment || DEFAULT_PAYPAL_ENVIRONMENT).trim().toLowerCase() || DEFAULT_PAYPAL_ENVIRONMENT;
+  const phase = getPayPalFailurePhase(error, "provider_import");
+  return {
+    providerStatus: getPayPalProviderStatus(error),
+    phase,
+    environment,
+    baseUrl: getPayPalBaseUrl(environment),
+    hasClientId: Boolean(String(options.clientId || "").trim()),
+    hasClientSecret: Boolean(String(options.clientSecret || "").trim()),
+    maskedClientId: maskPayPalClientId(options.clientId)
   };
 }
 

@@ -582,8 +582,18 @@ function getExpenseAccountingWarnings() {
   return Array.from(new Set(
     (Array.isArray(state.expenseAccounting.warnings) ? state.expenseAccounting.warnings : [])
       .map((warning) => String(warning || "").trim())
+      .map(normalizeExpenseAccountingWarning)
       .filter(Boolean)
   ));
+}
+
+function normalizeExpenseAccountingWarning(warning) {
+  const text = String(warning || "").trim();
+  if (!text) return "";
+  if (/PayPal fee unavailable due to API permissions\/auth/i.test(text) && /verify live vs sandbox app credentials/i.test(text)) {
+    return "PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env.";
+  }
+  return text;
 }
 
 function renderExpenseAccountingWarnings() {
@@ -2294,8 +2304,12 @@ async function readPayPalExpenseStatementPayload(response) {
 
 function getPayPalManualImportMessage(payload = {}) {
   const phase = String(payload?.phase || "").trim();
+  const providerStatus = String(payload?.providerStatus || payload?.paypalRest?.providerStatus || "").trim();
   const excerpt = String(payload?.shortExcerpt || "").trim();
   const details = [phase ? `phase: ${phase}` : "", excerpt ? `details: ${excerpt}` : ""].filter(Boolean).join(" · ");
+  if (phase === "oauth" && providerStatus === "auth_failed") {
+    return `PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env.${details ? ` ${details}` : ""}`;
+  }
   return `PayPal API не доступен для этого аккаунта/permissions. Для personal PayPal используйте импорт Activity/CSV или ручное подтверждение net.${details ? ` ${details}` : ""}`;
 }
 

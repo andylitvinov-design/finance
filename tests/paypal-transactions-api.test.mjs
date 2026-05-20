@@ -906,6 +906,7 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
     PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
     PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
     PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_ENVIRONMENT: process.env.PAYPAL_ENVIRONMENT,
   };
   const previousFetch = global.fetch;
   let streamController;
@@ -914,6 +915,7 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
   process.env.PAYPAL_CLIENT_SECRET = "bad-rest-secret";
   process.env.PAYPAL_MCP_CLIENT_ID = "mcp-client";
   process.env.PAYPAL_MCP_REFRESH_TOKEN = "mcp-refresh";
+  process.env.PAYPAL_ENVIRONMENT = "live";
 
   try {
     global.fetch = async (url, options = {}) => {
@@ -997,9 +999,79 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.source, "paypal-mcp");
+    assert.equal(response.body.providerStatus, "auth_failed");
+    assert.equal(response.body.phase, "oauth");
+    assert.deepEqual(response.body.paypalRest, {
+      providerStatus: "auth_failed",
+      phase: "oauth",
+      environment: "live",
+      baseUrl: "https://api-m.paypal.com",
+      hasClientId: true,
+      hasClientSecret: true,
+      maskedClientId: "bad-...ient"
+    });
     assert.match(response.body.warnings.join(" | "), /PayPal fee unavailable due to API permissions\/auth/);
     assert.equal(response.body.entries[0].sourceTransactionId, "FALLBACK-1");
     assert.equal(response.body.entries[0].suggestedCategory, "servicein");
+  } finally {
+    global.fetch = previousFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
+test("handler returns structured auth_failed diagnostics when PayPal REST OAuth is rejected", async () => {
+  const previousEnv = {
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
+    PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
+    PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_ENVIRONMENT: process.env.PAYPAL_ENVIRONMENT,
+  };
+  const previousFetch = global.fetch;
+
+  process.env.PAYPAL_CLIENT_ID = "live-client-1234";
+  process.env.PAYPAL_CLIENT_SECRET = "bad-rest-secret";
+  delete process.env.PAYPAL_MCP_CLIENT_ID;
+  delete process.env.PAYPAL_MCP_REFRESH_TOKEN;
+  process.env.PAYPAL_ENVIRONMENT = "live";
+
+  try {
+    global.fetch = async (url) => {
+      assert.match(String(url), /api-m\.paypal\.com\/v1\/oauth2\/token$/);
+      return {
+        ok: false,
+        status: 401,
+        async json() {
+          return { error: "invalid_client", error_description: "Client Authentication failed" };
+        }
+      };
+    };
+
+    const response = createResponseRecorder();
+    await handler(
+      { method: "POST", body: { startDate: "2026-05-01", endDate: "2026-05-20" } },
+      response
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.provider, "paypal");
+    assert.equal(response.body.providerStatus, "auth_failed");
+    assert.equal(response.body.phase, "oauth");
+    assert.equal(response.body.paypalRest.environment, "live");
+    assert.equal(response.body.paypalRest.baseUrl, "https://api-m.paypal.com");
+    assert.equal(response.body.paypalRest.hasClientId, true);
+    assert.equal(response.body.paypalRest.hasClientSecret, true);
+    assert.equal(response.body.paypalRest.maskedClientId, "live...1234");
+    assert.match(response.body.warnings.join(" | "), /PayPal REST import failed: PayPal OAuth failed \(401\): Client Authentication failed/);
+    assert.match(response.body.shortExcerpt, /PayPal OAuth failed \(401\): Client Authentication failed/);
+    assert.doesNotMatch(JSON.stringify(response.body), /bad-rest-secret/);
   } finally {
     global.fetch = previousFetch;
     for (const [key, value] of Object.entries(previousEnv)) {
