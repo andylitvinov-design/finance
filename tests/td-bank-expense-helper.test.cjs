@@ -580,6 +580,9 @@ test("browser OCR parser keeps amount rows with upload date fallback", () => {
     normalizeIncomingSheetDateValue(value) {
       return String(value || "").trim();
     },
+    isPrivat24ExpenseOcrContext() {
+      return false;
+    },
     extractExpenseOcrDate(line) {
       const match = String(line || "").match(/^DATE:(.+)$/);
       return match ? match[1].trim() : "";

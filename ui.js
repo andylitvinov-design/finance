@@ -3783,13 +3783,20 @@ function compactTdBankDescription(entry) {
 }
 
 function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
+  const rawText = String(text || "");
   const lines = String(text || "")
     .split(/\n+/)
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
-  const entries = [];
   const warnings = [];
   const fallbackDate = normalizeIncomingSheetDateValue(uploadedAtDate);
+  if (isPrivat24ExpenseOcrContext(rawText)) {
+    const entries = parsePrivat24ExpenseOcrEntries(lines, sourceImageIndex, fallbackDate);
+    warnings.push("Privat24 OCR context detected; broad OCR rows suppressed.");
+    if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no strict Privat24 amount rows were recognized.`);
+    return { entries, warnings };
+  }
+  const entries = [];
   let currentDate = "";
   lines.forEach((line) => {
     const date = extractExpenseOcrDate(line);
@@ -3800,7 +3807,7 @@ function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
       date: currentDate || fallbackDate,
       dateSource: currentDate ? "screenshot" : "upload_fallback",
       uploadedAtDate: fallbackDate,
-      channel: inferExpenseOcrChannel(line),
+      channel: inferExpenseOcrChannel(line, rawText),
       direction: inferExpenseOcrDirection(line),
       localAmount: amountInfo.amount,
       currency: amountInfo.currency,
@@ -3817,10 +3824,100 @@ function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
   return { entries, warnings };
 }
 
+function isPrivat24ExpenseOcrContext(text) {
+  const raw = String(text || "").toLowerCase();
+  return /(приват|privat|історія|история|карт|рахунок|uah|грн|₴|клієнт заплатив)/i.test(raw)
+    && !hasYooMoneyExpenseOcrMarker(raw);
+}
+
+function hasYooMoneyExpenseOcrMarker(text) {
+  return /(яндекс|yoomoney|юmoney|юмани)/i.test(String(text || ""));
+}
+
+function parsePrivat24ExpenseOcrEntries(lines, sourceImageIndex, fallbackDate) {
+  const entries = [];
+  let currentDate = "";
+  let previousContentLine = "";
+  lines.forEach((line) => {
+    const date = extractExpenseOcrDate(line);
+    if (date) {
+      currentDate = date;
+      previousContentLine = "";
+      return;
+    }
+    const amountInfo = extractStrictPrivat24ExpenseOcrAmount(line);
+    if (!amountInfo) {
+      if (isPrivat24ExpenseOcrContentLine(line)) previousContentLine = line;
+      return;
+    }
+    const organizationLine = [previousContentLine, line].filter(Boolean).join(" ");
+    entries.push(normalizeExpenseAccountingEntry({
+      date: currentDate || fallbackDate,
+      dateSource: currentDate ? "screenshot" : "upload_fallback",
+      uploadedAtDate: fallbackDate,
+      channel: "приват 24-грн",
+      direction: inferExpenseOcrDirection(line),
+      localAmount: amountInfo.amount,
+      currency: "UAH",
+      usdAmount: null,
+      suggestedCategory: inferExpenseOcrCategory(organizationLine),
+      organization: cleanupExpenseOcrOrganization(organizationLine),
+      counterparty: cleanupExpenseOcrOrganization(organizationLine),
+      confidence: 0.72,
+      source: "browser_ocr",
+      sourceImageIndex
+    }, entries.length));
+    previousContentLine = "";
+  });
+  return entries;
+}
+
+function isPrivat24ExpenseOcrContentLine(line) {
+  const raw = String(line || "").trim();
+  if (!raw) return false;
+  if (extractExpenseOcrDate(raw)) return false;
+  if (extractStrictPrivat24ExpenseOcrAmount(raw)) return false;
+  if (/^\d{1,6}$/.test(raw)) return false;
+  if (/^\d{1,2}:\d{2}$/.test(raw)) return false;
+  if (/^\d{1,3}%$/.test(raw)) return false;
+  if (/(privat24|приват24|історія|история|рахунок|картк|\*\d{3,4})/i.test(raw)) return false;
+  return /[A-Za-zА-Яа-яІіЇїЄєҐґ]/.test(raw);
+}
+
+function extractStrictPrivat24ExpenseOcrAmount(line) {
+  const normalizedLine = String(line || "").replace(/\s+/g, " ").trim();
+  if (!/[+-]/.test(normalizedLine)) return null;
+  if (hasYooMoneyExpenseOcrMarker(normalizedLine)) return null;
+  const match = normalizedLine.match(/([+-])\s*(\d[\d\s.,]*\d|\d)(?:\s*)(uah|грн|₴|rub|руб)\b/iu);
+  if (!match) return null;
+  const amount = Math.abs(parseLooseNumber(match[2]));
+  if (!amount) return null;
+  return { amount, currency: "UAH" };
+}
+
 function extractExpenseOcrDate(line) {
   const raw = String(line || "");
   const iso = raw.match(/\b(20\d{2})[-./](\d{1,2})[-./](\d{1,2})\b/);
   if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, "0")}-${String(iso[3]).padStart(2, "0")}`;
+  const monthDate = raw.toLowerCase().match(/(?:^|[^\d])(\d{1,2})\s+(січня|января|лютого|февраля|березня|марта|квітня|апреля|травня|мая|червня|июня|липня|июля|серпня|августа|вересня|сентября|жовтня|октября|листопада|ноября|грудня|декабря)(?=$|[^\p{L}])/iu);
+  if (monthDate) {
+    const months = {
+      "січня": "01", "января": "01",
+      "лютого": "02", "февраля": "02",
+      "березня": "03", "марта": "03",
+      "квітня": "04", "апреля": "04",
+      "травня": "05", "мая": "05",
+      "червня": "06", "июня": "06",
+      "липня": "07", "июля": "07",
+      "серпня": "08", "августа": "08",
+      "вересня": "09", "сентября": "09",
+      "жовтня": "10", "октября": "10",
+      "листопада": "11", "ноября": "11",
+      "грудня": "12", "декабря": "12"
+    };
+    const year = String(elements.endDate.value || "").slice(0, 4);
+    return year ? `${year}-${months[monthDate[2]]}-${String(monthDate[1]).padStart(2, "0")}` : "";
+  }
   const dotted = raw.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](20\d{2}))?\b/);
   if (!dotted) return "";
   const year = dotted[3] || String(elements.endDate.value || "").slice(0, 4);
@@ -3857,11 +3954,14 @@ function inferExpenseOcrDirection(line) {
   return /[+]\s?\d|зачисл|поступ|income|received|приход/.test(raw) ? "income" : "expense";
 }
 
-function inferExpenseOcrChannel(line) {
+function inferExpenseOcrChannel(line, fullText = "") {
   const normalized = normalizeLookupText(line);
   const direct = getManualFinanceChannels().find((channel) => normalized.includes(normalizeLookupText(channel)));
   if (direct) return direct;
   const currency = normalizeExpenseOcrCurrency(line);
+  if (currency === "RUB" && !hasYooMoneyExpenseOcrMarker(`${line}\n${fullText}`)) {
+    return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) !== "RUB") || getManualFinanceChannels()[0];
+  }
   return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) === currency) || getManualFinanceChannels()[0];
 }
 
