@@ -119,14 +119,72 @@
   };
 })();
 
-(function loadExpenseScreenshotMobileHotfix() {
-  if (typeof document === "undefined" || window.__expenseScreenshotMobileHotfixLoaderInstalled) return;
-  window.__expenseScreenshotMobileHotfixLoaderInstalled = true;
-  const script = document.createElement("script");
-  script.src = "./expense-screenshot-mobile-hotfix.js";
-  script.defer = true;
-  script.onerror = function () {
-    if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[expense-screenshot] mobile hotfix script failed to load");
-  };
-  document.head.appendChild(script);
+// Inline mobile screenshot hotfix: loaded from this existing script so it is not dependent on
+// a second dynamic script request/cache. Fixes Android JPG FileReader/decode failures.
+(function installInlineExpenseScreenshotReadFallback() {
+  if (typeof window === "undefined" || window.__expenseScreenshotInlineReadFallbackInstalled) return;
+  window.__expenseScreenshotInlineReadFallbackInstalled = true;
+  const MAX = 8 * 1024 * 1024;
+  const IMG_EXT = /\.(png|jpe?g|webp)$/i;
+  const IMG_MIME = /^image\/(png|jpe?g|webp)$/i;
+  function accepted(file) { return IMG_MIME.test(String(file?.type || "")) || IMG_EXT.test(String(file?.name || "")); }
+  function mime(file) {
+    const type = String(file?.type || "").toLowerCase();
+    if (IMG_MIME.test(type)) return type.replace("image/jpg", "image/jpeg");
+    const name = String(file?.name || "").toLowerCase();
+    if (/\.png$/.test(name)) return "image/png";
+    if (/\.webp$/.test(name)) return "image/webp";
+    if (/\.jpe?g$/.test(name)) return "image/jpeg";
+    return "image/jpeg";
+  }
+  function readByFileReader(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("FileReader failed"));
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.readAsDataURL(file);
+    });
+  }
+  function toDataUrl(buffer, type) {
+    const bytes = new Uint8Array(buffer);
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:${type};base64,${btoa(out)}`;
+  }
+  async function readDataUrl(file, type) {
+    try {
+      const dataUrl = await readByFileReader(file);
+      if (/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) return dataUrl;
+    } catch {}
+    if (typeof file?.arrayBuffer !== "function") throw new Error(`Не удалось прочитать ${file?.name || "скриншот"}.`);
+    return toDataUrl(await file.arrayBuffer(), type);
+  }
+  function decode(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onerror = reject;
+      image.onload = () => resolve(image);
+      image.src = dataUrl;
+    });
+  }
+  async function patchedPrepareExpenseScreenshotImage(file) {
+    if (!accepted(file)) throw new Error(`Файл ${file?.name || ""} должен быть PNG, JPEG или WEBP.`);
+    const type = mime(file);
+    const dataUrl = await readDataUrl(file, type);
+    if (!/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) throw new Error(`Файл ${file?.name || "скриншот"} не похож на изображение.`);
+    if (dataUrl.length > MAX) throw new Error(`Скриншот ${file?.name || ""} слишком большой.`);
+    try {
+      const image = await decode(dataUrl);
+      const maxSide = 1600;
+      const scale = Math.min(1, maxSide / Math.max(image.width || maxSide, image.height || maxSide));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round((image.width || maxSide) * scale));
+      canvas.height = Math.max(1, Math.round((image.height || maxSide) * scale));
+      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+      const resized = canvas.toDataURL("image/jpeg", 0.82);
+      if (resized.length <= MAX) return { name: file?.name || "screenshot", dataUrl: resized, uploadedAtDate: buildLocalTodayIsoDate() };
+    } catch {}
+    return { name: file?.name || "screenshot", dataUrl, uploadedAtDate: buildLocalTodayIsoDate() };
+  }
+  try { prepareExpenseScreenshotImage = patchedPrepareExpenseScreenshotImage; window.prepareExpenseScreenshotImage = patchedPrepareExpenseScreenshotImage; } catch {}
 })();
