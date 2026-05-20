@@ -18,7 +18,7 @@ const snapshot = {
       missing_opening_balance: 0,
       missing_amount_net_rows: 1,
       excluded_missing_amount_net_rows: 1,
-      copyable_ostatki_rows: "date\tchannel\tcurrency\tamount\n2026-05-11\tмонобанк грн\tUAH\t14033",
+      copyable_ostatki_rows: "",
     },
     actionable_accounts: [
       {
@@ -68,8 +68,8 @@ const snapshot = {
         date: "2026-05-11",
         channel: "монобанк грн",
         currency: "UAH",
-        computed_closing_balance: 14033,
-        action: "Add factual closing balance to Остатки",
+        expected_closing_hint: 14033,
+        action: "Confirm provider closing balance, then add factual balance to Остатки; do not copy expected_closing_hint as fact.",
       },
     ],
   },
@@ -98,8 +98,8 @@ test("balance repair plan orders blocking fixes before missing Остатки ro
   assert.equal(plan.balance_template_rows.length, 2);
   assert.match(plan.balance_template_tsv, /confirmed_balance/);
   assert.match(plan.tsv, /priority\tseverity\tproblem\tdate\tmovement_date\toperation/);
-  assert.match(plan.tsv, /opening_balance\tinflow\toutflow\tcomputed_closing_balance\tprovider_reported_balance/);
-  assert.match(plan.copyable_ostatki_rows, /монобанк грн/);
+  assert.match(plan.tsv, /opening_balance\tinflow\toutflow\tcomputed_closing_balance\texpected_closing_hint\tprovider_reported_balance/);
+  assert.equal(plan.copyable_ostatki_rows, "");
 });
 
 test("balance repair plan text warns against writing computed balances as facts", () => {

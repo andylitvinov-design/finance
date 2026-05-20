@@ -94,12 +94,12 @@ export function buildBalanceRepairPlan(snapshot = {}) {
       channel: row.channel || "",
       currency: row.currency || "",
       difference: null,
-      amount: row.computed_closing_balance ?? null,
+      amount: null,
       recommended_amount_net: null,
-      computed_closing_balance: row.computed_closing_balance ?? null,
+      expected_closing_hint: row.expected_closing_hint ?? row.computed_closing_balance ?? null,
       raw_source_id: "",
       diagnosis: "No factual closing Остатки row exists for this date/channel/currency.",
-      action: "Verify provider closing balance; if it matches computed_closing_balance, add this row to Остатки.",
+      action: "Verify provider closing balance; do not copy expected_closing_hint into Остатки as fact.",
       formula: "",
       verification_required: true,
       safe_to_apply: false,
@@ -126,10 +126,10 @@ export function buildBalanceRepairPlan(snapshot = {}) {
     balance_template_rows: buildBalanceTemplateRows(actions),
     tsv: buildRepairTsv(actions),
     balance_template_tsv: buildBalanceTemplateTsv(buildBalanceTemplateRows(actions)),
-    copyable_ostatki_rows: String(weekly.copyable_ostatki_rows || fixes.copyable_ostatki_rows || ""),
+    copyable_ostatki_rows: "",
     warnings: [
       "Do not write computed Остатки rows as factual balances until provider/manual statements confirm them.",
-      "Fix missing amount_net and mismatches before trusting missing_provider_balance copyable rows.",
+      "Fix missing amount_net and mismatches before collecting missing_provider_balance factual statements.",
       "PayPal personal rows must be manually confirmed from account activity; gross amount must not be copied into amount_net.",
     ],
   };
@@ -163,10 +163,6 @@ export function buildBalanceRepairPlanText(plan = {}) {
       ].filter(Boolean).join(" | "));
       if (action.formula) lines.push(`  formula: ${action.formula}`);
     }
-  }
-
-  if (plan.copyable_ostatki_rows) {
-    lines.push("", "Computed Остатки reference rows after provider verification only:", plan.copyable_ostatki_rows);
   }
 
   if (plan.balance_template_tsv) {
@@ -209,6 +205,7 @@ function buildRepairTsv(actions = []) {
     "inflow",
     "outflow",
     "computed_closing_balance",
+    "expected_closing_hint",
     "provider_reported_balance",
     "raw_source_id",
     "verification_required",
@@ -233,6 +230,7 @@ function buildRepairTsv(actions = []) {
       formatCell(row.inflow),
       formatCell(row.outflow),
       formatCell(row.computed_closing_balance),
+      formatCell(row.expected_closing_hint),
       formatCell(row.provider_reported_balance),
       row.raw_source_id || "",
       row.verification_required ? "yes" : "no",
@@ -270,7 +268,7 @@ function buildBalanceTemplateRows(actions = []) {
       channel: row.channel || "",
       currency: row.currency || "",
       confirmed_balance: "",
-      computed_reference_balance: row.computed_closing_balance ?? "",
+      computed_reference_balance: row.expected_closing_hint ?? row.computed_closing_balance ?? "",
       purpose: row.problem,
       verification_source: "",
       safe_to_apply: false,

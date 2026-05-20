@@ -38,9 +38,11 @@ function toCoverageAccount(row) {
       ? null
       : round(row.closing_balance),
     provider_reported_balance: hasClosingBalance ? round(row.provider_reported_balance) : null,
+    provider_reported_balance_source: hasClosingBalance ? normalizeBalanceSource(row.provider_reported_balance_source) : null,
+    opening_balance_source: hasOpeningBalance ? normalizeBalanceSource(row.opening_balance_source) : null,
     difference: row?.difference === null || row?.difference === undefined ? null : round(row.difference),
     status,
-    balance_source: hasClosingBalance ? "manual" : "missing",
+    balance_source: hasClosingBalance ? normalizeBalanceSource(row.provider_reported_balance_source) : "missing",
   };
   return {
     ...account,
@@ -138,6 +140,13 @@ function buildActionableAccounts(accounts) {
 function normalizeStatus(value) {
   const status = String(value || "").trim();
   return Object.values(STATUS).includes(status) ? status : STATUS.NEEDS_VERIFICATION;
+}
+
+function normalizeBalanceSource(value) {
+  const source = String(value || "").trim();
+  if (source === "provider_auto") return "provider_auto";
+  if (source === "manual" || source === "manual_fact") return "manual";
+  return source || "manual";
 }
 
 function compareActionableRows(left, right) {

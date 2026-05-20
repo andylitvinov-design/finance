@@ -143,10 +143,8 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 1);
   assert.equal(snapshot.balance_coverage.weekly_summary.status, "needs_verification");
   assert.equal(snapshot.balance_coverage.weekly_summary.missing_provider_balance, 1);
-  assert.match(
-    snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows,
-    /2026-05-02\twise usd\tUSD\t\t1206\tProvider closing balance for this exact date\/channel\/currency\ttrue/
-  );
+  assert.equal(snapshot.balance_coverage.weekly_summary.copyable_ostatki_rows, "");
+  assert.equal(snapshot.balance_fixes.missing_ostatki_rows[0].expected_closing_hint, 1206);
   assert.equal(snapshot.balance_coverage.actionable_accounts[0].status, "missing_provider_balance");
   assert.match(snapshot.balance_coverage.actionable_accounts[0].diagnosis, /Нет фактического остатка/);
   assert.match(snapshot.balance_coverage.actionable_accounts[0].fix_action, /Добавить фактический остаток закрытия/);
@@ -182,6 +180,8 @@ test("audit snapshot uses auto balance row as fallback when manual balance row i
   assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 0);
   assert.equal(snapshot.balance_coverage.summary.fully_reconciled_accounts, 1);
   assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance, 1206);
+  assert.equal(snapshot.balance_coverage.accounts[0].balance_source, "provider_auto");
+  assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance_source, "provider_auto");
   assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
 });
 
@@ -704,7 +704,7 @@ test("audit snapshot does not recommend PayPal net autofill when fee or net is m
   assert.equal(fix.action, "verify PayPal fee/net; do not auto-fill");
 });
 
-test("audit snapshot returns copyable missing Остатки rows from balance coverage", async () => {
+test("audit snapshot missing provider balance uses expected hint without copyable Остатки rows", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-04-30", to: "2026-04-30" },
     repositoryLoader: async () => ({
@@ -744,14 +744,10 @@ test("audit snapshot returns copyable missing Остатки rows from balance c
       date: "2026-04-30",
       channel: "монобанк грн",
       currency: "UAH",
-      computed_closing_balance: 17363,
-      amount_hint: 17363,
+      expected_closing_hint: 17363,
       do_not_apply_automatically: true,
-      action: "Confirm provider closing balance, then add factual balance to Остатки",
+      action: "Confirm provider closing balance, then add factual balance to Остатки; do not copy expected_closing_hint as fact.",
     },
   ]);
-  assert.equal(
-    snapshot.balance_fixes.copyable_ostatki_rows,
-    "date\tchannel\tcurrency\tcurrent_ostatki_amount\tcomputed_amount_hint\trequired_provider_evidence\tdo_not_apply_automatically\n2026-04-30\tмонобанк грн\tUAH\t\t17363\tProvider closing balance for this exact date/channel/currency\ttrue"
-  );
+  assert.equal(snapshot.balance_fixes.copyable_ostatki_rows, "");
 });

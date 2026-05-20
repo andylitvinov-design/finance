@@ -333,16 +333,16 @@ test("balance coverage UI renders actionable fixes and copy button", () => {
           date: "2026-04-30",
           channel: "монобанк грн",
           currency: "UAH",
-          computed_closing_balance: 17363,
-          action: "Add factual closing balance to Остатки",
+          expected_closing_hint: 17363,
+          action: "Confirm provider closing balance, then add factual balance to Остатки; do not copy expected_closing_hint as fact.",
         },
       ],
-      copyable_ostatki_rows: "date\tchannel\tcurrency\tamount\n2026-04-30\tмонобанк грн\tUAH\t17363",
+      copyable_ostatki_rows: "",
     },
   });
 
   assert.match(block.textContent, /Что нужно исправить/);
-  assert.match(block.textContent, /Скопировать строки для Остатки/);
+  assert.doesNotMatch(block.textContent, /Скопировать строки для Остатки/);
   assert.match(block.textContent, /EXu_R1-KOv6NC6HsBw/);
   assert.match(block.textContent, /Missing opening Остатки rows/);
   assert.match(block.textContent, /2026-04-29/);

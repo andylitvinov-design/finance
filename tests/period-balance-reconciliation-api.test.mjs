@@ -177,7 +177,7 @@ test("period balance reconciliation exposes YooMoney provider-vs-ledger status w
   assert.equal(summary.transaction_monthly_delta, 0);
   assert.equal(summary.transaction_delta, 0);
   assert.equal(summary.stale_ostatki_rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
-  assert.equal(summary.manual_confirmation_required_rows[0].amount_hint !== undefined, true);
+  assert.equal(summary.manual_confirmation_required_rows[0].expected_closing_hint !== undefined, true);
 });
 
 test("production period reconciliation route does not call YooMoney fixture", () => {
@@ -405,7 +405,7 @@ test("period balance reconciliation falls back to auto and marks missing facts",
       channel: row.channel,
       currency: row.currency,
       amount: row.amount,
-      amount_hint: row.amount_hint,
+      expected_closing_hint: row.expected_closing_hint,
       balance_source: row.balance_source,
       source_sheet: row.source_sheet,
       status: row.status,
@@ -417,7 +417,7 @@ test("period balance reconciliation falls back to auto and marks missing facts",
         channel: "paypal usd",
         currency: "USD",
         amount: null,
-        amount_hint: null,
+        expected_closing_hint: null,
         balance_source: "missing",
         source_sheet: "",
         status: "missing_opening_balance",
@@ -428,7 +428,7 @@ test("period balance reconciliation falls back to auto and marks missing facts",
         channel: "wise usd",
         currency: "USD",
         amount: null,
-        amount_hint: 1050,
+        expected_closing_hint: 1050,
         balance_source: "provider_auto",
         source_sheet: "Авто Остатки",
         status: "ok",

@@ -697,7 +697,7 @@ function buildMissingBalanceRow({ row, balances = [], autoBalances = [] }) {
   const exactAuto = findExactBalanceCandidate({ balances: autoBalances, row });
   const nearbyManual = findNearbyBalanceCandidates({ balances, row });
   const nearbyAuto = findNearbyBalanceCandidates({ balances: autoBalances, row });
-  const amountHint = row.status === "missing_provider_balance" ? row.closing_balance : null;
+  const expectedClosingHint = row.status === "missing_provider_balance" ? row.closing_balance : null;
   return {
     date: row.date,
     channel: row.channel,
@@ -713,7 +713,7 @@ function buildMissingBalanceRow({ row, balances = [], autoBalances = [] }) {
     exact_auto_source: compactBalanceRow(exactAuto),
     nearby_manual_sources: nearbyManual.map(compactBalanceRow),
     nearby_auto_sources: nearbyAuto.map(compactBalanceRow),
-    amount_hint: amountHint,
+    expected_closing_hint: expectedClosingHint,
     before: {
       status: row.status,
       opening_balance: row.opening_balance,
@@ -721,7 +721,7 @@ function buildMissingBalanceRow({ row, balances = [], autoBalances = [] }) {
     },
     after: null,
     skippedReason: "no exact factual manual/provider balance row available for safe automatic correction",
-    manual_action: buildMissingBalanceManualAction({ row, amountHint }),
+    manual_action: buildMissingBalanceManualAction({ row, expectedClosingHint }),
   };
 }
 
@@ -776,11 +776,11 @@ function buildMismatchManualAction({ row, factual }) {
   ].join(" ");
 }
 
-function buildMissingBalanceManualAction({ row, amountHint }) {
+function buildMissingBalanceManualAction({ row, expectedClosingHint }) {
   if (row.status === "missing_opening_balance") {
     return `Add a factual opening Остатки row before ${row.date} for ${row.channel} ${row.currency}; do not use computed balances as facts.`;
   }
-  return `Confirm provider closing balance for ${row.date} ${row.channel} ${row.currency}; optional amount_hint=${formatValue(amountHint)} must stay a hint until verified.`;
+  return `Confirm provider closing balance for ${row.date} ${row.channel} ${row.currency}; optional expected_closing_hint=${formatValue(expectedClosingHint)} must stay a hint until verified.`;
 }
 
 export function buildUpdatedLedgerRow({ header = [], currentRow = [], patch = {} } = {}) {

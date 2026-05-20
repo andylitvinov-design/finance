@@ -3,8 +3,16 @@
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_BASE_URL = "https://ezohata-incoming-ledger.vercel.app";
+const TOP_MISMATCH_TARGETS = [
+  { date: "2026-05-05", channel: "Яндекс руб", currency: "RUB", reported_difference: 141136.88 },
+  { date: "2026-04-27", channel: "Яндекс руб", currency: "RUB", reported_difference: -2755.86 },
+  { date: "2026-05-04", channel: "монобанк грн", currency: "UAH", reported_difference: 1000 },
+  { date: "2026-05-04", channel: "пейпал евр", currency: "EUR", reported_difference: -241.14 },
+  { date: "2026-05-09", channel: "трансервайз дол", currency: "USD", reported_difference: 165.32 },
+  { date: "2026-05-12", channel: "трансервайз дол", currency: "USD", reported_difference: -138.59 },
+];
 
-export function buildPeriodReconciliationDiagnosis({ reconciliationPayload = {}, auditSnapshot = null } = {}) {
+export function buildPeriodReconciliationDiagnosis({ reconciliationPayload = {}, auditSnapshot = null, dashboardData = null } = {}) {
   const reconciliation = reconciliationPayload.period_balance_reconciliation || reconciliationPayload.reconciliation || {};
   const rows = Array.isArray(reconciliation.by_channel_currency) ? reconciliation.by_channel_currency : [];
   const summary = reconciliation.summary || {};
@@ -31,6 +39,11 @@ export function buildPeriodReconciliationDiagnosis({ reconciliationPayload = {},
     balance_template_rows: buildBalanceTemplateRows(actionableRows, reconciliation.period || reconciliationPayload.period || {}),
     paypal_manual_confirmations: buildPayPalManualConfirmations(actionableRows),
     historical_wise_diagnostic: buildHistoricalWiseDiagnostic(auditSnapshot),
+    top_mismatch_diagnostics: buildTopMismatchDiagnostics({
+      auditSnapshot,
+      dashboardData,
+      reconciliationRows: rows,
+    }),
     invariants: [
       "Do not invent balances.",
       "Do not copy PayPal gross into amount_net without manual net/fee confirmation.",
@@ -107,6 +120,143 @@ function buildHistoricalWiseDiagnostic(auditSnapshot) {
   };
 }
 
+function buildTopMismatchDiagnostics({ auditSnapshot = null, dashboardData = null, reconciliationRows = [] } = {}) {
+  const dailyRows = Array.isArray(auditSnapshot?.daily_balances?.rows) ? auditSnapshot.daily_balances.rows : [];
+  const coverageRows = Array.isArray(auditSnapshot?.balance_coverage?.accounts) ? auditSnapshot.balance_coverage.accounts : [];
+  const manual = dashboardData?.data?.manual || dashboardData?.manual || {};
+  const operations = Array.isArray(manual.operations) ? manual.operations : [];
+  const balanceRows = [
+    ...tagBalanceRows(manual.balanceRows || manual.balances || [], "manual"),
+    ...tagBalanceRows(manual.autoBalances || manual.auto_balance_rows || [], "provider_auto"),
+  ];
+
+  return TOP_MISMATCH_TARGETS.map((target) => {
+    const daily = findTargetRow(dailyRows, target) || findTargetRow(coverageRows, target) || {};
+    const reconciliation = findReconciliationRow(reconciliationRows, target) || {};
+    const contributingRows = findLedgerRows(operations, target);
+    const manualFacts = findBalanceRows(balanceRows, target, "manual");
+    const providerFacts = findBalanceRows(balanceRows, target, "provider_auto");
+    const openingBalance = findOpeningBalance(balanceRows, target);
+    const factualClosing = providerFacts[0] || manualFacts[0] || null;
+    const computedClosing = firstValue(daily.closing_balance, daily.computed_closing_balance, reconciliation.computed_real_closing_balance);
+    const inflow = firstValue(daily.inflow, reconciliation.inflow);
+    const outflow = firstValue(daily.outflow, reconciliation.outflow);
+    const difference = firstValue(daily.difference, daily.real_difference, reconciliation.real_difference, target.reported_difference);
+
+    return {
+      date: target.date,
+      channel: target.channel,
+      currency: target.currency,
+      reported_difference: target.reported_difference,
+      evidence_status: classifyEvidenceStatus({ target, daily, reconciliation, manualFacts, providerFacts, contributingRows }),
+      ledger_contributing_rows: contributingRows,
+      amount_net_signs: contributingRows.map((row) => ({
+        sheet_row: row.sheet_row,
+        raw_source_id: row.raw_source_id,
+        amount_net: row.amount_net,
+        balance_amount: row.balance_amount,
+        sign: row.balance_amount > 0 ? "positive" : row.balance_amount < 0 ? "negative" : "zero_or_missing",
+      })),
+      ostatki_rows: manualFacts,
+      auto_ostatki_rows: providerFacts,
+      provider_balance_rows: providerFacts,
+      opening_balance: openingBalance ? openingBalance.amount : firstValue(daily.opening_balance, reconciliation.opening_balance),
+      opening_balance_source: openingBalance ? openingBalance.source : (daily.opening_balance_source || null),
+      inflow: inflow ?? null,
+      outflow: outflow ?? null,
+      computed_closing: computedClosing ?? null,
+      expected_closing_hint: computedClosing ?? null,
+      factual_closing: factualClosing ? factualClosing.amount : firstValue(daily.provider_reported_balance, reconciliation.factual_closing_balance),
+      factual_closing_source: factualClosing ? factualClosing.source : (daily.provider_reported_balance_source || daily.balance_source || null),
+      difference: difference ?? null,
+      safe_to_apply: false,
+    };
+  });
+}
+
+function tagBalanceRows(rows = [], fallbackSource) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    ...row,
+    source: normalizeBalanceSource(row, fallbackSource),
+  }));
+}
+
+function findTargetRow(rows = [], target) {
+  return (rows || []).find((row) =>
+    row?.date === target.date &&
+      normalize(row?.channel) === normalize(target.channel) &&
+      String(row?.currency || "").trim().toUpperCase() === target.currency
+  ) || null;
+}
+
+function findReconciliationRow(rows = [], target) {
+  return (rows || []).find((row) =>
+    normalize(row?.channel) === normalize(target.channel) &&
+      String(row?.currency || "").trim().toUpperCase() === target.currency
+  ) || null;
+}
+
+function findLedgerRows(operations = [], target) {
+  return (operations || [])
+    .filter((row) => normalizeDate(row?.date || row?.ledgerV2?.date) === target.date)
+    .filter((row) => String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase() === target.currency)
+    .filter((row) => normalize(getMovementChannel(row)) === normalize(target.channel))
+    .map((row) => {
+      const ledger = row?.ledgerV2 || {};
+      return {
+        sheet_row: row.sheetRowNumber || row.sheet_row || null,
+        date: normalizeDate(row.date || ledger.date),
+        operation: ledger.operation || row.operation || "",
+        from_channel: ledger.from_channel || row.fromChannel || "",
+        to_channel: ledger.to_channel || row.toChannel || "",
+        source: ledger.source || row.source || "",
+        raw_source_id: ledger.raw_source_id || row.rawSourceId || row.raw_source_id || ledger.external_id || row.externalId || row.external_id || "",
+        amount_gross: parseAmount(ledger.amount_gross ?? row.amountGross ?? row.amount_gross),
+        amount_fee: parseAmount(ledger.amount_fee ?? row.amountFee ?? row.amount_fee),
+        amount_net: parseAmount(ledger.amount_net ?? row.amountNet ?? row.amount_net),
+        balance_amount: parseAmount(ledger.balance_amount ?? row.balanceAmount),
+      };
+    });
+}
+
+function findBalanceRows(rows = [], target, source) {
+  return (rows || [])
+    .filter((row) => row.source === source)
+    .filter((row) => normalizeDate(row.date) === target.date)
+    .filter((row) => normalize(row.channel || row.accountName || row.account) === normalize(target.channel))
+    .filter((row) => String(row.currency || "").trim().toUpperCase() === target.currency)
+    .map(formatBalanceRow);
+}
+
+function findOpeningBalance(rows = [], target) {
+  return (rows || [])
+    .filter((row) => normalizeDate(row.date) < target.date)
+    .filter((row) => normalize(row.channel || row.accountName || row.account) === normalize(target.channel))
+    .filter((row) => String(row.currency || "").trim().toUpperCase() === target.currency)
+    .sort((left, right) => normalizeDate(left.date).localeCompare(normalizeDate(right.date)))
+    .map(formatBalanceRow)
+    .at(-1) || null;
+}
+
+function formatBalanceRow(row = {}) {
+  return {
+    date: normalizeDate(row.date),
+    channel: row.channel || row.accountName || row.account || "",
+    currency: String(row.currency || "").trim().toUpperCase(),
+    amount: parseAmount(row.balanceAmount ?? row.amount),
+    source: row.source || "manual",
+    source_sheet: row.sourceSheet || "",
+  };
+}
+
+function classifyEvidenceStatus({ target, daily = {}, reconciliation = {}, manualFacts = [], providerFacts = [], contributingRows = [] }) {
+  if (/paypal|пейпал/i.test(target.channel) && contributingRows.some((row) => row.amount_net === null)) return "needs_verification";
+  if (providerFacts.length || daily.provider_reported_balance_source === "provider_auto" || daily.balance_source === "provider_auto") return "provider_confirmed";
+  if (manualFacts.length || daily.provider_reported_balance !== undefined || reconciliation.factual_closing_balance !== undefined) return "manual_confirmed";
+  if (daily.status === "needs_verification" || reconciliation.status === "needs_verification") return "needs_verification";
+  return "missing_fact";
+}
+
 function pickReconciliationRow(row = {}) {
   return {
     channel: row.channel || "",
@@ -135,6 +285,39 @@ function previousDate(date) {
   if (Number.isNaN(parsed.getTime())) return "";
   parsed.setUTCDate(parsed.getUTCDate() - 1);
   return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeDate(value) {
+  const raw = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function getMovementChannel(row = {}) {
+  const ledger = row.ledgerV2 || {};
+  const balanceAmount = parseAmount(ledger.balance_amount ?? row.balanceAmount);
+  const operation = String(ledger.operation || row.operation || "").trim();
+  if (operation === "expense" || balanceAmount < 0) return ledger.from_channel || row.fromChannel || "";
+  return ledger.to_channel || row.toChannel || ledger.from_channel || row.fromChannel || "";
+}
+
+function normalizeBalanceSource(row = {}, fallback = "manual") {
+  const marker = [row.source, row.fact_source, row.provider, row.sourceSheet]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+  if (/provider_auto|auto snapshot|авто|wise|paypal|monobank|binance|privat|yoomoney/.test(marker)) return "provider_auto";
+  return fallback;
+}
+
+function parseAmount(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.+-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== undefined && value !== null);
 }
 
 function parseArgs(argv = []) {
@@ -177,7 +360,8 @@ export async function main(argv = process.argv.slice(2)) {
   const params = { from: args.from, to: args.to };
   const reconciliationPayload = await fetchJson(buildUrl(args.baseUrl, "/api", { action: "periodBalanceReconciliation", ...params }));
   const auditSnapshot = await fetchJson(buildUrl(args.baseUrl, "/api/audit-snapshot", params)).catch(() => null);
-  const diagnosis = buildPeriodReconciliationDiagnosis({ reconciliationPayload, auditSnapshot });
+  const dashboardData = await fetchJson(buildUrl(args.baseUrl, "/api", { action: "getDashboardData", ...params })).catch(() => null);
+  const diagnosis = buildPeriodReconciliationDiagnosis({ reconciliationPayload, auditSnapshot, dashboardData });
   if (args.json) console.log(JSON.stringify(diagnosis, null, 2));
   else {
     console.log(`Period ${diagnosis.period.from || ""}..${diagnosis.period.to || ""}: ${diagnosis.summary.status}`);

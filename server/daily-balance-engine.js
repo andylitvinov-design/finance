@@ -13,21 +13,24 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = []) {
 
   for (const movement of movements.rows) {
     const opening = findOpeningBalance(movement, balanceIndex, movements.byKey);
-    const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
+    const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
+    const providerReported = providerSnapshot?.amount ?? null;
     const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`);
-    const closing = opening === null ? null : round(opening + movement.net_change);
+    const closing = opening === null ? null : round(opening.amount + movement.net_change);
     const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
 
     rows.push({
       date: movement.date,
       channel: movement.channel,
       currency: movement.currency,
-      opening_balance: opening === null ? null : round(opening),
+      opening_balance: opening === null ? null : round(opening.amount),
+      opening_balance_source: opening?.source || null,
       inflow: round(movement.inflow),
       outflow: round(movement.outflow),
       net_change: round(movement.net_change),
       closing_balance: closing,
       provider_reported_balance: providerReported === null ? null : round(providerReported),
+      provider_reported_balance_source: providerSnapshot?.source || null,
       difference,
       status: resolveStatus({
         needsVerification,
@@ -126,7 +129,7 @@ function buildBalanceIndex(balanceRows) {
     }
 
     const key = makeKey(channel, currency);
-    const normalized = { date, channel, currency, key, amount };
+    const normalized = { date, channel, currency, key, amount, source: normalizeBalanceSource(row) };
     byDateKey.set(`${date}|${key}`, normalized);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(normalized);
@@ -149,7 +152,22 @@ function findOpeningBalance(movement, balanceIndex, movementRowsByKey) {
     .filter((row) => row.date > openingSnapshot.date && row.date < movement.date)
     .reduce((sum, row) => sum + row.net_change, 0);
 
-  return round(openingSnapshot.amount + movementSinceSnapshot);
+  return {
+    amount: round(openingSnapshot.amount + movementSinceSnapshot),
+    source: openingSnapshot.source,
+  };
+}
+
+function normalizeBalanceSource(row = {}) {
+  const marker = [
+    row.fact_source,
+    row.source,
+    row.provider,
+    row.sourceSheet,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/provider_auto|auto snapshot|авто|wise|paypal|monobank|binance|privat|yoomoney/.test(marker)) return "provider_auto";
+  if (/manual_fact|manual|остатки|fact/.test(marker)) return "manual";
+  return "manual";
 }
 
 function resolveStatus({ needsVerification, opening, providerReported, difference }) {

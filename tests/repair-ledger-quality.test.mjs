@@ -620,7 +620,7 @@ test("Авто Остатки remains fallback only for missing provider balance
   assert.equal(report.missingBalances.summary.detected, 0);
 });
 
-test("missing balance report emits amount_hint but no factual write without source", () => {
+test("missing balance report emits expected_closing_hint but no factual write without source", () => {
   const rows = buildMissingBalancesReport({
     operations: [
       operation({
@@ -642,9 +642,9 @@ test("missing balance report emits amount_hint but no factual write without sour
 
   assert.equal(rows.summary.detected, 1);
   assert.equal(rows.rows[0].status, "missing_provider_balance");
-  assert.equal(rows.rows[0].amount_hint, 1206);
+  assert.equal(rows.rows[0].expected_closing_hint, 1206);
   assert.equal(rows.rows[0].after, null);
-  assert.match(rows.rows[0].manual_action, /amount_hint=1206/);
+  assert.match(rows.rows[0].manual_action, /expected_closing_hint=1206/);
 });
 
 test("balance correction dry-run proves Wise negative card sign fix without mutating", () => {
