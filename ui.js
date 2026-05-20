@@ -2164,6 +2164,14 @@ function buildLocalTodayIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+const EXPENSE_SCREENSHOT_MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;
+
+function isSupportedExpenseScreenshotImageFile(file) {
+  const type = String(file?.type || "").trim().toLowerCase();
+  const name = String(file?.name || "").trim().toLowerCase();
+  return /^image\/(png|jpeg|webp)$/.test(type) || /\.(png|jpe?g|webp)$/.test(name);
+}
+
 async function parseExpenseScreenshotFiles(files) {
   if (!files.length) {
     setExpenseAccountingStatus("Выберите один или несколько скриншотов.", true);
@@ -3798,27 +3806,38 @@ function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
   }
   const entries = [];
   let currentDate = "";
+  let currentContext = "";
   lines.forEach((line) => {
     const date = extractExpenseOcrDate(line);
-    if (date) currentDate = date;
+    if (date) {
+      currentDate = date;
+      currentContext = "";
+      return;
+    }
     const amountInfo = extractExpenseOcrAmount(line);
-    if (!amountInfo) return;
+    if (!amountInfo) {
+      if (!isExpenseOcrNoiseLine(line)) currentContext = cleanupExpenseOcrOrganization(line) || currentContext;
+      return;
+    }
+    const cardText = [currentContext, line].filter(Boolean).join(" ");
+    const counterparty = cleanupExpenseOcrOrganization(cardText);
     entries.push(normalizeExpenseAccountingEntry({
       date: currentDate || fallbackDate,
       dateSource: currentDate ? "screenshot" : "upload_fallback",
       uploadedAtDate: fallbackDate,
-      channel: inferExpenseOcrChannel(line, rawText),
-      direction: inferExpenseOcrDirection(line),
+      channel: inferExpenseOcrChannel(cardText, rawText),
+      direction: inferExpenseOcrDirection(cardText),
       localAmount: amountInfo.amount,
       currency: amountInfo.currency,
       usdAmount: null,
-      suggestedCategory: inferExpenseOcrCategory(line),
-      organization: cleanupExpenseOcrOrganization(line),
-      counterparty: cleanupExpenseOcrOrganization(line),
+      suggestedCategory: inferExpenseOcrCategory(cardText),
+      organization: counterparty,
+      counterparty,
       confidence: 0.45,
       source: "browser_ocr",
       sourceImageIndex
     }, entries.length));
+    currentContext = "";
   });
   if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no amount rows were recognized.`);
   return { entries, warnings };
@@ -3919,20 +3938,53 @@ function extractExpenseOcrDate(line) {
     return year ? `${year}-${months[monthDate[2]]}-${String(monthDate[1]).padStart(2, "0")}` : "";
   }
   const dotted = raw.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](20\d{2}))?\b/);
-  if (!dotted) return "";
-  const year = dotted[3] || String(elements.endDate.value || "").slice(0, 4);
-  return year ? `${year}-${String(dotted[2]).padStart(2, "0")}-${String(dotted[1]).padStart(2, "0")}` : "";
+  if (dotted) {
+    const year = dotted[3] || getExpenseOcrPeriodYear();
+    return year ? `${year}-${String(dotted[2]).padStart(2, "0")}-${String(dotted[1]).padStart(2, "0")}` : "";
+  }
+  const monthName = raw.match(/(?:^|\s)(?:пн|вт|ср|чт|пт|сб|нд|вс|mon|tue|wed|thu|fri|sat|sun)?[,]?\s*(\d{1,2})\s+(січня|января|лютого|февраля|березня|марта|квітня|апреля|травня|мая|червня|июня|липня|июля|серпня|августа|вересня|сентября|жовтня|октября|листопада|ноября|грудня|декабря)(?:\s|$)/i);
+  if (!monthName) return "";
+  const month = getExpenseOcrMonthNumber(monthName[2]);
+  const year = getExpenseOcrPeriodYear();
+  return year && month ? `${year}-${String(month).padStart(2, "0")}-${String(monthName[1]).padStart(2, "0")}` : "";
+}
+
+function getExpenseOcrPeriodYear() {
+  return String(elements?.endDate?.value || elements?.startDate?.value || "").slice(0, 4);
+}
+
+function getExpenseOcrMonthNumber(value) {
+  const normalized = normalizeLookupText(value);
+  if (/січ|январ/.test(normalized)) return 1;
+  if (/лют|феврал/.test(normalized)) return 2;
+  if (/берез|март/.test(normalized)) return 3;
+  if (/квіт|апрел/.test(normalized)) return 4;
+  if (/трав|мая/.test(normalized)) return 5;
+  if (/черв|июн/.test(normalized)) return 6;
+  if (/лип|июл/.test(normalized)) return 7;
+  if (/серп|август/.test(normalized)) return 8;
+  if (/верес|сентябр/.test(normalized)) return 9;
+  if (/жовт|октябр/.test(normalized)) return 10;
+  if (/листоп|ноябр/.test(normalized)) return 11;
+  if (/груд|декабр/.test(normalized)) return 12;
+  return 0;
 }
 
 function extractExpenseOcrAmount(line) {
   const normalizedLine = String(line || "").replace(/\s+/g, " ").trim();
   const matches = Array.from(normalizedLine.matchAll(/([+-]?\s?\d[\d\s.,]*)(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/ig));
   if (!matches.length) return null;
-  const filtered = matches.filter((match) => {
+  const signedOrCurrencyMatches = matches.filter((match) => /[+-]/.test(match[1]) || Boolean(match[2]));
+  if (!signedOrCurrencyMatches.length) return null;
+  const filtered = signedOrCurrencyMatches.filter((match) => {
     const around = normalizedLine.slice(Math.max(0, match.index - 20), Math.min(normalizedLine.length, match.index + match[0].length + 20)).toLowerCase();
-    return !/balance|available|остат|комисс|fee|итог|total/.test(around);
+    return !/balance|available|остат|залиш|баланс|карта|card|комисс|fee|итог|total/.test(around);
   });
-  const candidates = filtered.length ? filtered : matches;
+  if (!filtered.length && signedOrCurrencyMatches.some((match) => {
+    const around = normalizedLine.slice(Math.max(0, match.index - 20), Math.min(normalizedLine.length, match.index + match[0].length + 20)).toLowerCase();
+    return /balance|available|остат|залиш|баланс|карта|card/.test(around);
+  })) return null;
+  const candidates = filtered.length ? filtered : signedOrCurrencyMatches;
   const chosen = candidates.find((match) => /[+-]/.test(match[1])) || candidates[candidates.length - 1];
   const amount = Math.abs(parseLooseNumber(chosen?.[1]));
   if (!amount) return null;
@@ -3962,11 +4014,16 @@ function inferExpenseOcrChannel(line, fullText = "") {
   if (currency === "RUB" && !hasYooMoneyExpenseOcrMarker(`${line}\n${fullText}`)) {
     return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) !== "RUB") || getManualFinanceChannels()[0];
   }
+  if (/privat\s*24|privatbank|приват\s*24|приватбанк/.test(normalized) && currency === "UAH") {
+    const privatChannel = getManualFinanceChannels().find((channel) => /приват|privat/.test(normalizeLookupText(channel)) && inferManualFinanceChannelCurrency(channel) === "UAH");
+    if (privatChannel) return privatChannel;
+  }
   return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) === currency) || getManualFinanceChannels()[0];
 }
 
 function inferExpenseOcrCategory(line) {
   const normalized = normalizeLookupText(line);
+  if (inferExpenseOcrDirection(line) === "income") return "serviceIncome";
   if (/курс|обуч|учеб|school|course|study/.test(normalized)) return "study";
   if (/еда|food|продукт|кафе|coffee|restaurant|маркет/.test(normalized)) return "food";
   if (/кварт|аренд|rent|flat|house|дом/.test(normalized)) return "flat";
@@ -3975,44 +4032,133 @@ function inferExpenseOcrCategory(line) {
   return "business";
 }
 
+function isExpenseOcrNoiseLine(line) {
+  return /balance|available|остат|залиш|баланс|карта|card|рахунок|счет/i.test(String(line || ""));
+}
+
 function cleanupExpenseOcrOrganization(line) {
   return String(line || "")
+    .replace(/\b(?:пн|вт|ср|чт|пт|сб|нд|вс|mon|tue|wed|thu|fri|sat|sun)?[,]?\s*\d{1,2}\s+(січня|января|лютого|февраля|березня|марта|квітня|апреля|травня|мая|червня|июня|липня|июля|серпня|августа|вересня|сентября|жовтня|октября|листопада|ноября|грудня|декабря)\b/ig, "")
     .replace(/\b(20\d{2}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[./-]\d{1,2}(?:[./-]20\d{2})?)\b/g, "")
+    .replace(/privat\s*24|privatbank|приват\s*24|приватбанк/ig, "")
     .replace(/[+-]?\s?\d[\d\s.,]*(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/ig, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 140);
 }
 
-function prepareExpenseScreenshotImage(file) {
+function createExpenseScreenshotImageError(file, stage, message) {
+  const error = new Error(message);
+  error.fileName = file?.name || "скриншот";
+  error.stage = stage;
+  return error;
+}
+
+function getExpenseScreenshotMimeType(file) {
+  const type = String(file?.type || "").trim().toLowerCase();
+  if (/^image\/(png|jpeg|webp)$/.test(type)) return type;
+  const name = String(file?.name || "").trim().toLowerCase();
+  if (/\.png$/.test(name)) return "image/png";
+  if (/\.webp$/.test(name)) return "image/webp";
+  if (/\.jpe?g$/.test(name)) return "image/jpeg";
+  return "";
+}
+
+function isValidExpenseScreenshotDataUrl(dataUrl) {
+  return /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(String(dataUrl || ""))
+    && String(dataUrl || "").length <= EXPENSE_SCREENSHOT_MAX_DATA_URL_LENGTH;
+}
+
+function normalizeExpenseScreenshotDataUrlMime(dataUrl, file) {
+  const raw = String(dataUrl || "");
+  if (isValidExpenseScreenshotDataUrl(raw)) return raw;
+  const mimeType = getExpenseScreenshotMimeType(file);
+  if (!mimeType) return raw;
+  return raw.replace(/^data:[^;,]+;base64,/i, `data:${mimeType};base64,`);
+}
+
+function readExpenseScreenshotAsDataUrl(file) {
   return new Promise((resolve, reject) => {
-    if (!/^image\/(png|jpeg|webp)$/i.test(file.type || "")) {
-      reject(new Error(`Файл ${file.name || ""} должен быть PNG, JPEG или WEBP.`));
-      return;
-    }
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Не удалось прочитать ${file.name || "скриншот"}.`));
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = () => reject(new Error(`Не удалось открыть ${file.name || "скриншот"}.`));
-      image.onload = () => {
+    reader.onerror = () => reject(createExpenseScreenshotImageError(file, "read", `Не удалось прочитать ${file.name || "скриншот"} на этапе read.`));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readExpenseScreenshotAsObjectUrl(file) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const blob = new Blob([buffer], { type: getExpenseScreenshotMimeType(file) || "image/jpeg" });
+    return URL.createObjectURL(blob);
+  } catch {
+    throw createExpenseScreenshotImageError(file, "read", `Не удалось прочитать ${file.name || "скриншот"} на этапе read.`);
+  }
+}
+
+function resizeExpenseScreenshotImage(source, file, originalDataUrl = "") {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => {
+      if (isValidExpenseScreenshotDataUrl(originalDataUrl)) {
+        resolve(originalDataUrl);
+        return;
+      }
+      reject(createExpenseScreenshotImageError(file, "decode", `Не удалось открыть ${file.name || "скриншот"} на этапе decode.`));
+    };
+    image.onload = () => {
+      try {
         const maxSide = 1600;
         const scale = Math.min(1, maxSide / Math.max(image.width || maxSide, image.height || maxSide));
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round((image.width || maxSide) * scale));
         canvas.height = Math.max(1, Math.round((image.height || maxSide) * scale));
         const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas 2D context unavailable.");
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve({
-          name: file.name || "screenshot",
-          dataUrl: canvas.toDataURL("image/jpeg", 0.82),
-          uploadedAtDate: buildLocalTodayIsoDate()
-        });
-      };
-      image.src = String(reader.result || "");
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+        if (!isValidExpenseScreenshotDataUrl(dataUrl)) throw new Error("Canvas returned an invalid data URL.");
+        resolve(dataUrl);
+      } catch {
+        if (isValidExpenseScreenshotDataUrl(originalDataUrl)) {
+          resolve(originalDataUrl);
+          return;
+        }
+        reject(createExpenseScreenshotImageError(file, "resize", `Не удалось подготовить ${file.name || "скриншот"} на этапе resize.`));
+      }
     };
-    reader.readAsDataURL(file);
+    image.src = source;
   });
+}
+
+async function prepareExpenseScreenshotImage(file) {
+  if (!isSupportedExpenseScreenshotImageFile(file)) {
+    throw createExpenseScreenshotImageError(file, "validate", `Файл ${file?.name || ""} должен быть PNG, JPEG или WEBP.`);
+  }
+  let dataUrl = "";
+  let objectUrl = "";
+  try {
+    try {
+      dataUrl = normalizeExpenseScreenshotDataUrlMime(await readExpenseScreenshotAsDataUrl(file), file);
+      const resized = await resizeExpenseScreenshotImage(dataUrl, file, dataUrl);
+      return {
+        name: file.name || "screenshot",
+        dataUrl: resized,
+        uploadedAtDate: buildLocalTodayIsoDate()
+      };
+    } catch (error) {
+      if (error?.stage !== "read") throw error;
+      objectUrl = await readExpenseScreenshotAsObjectUrl(file);
+      const resized = await resizeExpenseScreenshotImage(objectUrl, file, dataUrl);
+      return {
+        name: file.name || "screenshot",
+        dataUrl: resized,
+        uploadedAtDate: buildLocalTodayIsoDate()
+      };
+    }
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function normalizeExpenseAccountingEntry(entry, index = 0) {
