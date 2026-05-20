@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const ui = require("../period-balance-reconciliation-ui.js");
-const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ НА КОНЕЦ ПЕРИОДА", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"];
+const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА КОНЕЦ ДНЯ 23:59", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ EOD BALANCE", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ EOD", "ФАКТ НА КОНЕЦ ПЕРИОДА 23:59 EOD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"];
 
 test("period balance reconciliation UI wraps Analytics, not expense financial analysis", () => {
   const doc = createTestDocument();
@@ -196,7 +196,7 @@ test("period balance UI clarifies closing fact date source and hides unavailable
 
   const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
 
-  assert.ok(rows[0].includes("ФАКТ НА КОНЕЦ ПЕРИОДА"));
+  assert.ok(rows[0].some((cell) => cell.includes("ФАКТ НА КОНЕЦ ПЕРИОДА") && cell.includes("23:59")));
   assert.ok(rows[0].includes("ФАКТ ДАТА"));
   assert.ok(rows[0].includes("SOURCE ROW"));
   assert.ok(!rows[0].includes("ФАКТ РУЧНОЙ/ПРОВАЙДЕР"));
@@ -296,8 +296,8 @@ test("period balance top summary keeps multi-currency totals separated", () => {
   const rows = getTableTextRows(table);
 
   assert.deepEqual(rows[0], ["Показатель", "EUR", "UAH", "USD"]);
-  assert.deepEqual(rows[1], ["Полная сумма остатков на начало периода", "200", "100", "1000"]);
-  assert.deepEqual(rows[2], ["Полная сумма остатков на конец периода", "240", "70", "1125"]);
+  assert.deepEqual(rows[1], ["Полная сумма остатков на конец дня 23:59 перед/на старт", "200", "100", "1000"]);
+  assert.deepEqual(rows[2], ["Полная сумма EOD balance на конец периода 23:59", "240", "70", "1125"]);
   assert.equal(rows[3][0], "Плановая сумма приходов");
   assert.equal(rows[3][1], "50");
   assert.equal(rows[3][3], "200");

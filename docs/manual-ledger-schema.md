@@ -8,11 +8,14 @@ Legacy tabs are retained for compatibility and historical review:
 
 - `Расходы`: historical wide daily summary, `date | category | channel...`; not a runtime source
 - `Переводы`: compatibility transfer/rate rows
-- `Остатки`: compatibility end-of-day provider/manual balance snapshots by `date | channel | currency`
+- `Остатки`: compatibility end-of-day 23:59 provider/manual balance snapshots by `date | channel | currency`
+- `Авто Остатки`: provider-collected end-of-day 23:59 balance snapshots and provider status rows
 - `Комиссии`: compatibility commission rows
 - UI `fact`: legacy editor that now also writes normalized ledger rows
 
 Analytics and Operations use `Ledger` as the only operations source. If `Ledger` is missing or empty, legacy `Расходы` is ignored and the app should surface a warning instead of migrating or falling back during normal runtime.
+
+Balance snapshots in `Остатки`, `Авто Остатки`, and planned balances represent the end-of-day balance at 23:59 local day for the stated date. Same-day Ledger movements are already included in that snapshot and must not be counted again after the snapshot.
 
 ## Schema
 

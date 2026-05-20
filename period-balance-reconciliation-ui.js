@@ -291,8 +291,8 @@
     const closingTotals = sumPositionFieldByCurrency(byPosition, "factual_closing_balance");
     const currencyTotals = indexRowsByCurrency(byCurrency);
     const rows = [
-      ["Полная сумма остатков на начало периода", (currency) => openingTotals.get(currency)],
-      ["Полная сумма остатков на конец периода", (currency) => closingTotals.get(currency)],
+      ["Полная сумма остатков на конец дня 23:59 перед/на старт", (currency) => openingTotals.get(currency)],
+      ["Полная сумма EOD balance на конец периода 23:59", (currency) => closingTotals.get(currency)],
       ["Плановая сумма приходов", (currency) => currencyTotals.get(currency)?.planned_inflow],
       ["Плановая сумма расходов", (currency) => currencyTotals.get(currency)?.planned_outflow],
       ["Плановый рост", (currency) => currencyTotals.get(currency)?.planned_delta],
@@ -362,7 +362,7 @@
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА НАЧАЛО", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ ОСТАТОК", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ ОСТАТОК", "ФАКТ НА КОНЕЦ ПЕРИОДА", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА КОНЕЦ ДНЯ 23:59", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ EOD BALANCE", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ EOD", "ФАКТ НА КОНЕЦ ПЕРИОДА 23:59 EOD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
   }

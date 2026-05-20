@@ -123,9 +123,10 @@ function buildBalanceIndex(balanceRows) {
   const byDateKey = new Map();
   const incompleteDateKeys = new Set();
 
-  // "Остатки" rows are end-of-day provider/manual balance snapshots by date + channel + currency.
-  // A prior snapshot is used as the next day's opening balance; a same-day snapshot is compared
-  // against the computed closing balance as provider_reported_balance.
+  // Balance snapshots are EOD 23:59. Same-day movements are included in the
+  // snapshot and must not be counted again after that snapshot.
+  // A prior snapshot is used as the next day's opening balance; a same-day
+  // snapshot is compared against computed closing as provider_reported_balance.
   for (const row of balanceRows || []) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
