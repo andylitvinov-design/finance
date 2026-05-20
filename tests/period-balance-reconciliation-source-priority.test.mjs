@@ -269,3 +269,78 @@ test("manual fact still beats same-date blank auto status row", async () => {
   assert.equal(row.factStatus, "confirmed");
   assert.equal(row.sourceSheet, "Остатки");
 });
+
+test("manual period-start opening overrides auto and auto-only fact stays pending", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-03" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [
+        {
+          date: "2026-05-02",
+          toChannel: "трансервайз дол",
+          currency: "USD",
+          amountNet: "50",
+          balanceAmount: 50,
+          ledgerV2: {
+            date: "2026-05-02",
+            operation: "income",
+            to_channel: "трансервайз дол",
+            currency: "USD",
+            amount_net: "50",
+            balance_amount: 50,
+          },
+        },
+        {
+          date: "2026-05-02",
+          toChannel: "трансервайз евро",
+          currency: "EUR",
+          amountNet: "20",
+          balanceAmount: 20,
+          ledgerV2: {
+            date: "2026-05-02",
+            operation: "income",
+            to_channel: "трансервайз евро",
+            currency: "EUR",
+            amount_net: "20",
+            balance_amount: 20,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "трансервайз дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-03", channel: "трансервайз дол", currency: "USD", amount: "150", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-01", provider: "wise", channel: "трансервайз дол", currency: "USD", amount: "999", source: "provider_auto", sourceSheet: "Авто Остатки", status: "ok", sourceRow: 21 },
+        { date: "2026-05-01", provider: "wise", channel: "трансервайз евро", currency: "EUR", amount: "200", source: "provider_auto", sourceSheet: "Авто Остатки", status: "ok", sourceRow: 22 },
+        { date: "2026-05-03", provider: "wise", channel: "трансервайз евро", currency: "EUR", amount: "220", source: "provider_auto", sourceSheet: "Авто Остатки", status: "ok", sourceRow: 23 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const rows = snapshot.period_balance_reconciliation.by_channel_currency;
+  const manualOpening = rows.find((item) => item.channel === "трансервайз дол" && item.currency === "USD");
+  const autoFact = rows.find((item) => item.channel === "трансервайз евро" && item.currency === "EUR");
+
+  assert.equal(manualOpening.status, "ok");
+  assert.equal(manualOpening.opening_balance, 100);
+  assert.equal(manualOpening.opening_balance_date, "2026-05-01");
+  assert.equal(manualOpening.factual_closing_balance, 150);
+  assert.equal(manualOpening.balanceSource, "manual_fact");
+  assert.equal(manualOpening.needsManualConfirmation, false);
+  assert.equal(manualOpening.sourceSheet, "Остатки");
+
+  assert.equal(autoFact.status, "ok");
+  assert.equal(autoFact.opening_balance, 200);
+  assert.equal(autoFact.opening_balance_date, "2026-05-01");
+  assert.equal(autoFact.factual_closing_balance, 220);
+  assert.equal(autoFact.balanceSource, "provider_auto");
+  assert.equal(autoFact.factStatus, "auto_pending");
+  assert.equal(autoFact.needsManualConfirmation, true);
+  assert.equal(autoFact.sourceSheet, "Авто Остатки");
+  assert.equal(autoFact.sourceRow, 23);
+});

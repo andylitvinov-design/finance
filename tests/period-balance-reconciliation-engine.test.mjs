@@ -206,6 +206,139 @@ test("real reconciliation includes movements after the opening snapshot even whe
   assert.equal(row.real_difference, 0);
 });
 
+test("period-start snapshot is opening balance and same-day movement is excluded", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-03" },
+    operations: [
+      {
+        date: "2026-05-01",
+        toChannel: "трансервайз евро",
+        currency: "EUR",
+        amountNet: "200",
+        balanceAmount: 200,
+        ledgerV2: {
+          date: "2026-05-01",
+          operation: "income",
+          to_channel: "трансервайз евро",
+          currency: "EUR",
+          amount_net: "200",
+          balance_amount: 200,
+        },
+      },
+      {
+        date: "2026-05-02",
+        toChannel: "трансервайз евро",
+        currency: "EUR",
+        amountNet: "50",
+        balanceAmount: 50,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "income",
+          to_channel: "трансервайз евро",
+          currency: "EUR",
+          amount_net: "50",
+          balance_amount: 50,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "трансервайз евро", currency: "EUR", amount: "1000" },
+      { date: "2026-05-03", channel: "трансервайз евро", currency: "EUR", amount: "1050" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance, 1000);
+  assert.equal(row.opening_balance_date, "2026-05-01");
+  assert.equal(row.real_delta, 50);
+  assert.equal(row.movement_rows, 1);
+  assert.equal(row.calculated_closing_balance, 1050);
+  assert.equal(row.real_difference, 0);
+});
+
+test("day-after period still uses previous-day snapshot and includes period movement", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-02", to: "2026-05-03" },
+    operations: [
+      {
+        date: "2026-05-01",
+        toChannel: "трансервайз евро",
+        currency: "EUR",
+        amountNet: "200",
+        balanceAmount: 200,
+        ledgerV2: {
+          date: "2026-05-01",
+          operation: "income",
+          to_channel: "трансервайз евро",
+          currency: "EUR",
+          amount_net: "200",
+          balance_amount: 200,
+        },
+      },
+      {
+        date: "2026-05-02",
+        toChannel: "трансервайз евро",
+        currency: "EUR",
+        amountNet: "50",
+        balanceAmount: 50,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "income",
+          to_channel: "трансервайз евро",
+          currency: "EUR",
+          amount_net: "50",
+          balance_amount: 50,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "трансервайз евро", currency: "EUR", amount: "1000" },
+      { date: "2026-05-03", channel: "трансервайз евро", currency: "EUR", amount: "1050" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance, 1000);
+  assert.equal(row.opening_balance_date, "2026-05-01");
+  assert.equal(row.real_delta, 50);
+  assert.equal(row.movement_rows, 1);
+  assert.equal(row.calculated_closing_balance, 1050);
+});
+
+test("missing period-start opening still reports missing opening balance", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-03" },
+    operations: [
+      {
+        date: "2026-05-02",
+        toChannel: "трансервайз евро",
+        currency: "EUR",
+        amountNet: "50",
+        balanceAmount: 50,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "income",
+          to_channel: "трансервайз евро",
+          currency: "EUR",
+          amount_net: "50",
+          balance_amount: 50,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-03", channel: "трансервайз евро", currency: "EUR", amount: "1050" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "missing_opening_balance");
+  assert.equal(row.opening_balance, null);
+  assert.equal(row.opening_balance_date, null);
+  assert.equal(row.computed_status, "missing_opening_balance");
+});
+
 test("empty amount_net makes reconciliation failed", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [income({ amountNet: "", ledgerV2: { amount_net: "" } })], balanceRows: balances("1300") });
   const row = result.by_channel_currency[0];

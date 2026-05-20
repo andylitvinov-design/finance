@@ -79,7 +79,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const [channel, currency] = splitKey(key);
   if (!channel || !currency) return null;
 
-  const openingSnapshot = balanceIndex.findOpening(key, from);
+  const openingSnapshot = balanceIndex.findOpening(key, { from, to });
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
   const nearestManualProviderFact = balanceIndex.findNearest(key, to);
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
@@ -364,6 +364,7 @@ function getMovementWindowStart(openingDate, from) {
   if (!openingDate) return from;
   const afterOpening = addDays(openingDate, 1);
   if (!from) return afterOpening;
+  if (openingDate === from) return afterOpening;
   return afterOpening && afterOpening < from ? afterOpening : from;
 }
 
@@ -494,10 +495,11 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
   for (const rows of statusByKey.values()) rows.sort((left, right) => left.date.localeCompare(right.date));
 
   return {
-    findOpening(key, from) {
+    findOpening(key, { from, to } = {}) {
       const rows = byKey.get(key) || [];
       if (!from) return rows[0] || null;
-      return rows.filter((row) => row.date < from).at(-1) || null;
+      if (from && to && from === to) return rows.filter((row) => row.date < from).at(-1) || null;
+      return rows.filter((row) => row.date <= from).at(-1) || null;
     },
     findClosing(key, { from, to }) {
       const rows = byKey.get(key) || [];
