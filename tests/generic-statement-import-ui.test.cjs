@@ -199,6 +199,23 @@ test("generic PayPal CSV does not treat Gross as a saveable amount when Net is m
   assert.match(result.entries[0].rawMetadata, /PayPal net missing; gross used for review only/);
 });
 
+test("generic signed amount-only CSV preserves sign as direction and ignores balance", () => {
+  const context = buildGenericImportContext();
+  const result = plain(context.parseGenericStatementCsv([
+    "Date,Description,Amount,Currency,Balance",
+    "2026-04-11,Refund,+55.60,EUR,2400.00",
+    "2026-04-12,Payment,-12.34,EUR,2387.66"
+  ].join("\n"), {
+    source: "csv_import",
+    fileName: "generic-statement.csv",
+    normalizedFileName: "generic-statement"
+  }));
+
+  assert.deepEqual(result.entries.map((entry) => entry.direction), ["income", "expense"]);
+  assert.deepEqual(result.entries.map((entry) => entry.localAmount), [55.6, 12.34]);
+  assert.equal(result.entries.some((entry) => entry.localAmount === 2400 || entry.localAmount === 2387.66), false);
+});
+
 test("generic Privat and YooMoney statements map only provider-specific currency channels", () => {
   const context = buildGenericImportContext();
   const privat = plain(context.parseGenericStatementCsv([
