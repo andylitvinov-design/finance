@@ -106,6 +106,7 @@
     "td_bank",
     "wise",
     "yoomoney",
+    "revolut",
     "google_sheets",
     "migration",
     "ocr",
@@ -253,6 +254,10 @@
     privatbank: "privatbank",
     tdbank: "td_bank",
     td_bank: "td_bank",
+    revolut: "revolut",
+    "револют": "revolut",
+    revolut_usd: "revolut",
+    revolut_dol: "revolut",
     fact: "fact",
     manual: "manual",
     google_sheets: "google_sheets",
@@ -308,7 +313,7 @@
       "трансервайз евро",
       "трансервайз евр"
     ],
-    "REVOLUT дол": ["revolut", "revolut usd", "револют", "револют дол"],
+    "REVOLUT дол": ["revolut", "revolut usd", "revolut_usd", "revolut dol", "револют", "револют дол"],
     "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
     "Payoneer - dol": ["payoneer usd", "payoneer dol", "payoneer - dol"],
     "Бинанс spot": [

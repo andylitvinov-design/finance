@@ -25,6 +25,10 @@
       "destination": "/api/index?action=payoneerTransactions"
     },
     {
+      "source": "/api/revolut-transactions",
+      "destination": "/api/index?action=revolutTransactions"
+    },
+    {
       "source": "/api/paypal-manual-balance",
       "destination": "/api/index?action=paypalManualBalance"
     },

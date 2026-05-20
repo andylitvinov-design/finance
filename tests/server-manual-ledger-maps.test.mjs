@@ -12,3 +12,11 @@ test("server manual ledger maps preserve generic import sources", () => {
     assert.equal(resolveManualLedgerSource("", `${source}:statement:row-1`, "other"), source);
   }
 });
+
+test("server manual ledger maps normalize Revolut source aliases", () => {
+  assert.equal(normalizeManualLedgerSource("revolut"), "revolut");
+  assert.equal(normalizeManualLedgerSource("револют"), "revolut");
+  assert.equal(normalizeManualLedgerSource("revolut_usd"), "revolut");
+  assert.equal(normalizeManualLedgerSource("revolut dol"), "revolut");
+  assert.equal(resolveManualLedgerSource("", "revolut:abc123", "other"), "revolut");
+});
