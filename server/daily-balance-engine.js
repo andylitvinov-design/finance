@@ -11,32 +11,45 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = []) {
   const balanceIndex = buildBalanceIndex(balanceRows);
   const rows = [];
 
-  for (const movement of movements.rows) {
-    const opening = findOpeningBalance(movement, balanceIndex, movements.byKey);
-    const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
-    const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`);
-    const closing = opening === null ? null : round(opening + movement.net_change);
-    const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
-
-    rows.push({
-      date: movement.date,
-      channel: movement.channel,
-      currency: movement.currency,
-      opening_balance: opening === null ? null : round(opening),
-      inflow: round(movement.inflow),
-      outflow: round(movement.outflow),
-      net_change: round(movement.net_change),
-      closing_balance: closing,
-      provider_reported_balance: providerReported === null ? null : round(providerReported),
-      difference,
-      status: resolveStatus({
+  for (const movementRows of movements.byKey.values()) {
+    let carriedOpening = null;
+    for (const movement of movementRows) {
+      const opening = carriedOpening === null
+        ? findOpeningBalance(movement, balanceIndex)
+        : carriedOpening;
+      const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
+      const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`);
+      const closing = opening === null ? null : round(opening + movement.net_change);
+      const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
+      const status = resolveStatus({
         needsVerification,
         opening,
         providerReported,
         difference,
-      }),
-    });
+      });
+
+      rows.push({
+        date: movement.date,
+        channel: movement.channel,
+        currency: movement.currency,
+        opening_balance: opening === null ? null : round(opening),
+        inflow: round(movement.inflow),
+        outflow: round(movement.outflow),
+        net_change: round(movement.net_change),
+        closing_balance: closing,
+        provider_reported_balance: providerReported === null ? null : round(providerReported),
+        difference,
+        status,
+      });
+
+      const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
+      carriedOpening = shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot })
+        ? closing
+        : providerReported ?? closing;
+    }
   }
+
+  rows.sort(compareMovementRows);
 
   const status_counts = buildStatusCounts(rows);
 
@@ -126,7 +139,16 @@ function buildBalanceIndex(balanceRows) {
     }
 
     const key = makeKey(channel, currency);
-    const normalized = { date, channel, currency, key, amount };
+    const normalized = {
+      date,
+      channel,
+      currency,
+      key,
+      amount,
+      source: String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim(),
+      sourceSheet: String(row?.sourceSheet || row?.source_sheet || "").trim(),
+      comment: String(row?.comment || "").trim(),
+    };
     byDateKey.set(`${date}|${key}`, normalized);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(normalized);
@@ -139,17 +161,26 @@ function buildBalanceIndex(balanceRows) {
   return { byKey, byDateKey, incompleteDateKeys };
 }
 
-function findOpeningBalance(movement, balanceIndex, movementRowsByKey) {
+function findOpeningBalance(movement, balanceIndex) {
   const snapshots = balanceIndex.byKey.get(movement.key) || [];
   const openingSnapshot = snapshots.filter((row) => row.date < movement.date).at(-1);
   if (!openingSnapshot) return null;
+  return round(openingSnapshot.amount);
+}
 
-  const priorMovements = movementRowsByKey.get(movement.key) || [];
-  const movementSinceSnapshot = priorMovements
-    .filter((row) => row.date > openingSnapshot.date && row.date < movement.date)
-    .reduce((sum, row) => sum + row.net_change, 0);
+function shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot }) {
+  if (closing === null) return false;
+  if (status !== STATUS.MISMATCH || providerReported === null) return true;
+  return isProviderAutoSnapshot(providerSnapshot);
+}
 
-  return round(openingSnapshot.amount + movementSinceSnapshot);
+function isProviderAutoSnapshot(row) {
+  const text = [
+    row?.source,
+    row?.sourceSheet,
+    row?.comment,
+  ].map((value) => String(value || "").trim().toLowerCase()).join(" ");
+  return /provider_auto|авто остатки|wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(text);
 }
 
 function resolveStatus({ needsVerification, opening, providerReported, difference }) {

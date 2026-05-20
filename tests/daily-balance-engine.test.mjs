@@ -179,6 +179,94 @@ test("provider reported balance mismatch returns mismatch status and difference"
   assert.equal(result.summary.mismatch_rows, 1);
 });
 
+test("mismatched provider snapshot does not become next opening anchor", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-09",
+        operation: "expense",
+        fromChannel: "wise usd",
+        toChannel: "",
+        amountNet: "137.96",
+        balanceAmount: -137.96,
+        ledgerV2: {
+          date: "2026-05-09",
+          operation: "expense",
+          from_channel: "wise usd",
+          to_channel: "",
+          currency: "USD",
+          amount_net: "137.96",
+          balance_amount: -137.96,
+        },
+      }),
+      operation({
+        date: "2026-05-10",
+        operation: "expense",
+        fromChannel: "wise usd",
+        toChannel: "",
+        amountNet: "167.01",
+        balanceAmount: -167.01,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "expense",
+          from_channel: "wise usd",
+          to_channel: "",
+          currency: "USD",
+          amount_net: "167.01",
+          balance_amount: -167.01,
+        },
+      }),
+      operation({
+        date: "2026-05-11",
+        operation: "expense",
+        fromChannel: "wise usd",
+        toChannel: "",
+        amountNet: "35.13",
+        balanceAmount: -35.13,
+        ledgerV2: {
+          date: "2026-05-11",
+          operation: "expense",
+          from_channel: "wise usd",
+          to_channel: "",
+          currency: "USD",
+          amount_net: "35.13",
+          balance_amount: -35.13,
+        },
+      }),
+      operation({
+        date: "2026-05-12",
+        operation: "expense",
+        fromChannel: "wise usd",
+        toChannel: "",
+        amountNet: "52.94",
+        balanceAmount: -52.94,
+        ledgerV2: {
+          date: "2026-05-12",
+          operation: "expense",
+          from_channel: "wise usd",
+          to_channel: "",
+          currency: "USD",
+          amount_net: "52.94",
+          balance_amount: -52.94,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-08", channel: "wise usd", amount: "2391.31", currency: "USD" },
+      { date: "2026-05-09", channel: "wise usd", amount: "2419.07", currency: "USD", source: "provider_auto", sourceSheet: "Авто Остатки" },
+      { date: "2026-05-12", channel: "wise usd", amount: "2026.03", currency: "USD" },
+    ]
+  );
+
+  const may9 = result.rows.find((row) => row.date === "2026-05-09");
+  const may12 = result.rows.find((row) => row.date === "2026-05-12");
+  assert.equal(may9.status, "mismatch");
+  assert.equal(may9.difference, 165.72);
+  assert.equal(may12.outflow, 52.94);
+  assert.equal(may12.opening_balance, 2051.21);
+  assert.equal(may12.difference, 27.76);
+});
+
 test("Ostatki same-day date is treated as end-of-day provider reported balance", () => {
   const result = buildDailyCurrencyBalances(
     [operation({ ledgerV2: { amount_net: "300", balance_amount: 300 } })],

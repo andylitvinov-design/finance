@@ -1298,7 +1298,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
   (entries || []).forEach((entry, index) => {
     const date = normalizeIncomingSheetDateValue(entry.date);
     const channel = canonicalManualFinanceChannel(entry.channel || "");
-    const amount = Math.abs(parseLooseNumber(entry.localAmount));
+    const amount = Math.abs(parseLooseNumber(entry.accountAmount ?? entry.balanceAmount ?? entry.localAmount));
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
     const explicitSourceId = String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim();

@@ -29,6 +29,9 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.channel, "трансервайз дол");
   assert.equal(entry.direction, "expense");
   assert.equal(entry.localAmount, 12.34);
+  assert.equal(entry.localCurrency, "USD");
+  assert.equal(entry.accountAmount, 12.34);
+  assert.equal(entry.amountNet, 12.34);
   assert.equal(entry.netAmount, 12.34);
   assert.equal(entry.feeAmount, 0.44);
   assert.equal(entry.feeCurrency, "USD");
@@ -42,6 +45,57 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.referenceNumber, "WISE-1");
   assert.equal(entry.transferType, "CARD");
   assert.equal(entry.description, "Card payment to Vendor");
+});
+
+test("normalizeWiseTransaction keeps Wise card operation date ahead of settlement date", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "DEBIT",
+      date: "2026-05-12T09:00:00.000Z",
+      operationDate: "2026-05-09T20:15:00.000Z",
+      settlementDate: "2026-05-12T09:00:00.000Z",
+      referenceNumber: "CARD-SETTLED-LATE",
+      amount: { value: "-128.08", currency: "USD" },
+      totalFees: { value: "0.37", currency: "USD" },
+      details: {
+        description: "Card transaction of 108.36 EUR issued by YellowSquare",
+        type: "CARD"
+      }
+    },
+    { id: "balance-usd", currency: "USD" },
+    "profile-1"
+  );
+
+  assert.equal(entry.date, "2026-05-09");
+  assert.equal(entry.operationDate, "2026-05-09");
+  assert.equal(entry.postedDate, "2026-05-12");
+});
+
+test("normalizeWiseTransaction stores EUR card purchase as Wise USD balance movement", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "DEBIT",
+      date: "2026-05-09T20:15:00.000Z",
+      referenceNumber: "CARD-3771546317",
+      amount: { value: "-128.08", currency: "USD" },
+      totalFees: { value: "0.37", currency: "USD" },
+      details: {
+        description: "Card transaction of 108.36 EUR issued by YellowSquare",
+        type: "CARD"
+      }
+    },
+    { id: "balance-usd", currency: "USD" },
+    "profile-1"
+  );
+
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.channel, "трансервайз дол");
+  assert.equal(entry.currency, "USD");
+  assert.equal(entry.accountAmount, 128.08);
+  assert.equal(entry.amountNet, 128.08);
+  assert.equal(entry.usdAmount, 128.08);
+  assert.equal(entry.localAmount, 108.36);
+  assert.equal(entry.localCurrency, "EUR");
 });
 
 test("normalizeWiseTransaction treats CARD transactions as expense before amount normalization", () => {
@@ -109,6 +163,28 @@ test("summarizeWiseStatementEntries groups income and expense by month and curre
       }
     }
   ]);
+});
+
+test("summarizeWiseStatementEntries uses Wise account amount by operation date for card purchases", () => {
+  const summary = summarizeWiseStatementEntries([
+    { date: "2026-05-09", direction: "expense", localAmount: 108.36, localCurrency: "EUR", accountAmount: 128.08, currency: "USD" },
+    { date: "2026-05-09", direction: "expense", localAmount: 5.35, localCurrency: "EUR", accountAmount: 6.33, currency: "USD" },
+    { date: "2026-05-09", direction: "expense", localAmount: 3, localCurrency: "EUR", accountAmount: 3.55, currency: "USD" },
+    { date: "2026-05-12", direction: "expense", localAmount: 6.96, localCurrency: "EUR", accountAmount: 8.19, currency: "USD" },
+    { date: "2026-05-12", direction: "expense", localAmount: 5.89, localCurrency: "EUR", accountAmount: 6.93, currency: "USD" },
+    { date: "2026-05-12", direction: "expense", localAmount: 2.1, localCurrency: "EUR", accountAmount: 2.48, currency: "USD" },
+    { date: "2026-05-12", direction: "expense", localAmount: 30, localCurrency: "EUR", accountAmount: 35.34, currency: "USD" }
+  ]);
+
+  assert.deepEqual(summary.months, [
+    {
+      month: "2026-05",
+      totalsByCurrency: {
+        USD: { income: 0, expense: 190.9, net: -190.9 }
+      }
+    }
+  ]);
+  assert.equal(summary.totalsByCurrency.USD.expense, 190.9);
 });
 
 test("fetchWiseStatementEntries loads profiles, balances, and compact statements", async () => {

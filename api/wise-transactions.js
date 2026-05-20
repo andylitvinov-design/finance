@@ -146,21 +146,30 @@ async function fetchWiseJson(options) {
 
 export function normalizeWiseTransaction(transaction, balance, profileId, index = 0) {
   const amount = normalizeWiseMoney(transaction?.amount);
+  const localAmount = extractWiseCardLocalAmount(transaction, amount);
   const explicitUsdAmount = parseExplicitWiseUsdAmount(transaction);
   const fee = normalizeWiseMoney(transaction?.totalFees);
-  const date = normalizeIsoDate(String(transaction?.date || "").slice(0, 10));
+  const dateInfo = selectWiseTransactionDates(transaction);
   const reference = String(transaction?.referenceNumber || "").trim();
   const direction = resolveWiseTransactionDirection(transaction, amount);
   const counterparty = buildWiseCounterparty(transaction, direction);
+  const accountCurrency = amount.currency || String(balance?.currency || "").toUpperCase();
+  const accountAmount = Math.abs(amount.value);
+  const accountUsdAmount = explicitUsdAmount ?? (accountCurrency === "USD" ? accountAmount : null);
   return {
     id: `wise-${reference || balance?.balanceId || balance?.id || index}`,
-    date,
-    channel: getWiseChannel(amount.currency || balance?.currency),
+    date: dateInfo.operationDate || dateInfo.postedDate,
+    operationDate: dateInfo.operationDate,
+    postedDate: dateInfo.postedDate,
+    channel: getWiseChannel(accountCurrency),
     direction,
-    localAmount: Math.abs(amount.value),
-    currency: amount.currency || String(balance?.currency || "").toUpperCase(),
-    usdAmount: explicitUsdAmount ?? ((amount.currency || balance?.currency) === "USD" ? Math.abs(amount.value) : null),
-    netAmount: Math.abs(amount.value),
+    localAmount: Math.abs(localAmount.value || accountAmount),
+    localCurrency: localAmount.currency || accountCurrency,
+    accountAmount,
+    currency: accountCurrency,
+    usdAmount: accountUsdAmount,
+    amountNet: accountAmount,
+    netAmount: accountAmount,
     suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
     organization: buildWiseDescription(transaction, balance, profileId),
     ...counterparty,
@@ -224,7 +233,7 @@ export function summarizeWiseStatementEntries(entries = []) {
   entries.forEach((entry) => {
     const date = normalizeIsoDate(entry?.date);
     const currency = String(entry?.currency || "").trim().toUpperCase();
-    const amount = Math.abs(Number(entry?.localAmount || 0));
+    const amount = Math.abs(Number(entry?.accountAmount || entry?.amountNet || entry?.netAmount || entry?.localAmount || 0));
     if (!date || !currency || !amount) return;
     const month = date.slice(0, 7);
     if (!monthLookup.has(month)) monthLookup.set(month, new Map());
@@ -355,6 +364,87 @@ function parseExplicitWiseUsdAmount(transaction) {
     if (Number.isFinite(numeric) && numeric !== 0) return Math.abs(numeric);
   }
   return null;
+}
+
+function selectWiseTransactionDates(transaction) {
+  const details = transaction?.details || {};
+  const operationDate = firstWiseIsoDate(
+    transaction?.operationDate,
+    transaction?.operation_date,
+    transaction?.createdOn,
+    transaction?.createdAt,
+    transaction?.creationTime,
+    details?.operationDate,
+    details?.operation_date,
+    details?.createdOn,
+    details?.createdAt,
+    details?.cardTransaction?.createdOn,
+    details?.cardTransaction?.createdAt,
+    details?.cardTransaction?.operationDate,
+    transaction?.date
+  );
+  const postedDate = firstWiseIsoDate(
+    transaction?.postedDate,
+    transaction?.posted_date,
+    transaction?.settlementDate,
+    transaction?.settledAt,
+    details?.postedDate,
+    details?.posted_date,
+    details?.settlementDate,
+    details?.settledAt,
+    transaction?.date
+  );
+  return { operationDate, postedDate };
+}
+
+function firstWiseIsoDate(...values) {
+  for (const value of values) {
+    const normalized = normalizeWiseDate(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function normalizeWiseDate(value) {
+  if (!value) return "";
+  const raw = String(value || "").trim();
+  const iso = raw.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return "";
+}
+
+function extractWiseCardLocalAmount(transaction, accountAmount) {
+  const candidates = [
+    transaction?.sourceAmount,
+    transaction?.source_amount,
+    transaction?.targetAmount,
+    transaction?.target_amount,
+    transaction?.details?.sourceAmount,
+    transaction?.details?.source_amount,
+    transaction?.details?.targetAmount,
+    transaction?.details?.target_amount,
+    transaction?.details?.merchantAmount,
+    transaction?.details?.merchant_amount,
+    transaction?.details?.cardTransaction?.sourceAmount,
+    transaction?.details?.cardTransaction?.targetAmount,
+    transaction?.details?.cardTransaction?.merchantAmount
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeWiseMoney(candidate);
+    if (normalized.value && normalized.currency) return normalized;
+  }
+  const descriptionAmount = parseWiseCardDescriptionAmount(transaction?.details?.description);
+  if (descriptionAmount.value && descriptionAmount.currency) return descriptionAmount;
+  return accountAmount;
+}
+
+function parseWiseCardDescriptionAmount(description) {
+  const match = String(description || "").match(/\bcard transaction of\s+([+-]?\d+(?:[.,]\d+)?)\s+([A-Z]{3})\b/i);
+  if (!match) return { value: 0, currency: "" };
+  return {
+    value: Number.parseFloat(String(match[1] || "0").replace(",", ".")) || 0,
+    currency: String(match[2] || "").trim().toUpperCase()
+  };
 }
 
 function normalizeWiseBalance(balance) {
