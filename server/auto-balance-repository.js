@@ -86,7 +86,9 @@ export function parseAutoBalanceRows(values = []) {
         rate: indexes.rate === -1 ? "" : String(row[indexes.rate] ?? "").trim(),
         usdAmount: hasNumericAmount ? (amountUsd || formatUsdAmount(numericAmount, currency)) : "",
         source: normalizeAutoBalanceSource(row[indexes.source]),
-        fact_source: normalizeAutoBalanceSource(row[indexes.source]) === "paypal_derived_balance" ? "derived_balance" : "provider_auto",
+        fact_source: normalizeAutoBalanceSource(row[indexes.source]) === "paypal_derived_balance"
+          ? "derived_balance"
+          : (normalizeAutoBalanceSource(row[indexes.source]) === "planned_daily_balance" ? "planned_daily_balance" : "provider_auto"),
         provider: indexes.provider === -1 ? inferProvider(channel) : String(row[indexes.provider] || inferProvider(channel)).trim().toLowerCase(),
         rawSourceId: indexes.rawSourceId === -1 ? "" : String(row[indexes.rawSourceId] || "").trim(),
         status,
@@ -129,6 +131,7 @@ function normalizeAutoBalanceStatus(value) {
 
 function normalizeAutoBalanceSource(value) {
   const source = String(value || "").trim().toLowerCase();
+  if (source === "planned_daily_balance") return "planned_daily_balance";
   if (source === "paypal_derived_balance") return "paypal_derived_balance";
   if (source === "paypal_manual_balance" || source === "paypal_manual_confirmed_balance") return source;
   return "provider_auto";

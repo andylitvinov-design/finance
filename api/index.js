@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import autoBalanceSnapshotsHandler from "../server/auto-balance-snapshots.js";
+import dailyPlannedBalancesHandler from "../server/daily-planned-balances.js";
 import payoneerTransactionsHandler from "../server/payoneer-transactions.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
@@ -30,6 +31,7 @@ const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const AUTO_BALANCE_SNAPSHOTS_ACTION = "autoBalanceSnapshots";
+const DAILY_PLANNED_BALANCES_ACTION = "generateDailyPlannedBalances";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
@@ -169,6 +171,10 @@ export default async function handler(request, response) {
 
   if (debugAction === AUTO_BALANCE_SNAPSHOTS_ACTION) {
     return await autoBalanceSnapshotsHandler(request, response);
+  }
+
+  if (debugAction === DAILY_PLANNED_BALANCES_ACTION) {
+    return await dailyPlannedBalancesHandler(request, response);
   }
 
   if (debugAction === PAYONEER_TRANSACTIONS_ACTION) {

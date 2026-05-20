@@ -11,6 +11,7 @@ const STATUS = {
   NEEDS_PROVIDER_PERMISSION: "needs_provider_permission",
   PROVIDER_ERROR: "provider_error",
   NOT_SUPPORTED_FOR_ACCOUNT: "not_supported_for_account",
+  PLANNED: "planned",
   NO_DATA: "no_data",
 };
 
@@ -117,11 +118,16 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     ? "manual"
     : factBalance.status === "derived_pending"
       ? "derived"
-      : factBalance.status === "auto_pending"
-      ? "provider"
-      : "missing";
+      : factBalance.status === "planned"
+        ? "planned_daily_balance"
+        : factBalance.status === "auto_pending"
+          ? "provider"
+          : "missing";
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
     ? round(displayedFactClosing - calculatedClosing)
+    : null;
+  const varianceToFact = factBalance.plannedAmount !== null && factBalance.plannedAmount !== undefined && manualProviderClosing !== null
+    ? round(manualProviderClosing - factBalance.plannedAmount)
     : null;
 
   let status = STATUS.OK;
@@ -135,6 +141,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     status = STATUS.MISSING_PROVIDER;
   } else if (manualProviderClosing === null && !hasMovement && !hasPlan && opening === null) {
     status = STATUS.NO_DATA;
+  } else if (factBalance.status === "planned") {
+    status = STATUS.PLANNED;
   } else if (calculatedClosing !== null && manualProviderClosing !== null && Math.abs(round(manualProviderClosing - calculatedClosing)) > 0.0001) {
     status = STATUS.MISMATCH;
   }
@@ -177,7 +185,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     computed_status: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
     balanceSource: factBalance.status === "confirmed"
       ? "manual_fact"
-      : (factBalance.status === "derived_pending" ? "derived_balance" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing")),
+      : (factBalance.status === "derived_pending" ? "derived_balance" : (factBalance.status === "planned" ? "planned_daily_balance" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing"))),
     needsManualConfirmation: factBalance.status !== "confirmed",
     providerStatus: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
     provider_status: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
@@ -191,6 +199,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
       : null,
     displayed_fact_balance: roundedDisplayedFactClosing,
     factual_closing_balance: roundedDisplayedFactClosing,
+    planned_balance: factBalance.plannedAmount ?? (factBalance.status === "planned" ? roundedDisplayedFactClosing : null),
+    planned_balance_date: factBalance.plannedDate || (factBalance.status === "planned" ? factBalance.date : null),
+    factual_balance: factBalance.status === "planned" ? null : roundedDisplayedFactClosing,
+    variance_to_fact: varianceToFact,
     factual_closing_balance_date: factBalance.date,
     closing_balance_source: closingSource,
     fact_source: factSource,
@@ -283,21 +295,27 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
   const balanceSource = getResolvedBalanceSource(snapshot);
   const auto = balanceSource === "provider_auto";
   const derived = balanceSource === "derived_balance";
+  const planned = balanceSource === "planned_daily_balance";
+  const plannedSnapshot = planned ? snapshot : balanceIndex?.findPlanned?.(key, normalizedTargetDate);
   return {
-    status: derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed"),
+    status: planned ? "planned" : (derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed")),
     amount: round(snapshot.amount),
     date: snapshot.date,
-    sourceSheet: snapshot.sourceSheet || (auto || derived ? "Авто Остатки" : "Остатки"),
+    sourceSheet: snapshot.sourceSheet || (auto || derived || planned ? "Авто Остатки" : "Остатки"),
     sourceRow: snapshot.sourceRow || null,
-    sourceType: derived ? "derived" : (auto ? "auto" : "manual fact"),
+    sourceType: planned ? "planned_daily_balance" : (derived ? "derived" : (auto ? "auto" : "manual fact")),
     provider: snapshot.provider || null,
     comment: snapshot.comment || "",
-    warning: derived ? "derived from confirmed opening and Ledger amount_net" : (auto ? "needs manual confirmation" : null),
+    plannedAmount: plannedSnapshot ? round(plannedSnapshot.amount) : null,
+    plannedDate: plannedSnapshot?.date || null,
+    warning: planned ? "planned / needs manual confirmation" : (derived ? "derived from confirmed opening and Ledger amount_net" : (auto ? "needs manual confirmation" : null)),
     repairHint: derived
       ? `review derived PayPal balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date}`
+      : (planned
+      ? `confirm planned balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date} with provider/manual fact`
       : (auto
       ? `confirm auto balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date} in Остатки`
-      : null),
+      : null)),
   };
 }
 
@@ -468,7 +486,7 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     const amount = parseNumber(row?.balanceAmount ?? row?.amount);
     const key = makeKey(channel, currency);
     const rowStatus = normalizeProviderBalanceStatus(row?.status || row?.autoBalanceStatus || row?.auto_balance_status);
-    if (date && channel && currency && rowStatus && !["ok", "zero_balance", "derived_from_confirmed_opening"].includes(rowStatus)) {
+    if (date && channel && currency && rowStatus && !["ok", "zero_balance", "derived_from_confirmed_opening", "planned"].includes(rowStatus)) {
       const statusRows = statusByKey.get(key) || [];
       statusRows.push({
         date,
@@ -513,6 +531,11 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
       const rows = byKey.get(key) || [];
       if (to) return rows.find((row) => row.date === to) || null;
       return rows.filter((row) => (!from || row.date >= from)).at(-1) || null;
+    },
+    findPlanned(key, to) {
+      const rows = byKey.get(key) || [];
+      if (!to) return rows.filter((row) => row.balanceSource === "planned_daily_balance").at(-1) || null;
+      return rows.find((row) => row.date === to && row.balanceSource === "planned_daily_balance") || null;
     },
     findLatestBeforeOrOn(key, to) {
       const rows = byKey.get(key) || [];
@@ -586,7 +609,8 @@ function balanceSourcePriority(row) {
   if (source === "manual_fact") return 0;
   if (source === "provider_auto") return 1;
   if (source === "derived_balance") return 2;
-  return 3;
+  if (source === "planned_daily_balance") return 3;
+  return 4;
 }
 
 function getResolvedBalanceSource(row = {}) {
@@ -594,7 +618,8 @@ function getResolvedBalanceSource(row = {}) {
   if (/manual confirmed|manual balance|manual fact|paypal manual balance|paypal manual confirmed|paypal_manual_balance|paypal_manual_confirmed_balance/.test(source)) return "manual_fact";
   if (/paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(source)) return "derived_balance";
   const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
-  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "derived_balance" || explicit === "missing") return explicit;
+  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "derived_balance" || explicit === "planned_daily_balance" || explicit === "missing") return explicit;
+  if (/planned_daily_balance|planned daily balance/.test(source)) return "planned_daily_balance";
   if (isManualBalanceSource(row)) return "manual_fact";
   if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(source)) return "provider_auto";
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
@@ -675,6 +700,7 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
     + (statusCounts[STATUS.MISSING_CLOSING] || 0)
     + (statusCounts[STATUS.MISSING_AMOUNT_NET] || 0)
     + (statusCounts[STATUS.NEEDS_VERIFICATION] || 0)
+    + (statusCounts[STATUS.PLANNED] || 0)
     + countProviderLimitationStatuses(statusCounts);
 
   return {
@@ -698,6 +724,7 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
       [STATUS.NEEDS_PROVIDER_PERMISSION]: statusCounts[STATUS.NEEDS_PROVIDER_PERMISSION] || 0,
       [STATUS.PROVIDER_ERROR]: statusCounts[STATUS.PROVIDER_ERROR] || 0,
       [STATUS.NOT_SUPPORTED_FOR_ACCOUNT]: statusCounts[STATUS.NOT_SUPPORTED_FOR_ACCOUNT] || 0,
+      [STATUS.PLANNED]: statusCounts[STATUS.PLANNED] || 0,
       [STATUS.NO_DATA]: statusCounts[STATUS.NO_DATA] || 0,
     },
     blocked: incomplete,
@@ -726,6 +753,7 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "Провайдерский остаток доступен только после настройки токена или разрешений.";
   if (row.status === STATUS.PROVIDER_ERROR) return "Провайдерский остаток не получен из-за ошибки API; статус сохранен в Авто Остатки.";
   if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Провайдерский остаток не поддерживается для текущего аккаунта.";
+  if (row.status === STATUS.PLANNED) return "Плановый остаток рассчитан из предыдущего лучшего остатка и Ledger amount_net; нужен ручной или провайдерский факт.";
   if (row.status === STATUS.MISSING_CLOSING) return "Есть план/движение, но нет нового фактического Остатки за период.";
   if (row.status === STATUS.MISMATCH) return "Расхождение: фактический конечный остаток не равен реальному расчетному остатку.";
   return "Нужна проверка: не хватает данных для полной сверки периода.";
@@ -787,6 +815,7 @@ function buildFixAction(row) {
   if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "Настроить разрешение провайдера, затем повторить auto-balance snapshot.";
   if (row.status === STATUS.PROVIDER_ERROR) return "Проверить ошибку провайдера и повторить auto-balance snapshot.";
   if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Оставить статус или добавить ручной факт, если провайдер не поддерживает API-баланс.";
+  if (row.status === STATUS.PLANNED) return "Подтвердить плановый остаток ручным или провайдерским фактом.";
   if (row.status === STATUS.MISSING_CLOSING) return "Добавить фактический конечный Остатки за период по этому счету/валюте.";
   if (row.status === STATUS.MISMATCH) return "Проверить Ledger movements, amount_net и строку Остатки за период.";
   return "Проверить дату, счет, валюту и сумму в Ledger/Остатки.";
@@ -803,6 +832,7 @@ function buildRepairAction(row) {
   if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "configure_provider_permission";
   if (row.status === STATUS.PROVIDER_ERROR) return "retry_provider_snapshot";
   if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "provider_not_supported_or_enter_manual_fact";
+  if (row.status === STATUS.PLANNED) return "enter_manual_provider_fact";
   if (row.status === STATUS.MISSING_CLOSING) return "enter_closing_fact";
   if (row.status === STATUS.MISMATCH) return "investigate_mismatch";
   return "needs_verification";
@@ -884,6 +914,7 @@ function getFixPriority(status) {
     [STATUS.NOT_SUPPORTED_FOR_ACCOUNT]: 3,
     [STATUS.MISSING_CLOSING]: 4,
     [STATUS.NEEDS_VERIFICATION]: 4,
+    [STATUS.PLANNED]: 4,
     [STATUS.CARRIED_FORWARD]: 8,
     [STATUS.OK]: 9,
     [STATUS.NO_DATA]: 10,
@@ -893,7 +924,7 @@ function getFixPriority(status) {
 
 function resolveCurrencyStatus(statusCounts) {
   if (statusCounts[STATUS.MISSING_AMOUNT_NET] || statusCounts[STATUS.MISMATCH]) return "failed";
-  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION] || countProviderLimitationStatuses(statusCounts)) return "blocked";
+  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION] || statusCounts[STATUS.PLANNED] || countProviderLimitationStatuses(statusCounts)) return "blocked";
   if (statusCounts[STATUS.CARRIED_FORWARD]) return STATUS.CARRIED_FORWARD;
   if (statusCounts[STATUS.NO_DATA]) return STATUS.NO_DATA;
   return STATUS.OK;

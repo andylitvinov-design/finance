@@ -233,16 +233,24 @@ function jsonResponse(payload, status = 200) {
 
 test("vercel cron points daily UTC schedule to auto balance snapshots endpoint", () => {
   const config = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8"));
-  assert.deepEqual(config.crons, [
-    {
-      path: "/api/auto-balance-snapshots",
-      schedule: "0 0 * * *",
-    },
-  ]);
-  assert.ok(config.rewrites.some((rewrite) =>
-    rewrite.source === "/api/auto-balance-snapshots" &&
-    rewrite.destination === "/api/index?action=autoBalanceSnapshots"
-  ));
+	  assert.deepEqual(config.crons, [
+	    {
+	      path: "/api/auto-balance-snapshots",
+	      schedule: "0 0 * * *",
+	    },
+	    {
+	      path: "/api/daily-planned-balances",
+	      schedule: "15 0 * * *",
+	    },
+	  ]);
+	  assert.ok(config.rewrites.some((rewrite) =>
+	    rewrite.source === "/api/auto-balance-snapshots" &&
+	    rewrite.destination === "/api/index?action=autoBalanceSnapshots"
+	  ));
+	  assert.ok(config.rewrites.some((rewrite) =>
+	    rewrite.source === "/api/daily-planned-balances" &&
+	    rewrite.destination === "/api/index?action=generateDailyPlannedBalances"
+	  ));
   assert.deepEqual(config.regions, ["fra1"]);
 });
 
