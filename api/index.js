@@ -7,6 +7,7 @@ import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
+import paypalManualBalanceHandler from "../server/paypal-manual-balance.js";
 import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
@@ -30,6 +31,7 @@ const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const AUTO_BALANCE_SNAPSHOTS_ACTION = "autoBalanceSnapshots";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
+const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -171,6 +173,10 @@ export default async function handler(request, response) {
 
   if (debugAction === PAYONEER_TRANSACTIONS_ACTION) {
     return await payoneerTransactionsHandler(request, response);
+  }
+
+  if (debugAction === PAYPAL_MANUAL_BALANCE_ACTION) {
+    return await paypalManualBalanceHandler(request, response);
   }
 
   if (isDebugAction(debugAction)) {
