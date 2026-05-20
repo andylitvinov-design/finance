@@ -1,6 +1,7 @@
 (function installBinanceOneClickImport(root) {
   const BINANCE_API_PATH = "./api/binance-transactions";
   const PROVIDER = "binance";
+  const BINANCE_ENTRY_SOURCES = new Set(["binance", "binance_pay", "binance_email", "binance_csv"]);
 
   function getState() {
     try {
@@ -84,7 +85,7 @@
       }
       const entries = (payload.entries || []).map((entry, index) => root.normalizeExpenseAccountingEntry(entry, index));
       appState.expenseAccounting.entries = [
-        ...(appState.expenseAccounting.entries || []).filter((entry) => entry.source !== PROVIDER),
+        ...(appState.expenseAccounting.entries || []).filter((entry) => !isBinanceEntry(entry)),
         ...entries
       ];
       appState.expenseAccounting.binanceSummary = typeof root.hasProviderSummaryData === "function" && root.hasProviderSummaryData(payload.summary)
@@ -111,6 +112,10 @@
       appState.expenseAccounting.binanceLoading = false;
       root.renderTabs();
     }
+  }
+
+  function isBinanceEntry(entry) {
+    return BINANCE_ENTRY_SOURCES.has(String(entry?.source || "").trim());
   }
 
   function createBinanceButton() {
