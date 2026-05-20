@@ -44,8 +44,9 @@ function inPeriod(entry, from, to) {
   return true;
 }
 
-function existingSourceIds(repository = {}) {
+function existingLedgerKeys(repository = {}) {
   const ids = new Set();
+  const fingerprints = new Set();
   for (const row of repository.operations || []) {
     [
       row.rawSourceId,
@@ -57,8 +58,10 @@ function existingSourceIds(repository = {}) {
       const id = String(value || "").trim();
       if (id) ids.add(id);
     });
+    const fingerprint = ledgerFingerprint(row);
+    if (fingerprint) fingerprints.add(fingerprint);
   }
-  return ids;
+  return { ids, fingerprints };
 }
 
 async function main() {
@@ -73,7 +76,7 @@ async function main() {
     .flatMap((row, index) => normalizeBinanceCsvTransaction(row, index))
     .filter((entry) => inPeriod(entry, args.from, args.to));
   const repository = await loadManualRepositoryFromGoogleSheets().catch((error) => ({ ok: false, operations: [], warning: String(error?.message || error) }));
-  const existing = existingSourceIds(repository);
+  const existing = existingLedgerKeys(repository);
   const rowsToAdd = [];
   const existingDuplicates = [];
   const ambiguousRows = [];
@@ -85,7 +88,7 @@ async function main() {
       ambiguousRows.push(entry);
       continue;
     }
-    if (existing.has(id)) {
+    if (existing.ids.has(id) || existing.fingerprints.has(ledgerFingerprint(entry))) {
       existingDuplicates.push(entry);
       continue;
     }
@@ -120,6 +123,27 @@ async function main() {
       needs_wallet_split: needsWalletSplit.length,
     },
   }, null, 2));
+}
+
+function ledgerFingerprint(row = {}) {
+  const ledger = row.ledgerV2 || {};
+  const date = String(row.date || ledger.date || "").slice(0, 10);
+  const fromChannel = String(row.fromChannel || row.from_channel || ledger.from_channel || "").trim();
+  const toChannel = String(row.toChannel || row.to_channel || ledger.to_channel || "").trim();
+  const channel = String(row.channel || ledger.channel || fromChannel || toChannel || "").trim();
+  const currency = String(row.currency || ledger.currency || "").trim().toUpperCase();
+  const amountNet = Number(row.netAmount ?? row.amountNet ?? row.amount_net ?? ledger.amount_net);
+  if (!date || !currency || !Number.isFinite(amountNet) || (!fromChannel && !toChannel && !channel)) return "";
+  return [
+    date,
+    channel || "-",
+    currency,
+    roundLedgerAmount(amountNet),
+  ].join("|");
+}
+
+function roundLedgerAmount(value) {
+  return Math.round(Number(value || 0) * 100000000) / 100000000;
 }
 
 async function readInputCsv(filePath = "") {
