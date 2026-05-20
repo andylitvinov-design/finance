@@ -405,7 +405,7 @@ function buildRequiredManualFactRow(row, period = {}) {
     channel: row.channel || "",
     currency: row.currency || "",
     amount: null,
-    amount_hint: source === "provider_auto" ? row.manual_provider_closing_balance : null,
+    expected_closing_hint: source === "provider_auto" ? row.manual_provider_closing_balance : null,
     balanceSource: source,
     balance_source: source,
     needsManualConfirmation: true,

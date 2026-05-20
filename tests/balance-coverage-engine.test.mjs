@@ -44,6 +44,8 @@ test("balance coverage reports a fully reconciled account-currency row", () => {
     net_change: 206,
     computed_closing_balance: 1206,
     provider_reported_balance: 1206,
+    provider_reported_balance_source: "manual",
+    opening_balance_source: "manual",
     difference: 0,
     status: "ok",
     balance_source: "manual",
@@ -52,6 +54,17 @@ test("balance coverage reports a fully reconciled account-currency row", () => {
     fix_priority: 0,
     formula: "opening_balance 1000 + inflow 206 - outflow 0 = computed_closing_balance 1206 ; provider_reported_balance 1206 ; difference 0",
   });
+});
+
+test("balance coverage reports provider_auto balance source", () => {
+  const result = buildBalanceCoverage({
+    rows: [dailyRow({ provider_reported_balance_source: "provider_auto" })],
+    summary: { excluded_missing_amount_net_rows: 0 },
+  });
+
+  assert.equal(result.accounts[0].provider_reported_balance_source, "provider_auto");
+  assert.equal(result.accounts[0].balance_source, "provider_auto");
+  assert.equal(result.summary.fully_reconciled_accounts, 1);
 });
 
 test("balance coverage surfaces missing provider balance", () => {

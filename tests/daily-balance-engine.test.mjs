@@ -87,14 +87,30 @@ test("opening plus income minus expense calculates closing balance", () => {
     channel: "wise usd",
     currency: "USD",
     opening_balance: 1000,
+    opening_balance_source: "manual",
     inflow: 300,
     outflow: 50,
     net_change: 250,
     closing_balance: 1250,
     provider_reported_balance: 1250,
+    provider_reported_balance_source: "manual",
     difference: 0,
     status: "ok",
   });
+});
+
+test("auto Остатки factual provider balance is preserved as provider_auto source", () => {
+  const result = buildDailyCurrencyBalances(
+    [operation({ ledgerV2: { amount_net: "300", balance_amount: 300 } })],
+    [
+      { date: "2026-05-01", channel: "wise usd", amount: "1000", currency: "USD", source: "manual_fact" },
+      { date: "2026-05-02", channel: "wise usd", amount: "1300", currency: "USD", source: "provider_auto", sourceSheet: "Авто Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].provider_reported_balance, 1300);
+  assert.equal(result.rows[0].provider_reported_balance_source, "provider_auto");
+  assert.equal(result.rows[0].status, "ok");
 });
 
 test("missing amount_net row is excluded and counted", () => {

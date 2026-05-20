@@ -297,8 +297,8 @@ test("matching provider operations keeps stale Остатки mismatch out of tr
 
   assert.equal(report.transaction_reconciliation_status, "ok");
   assert.equal(report.balance_diagnostics.rows[0].classification, "stale_or_wrong_ostatki_needs_provider_balance");
-  assert.equal(report.balance_diagnostics.copyable_rows[0].amount_hint, -73049.5);
-  assert.equal(report.balance_diagnostics.copyable_rows[0].computed_amount_hint, -73049.5);
+  assert.equal(report.balance_diagnostics.copyable_rows[0].amount, null);
+  assert.equal(report.balance_diagnostics.copyable_rows[0].expected_closing_hint, -73049.5);
   assert.equal(report.balance_diagnostics.copyable_rows[0].current_ostatki_amount, 68087.38);
   assert.match(report.balance_diagnostics.copyable_rows[0].required_provider_evidence, /provider balance after operation/i);
   assert.equal(report.balance_diagnostics.copyable_rows[0].needs_provider_confirmation, true);

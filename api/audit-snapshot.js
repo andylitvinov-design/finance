@@ -600,10 +600,9 @@ function buildMissingOstatkiFixRows(balanceCoverage) {
       date: row.date,
       channel: row.channel,
       currency: row.currency,
-      computed_closing_balance: row.computed_closing_balance,
-      amount_hint: row.computed_closing_balance,
+      expected_closing_hint: row.computed_closing_balance,
       do_not_apply_automatically: true,
-      action: "Confirm provider closing balance, then add factual balance to Остатки",
+      action: "Confirm provider closing balance, then add factual balance to Остатки; do not copy expected_closing_hint as fact.",
     }))
     .sort((left, right) => {
       if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
@@ -632,20 +631,7 @@ function buildMissingOpeningBalanceFixRows(balanceCoverage) {
 }
 
 function buildCopyableOstatkiRows(rows) {
-  const copyableRows = (rows || []).filter((row) => row.computed_closing_balance !== null && row.computed_closing_balance !== undefined);
-  if (!copyableRows.length) return "";
-  return [
-    "date\tchannel\tcurrency\tcurrent_ostatki_amount\tcomputed_amount_hint\trequired_provider_evidence\tdo_not_apply_automatically",
-    ...copyableRows.map((row) => [
-      row.date || "",
-      row.channel || "",
-      row.currency || "",
-      row.current_ostatki_amount ?? "",
-      formatFixNumber(row.computed_closing_balance),
-      "Provider closing balance for this exact date/channel/currency",
-      "true",
-    ].join("\t")),
-  ].join("\n");
+  return "";
 }
 
 function buildPayPalSummary(operations) {

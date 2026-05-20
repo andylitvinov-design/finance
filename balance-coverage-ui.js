@@ -236,26 +236,27 @@
     }
 
     if (ostatkiRows.length) {
-      const copyButton = doc.createElement("button");
-      copyButton.type = "button";
-      copyButton.className = "secondary";
-      copyButton.textContent = "Скопировать строки для Остатки";
-      copyButton.disabled = !String(fixes?.copyable_ostatki_rows || "").trim();
-      copyButton.addEventListener("click", async () => {
-        const text = String(fixes?.copyable_ostatki_rows || "");
-        if (!text || !root?.navigator?.clipboard?.writeText) return;
-        await root.navigator.clipboard.writeText(text);
-      });
-      block.appendChild(copyButton);
+      const copyableOstatkiRows = String(fixes?.copyable_ostatki_rows || "").trim();
+      if (copyableOstatkiRows) {
+        const copyButton = doc.createElement("button");
+        copyButton.type = "button";
+        copyButton.className = "secondary";
+        copyButton.textContent = "Скопировать строки для Остатки";
+        copyButton.addEventListener("click", async () => {
+          if (!root?.navigator?.clipboard?.writeText) return;
+          await root.navigator.clipboard.writeText(copyableOstatkiRows);
+        });
+        block.appendChild(copyButton);
+      }
       block.appendChild(renderFixSubsection(
         doc,
         "Missing Остатки rows",
-        ["Дата", "Счёт", "Валюта", "Сумма для Остатки"],
+        ["Дата", "Счёт", "Валюта", "expected_closing_hint"],
         ostatkiRows.map((row) => [
           row.date || "—",
           row.channel || "—",
           row.currency || "—",
-          formatCoverageNumber(row.computed_closing_balance),
+          formatCoverageNumber(row.expected_closing_hint ?? row.computed_closing_balance),
         ])
       ));
     }
