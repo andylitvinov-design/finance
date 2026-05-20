@@ -507,6 +507,9 @@ export function normalizeBinanceCsvTransaction(row = {}, index = 0) {
   const remark = firstNonEmpty(row.remark, row.notes, row.description, row.status);
   const rowHash = row.__rowHash || hashSourceRow(JSON.stringify(row));
   const counterparty = extractCounterparty(remark);
+  if ((!operation || operation === "send") && /^send$/i.test(String(operationRaw || "").trim()) && /binance pay/i.test(remark)) {
+    operation = signedAmount >= 0 ? "pay_receive" : "pay_send";
+  }
 
   if (!date || !currency || !amount || !operation) {
     return buildAmbiguousBinanceEntry({ row, index, date, currency, amount, operation, reason: "missing required Binance CSV fields" });
@@ -591,6 +594,30 @@ export function normalizeBinanceCsvTransaction(row = {}, index = 0) {
       category: "exchange",
       description: compactDescription(["Binance Withdrawal", remark]),
       comment: "wallet evidence: withdrawal from Spot"
+    });
+  }
+
+  if (operation === "funding_transfer") {
+    const channel = accountChannel || "";
+    const rawSourceId = buildBinanceGenericRawSourceId("binance_internal_transfer", { dateTime: time, amount, currency, detail: `${time}:${amount}:${currency}` });
+    const isOut = signedAmount < 0;
+    return buildBinanceEntry({
+      id: `${rawSourceId}:${isOut ? "out" : "in"}:${channel || rowHash}`,
+      date,
+      operation: "transfer",
+      direction: isOut ? "out" : "income",
+      channel,
+      fromChannel: isOut ? channel : "",
+      toChannel: isOut ? "" : channel,
+      amount,
+      currency,
+      source: "binance_csv",
+      rawSourceId: `${rawSourceId}:${isOut ? "out" : "in"}:${channel || rowHash}`,
+      transferGroupId: rawSourceId,
+      category: "exchange",
+      description: compactDescription(["Binance internal wallet transfer", remark]),
+      needsVerification: !channel,
+      comment: channel ? "wallet evidence: Transfer Between Main and Funding Wallet" : "needs wallet evidence: internal Binance transfer wallet missing"
     });
   }
 
@@ -885,7 +912,8 @@ function dateFromBinanceTime(value) {
     const parsed = new Date(Number(value));
     return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
   }
-  return normalizeIsoDate(String(value || "").slice(0, 10));
+  const parsed = parseBinanceCsvDateTime(value);
+  return parsed ? parsed.slice(0, 10) : "";
 }
 
 function isoTimestampFromBinanceTime(value) {
@@ -895,8 +923,20 @@ function isoTimestampFromBinanceTime(value) {
   }
   const raw = String(value || "").trim();
   if (!raw) return "";
+  const csvTimestamp = parseBinanceCsvDateTime(raw);
+  if (csvTimestamp) return csvTimestamp;
   const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
   const parsed = new Date(/Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().replace(".000Z", "Z");
+}
+
+function parseBinanceCsvDateTime(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{2,4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!match) return "";
+  const year = match[1].length === 2 ? `20${match[1]}` : match[1];
+  const iso = `${year}-${match[2]}-${match[3]}T${match[4] || "00"}:${match[5] || "00"}:${match[6] || "00"}Z`;
+  const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().replace(".000Z", "Z");
 }
 
@@ -944,6 +984,7 @@ function normalizeBinanceOperation(value) {
   if (/pay/.test(token)) return "pay";
   if (/deposit/.test(token)) return "deposit";
   if (/withdraw|withdrawal/.test(token)) return "withdrawal";
+  if (/transfer between main and funding wallet|main.*funding|funding.*main/.test(token)) return "funding_transfer";
   if (/subscribe|subscription|purchase/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_subscribe";
   if (/redeem|redemption/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_redemption";
   if (/interest|reward|distribution/.test(token) && /earn|saving|savings|simple/.test(token)) return "earn_interest";
@@ -955,6 +996,8 @@ function normalizeBinanceOperation(value) {
 
 function extractCounterparty(value) {
   const raw = String(value || "").trim();
+  const binancePay = raw.match(/binance pay\s*-\s*([^|,;\s]+)/i);
+  if (binancePay?.[1]) return binancePay[1].trim();
   const match = raw.match(/(?:from|to|counterparty|контрагент)[:\s]+([^|,;]+)/i);
   return String(match?.[1] || "").trim();
 }

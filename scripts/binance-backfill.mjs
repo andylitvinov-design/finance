@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import {
   normalizeBinanceCsvTransaction,
   parseBinanceTransactionHistoryCsv,
@@ -13,6 +15,7 @@ import {
 } from "../server/manual-google-sheets.js";
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const execFileAsync = promisify(execFile);
 const LEDGER_HEADERS = [
   "date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd",
   "amount_gross", "amount_fee", "amount_net", "category",
@@ -60,12 +63,12 @@ function existingSourceIds(repository = {}) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.file) throw new Error("Usage: node scripts/binance-backfill.mjs --file <binance-history.csv> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--apply --confirm-reviewed]");
+  if (!args.file) throw new Error("Usage: node scripts/binance-backfill.mjs --file <binance-history.csv|binance-history.zip> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--apply --confirm-reviewed]");
   if (args.apply && !args.confirmReviewed) {
     throw new Error("Refusing Binance backfill apply without --confirm-reviewed. Run dry-run first and review rows_to_add, existing_duplicates, ambiguous_rows, and needs_wallet_split.");
   }
 
-  const csv = await readFile(args.file, "utf8");
+  const csv = await readInputCsv(args.file);
   const normalized = parseBinanceTransactionHistoryCsv(csv)
     .flatMap((row, index) => normalizeBinanceCsvTransaction(row, index))
     .filter((entry) => inPeriod(entry, args.from, args.to));
@@ -117,6 +120,20 @@ async function main() {
       needs_wallet_split: needsWalletSplit.length,
     },
   }, null, 2));
+}
+
+async function readInputCsv(filePath = "") {
+  if (/\.zip$/i.test(filePath)) {
+    const listing = await execFileAsync("unzip", ["-Z1", filePath], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+    const csvName = listing.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /\.csv$/i.test(line));
+    if (!csvName) throw new Error("Binance ZIP does not contain a CSV file.");
+    const extracted = await execFileAsync("unzip", ["-p", filePath, csvName], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+    return extracted.stdout;
+  }
+  return readFile(filePath, "utf8");
 }
 
 async function appendLedgerRows(entries = [], { fetchImpl = fetch } = {}) {
