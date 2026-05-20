@@ -9,19 +9,49 @@ const PAYONEER_CHANNEL_BY_CURRENCY = {
 };
 
 const HEADER_ALIASES = {
-  date: ["date", "transaction date", "created date", "completion date"],
-  id: ["transaction id", "reference id", "payment id", "id"],
-  description: ["description", "details", "payer", "payee", "from", "to"],
-  payer: ["payer", "from"],
-  payee: ["payee", "to"],
-  currency: ["currency"],
-  amount: ["amount"],
-  gross: ["gross amount", "gross"],
-  credit: ["credit"],
-  debit: ["debit"],
-  fee: ["fee", "fees", "service fee"],
-  net: ["net amount", "net", "total"],
-  balance: ["balance", "running balance"],
+  date: [
+    "date",
+    "transaction date",
+    "transaction date utc",
+    "created date",
+    "creation date",
+    "completion date",
+    "posted date",
+    "payment date",
+    "settlement date",
+  ],
+  id: [
+    "transaction id",
+    "transaction number",
+    "transaction reference",
+    "reference id",
+    "reference number",
+    "reference",
+    "payment id",
+    "transfer id",
+    "id",
+  ],
+  description: [
+    "description",
+    "details",
+    "transaction description",
+    "transaction type",
+    "type",
+    "payer",
+    "payee",
+    "from",
+    "to",
+  ],
+  payer: ["payer", "from", "sender", "client", "customer", "payer name", "from name"],
+  payee: ["payee", "to", "recipient", "beneficiary", "payee name", "to name"],
+  currency: ["currency", "currency code", "transaction currency", "amount currency", "net currency"],
+  amount: ["amount", "transaction amount", "amount charged", "total amount"],
+  gross: ["gross amount", "gross", "original amount"],
+  credit: ["credit", "credit amount", "amount credited"],
+  debit: ["debit", "debit amount", "amount debited", "withdrawal amount"],
+  fee: ["fee", "fees", "fee amount", "service fee", "service fees", "transaction fee"],
+  net: ["net amount", "net", "net received", "total", "total net", "settlement amount"],
+  balance: ["balance", "running balance", "available balance"],
 };
 
 export default async function handler(request, response) {
@@ -298,9 +328,19 @@ function buildPayoneerHeaderMap(row = []) {
   const normalized = row.map(normalizePayoneerHeader);
   return Object.fromEntries(
     Object.entries(HEADER_ALIASES)
-      .map(([key, aliases]) => [key, normalized.findIndex((header) => aliases.includes(header))])
+      .map(([key, aliases]) => [key, findPayoneerHeaderColumn(normalized, aliases)])
       .filter(([, index]) => index !== -1)
   );
+}
+
+function findPayoneerHeaderColumn(normalizedHeaders = [], aliases = []) {
+  return normalizedHeaders.findIndex((header) => aliases.some((alias) => isPayoneerHeaderAliasMatch(header, alias)));
+}
+
+function isPayoneerHeaderAliasMatch(header, alias) {
+  if (!header || !alias) return false;
+  if (header === alias) return true;
+  return header.startsWith(`${alias} `) || header.endsWith(` ${alias}`) || header.includes(` ${alias} `);
 }
 
 function validatePayoneerHeaderMap(headerMap) {
@@ -344,7 +384,7 @@ function normalizeIsoDate(value) {
 function parsePayoneerAmount(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return { value: 0, hasValue: false };
-  const negative = /^\(.*\)$/.test(raw) || /^-/.test(raw);
+  const negative = /^(.*)$/.test(raw) && /^\(.*\)$/.test(raw) || /^-/.test(raw);
   let cleaned = raw
     .replace(/[()\sA-Z$€£₴₽]/gi, "")
     .replace(/[^\d,.-]/g, "");
