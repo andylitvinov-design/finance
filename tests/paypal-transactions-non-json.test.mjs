@@ -124,14 +124,186 @@ async function runMcpHandlerWithToolText(toolText) {
   );
 }
 
+async function runMcpHandlerWithToolNotFound() {
+  return withEnv(
+    {
+      PAYPAL_CLIENT_ID: "",
+      PAYPAL_CLIENT_SECRET: "",
+      PAYPAL_MCP_CLIENT_ID: "mcp-client",
+      PAYPAL_MCP_REFRESH_TOKEN: "mcp-refresh",
+    },
+    async () => {
+      const previousFetch = global.fetch;
+      let streamController;
+      try {
+        global.fetch = async (url, options = {}) => {
+          const href = String(url);
+          if (href.endsWith("/token")) {
+            return { ok: true, status: 200, async text() { return JSON.stringify({ access_token: "mcp-access" }); } };
+          }
+          if (href.endsWith("/sse")) {
+            return {
+              ok: true,
+              status: 200,
+              body: new ReadableStream({
+                start(controller) {
+                  streamController = controller;
+                  controller.enqueue(new TextEncoder().encode("event: endpoint\ndata: /sse/message?sessionId=tool-missing\n\n"));
+                },
+                cancel() {}
+              })
+            };
+          }
+          if (href.includes("/sse/message?sessionId=tool-missing")) {
+            const body = JSON.parse(options.body);
+            if (body.method === "initialize") {
+              streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: body.id,
+                result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "PayPal MCP Agent" } }
+              })}\n\n`));
+            }
+            if (body.method === "tools/call") {
+              streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: body.id,
+                error: { code: -32602, message: "tool list_transactions not found" }
+              })}\n\n`));
+            }
+            if (body.method === "tools/list") {
+              streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: body.id,
+                result: { tools: [{ name: "get_transaction" }] }
+              })}\n\n`));
+            }
+            return { ok: true, status: 202, async text() { return ""; } };
+          }
+          throw new Error(`Unexpected fetch: ${href}`);
+        };
+
+        const response = createResponseRecorder();
+        await handler({ method: "POST", body: { startDate: "2026-05-20", endDate: "2026-05-20" } }, response);
+        return response;
+      } finally {
+        global.fetch = previousFetch;
+      }
+    }
+  );
+}
+
 test("handler returns structured JSON when PayPal MCP tool text is non-JSON", async () => {
   const response = await runMcpHandlerWithToolText("Failed to call list_transactions");
 
-  assert.equal(response.statusCode, 400);
+  assert.equal(response.statusCode, 200);
   assert.equal(response.body.ok, false);
-  assert.match(response.body.error, /PayPal MCP tool list_transactions/);
-  assert.match(response.body.error, /Failed to call list_transactions/);
-  assert.doesNotMatch(response.body.error, /^Unexpected token|SyntaxError/);
+  assert.equal(response.body.provider, "paypal");
+  assert.equal(response.body.error, "paypal_manual_import_required");
+  assert.equal(response.body.phase, "mcp_fallback");
+  assert.equal(response.body.canUseManualImport, true);
+  assert.equal(response.body.fallback, "manual_activity_import");
+  assert.match(response.body.shortExcerpt, /PayPal MCP tool list_transactions/);
+  assert.match(response.body.shortExcerpt, /Failed to call list_transactions/);
+  assert.doesNotMatch(response.body.shortExcerpt, /^Unexpected token|SyntaxError/);
+});
+
+test("handler returns structured manual fallback when PayPal MCP list_transactions tool is missing", async () => {
+  const response = await runMcpHandlerWithToolNotFound();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.provider, "paypal");
+  assert.equal(response.body.error, "paypal_manual_import_required");
+  assert.equal(response.body.phase, "mcp_tool_not_found");
+  assert.equal(response.body.providerStatus, "mcp_tool_not_found");
+  assert.equal(response.body.canUseManualImport, true);
+  assert.deepEqual(response.body.availableMcpTools, ["get_transaction"]);
+  assert.match(response.body.shortExcerpt, /list_transactions/);
+});
+
+test("handler returns manual import guidance for PayPal REST transaction permission failures", async () => {
+  await withEnv(
+    {
+      PAYPAL_CLIENT_ID: "rest-client",
+      PAYPAL_CLIENT_SECRET: "rest-secret",
+      PAYPAL_MCP_CLIENT_ID: "",
+      PAYPAL_MCP_REFRESH_TOKEN: "",
+    },
+    async () => {
+      const previousFetch = global.fetch;
+      try {
+        global.fetch = async (url) => {
+          const href = String(url);
+          if (href.endsWith("/v1/oauth2/token")) {
+            return { ok: true, status: 200, async text() { return JSON.stringify({ access_token: "rest-access" }); } };
+          }
+          if (href.includes("/v1/reporting/transactions")) {
+            return {
+              ok: false,
+              status: 403,
+              async text() {
+                return JSON.stringify({ name: "NOT_AUTHORIZED", message: "Transaction Search reporting permission denied for this account" });
+              }
+            };
+          }
+          throw new Error(`Unexpected fetch: ${href}`);
+        };
+
+        const response = createResponseRecorder();
+        await handler({ method: "POST", body: { startDate: "2026-05-20", endDate: "2026-05-20" } }, response);
+
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.body.ok, false);
+        assert.equal(response.body.provider, "paypal");
+        assert.equal(response.body.error, "paypal_manual_import_required");
+        assert.equal(response.body.phase, "transaction_search");
+        assert.equal(response.body.providerStatus, "permission_denied");
+        assert.equal(response.body.canUseManualImport, true);
+        assert.match(response.body.shortExcerpt, /NOT_AUTHORIZED|permission denied/i);
+      } finally {
+        global.fetch = previousFetch;
+      }
+    }
+  );
+});
+
+test("handler returns sanitized oauth phase for PayPal invalid_client failures", async () => {
+  await withEnv(
+    {
+      PAYPAL_CLIENT_ID: "rest-client",
+      PAYPAL_CLIENT_SECRET: "super-secret-value",
+      PAYPAL_MCP_CLIENT_ID: "",
+      PAYPAL_MCP_REFRESH_TOKEN: "",
+    },
+    async () => {
+      const previousFetch = global.fetch;
+      try {
+        global.fetch = async (url) => {
+          assert.match(String(url), /\/v1\/oauth2\/token$/);
+          return {
+            ok: false,
+            status: 401,
+            async text() {
+              return JSON.stringify({ error: "invalid_client", error_description: "Client Authentication failed client_secret=super-secret-value" });
+            }
+          };
+        };
+
+        const response = createResponseRecorder();
+        await handler({ method: "POST", body: { startDate: "2026-05-20", endDate: "2026-05-20" } }, response);
+
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.body.ok, false);
+        assert.equal(response.body.phase, "oauth");
+        assert.equal(response.body.providerStatus, "auth_failed");
+        assert.equal(response.body.canUseManualImport, true);
+        assert.doesNotMatch(JSON.stringify(response.body), /super-secret-value/);
+        assert.match(response.body.shortExcerpt, /invalid_client|Client Authentication failed/);
+      } finally {
+        global.fetch = previousFetch;
+      }
+    }
+  );
 });
 
 test("handler imports manual PayPal rows without calling provider credentials", async () => {

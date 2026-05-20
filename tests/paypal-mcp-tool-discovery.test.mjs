@@ -5,8 +5,6 @@ import handler, {
   normalizePayPalTransactionDetails,
 } from "../api/paypal-transactions.js";
 
-const ACTIONABLE_ERROR = "PayPal REST import failed and MCP fallback is unavailable because PayPal MCP tool list_transactions is not exposed. Use PayPal REST permissions or PayPal statement file import.";
-
 function createResponseRecorder() {
   return {
     statusCode: 200,
@@ -144,11 +142,14 @@ test("REST failure plus missing MCP list_transactions returns actionable structu
 
     const response = await runHandler(fetchImpl);
 
-    assert.equal(response.statusCode, 400);
+    assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, false);
     assert.equal(response.body.provider, "paypal");
-    assert.equal(response.body.phase, "mcp_fallback");
-    assert.equal(response.body.error, ACTIONABLE_ERROR);
+    assert.equal(response.body.phase, "mcp_tool_not_found");
+    assert.equal(response.body.error, "paypal_manual_import_required");
+    assert.equal(response.body.canUseManualImport, true);
+    assert.equal(response.body.fallback, "manual_activity_import");
+    assert.match(response.body.shortExcerpt, /PayPal MCP tool list_transactions/);
     assert.match(response.body.warnings.join(" | "), /PayPal REST import failed/);
     const serialized = JSON.stringify(response.body);
     assert.doesNotMatch(serialized, /rest-secret|mcp-refresh-token|mcp-access-token|access_token=rest-token|client_secret=rest-secret/);
@@ -215,11 +216,13 @@ test("MCP plain text non-JSON returns capped redacted JSON error", async () => {
       callText: `Not JSON Bearer secret-token access_token=token-value client_secret=secret-value ${"x".repeat(500)}`
     }));
 
-    assert.equal(response.statusCode, 400);
+    assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, false);
-    assert.match(response.body.error, /PayPal MCP tool list_transactions returned non-JSON/);
-    assert.doesNotMatch(response.body.error, /secret-token|token-value|secret-value/);
-    assert.equal(response.body.error.length < 380, true);
+    assert.equal(response.body.error, "paypal_manual_import_required");
+    assert.equal(response.body.canUseManualImport, true);
+    assert.match(response.body.shortExcerpt, /PayPal MCP tool list_transactions returned non-JSON/);
+    assert.doesNotMatch(response.body.shortExcerpt, /secret-token|token-value|secret-value/);
+    assert.equal(response.body.shortExcerpt.length < 380, true);
   });
 });
 
