@@ -68,30 +68,32 @@ export function parseAutoBalanceRows(values = []) {
   if (indexes.date === -1 || indexes.channel === -1 || indexes.currency === -1 || indexes.status === -1) return [];
   return rows
     .map((row, rowIndex) => {
-      const status = String(row[indexes.status] || "").trim();
+      const status = normalizeAutoBalanceStatus(row[indexes.status]);
       const channel = String(row[indexes.channel] || "").trim();
       const currency = String(row[indexes.currency] || "").trim().toUpperCase();
       const amount = String(row[indexes.amount] ?? "").trim();
       const amountUsd = indexes.amountUsd === -1 ? "" : String(row[indexes.amountUsd] ?? "").trim();
       const numericAmount = parseNumber(amount);
-      if (!["ok", "zero_balance"].includes(status)) {
-        return null;
-      }
-      if (!Number.isFinite(numericAmount)) return null;
+      const hasNumericAmount = Number.isFinite(numericAmount);
+      if (["ok", "zero_balance"].includes(status) && !hasNumericAmount) return null;
       return {
         date: normalizeDate(row[indexes.date]),
         channel,
         accountName: channel,
-        amount,
-        balanceAmount: amount,
+        amount: hasNumericAmount ? amount : "",
+        balanceAmount: hasNumericAmount ? amount : "",
         currency,
         rate: indexes.rate === -1 ? "" : String(row[indexes.rate] ?? "").trim(),
-        usdAmount: amountUsd || formatUsdAmount(numericAmount, currency),
+        usdAmount: hasNumericAmount ? (amountUsd || formatUsdAmount(numericAmount, currency)) : "",
         source: "provider_auto",
         fact_source: "provider_auto",
         provider: indexes.provider === -1 ? inferProvider(channel) : String(row[indexes.provider] || inferProvider(channel)).trim().toLowerCase(),
         rawSourceId: indexes.rawSourceId === -1 ? "" : String(row[indexes.rawSourceId] || "").trim(),
         status,
+        autoBalanceStatus: status,
+        auto_balance_status: status,
+        isStatusOnly: !hasNumericAmount,
+        is_status_only: !hasNumericAmount,
         comment: indexes.comment === -1 ? "" : String(row[indexes.comment] || "").trim(),
         sourceSheet: AUTO_BALANCE_SHEET_NAME,
         sourceRow: rowIndex + 2,
@@ -119,13 +121,21 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
 }
 
+function normalizeAutoBalanceStatus(value) {
+  const status = String(value || "").trim();
+  if (status === "needs_permission") return "needs_provider_permission";
+  return status || "missing_provider_balance";
+}
+
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
 }
 
 function parseNumber(value) {
-  const numeric = Number(String(value ?? "").replace(/\s/g, "").replace(",", "."));
+  const raw = String(value ?? "").trim();
+  if (!raw) return NaN;
+  const numeric = Number(raw.replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(numeric) ? numeric : NaN;
 }
 

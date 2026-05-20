@@ -4,6 +4,7 @@ import { fetchPayPalCurrentBalances } from "../api/paypal-transactions.js";
 import { fetchYooMoneyCurrentBalance } from "../api/yoomoney-transactions.js";
 import {
   fetchBinanceCurrentBalances,
+  fetchBinanceEarnCurrentBalances,
   getBinanceProviderConfigFromEnv,
 } from "./binance-transactions.js";
 import {
@@ -25,7 +26,7 @@ const FALLBACK_USD_RATES = {
   USDT: 1,
 };
 
-const EXPECTED_PROVIDER_BALANCES = [
+export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "wise", channel: "трансервайз дол", currency: "USD", source: "wise_auto" },
   { provider: "wise", channel: "трансервайз евро", currency: "EUR", source: "wise_auto" },
   { provider: "monobank", channel: "монобанк грн", currency: "UAH", source: "monobank_auto" },
@@ -291,7 +292,7 @@ async function collectPayPalBalanceRows({ date, env, fetchImpl }) {
       rows: buildExpectedProviderRows({
         provider,
         date,
-        status: status === "error" ? "provider_error" : status,
+        status: status === "error" ? "provider_error" : mapUnavailableStatus(status),
         comment: String(error?.message || error),
       }),
       skipped_rows: [],
@@ -329,7 +330,7 @@ async function collectYooMoneyBalanceRows({ date, env, fetchImpl }) {
     return {
       provider,
       provider_current_balance_status: isPermissionError(error) ? "needs_permission" : "error",
-      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_permission" : "provider_error", comment: String(error?.message || error) }),
+      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_provider_permission" : "provider_error", comment: String(error?.message || error) }),
       skipped_rows: [],
       error: String(error?.message || error),
     };
@@ -343,34 +344,76 @@ async function collectBinanceBalanceRows({ date, env, fetchImpl }) {
     if (!config) {
       return buildUnavailableProviderResult(provider, "needs_permission", "BINANCE_API_KEY and BINANCE_API_SECRET are not configured.", date);
     }
-    const balances = await fetchBinanceCurrentBalances({ ...config, fetchImpl });
+    const [spotResult, earnResult] = await Promise.allSettled([
+      fetchBinanceCurrentBalances({ ...config, fetchImpl }),
+      fetchBinanceEarnCurrentBalances({ ...config, fetchImpl }),
+    ]);
     const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
-    const spotUsdt = balances.find((balance) => balance.wallet === "spot" && balance.currency === "USDT");
-    if (spotUsdt) {
+    const errors = [];
+
+    if (spotResult.status === "fulfilled") {
+      const spotUsdt = spotResult.value.find((balance) => balance.wallet === "spot" && balance.currency === "USDT");
+      if (spotUsdt) {
+        replaceExpectedRow(rows, buildSnapshotRow({
+          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "Бинанс spot" && row.currency === "USDT"),
+          date,
+          amount: spotUsdt.amount,
+          rawSourceId: spotUsdt.id,
+          status: Number(spotUsdt.amount) === 0 ? "zero_balance" : "ok",
+          comment: SNAPSHOT_COMMENT,
+        }));
+      }
+    } else {
+      errors.push(`spot: ${String(spotResult.reason?.message || spotResult.reason)}`);
       replaceExpectedRow(rows, buildSnapshotRow({
         ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "Бинанс spot" && row.currency === "USDT"),
         date,
-        amount: spotUsdt.amount,
-        rawSourceId: spotUsdt.id,
-        status: Number(spotUsdt.amount) === 0 ? "zero_balance" : "ok",
-        comment: SNAPSHOT_COMMENT,
+        amount: "",
+        amountUsd: "",
+        rawSourceId: "binance:Бинанс spot:USDT",
+        status: isPermissionError(spotResult.reason) ? "needs_provider_permission" : "provider_error",
+        comment: toSafeComment(spotResult.reason),
       }));
     }
-    replaceExpectedRow(rows, buildSnapshotRow({
-      ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
-      date,
-      amount: "",
-      amountUsd: "",
-      rawSourceId: "binance:binance save:USDT",
-      status: "provider_not_implemented",
-      comment: "Binance savings/Earn current balance endpoint is not wired in this app yet.",
-    }));
-    return { provider, provider_current_balance_status: "available", rows, skipped_rows: [] };
+
+    if (earnResult.status === "fulfilled") {
+      const earnUsdt = earnResult.value.find((balance) => balance.wallet === "earn" && balance.currency === "USDT");
+      if (earnUsdt) {
+        replaceExpectedRow(rows, buildSnapshotRow({
+          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
+          date,
+          amount: earnUsdt.amount,
+          rawSourceId: earnUsdt.id,
+          status: Number(earnUsdt.amount) === 0 ? "zero_balance" : "ok",
+          comment: SNAPSHOT_COMMENT,
+        }));
+      }
+    } else {
+      errors.push(`earn: ${String(earnResult.reason?.message || earnResult.reason)}`);
+      replaceExpectedRow(rows, buildSnapshotRow({
+        ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
+        date,
+        amount: "",
+        amountUsd: "",
+        rawSourceId: "binance:binance save:USDT",
+        status: isPermissionError(earnResult.reason) ? "needs_provider_permission" : "provider_error",
+        comment: toSafeComment(earnResult.reason),
+      }));
+    }
+
+    const hasWritable = rows.some((row) => ["ok", "zero_balance"].includes(row.status));
+    return {
+      provider,
+      provider_current_balance_status: hasWritable ? "available" : (errors.every((error) => isPermissionError(error)) ? "needs_permission" : "error"),
+      rows,
+      skipped_rows: [],
+      error: errors.length ? errors.join("; ") : null,
+    };
   } catch (error) {
     return {
       provider,
       provider_current_balance_status: isPermissionError(error) ? "needs_permission" : "error",
-      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_permission" : "provider_error", comment: String(error?.message || error) }),
+      rows: buildExpectedProviderRows({ provider, date, status: isPermissionError(error) ? "needs_provider_permission" : "provider_error", comment: String(error?.message || error) }),
       skipped_rows: [],
       error: String(error?.message || error),
     };
@@ -588,7 +631,7 @@ function parseBalanceSheetValues(values) {
     rawSourceId: String(row?.[9] || "").trim(),
     status: String(row?.[10] || "ok").trim() || "ok",
     comment: String(row?.[11] || "").trim(),
-  })).filter((row) => row.date && row.provider && row.channel && row.currency && (row.amount || row.usdAmount));
+  })).filter((row) => row.date && row.provider && row.channel && row.currency && (row.status || row.amount || row.usdAmount));
 }
 
 function buildBalanceSheetValues(rows) {
@@ -674,6 +717,10 @@ function isPermissionError(error) {
   const text = String(error?.message || error || "").toLowerCase();
   const status = Number(error?.paypalStatus || error?.status || 0);
   return status === 401 || status === 403 || /permission|unauthori[sz]ed|forbidden|auth|credential|token|scope|access_denied|not configured/.test(text);
+}
+
+function toSafeComment(error) {
+  return String(error?.message || error || "Provider current balance request failed.").slice(0, 240);
 }
 
 function isNotSupportedAccountError(error) {

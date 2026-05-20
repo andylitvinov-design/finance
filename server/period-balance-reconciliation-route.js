@@ -67,6 +67,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const plannedSourceStatus = resolvePlannedSourceStatus(repository, plannedRows);
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+  const autoStatusRows = autoBalanceRows.filter((row) => isAutoStatusOnlyRow(row));
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
   const reconciliation = buildPeriodBalanceReconciliation({
@@ -84,6 +85,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     ...(reconciliation.diagnostics || {}),
     manual_balance_snapshot_rows_loaded: manualBalances.length,
     auto_balance_snapshot_rows_loaded: autoBalanceRows.length,
+    auto_balance_status_rows_loaded: autoStatusRows.length,
+    auto_balance_status_counts: countAutoBalanceStatuses(autoStatusRows),
     balance_snapshot_rows_loaded: balanceRows.length,
     analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
       .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
@@ -105,6 +108,21 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function isAutoStatusOnlyRow(row = {}) {
+  const status = String(row.status || row.autoBalanceStatus || row.auto_balance_status || "").trim();
+  const amount = String(row.balanceAmount ?? row.amount ?? "").trim();
+  const amountUsd = String(row.usdAmount ?? row.amountUsd ?? row.amount_usd ?? "").trim();
+  return Boolean(status && !["ok", "zero_balance"].includes(status) && !amount && !amountUsd);
+}
+
+function countAutoBalanceStatuses(rows = []) {
+  return rows.reduce((counts, row) => {
+    const status = String(row.status || row.autoBalanceStatus || row.auto_balance_status || "").trim();
+    if (status) counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
 }
 
 async function loadYooMoneyProviderEvidence(period = {}, options = {}) {
@@ -338,7 +356,7 @@ function annotateReconciliationSources(reconciliation, balanceRows = []) {
   reconciliation.by_channel_currency = (reconciliation.by_channel_currency || []).map((row) => {
     const sourceRow = findSourceBalanceRow(row, lookup);
     const balanceSource = sourceRow
-      ? (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact")
+      ? (isStatusOnlyBalanceRow(sourceRow) ? "missing" : (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact"))
       : "missing";
     return {
       ...row,
@@ -358,7 +376,7 @@ function annotateReconciliationSources(reconciliation, balanceRows = []) {
   reconciliation.actionable_rows = (reconciliation.actionable_rows || []).map((row) => {
     const sourceRow = findSourceBalanceRow(row, lookup);
     const balanceSource = sourceRow
-      ? (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact")
+      ? (isStatusOnlyBalanceRow(sourceRow) ? "missing" : (normalizeBalanceSource(sourceRow, "manual_fact") === "provider_auto" ? "provider_auto" : "manual_fact"))
       : String(row.balanceSource || row.balance_source || "missing").trim() || "missing";
     return {
       ...row,
@@ -439,6 +457,13 @@ function findSourceBalanceRow(row, lookup) {
   const exactKey = balanceDatedKey(date, row.channel, row.currency);
   if (exactKey && lookup.has(exactKey)) return lookup.get(exactKey);
   return null;
+}
+
+function isStatusOnlyBalanceRow(row = {}) {
+  const status = String(row.status || row.autoBalanceStatus || row.auto_balance_status || "").trim();
+  const amount = String(row.balanceAmount ?? row.amount ?? "").trim();
+  const amountUsd = String(row.usdAmount ?? row.amountUsd ?? row.amount_usd ?? "").trim();
+  return Boolean(status && !["ok", "zero_balance"].includes(status) && !amount && !amountUsd);
 }
 
 function balanceDatedKey(date, channel, currency) {
