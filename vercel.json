@@ -21,6 +21,10 @@
       "destination": "/api/index?action=binanceTransactions"
     },
     {
+      "source": "/api/payoneer-transactions",
+      "destination": "/api/index?action=payoneerTransactions"
+    },
+    {
       "source": "/api/debug-full",
       "destination": "/api/index?action=debugFull"
     },

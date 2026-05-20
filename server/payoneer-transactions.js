@@ -1,4 +1,4 @@
-import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
+import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
 
 const PAYONEER_SOURCE = "payoneer";
 const PAYONEER_CHANNEL_BY_CURRENCY = {
