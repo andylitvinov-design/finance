@@ -51,6 +51,8 @@ const REAL_INCOME_CHANNELS = [
   "БАНК КАНАДА cad",
   "трансервайз дол",
   "трансервайз евро",
+  "Payoneer - dol",
+  "Payoneer - eur",
   "Бинанс spot",
   "binance save",
 ];
@@ -67,6 +69,8 @@ const REAL_INCOME_CHANNEL_CURRENCY = {
   "БАНК КАНАДА cad": "CAD",
   "трансервайз дол": "USD",
   "трансервайз евро": "EUR",
+  "Payoneer - dol": "USD",
+  "Payoneer - eur": "EUR",
   "Бинанс spot": "USD",
   "binance save": "USD",
 };
@@ -1106,6 +1110,7 @@ function isLedgerProviderIncomeSource(row) {
     "monobank",
     "wise",
     "transferwise",
+    "payoneer",
     "binance"
   ].includes(normalizedSource)) return true;
   const rawSourceId = String(
@@ -1116,7 +1121,7 @@ function isLedgerProviderIncomeSource(row) {
     row?.ledgerV2?.raw_source_id ||
     ""
   ).trim().toLowerCase();
-  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|binance|usdt|usdc|crypto|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|payoneer|binance|usdt|usdc|crypto|mcp):/.test(rawSourceId);
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -1421,6 +1426,8 @@ function resolvePaymentChannel(value) {
   }
   if (/wise.*usd|transf?erwise.*usd|трансервайз.*дол/.test(normalized)) return "трансервайз дол";
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
+  if (/payoneer.*(?:usd|дол)|(?:usd|дол).*payoneer/.test(normalized)) return "Payoneer - dol";
+  if (/payoneer.*(?:eur|евр|euro)|(?:eur|евр|euro).*payoneer/.test(normalized)) return "Payoneer - eur";
   if (/binance.*sav|бинанс.*сейв/.test(normalized)) return "binance save";
   if (/(binance|бинанс|crypto|крипт|usdt|usdc)/.test(normalized)) return "Бинанс spot";
   if (/(mono|monobank|монобанк).*(uah|грн|грив)|(?:uah|грн|грив).*(mono|monobank|монобанк)/.test(normalized)) {

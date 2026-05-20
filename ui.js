@@ -273,6 +273,15 @@ function renderExpenseAccountingBlock() {
   privat24Input.type = "file";
   privat24Input.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
   privat24Input.disabled = state.expenseAccounting.loading || state.expenseAccounting.privat24ImportLoading;
+  const payoneerInput = document.createElement("input");
+  payoneerInput.type = "file";
+  payoneerInput.accept = ".csv,.txt,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+  payoneerInput.disabled = state.expenseAccounting.loading || state.expenseAccounting.payoneerLoading;
+  payoneerInput.style.display = "none";
+  payoneerInput.addEventListener("change", async () => {
+    await importPayoneerStatementFile(payoneerInput.files?.[0] || null);
+    payoneerInput.value = "";
+  });
   const statementInput = document.createElement("input");
   statementInput.type = "file";
   statementInput.accept = "image/*,.pdf,.csv,.xlsx,.xls,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
@@ -301,6 +310,7 @@ function renderExpenseAccountingBlock() {
   const actions = document.createElement("div");
   actions.className = "expense-actions";
   const statementLoading = state.expenseAccounting.paypalLoading
+    || state.expenseAccounting.payoneerLoading
     || state.expenseAccounting.wiseLoading
     || state.expenseAccounting.yoomoneyLoading
     || state.expenseAccounting.statementImportLoading
@@ -314,6 +324,12 @@ function renderExpenseAccountingBlock() {
   paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
   paypalButton.disabled = state.expenseAccounting.loading || statementLoading;
   paypalButton.addEventListener("click", loadPayPalExpenseStatement);
+  const payoneerButton = document.createElement("button");
+  payoneerButton.type = "button";
+  payoneerButton.className = "secondary";
+  payoneerButton.textContent = state.expenseAccounting.payoneerLoading ? "Импортирую Payoneer..." : "Импорт Payoneer CSV/XLSX";
+  payoneerButton.disabled = state.expenseAccounting.loading || statementLoading;
+  payoneerButton.addEventListener("click", () => payoneerInput.click());
   const wiseButton = document.createElement("button");
   wiseButton.type = "button";
   wiseButton.className = "secondary";
@@ -364,8 +380,8 @@ function renderExpenseAccountingBlock() {
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", startOrContinueTdImport);
-  actions.append(parseButton, statementImportButton, paypalButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
-  upload.append(input, statementInput, privat24Input, tdBankCsvInput, actions);
+  actions.append(parseButton, statementImportButton, paypalButton, payoneerButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  upload.append(input, statementInput, privat24Input, payoneerInput, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderPrivat24ImportHelper());
@@ -747,6 +763,10 @@ function renderExpenseFinancialAnalysis() {
     if (hasProviderSummaryData(paypalSummary)) {
       block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
     }
+    const payoneerSummary = typeof getActivePayoneerSummary === "function" ? getActivePayoneerSummary() : null;
+    if (hasProviderSummaryData(payoneerSummary)) {
+      block.appendChild(renderProviderMonthlyStatement("Payoneer за месяц", payoneerSummary));
+    }
     const wiseSummary = getActiveWiseSummary();
     if (hasProviderSummaryData(wiseSummary)) {
       block.appendChild(renderProviderMonthlyStatement("Wise за месяц", wiseSummary));
@@ -790,6 +810,10 @@ function renderExpenseFinancialAnalysis() {
   const paypalSummary = getActivePayPalSummary();
   if (hasProviderSummaryData(paypalSummary)) {
     block.appendChild(renderProviderMonthlyStatement("PayPal за месяц", paypalSummary));
+  }
+  const payoneerSummary = typeof getActivePayoneerSummary === "function" ? getActivePayoneerSummary() : null;
+  if (hasProviderSummaryData(payoneerSummary)) {
+    block.appendChild(renderProviderMonthlyStatement("Payoneer за месяц", payoneerSummary));
   }
   const wiseSummary = getActiveWiseSummary();
   if (hasProviderSummaryData(wiseSummary)) {
@@ -1208,9 +1232,9 @@ function getLedgerIncomeChannel(row) {
 function isLedgerProviderIncomeSource(row) {
   const source = String(row?.source || row?.displaySource || "").trim().toLowerCase();
   if (["", "manual", "fact", "migration", "photo", "unknown"].includes(source)) return false;
-  if (["paypal", "paypal_manual", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider", "file_import", "csv_import", "xlsx_import", "pdf_import"].includes(source)) return true;
+  if (["paypal", "paypal_manual", "payoneer", "wise", "monobank", "privatbank", "privat24", "yoomoney", "tdbank", "td_bank", "mcp", "provider", "file_import", "csv_import", "xlsx_import", "pdf_import"].includes(source)) return true;
   const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim().toLowerCase();
-  return /^(paypal|paypal_manual|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
+  return /^(paypal|paypal_manual|payoneer|wise|monobank|privatbank|privat24|yoomoney|tdbank|td_bank|provider|mcp|file_import|csv_import|xlsx_import|pdf_import):/.test(rawSourceId);
 }
 
 function normalizeLedgerProviderIncomeClassifier(value) {
@@ -1537,6 +1561,12 @@ function getActivePayPalSummary() {
   if (hasProviderSummaryData(state.expenseAccounting.paypalSummary)) return state.expenseAccounting.paypalSummary;
   const paypalEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "paypal" || entry.source === "paypal_manual");
   return buildProviderExpenseSummary(paypalEntries);
+}
+
+function getActivePayoneerSummary() {
+  if (hasProviderSummaryData(state.expenseAccounting.payoneerSummary)) return state.expenseAccounting.payoneerSummary;
+  const payoneerEntries = state.expenseAccounting.entries.filter((entry) => entry.source === "payoneer");
+  return buildProviderExpenseSummary(payoneerEntries);
 }
 
 function getActiveWiseSummary() {
@@ -2044,6 +2074,7 @@ async function parseExpenseScreenshotFiles(files) {
       const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
       state.expenseAccounting.entries = fallback.entries;
       state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.payoneerSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
       state.expenseAccounting.monobankSummary = null;
@@ -2053,6 +2084,7 @@ async function parseExpenseScreenshotFiles(files) {
     } else {
       state.expenseAccounting.entries = entries;
       state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.payoneerSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
       state.expenseAccounting.monobankSummary = null;
@@ -2074,6 +2106,7 @@ async function parseExpenseScreenshotFiles(files) {
       const fallback = await parseExpenseScreenshotsWithBrowserOcr(images);
       state.expenseAccounting.entries = fallback.entries;
       state.expenseAccounting.paypalSummary = null;
+      state.expenseAccounting.payoneerSummary = null;
       state.expenseAccounting.wiseSummary = null;
       state.expenseAccounting.yoomoneySummary = null;
       state.expenseAccounting.monobankSummary = null;
@@ -2134,6 +2167,18 @@ async function readPayPalExpenseStatementPayload(response) {
   }
 }
 
+async function readProviderJsonPayload(response, providerName = "Provider") {
+  const text = await response.text().catch(() => "");
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const excerpt = getShortPayPalResponseExcerpt(raw) || "non-JSON response";
+    throw new Error(`${providerName} вернул не-JSON ответ (${response.status || "unknown"}): ${excerpt}`);
+  }
+}
+
 async function loadPayPalExpenseStatement() {
   const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
   const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
@@ -2175,6 +2220,55 @@ async function loadPayPalExpenseStatement() {
     setExpenseAccountingStatus(error.message || "Не удалось загрузить PayPal-выписку.", true);
   } finally {
     state.expenseAccounting.paypalLoading = false;
+    renderTabs();
+  }
+}
+
+async function importPayoneerStatementFile(file) {
+  if (!file) {
+    setExpenseAccountingStatus("Выберите Payoneer CSV/XLSX файл.", true);
+    renderTabs();
+    return;
+  }
+  const startDate = normalizeIncomingSheetDateValue(elements.startDate.value);
+  const endDate = normalizeIncomingSheetDateValue(elements.endDate.value);
+  state.expenseAccounting.payoneerLoading = true;
+  setExpenseAccountingStatus("Импортирую Payoneer-выписку...", false);
+  renderTabs();
+  try {
+    const fileType = detectExpenseStatementFileType(file);
+    const text = fileType === "xlsx"
+      ? await readGenericXlsxFileAsCsv(file)
+      : await file.text();
+    const response = await fetch("./api/payoneer-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate, endDate, text, dryRun: true })
+    });
+    const payload = await readProviderJsonPayload(response, "Payoneer");
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || `Payoneer вернул ошибку (${response.status}).`);
+    }
+    const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "payoneer"),
+      ...entries
+    ];
+    state.expenseAccounting.payoneerSummary = hasProviderSummaryData(payload.summary)
+      ? payload.summary
+      : buildProviderExpenseSummary(entries);
+    state.expenseAccounting.warnings = payload.warnings || [];
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    setExpenseAccountingStatus(
+      entries.length
+        ? `Payoneer-выписка импортирована: ${entries.length} строк. Проверьте warnings, категории и amount_net перед внесением.`
+        : "Payoneer-выписка прочитана, но операций не найдено.",
+      false
+    );
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось импортировать Payoneer-выписку.", true);
+  } finally {
+    state.expenseAccounting.payoneerLoading = false;
     renderTabs();
   }
 }
@@ -2744,9 +2838,9 @@ function normalizeGenericStatementRawHeader(value) {
     .replace(/[^0-9a-zа-яіїєґ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (header === "gross") return "gross";
-  if (header === "fee" || header === "fees") return "fee";
-  if (header === "net") return "net";
+  if (header === "gross" || header === "gross amount") return "gross";
+  if (header === "fee" || header === "fees" || header === "service fee") return "fee";
+  if (header === "net" || header === "net amount") return "net";
   if (header === "source amount") return "source_amount";
   if (header === "target amount") return "target_amount";
   return normalizeStatementHeader(header);
@@ -2785,6 +2879,8 @@ function inferGenericStatementChannel({ context = {}, currency = "", description
   if (providerHint === "tdbank" && (!currency || currency === "CAD")) return "БАНК КАНАДА cad";
   if (providerHint === "paypal" && currency === "USD") return findConfiguredChannelByAliases(["пейпал дол", "paypal usd"]);
   if (providerHint === "paypal" && currency === "EUR") return findConfiguredChannelByAliases(["пейпал евр", "paypal eur"]);
+  if (providerHint === "payoneer" && currency === "USD") return findConfiguredChannelByAliases(["Payoneer - dol", "payoneer usd", "payoneer dol"]);
+  if (providerHint === "payoneer" && currency === "EUR") return findConfiguredChannelByAliases(["Payoneer - eur", "payoneer eur", "payoneer euro"]);
   if (providerHint === "privatbank" && currency === "UAH") return findConfiguredChannelByAliases(["приват 24-грн", "privat 24 uah"]);
   if (providerHint === "yoomoney" && currency === "RUB") return findConfiguredChannelByAliases(["Яндекс руб", "yoomoney rub", "yandex rub"]);
   if (providerHint === "wise") return inferWiseGenericStatementChannel(currency);
@@ -2826,6 +2922,11 @@ function detectGenericStatementProvider({ fileName = "", headers = [], rawHeader
       [/paypal/, 0.75, "filename/text"],
       [/transaction id|payer|payee/, 0.25, "headers"],
       [/\bgross\b|\bfee\b|\bnet\b/, 0.25, "headers"]
+    ], haystack, currencySet, headerSet),
+    buildProviderDetectionCandidate("payoneer", [
+      [/payoneer/, 0.75, "filename/text"],
+      [/transaction id|reference id|payment id|payer|payee/, 0.25, "headers"],
+      [/\bgross\b|\bfee\b|\bnet\b|service fee/, 0.25, "headers"]
     ], haystack, currencySet, headerSet),
     buildProviderDetectionCandidate("privatbank", [
       [/privat|privat24|приват/, 0.75, "filename/text"],
@@ -3780,6 +3881,7 @@ async function saveExpenseAccountingEntries() {
     await loadDashboardData();
     state.expenseAccounting.entries = [];
     state.expenseAccounting.paypalSummary = null;
+    state.expenseAccounting.payoneerSummary = null;
     state.expenseAccounting.wiseSummary = null;
     state.expenseAccounting.yoomoneySummary = null;
     state.expenseAccounting.monobankSummary = null;
