@@ -384,6 +384,7 @@ async function collectDerivedPayPalBalanceRows({ date, fetchImpl, originalError 
       blocked_reason: result.blocked_reason || null,
       blocked_rows: result.blocked_rows || [],
     });
+    if (result.blocked_reason === "manual_or_provider_balance_exists") continue;
     rows.push(result.row || buildPayPalDerivedStatusRow({
       ...expected,
       date,
@@ -392,10 +393,13 @@ async function collectDerivedPayPalBalanceRows({ date, fetchImpl, originalError 
     }));
   }
 
+  const blockedReasons = derived.map((row) => row.blocked_reason).filter(Boolean);
   return {
     provider_current_balance_status: rows.some((row) => row.status === "derived_from_confirmed_opening")
       ? "derived_from_ledger"
-      : "needs_initial_paypal_balance",
+      : (blockedReasons.length && blockedReasons.every((reason) => reason === "manual_or_provider_balance_exists")
+        ? "manual_or_provider_balance_exists"
+        : "needs_initial_paypal_balance"),
     rows,
     derived,
   };
