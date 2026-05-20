@@ -1021,6 +1021,8 @@ function parseAutoBalanceRows(values) {
       const provider = normalizeAutoBalanceProvider(providerIndex === -1 ? "" : row[providerIndex], sourceIndex === -1 ? "" : row[sourceIndex], commentIndex === -1 ? "" : row[commentIndex]);
       const source = normalizeAutoBalanceSource(sourceIndex === -1 ? "" : row[sourceIndex], provider);
       const amount = String(row[amountIndex] || "").trim();
+      const status = normalizeAutoBalanceStatus(statusIndex === -1 ? "" : row[statusIndex]);
+      const isStatusOnly = !amount && Boolean(status);
       return {
         date: normalizeDate(row[dateIndex]),
         provider,
@@ -1035,13 +1037,23 @@ function parseAutoBalanceRows(values) {
         balanceSource: "provider_auto",
         fetchedAt: fetchedAtIndex === -1 ? "" : String(row[fetchedAtIndex] || "").trim(),
         rawSourceId: rawSourceIdIndex === -1 ? "" : String(row[rawSourceIdIndex] || "").trim(),
-        status: statusIndex === -1 ? "" : String(row[statusIndex] || "").trim(),
+        status,
+        autoBalanceStatus: status,
+        auto_balance_status: status,
+        isStatusOnly,
+        is_status_only: isStatusOnly,
         comment: commentIndex === -1 ? "" : String(row[commentIndex] || "").trim(),
         sourceSheet: AUTO_BALANCE_SHEET_NAME,
         sourceRow: rowIndex + 2,
       };
     })
-    .filter((row) => row.date && row.channel && row.amount);
+    .filter((row) => row.date && row.channel && (row.amount || row.status));
+}
+
+function normalizeAutoBalanceStatus(status) {
+  const value = String(status || "").trim();
+  if (value === "needs_permission") return "needs_provider_permission";
+  return value;
 }
 
 function classifyBalanceSource({ source = "", comment = "" } = {}) {

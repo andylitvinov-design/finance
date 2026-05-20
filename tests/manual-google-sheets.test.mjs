@@ -586,6 +586,65 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
   }
 });
 
+test("loadManualRepositoryFromGoogleSheets preserves Авто Остатки status-only rows", async () => {
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "manual-ledger-test@example.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({
+      fetchImpl: async (url) => {
+        if (String(url).includes("oauth2.googleapis.com/token")) {
+          return jsonResponse({ access_token: "token" });
+        }
+        if (String(url).includes("sheets.googleapis.com")) {
+          return jsonResponse({
+            valueRanges: [
+              {
+                range: "'Ledger'!A:V",
+                values: [["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "source", "raw_source_id"]],
+              },
+              {
+                range: "'Авто Остатки'!A:L",
+                values: [
+                  ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+                  ["2026-05-20", "binance", "binance save", "5410,644", "USDT", "1", "5410,644", "binance_auto", "2026-05-20T09:00:00.000Z", "binance:save:USDT:2026-05-20", "ok", "auto daily provider snapshot"],
+                  ["2026-05-20", "payoneer", "Payoneer - dol", "", "USD", "1", "", "payoneer_auto", "2026-05-20T09:00:00.000Z", "payoneer:Payoneer - dol:USD:2026-05-20", "provider_not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet."],
+                  ["2026-05-20", "monobank", "монобанк грн", "", "UAH", "1", "", "monobank_auto", "2026-05-20T09:00:00.000Z", "monobank:монобанк грн:UAH:2026-05-20", "needs_permission", "MONOBANK_API_TOKEN is not configured."],
+                ],
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+
+    assert.equal(repository.ok, true);
+    assert.equal(repository.autoBalances.length, 3);
+    assert.equal(repository.autoBalances[0].amount, "5410,644");
+    assert.equal(repository.autoBalances[0].status, "ok");
+
+    const payoneer = repository.autoBalances.find((row) => row.provider === "payoneer");
+    assert.equal(payoneer.amount, "");
+    assert.equal(payoneer.balanceAmount, "");
+    assert.equal(payoneer.status, "provider_not_implemented");
+    assert.equal(payoneer.autoBalanceStatus, "provider_not_implemented");
+    assert.equal(payoneer.isStatusOnly, true);
+    assert.equal(payoneer.balanceSource, "provider_auto");
+
+    const monobank = repository.autoBalances.find((row) => row.provider === "monobank");
+    assert.equal(monobank.status, "needs_provider_permission");
+    assert.equal(monobank.isStatusOnly, true);
+  } finally {
+    if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
 test("loadManualRepositoryFromGoogleSheets canonicalizes balance channels and currencies", async () => {
   const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
