@@ -397,6 +397,7 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (/^migration:/i.test(raw)) return "migration";
   if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
   if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
+  if (/^(binance|crypto|usdt|usdc|trc20|erc20)[:_-]/i.test(raw)) return "binance";
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
   if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
@@ -416,6 +417,7 @@ function inferManualLedgerSourceFromChannels(...values) {
   if (!normalized) return "";
   if (/(paypal|пейпал)/.test(normalized)) return "paypal";
   if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
+  if (/(binance|бинанс|crypto|крипт|usdt|usdc|trc20|erc20)/.test(normalized)) return "binance";
   if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
   if (/(privat|приват)/.test(normalized)) return "privatbank";
   if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
@@ -425,11 +427,12 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "paypal_manual", "paypal_personal_manual", "wise", "binance", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
   if (["paypal_personal", "manual_provider_confirmed"].includes(token)) return "paypal_personal_manual";
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
   if (["transferwise"].includes(token)) return "wise";
+  if (["binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(token)) return "binance";
   if (["mono"].includes(token)) return "monobank";
   if (["privat24", "privat_24"].includes(token)) return "privatbank";
   if (["tdbank"].includes(token)) return "td_bank";
@@ -442,11 +445,12 @@ function normalizeManualLedgerSource(value, fallback = "") {
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "paypal_manual", "paypal_personal_manual", "wise", "binance", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
   else if (["paypal_personal", "manual_provider_confirmed"].includes(token)) normalized = "paypal_personal_manual";
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
   else if (["transferwise"].includes(token)) normalized = "wise";
+  else if (["binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(token)) normalized = "binance";
   else if (["mono"].includes(token)) normalized = "monobank";
   else if (["privat24", "privat_24"].includes(token)) normalized = "privatbank";
   else if (["tdbank"].includes(token)) normalized = "td_bank";
@@ -967,7 +971,7 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const hasExplicitFee = String(amountFee || "").trim() !== "" && Number.isFinite(parseLooseNumber(amountFee));
     const derivedAmountNet = hasExplicitFee
       ? formatSheetNumber(Math.max(0, Math.abs(parseLooseNumber(amountGross || amount)) - Math.abs(parseLooseNumber(amountFee))))
-      : (resolvedSource === "paypal" || resolvedSource === "paypal_personal_manual" ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
+      : (["paypal", "paypal_manual", "paypal_personal_manual"].includes(resolvedSource) ? "" : formatSheetNumber(Math.abs(parseLooseNumber(amountGross || amount))));
     const amountNet = normalizeManualFinancePersistedNumberInput(
       firstNonEmpty(row?.amountNet, row?.amount_net, row?.netAmount, derivedAmountNet)
     );
