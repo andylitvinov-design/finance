@@ -1,97 +1,63 @@
-// Hotfix: make mobile screenshot upload/OCR more tolerant for Privat24 images.
+// Hotfix: tolerant mobile image read + strict Privat24 browser OCR parser.
 (function () {
-  const MAX_DATA_URL_LENGTH = 8 * 1024 * 1024;
-  const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
-  const IMAGE_MIME = /^image\/(png|jpe?g|webp)$/i;
-  const MONTHS = {
-    "січня":"01","сiчня":"01","января":"01",
-    "лютого":"02","февраля":"02",
-    "березня":"03","марта":"03",
-    "квітня":"04","квiтня":"04","апреля":"04",
-    "травня":"05","мая":"05",
-    "червня":"06","июня":"06",
-    "липня":"07","июля":"07",
-    "серпня":"08","августа":"08",
-    "вересня":"09","сентября":"09",
-    "жовтня":"10","октября":"10",
-    "листопада":"11","ноября":"11",
-    "грудня":"12","декабря":"12"
-  };
-
+  const MAX = 8 * 1024 * 1024;
+  const IMG_EXT = /\.(png|jpe?g|webp)$/i;
+  const IMG_MIME = /^image\/(png|jpe?g|webp)$/i;
+  const MONTHS = {"січня":"01","сiчня":"01","января":"01","лютого":"02","февраля":"02","березня":"03","марта":"03","квітня":"04","квiтня":"04","апреля":"04","травня":"05","мая":"05","червня":"06","июня":"06","липня":"07","июля":"07","серпня":"08","августа":"08","вересня":"09","сентября":"09","жовтня":"10","октября":"10","листопада":"11","ноября":"11","грудня":"12","декабря":"12"};
   const originalExtractDate = typeof extractExpenseOcrDate === "function" ? extractExpenseOcrDate : null;
   const originalParseOcrText = typeof parseExpenseOcrText === "function" ? parseExpenseOcrText : null;
 
-  function yearFromUi() {
-    return String(elements?.endDate?.value || elements?.startDate?.value || new Date().toISOString()).slice(0, 4) || String(new Date().getFullYear());
-  }
-
-  function mimeFromFile(file) {
+  function uiYear() { return String(elements?.endDate?.value || elements?.startDate?.value || new Date().toISOString()).slice(0, 4) || String(new Date().getFullYear()); }
+  function mime(file) {
     const type = String(file?.type || "").toLowerCase();
-    if (IMAGE_MIME.test(type)) return type.replace("image/jpg", "image/jpeg");
+    if (IMG_MIME.test(type)) return type.replace("image/jpg", "image/jpeg");
     const name = String(file?.name || "").toLowerCase();
     if (/\.png$/.test(name)) return "image/png";
     if (/\.webp$/.test(name)) return "image/webp";
     if (/\.jpe?g$/.test(name)) return "image/jpeg";
     return "";
   }
-
-  function acceptedImage(file) {
-    return IMAGE_MIME.test(String(file?.type || "")) || IMAGE_EXT.test(String(file?.name || ""));
-  }
-
-  function fileReaderDataUrl(file) {
+  function accepted(file) { return IMG_MIME.test(String(file?.type || "")) || IMG_EXT.test(String(file?.name || "")); }
+  function readByFileReader(file) {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error(`read failed: ${file?.name || "screenshot"}`));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsDataURL(file);
+      const r = new FileReader();
+      r.onerror = () => reject(new Error(`read failed: ${file?.name || "screenshot"}`));
+      r.onload = () => resolve(String(r.result || ""));
+      r.readAsDataURL(file);
     });
   }
-
-  function bufferToDataUrl(buffer, mime) {
+  function toDataUrl(buffer, type) {
     const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    }
-    return `data:${mime};base64,${btoa(binary)}`;
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:${type};base64,${btoa(out)}`;
   }
-
-  async function readDataUrl(file, mime) {
+  async function readDataUrl(file, type) {
     try {
-      const dataUrl = await fileReaderDataUrl(file);
+      const dataUrl = await readByFileReader(file);
       if (/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) return dataUrl;
     } catch {}
     if (typeof file?.arrayBuffer !== "function") throw new Error(`Не удалось прочитать ${file?.name || "скриншот"}.`);
-    return bufferToDataUrl(await file.arrayBuffer(), mime);
+    return toDataUrl(await file.arrayBuffer(), type);
   }
-
-  function decode(dataUrl) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onerror = reject;
-      image.onload = () => resolve(image);
-      image.src = dataUrl;
-    });
-  }
+  function decode(dataUrl) { return new Promise((resolve, reject) => { const img = new Image(); img.onerror = reject; img.onload = () => resolve(img); img.src = dataUrl; }); }
 
   async function patchedPrepareExpenseScreenshotImage(file) {
-    if (!acceptedImage(file)) throw new Error(`Файл ${file?.name || ""} должен быть PNG, JPEG или WEBP.`);
-    const mime = mimeFromFile(file) || "image/jpeg";
-    const dataUrl = await readDataUrl(file, mime);
+    if (!accepted(file)) throw new Error(`Файл ${file?.name || ""} должен быть PNG, JPEG или WEBP.`);
+    const type = mime(file) || "image/jpeg";
+    const dataUrl = await readDataUrl(file, type);
     if (!/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) throw new Error(`Файл ${file?.name || "скриншот"} не похож на изображение.`);
-    if (dataUrl.length > MAX_DATA_URL_LENGTH) throw new Error(`Скриншот ${file?.name || ""} слишком большой.`);
+    if (dataUrl.length > MAX) throw new Error(`Скриншот ${file?.name || ""} слишком большой.`);
     try {
-      const image = await decode(dataUrl);
+      const img = await decode(dataUrl);
       const maxSide = 1600;
-      const scale = Math.min(1, maxSide / Math.max(image.width || maxSide, image.height || maxSide));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round((image.width || maxSide) * scale));
-      canvas.height = Math.max(1, Math.round((image.height || maxSide) * scale));
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const resized = canvas.toDataURL("image/jpeg", 0.82);
-      if (resized.length <= MAX_DATA_URL_LENGTH) return { name: file?.name || "screenshot", dataUrl: resized, uploadedAtDate: buildLocalTodayIsoDate() };
+      const scale = Math.min(1, maxSide / Math.max(img.width || maxSide, img.height || maxSide));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round((img.width || maxSide) * scale));
+      c.height = Math.max(1, Math.round((img.height || maxSide) * scale));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const resized = c.toDataURL("image/jpeg", 0.82);
+      if (resized.length <= MAX) return { name: file?.name || "screenshot", dataUrl: resized, uploadedAtDate: buildLocalTodayIsoDate() };
     } catch {}
     return { name: file?.name || "screenshot", dataUrl, uploadedAtDate: buildLocalTodayIsoDate() };
   }
@@ -100,43 +66,46 @@
     const direct = originalExtractDate ? originalExtractDate(line) : "";
     if (direct) return direct;
     const raw = String(line || "").toLowerCase().replace(/ё/g, "е");
-    const monthNames = Object.keys(MONTHS).join("|");
-    const match = raw.match(new RegExp(`(?:^|\\b)(\\d{1,2})\\s+(${monthNames})(?:\\b|$)`, "i"));
-    return match ? `${yearFromUi()}-${MONTHS[match[2]]}-${String(match[1]).padStart(2, "0")}` : "";
+    const names = Object.keys(MONTHS).join("|");
+    const m = raw.match(new RegExp(`(?:^|\\b)(\\d{1,2})\\s+(${names})(?:\\b|$)`, "i"));
+    return m ? `${uiYear()}-${MONTHS[m[2]]}-${String(m[1]).padStart(2, "0")}` : "";
   }
 
   function parseAmount(line) {
     const raw = String(line || "").replace(/\u00a0/g, " ");
-    const match = raw.match(/([+-])?\s*(\d[\d\s.,]*\d|\d)\s*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/i);
-    if (!match) return null;
-    const amount = Math.abs(parseLooseNumber(match[2]));
+    const m = raw.match(/([+-])\s*(\d[\d\s.,]*\d|\d)\s*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/i);
+    if (!m) return null;
+    const amount = Math.abs(parseLooseNumber(m[2]));
     if (!amount) return null;
-    const cur = String(match[3]).toLowerCase();
+    const cur = String(m[3]).toLowerCase();
     const currency = /uah|грн|₴/.test(cur) ? "UAH" : /eur|€/.test(cur) ? "EUR" : /rub|руб/.test(cur) ? "RUB" : /cad|c\$/.test(cur) ? "CAD" : "USD";
-    return { amount, currency, direction: match[1] === "+" ? "income" : "expense" };
+    return { amount, currency, direction: m[1] === "+" ? "income" : "expense" };
   }
-
   function privatUahChannel() {
     const channels = getManualFinanceChannels();
-    return channels.find((channel) => /приват\s*24.*грн/i.test(String(channel || ""))) || "приват 24-грн";
+    return channels.find((x) => /приват\s*24.*грн/i.test(String(x || ""))) || "приват 24-грн";
+  }
+  function usefulName(line) {
+    const raw = String(line || "").trim();
+    if (!raw || /^\d{1,2}:\d{2}$/.test(raw)) return false;
+    if (/^(історія|история|аналітика|аналитика|choose files?|no file chosen)$/i.test(raw)) return false;
+    if (/^[•.*\s-]*\d{3,4}$/.test(raw)) return false;
+    return true;
   }
 
   function patchedParseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
     const original = originalParseOcrText ? originalParseOcrText(text, sourceImageIndex, uploadedAtDate) : { entries: [], warnings: [] };
-    const lines = String(text || "").split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+    const lines = String(text || "").split(/\n+/).map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean);
     const entries = [];
     let currentDate = "";
-    let previousText = "";
+    let prev = "";
     for (const line of lines) {
       const date = patchedExtractExpenseOcrDate(line);
-      if (date) { currentDate = date; previousText = ""; continue; }
+      if (date) { currentDate = date; prev = ""; continue; }
       const amount = parseAmount(line);
-      if (!amount) {
-        if (!/^\d{1,2}:\d{2}$/.test(line) && !/^(історія|история|аналітика|аналитика)$/i.test(line)) previousText = line;
-        continue;
-      }
+      if (!amount) { if (usefulName(line)) prev = line; continue; }
       const channel = amount.currency === "UAH" ? privatUahChannel() : inferExpenseOcrChannel(line);
-      const organization = previousText || line.replace(/[+-]?\s*\d[\d\s.,]*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/ig, "").trim();
+      const organization = prev || line.replace(/[+-]\s*\d[\d\s.,]*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/ig, "").trim();
       entries.push(normalizeExpenseAccountingEntry({
         date: currentDate || uploadedAtDate,
         dateSource: currentDate ? "screenshot" : "upload_fallback",
@@ -150,18 +119,14 @@
         receivedType: amount.direction === "income" ? "serviceincome" : "",
         organization,
         counterparty: organization,
-        confidence: 0.72,
-        source: "browser_ocr",
+        confidence: 0.78,
+        source: "browser_ocr_strict",
         sourceImageIndex
       }, entries.length));
-      previousText = "";
+      prev = "";
     }
-    const merged = [...entries];
-    (original.entries || []).forEach((entry) => {
-      const duplicate = merged.some((candidate) => candidate.date === entry.date && candidate.channel === entry.channel && candidate.currency === entry.currency && Math.abs(Number(candidate.localAmount || 0) - Number(entry.localAmount || 0)) < 0.0001);
-      if (!duplicate) merged.push(entry);
-    });
-    return { entries: merged, warnings: [...(original.warnings || []), ...(merged.length ? [] : ["Browser OCR did not find expense-like rows."])] };
+    if (entries.length) return { entries, warnings: ["Browser OCR strict currency parser used; broad OCR rows suppressed."] };
+    return { entries: original.entries || [], warnings: [...(original.warnings || []), ...((original.entries || []).length ? [] : ["Browser OCR did not find expense-like rows."])] };
   }
 
   try { prepareExpenseScreenshotImage = patchedPrepareExpenseScreenshotImage; window.prepareExpenseScreenshotImage = patchedPrepareExpenseScreenshotImage; } catch {}
