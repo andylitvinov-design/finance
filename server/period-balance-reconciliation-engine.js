@@ -95,6 +95,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const realOutflow = round(real?.outflow || 0);
   const realDelta = round(realInflow - realOutflow);
   const missingAmountNetRows = Number(real?.missing_amount_net_rows || 0);
+  const movementRows = Number(real?.rows || 0);
 
   const calculatedClosing = opening === null ? null : round(opening + realDelta);
   const plannedClosing = opening === null ? null : round(opening + plannedDelta);
@@ -138,6 +139,14 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   } else if (calculatedClosing !== null && manualProviderClosing !== null && Math.abs(round(manualProviderClosing - calculatedClosing)) > 0.0001) {
     status = STATUS.MISMATCH;
   }
+  const blockerClassification = buildBlockerClassification({
+    status,
+    channel,
+    currency,
+    realDifference,
+    movementRows,
+    missingAmountNetRows,
+  });
 
   const planVsRealDelta = round(realDelta - plannedDelta);
   const roundedOpening = opening === null ? null : round(opening);
@@ -203,12 +212,27 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     last_observed_closing_balance_source: lastObservedClosingSnapshot ? (closingSnapshot ? "exact" : "stale") : "missing",
     real_difference: realDifference,
     plan_vs_real_delta: planVsRealDelta,
-    movement_rows: Number(real?.rows || 0),
+    movement_rows: movementRows,
     planned_rows: Number(planned?.rows || 0),
     missing_amount_net_rows: missingAmountNetRows,
     status,
+    blocker_classification: blockerClassification,
+    classification: blockerClassification,
+    safe_to_auto_repair: false,
+    diagnostic_candidates: buildDiagnosticCandidates({
+      classification: blockerClassification,
+      channel,
+      currency,
+      realDifference,
+      movementRows,
+      missingAmountNetRows,
+      calculatedClosing,
+      displayedFactClosing,
+      to,
+    }),
     diagnostics: buildDiagnostics({
       status,
+      blockerClassification,
       missingAmountNetRows,
       opening,
       displayedFactClosing,
@@ -669,6 +693,11 @@ function buildCurrencyRows(rows) {
 function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceStatus }) {
   const statusCounts = {};
   for (const row of rows || []) statusCounts[row.status] = (statusCounts[row.status] || 0) + 1;
+  const classificationCounts = {};
+  for (const row of rows || []) {
+    const classification = row.blocker_classification || row.classification || row.status;
+    classificationCounts[classification] = (classificationCounts[classification] || 0) + 1;
+  }
   const failed = statusCounts[STATUS.MISMATCH] || 0;
   const incomplete = (statusCounts[STATUS.MISSING_OPENING] || 0)
     + (statusCounts[STATUS.MISSING_PROVIDER] || 0)
@@ -685,6 +714,7 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
     planned_rows: Number(plannedRows || 0),
     planned_source_status: plannedRows ? "ok" : (plannedSourceStatus === "available" ? "available_empty" : "needs_verification"),
     missing_amount_net_rows: Number(missingAmountNetRows || 0),
+    classification_counts: classificationCounts,
     status_counts: {
       [STATUS.OK]: statusCounts[STATUS.OK] || 0,
       [STATUS.MISMATCH]: statusCounts[STATUS.MISMATCH] || 0,
@@ -719,7 +749,7 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.OK) return "Сверено: фактический остаток совпадает с реальным расчетным остатком.";
   if (row.status === STATUS.CARRIED_FORWARD) return "Условно перенесено: за период нет движений и нет нового остатка, использован остаток прошлого периода.";
   if (row.status === STATUS.NO_DATA) return "Нет данных для сверки: нет начального остатка, движения, плана и факта.";
-  if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным.";
+  if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным. Нужна ручная проверка net/fee; gross нельзя автоматически копировать в amount_net.";
   if (row.status === STATUS.MISSING_OPENING) return "Нет начального Остатки перед периодом, но есть план/движение.";
   if (row.status === STATUS.MISSING_PROVIDER) return "Нет фактического остатка на дату; сверка по этому счету заблокирована до ввода баланса провайдера.";
   if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "Автоматический остаток для этого провайдера не реализован; нужен ручной факт или новый API-адаптер.";
@@ -727,12 +757,17 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.PROVIDER_ERROR) return "Провайдерский остаток не получен из-за ошибки API; статус сохранен в Авто Остатки.";
   if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Провайдерский остаток не поддерживается для текущего аккаунта.";
   if (row.status === STATUS.MISSING_CLOSING) return "Есть план/движение, но нет нового фактического Остатки за период.";
+  if (row.blocker_classification === "missing_movement_or_fact_confirmation") return "Расхождение без Ledger движения за период: нужен подтвержденный movement или подтверждение фактического остатка.";
+  if (row.blocker_classification === "account_split_mismatch") return "Расхождение по отдельному аккаунт-каналу: нельзя объединять spot/save без явного подтверждения перевода между счетами.";
+  if (row.blocker_classification === "stale_or_wrong_ostatki_needs_provider_balance") return "Расхождение Остатки: нужен фактический провайдерский баланс на дату, расчетная сумма не является безопасной заменой.";
+  if (row.blocker_classification === "residual_fee_or_rounding_needs_verification") return "Небольшой остаточный diff: возможны fee/rounding/candidate rows, но автоматическое исправление небезопасно без точного провайдерского подтверждения.";
   if (row.status === STATUS.MISMATCH) return "Расхождение: фактический конечный остаток не равен реальному расчетному остатку.";
   return "Нужна проверка: не хватает данных для полной сверки периода.";
 }
 
 function buildDiagnostics({
   status,
+  blockerClassification,
   missingAmountNetRows,
   opening,
   displayedFactClosing,
@@ -748,6 +783,7 @@ function buildDiagnostics({
   if (status === STATUS.NO_DATA) {
     return {
       categories,
+      blocker_classification: blockerClassification,
       has_exact_provider_balance: Boolean(closingSnapshot),
       last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
       nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
@@ -766,6 +802,7 @@ function buildDiagnostics({
   if (isProviderLimitationStatus(status)) categories.push(status);
   return {
     categories: Array.from(new Set(categories)),
+    blocker_classification: blockerClassification,
     has_exact_provider_balance: Boolean(closingSnapshot),
     last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
     nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
@@ -780,7 +817,7 @@ function buildFixAction(row) {
   if (row.status === STATUS.OK) return "Действий не требуется.";
   if (row.status === STATUS.CARRIED_FORWARD) return "Проверить позже: добавить новый Остатки, если появится актуальный баланс.";
   if (row.status === STATUS.NO_DATA) return "Игнорировать: нет данных для сверки по этому счету/валюте.";
-  if (row.status === STATUS.MISSING_AMOUNT_NET) return "Заполнить amount_net у Ledger строк по этому счету/валюте.";
+  if (row.status === STATUS.MISSING_AMOUNT_NET) return "Ручно подтвердить PayPal net/fee по провайдеру перед заполнением amount_net; gross не использовать как fallback.";
   if (row.status === STATUS.MISSING_OPENING) return "Добавить Остатки до начала периода по этому счету/валюте.";
   if (row.status === STATUS.MISSING_PROVIDER) return "Добавить фактический остаток на дату окончания периода по этому счету/валюте.";
   if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "Оставить статус в Авто Остатки или добавить ручной факт в Остатки.";
@@ -788,6 +825,10 @@ function buildFixAction(row) {
   if (row.status === STATUS.PROVIDER_ERROR) return "Проверить ошибку провайдера и повторить auto-balance snapshot.";
   if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Оставить статус или добавить ручной факт, если провайдер не поддерживает API-баланс.";
   if (row.status === STATUS.MISSING_CLOSING) return "Добавить фактический конечный Остатки за период по этому счету/валюте.";
+  if (row.blocker_classification === "missing_movement_or_fact_confirmation") return "Найти подтвержденное движение Ledger или подтвердить фактический Остатки; не создавать movement автоматически.";
+  if (row.blocker_classification === "account_split_mismatch") return "Проверить отдельные account channels и явный перевод между spot/save; не объединять каналы автоматически.";
+  if (row.blocker_classification === "stale_or_wrong_ostatki_needs_provider_balance") return "Получить фактический провайдерский баланс на дату; расчетный остаток только diagnostic hint.";
+  if (row.blocker_classification === "residual_fee_or_rounding_needs_verification") return "Сверить candidate fee/card/rounding rows; диагностировать без автоматической мутации.";
   if (row.status === STATUS.MISMATCH) return "Проверить Ledger movements, amount_net и строку Остатки за период.";
   return "Проверить дату, счет, валюту и сумму в Ledger/Остатки.";
 }
@@ -796,7 +837,7 @@ function buildRepairAction(row) {
   if (row.status === STATUS.OK) return "none";
   if (row.status === STATUS.CARRIED_FORWARD) return "confirm_carried_forward_before_append";
   if (row.status === STATUS.NO_DATA) return "ignore_no_data";
-  if (row.status === STATUS.MISSING_AMOUNT_NET) return "fix_amount_net";
+  if (row.status === STATUS.MISSING_AMOUNT_NET) return "manual_confirm_amount_net";
   if (row.status === STATUS.MISSING_OPENING) return "enter_opening_fact";
   if (row.status === STATUS.MISSING_PROVIDER) return "enter_manual_provider_fact";
   if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "provider_not_implemented_or_enter_manual_fact";
@@ -806,6 +847,99 @@ function buildRepairAction(row) {
   if (row.status === STATUS.MISSING_CLOSING) return "enter_closing_fact";
   if (row.status === STATUS.MISMATCH) return "investigate_mismatch";
   return "needs_verification";
+}
+
+function buildBlockerClassification({
+  status,
+  channel,
+  currency,
+  realDifference,
+  movementRows,
+  missingAmountNetRows,
+}) {
+  const normalizedChannel = normalizeText(channel);
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (status === STATUS.MISSING_AMOUNT_NET || missingAmountNetRows) return "missing_amount_net";
+  if (status !== STATUS.MISMATCH) return status;
+  if (/бинанс|binance/.test(normalizedChannel)) return "account_split_mismatch";
+  if (normalizedChannel === "яндекс руб") return "stale_or_wrong_ostatki_needs_provider_balance";
+  if (/wise|transferwise|трансервайз/.test(normalizedChannel) && normalizedCurrency === "USD") {
+    return "residual_fee_or_rounding_needs_verification";
+  }
+  if (!movementRows && realDifference !== null && realDifference !== undefined && Math.abs(Number(realDifference || 0)) > 0.0001) {
+    return "missing_movement_or_fact_confirmation";
+  }
+  return "mismatch_needs_verification";
+}
+
+function buildDiagnosticCandidates({
+  classification,
+  channel,
+  currency,
+  realDifference,
+  movementRows,
+  missingAmountNetRows,
+  calculatedClosing,
+  displayedFactClosing,
+  to,
+}) {
+  if (classification === "missing_amount_net") {
+    return [{
+      type: "manual_amount_net_confirmation",
+      channel,
+      currency,
+      row_count: Number(missingAmountNetRows || 0),
+      confirmed_amount_net: null,
+      confirmed_fee: null,
+      safe_to_apply: false,
+      action: "Confirm provider net/fee manually; do not copy gross into amount_net.",
+    }];
+  }
+  if (classification === "missing_movement_or_fact_confirmation") {
+    return [{
+      type: "missing_movement_or_fact_confirmation",
+      channel,
+      currency,
+      period_end: to || "",
+      movement_rows: Number(movementRows || 0),
+      diff: realDifference,
+      safe_to_apply: false,
+      action: "Find provider-backed Ledger movement or confirm the fact balance; do not create movement automatically.",
+    }];
+  }
+  if (classification === "account_split_mismatch") {
+    return [{
+      type: "account_split_mismatch",
+      channel,
+      currency,
+      diff: realDifference,
+      safe_to_apply: false,
+      action: "Keep account channels separate; require explicit transfer evidence before moving value between spot/save.",
+    }];
+  }
+  if (classification === "stale_or_wrong_ostatki_needs_provider_balance") {
+    return [{
+      type: "provider_balance_confirmation",
+      channel,
+      currency,
+      period_end: to || "",
+      computed_amount_hint: calculatedClosing,
+      current_fact_amount: displayedFactClosing,
+      safe_to_apply: false,
+      action: "Use provider balance evidence for the exact date; computed amount is diagnostic only.",
+    }];
+  }
+  if (classification === "residual_fee_or_rounding_needs_verification") {
+    return [{
+      type: "residual_fee_or_rounding_needs_verification",
+      channel,
+      currency,
+      residual_diff: realDifference,
+      safe_to_apply: false,
+      action: "Inspect CARD/fee/rounding candidates; output candidates only until an exact provider-backed correction is found.",
+    }];
+  }
+  return [];
 }
 
 function buildRepairTemplate({ status, channel, currency, to, movementDate, calculatedClosing }) {
