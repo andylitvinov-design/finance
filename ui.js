@@ -406,6 +406,10 @@ function renderPayPalManualImportHelper() {
     <div class="expense-helper-title">PayPal personal import</div>
     <div class="config-note">Для personal PayPal используйте Activity/CSV export через «Загрузить выписку». API может быть недоступен без business/reporting permissions.</div>
     <div class="config-note">Net подтверждайте только из Activity/CSV или вручную; gross не используется как net автоматически.</div>
+    <div class="config-note">Введите PayPal остаток один раз. После этого система будет автоматически рассчитывать следующие PayPal остатки по Ledger движениям.</div>
+    <div class="expense-actions">
+      <button type="button" class="secondary" data-paypal-derived-balance-run>${state.expenseAccounting.paypalDerivedBalanceLoading ? "Рассчитываю..." : "Рассчитать PayPal остатки автоматически"}</button>
+    </div>
     ${showBalanceForm ? `
       <div class="expense-helper-title">Ввести остатки PayPal вручную</div>
       <div class="manual-paypal-balance-grid">
@@ -434,7 +438,48 @@ function renderPayPalManualImportHelper() {
     saveButton.disabled = state.expenseAccounting.paypalManualBalanceSaving;
     saveButton.addEventListener("click", savePayPalManualBalance);
   }
+  const derivedButton = helper.querySelector("[data-paypal-derived-balance-run]");
+  if (derivedButton) {
+    derivedButton.disabled = state.expenseAccounting.paypalDerivedBalanceLoading;
+    derivedButton.addEventListener("click", runPayPalDerivedBalanceSnapshot);
+  }
   return helper;
+}
+
+async function runPayPalDerivedBalanceSnapshot() {
+  const date = normalizeIncomingSheetDateValue(elements.endDate.value || elements.startDate.value);
+  if (!date) {
+    setExpenseAccountingStatus("Выберите дату для расчета PayPal остатков.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.paypalDerivedBalanceLoading = true;
+  setExpenseAccountingStatus("Рассчитываю PayPal остатки по Ledger движениям...", false);
+  renderTabs();
+  try {
+    const response = await fetch(`./api/auto-balance-snapshots?date=${encodeURIComponent(date)}`);
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.ok) {
+      throw new Error(result?.error || `PayPal auto balance failed (${response.status}).`);
+    }
+    const paypal = (result.provider_results || []).find((item) => item.provider === "paypal") || {};
+    if (paypal.provider_current_balance_status === "needs_initial_paypal_balance") {
+      state.expenseAccounting.paypalManualBalanceRequired = true;
+      setExpenseAccountingStatus("Введите один подтвержденный PayPal остаток вручную; после этого следующие даты будут рассчитаны автоматически.", false);
+    } else {
+      setExpenseAccountingStatus(`PayPal авто-остатки: ${paypal.writable_rows || 0} строк. Обновляю сверку...`, false);
+    }
+    if (typeof loadDashboardDataDeduped === "function") {
+      await loadDashboardDataDeduped();
+    } else {
+      renderTabs();
+    }
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось рассчитать PayPal остатки автоматически.", true);
+    renderTabs();
+  } finally {
+    state.expenseAccounting.paypalDerivedBalanceLoading = false;
+  }
 }
 
 async function savePayPalManualBalance() {

@@ -10,6 +10,7 @@ import {
   EXPECTED_PROVIDER_BALANCES,
   collectProviderBalanceRows,
   buildPayPalManualBalanceRows,
+  derivePayPalBalanceRow,
   mergeBalanceRowsByDateChannelCurrency,
   savePayPalManualBalanceRows,
   runAutoBalanceSnapshots,
@@ -70,6 +71,92 @@ test("manual PayPal balance input rejects empty and malformed values", () => {
     () => buildPayPalManualBalanceRows({ date: "20.05.2026", USD: "123.45", EUR: "67.89", CAD: "0" }),
     /date must be YYYY-MM-DD/
   );
+});
+
+test("derived PayPal balance uses confirmed opening plus signed Ledger amount_net movements", () => {
+  const result = derivePayPalBalanceRow({
+    date: "2026-05-20",
+    channel: "пейпал дол",
+    currency: "USD",
+    balances: [
+      { date: "2026-05-01", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "100", source: "paypal_manual_balance", status: "ok" },
+    ],
+    operations: [
+      { date: "2026-05-05", fromChannel: "пейпал дол", currency: "USD", amountNet: "20", balanceAmount: -20, sheetRowNumber: 7, ledgerV2: { date: "2026-05-05", operation: "expense", from_channel: "пейпал дол", currency: "USD", amount_net: "20", balance_amount: -20 } },
+      { date: "2026-05-06", toChannel: "пейпал дол", currency: "USD", amountNet: "50", balanceAmount: 50, sheetRowNumber: 8, ledgerV2: { date: "2026-05-06", operation: "income", to_channel: "пейпал дол", currency: "USD", amount_net: "50", balance_amount: 50 } },
+    ],
+  });
+
+  assert.equal(result.row.source, "paypal_derived_balance");
+  assert.equal(result.row.status, "derived_from_confirmed_opening");
+  assert.equal(result.row.amount, "130");
+  assert.equal(result.row.rawSourceId, "paypal_derived_balance:2026-05-20:USD");
+  assert.equal(result.opening_date, "2026-05-01");
+  assert.equal(result.opening_amount, 100);
+  assert.equal(result.ledger_delta, 30);
+  assert.equal(result.movement_row_count, 2);
+});
+
+test("derived PayPal balance refuses to invent opening balances", () => {
+  const result = derivePayPalBalanceRow({
+    date: "2026-05-20",
+    channel: "пейпал дол",
+    currency: "USD",
+    balances: [],
+    operations: [],
+  });
+
+  assert.equal(result.row, undefined);
+  assert.equal(result.blocked_reason, "needs_initial_paypal_balance");
+  assert.match(result.comment, /Enter one confirmed PayPal opening balance/);
+});
+
+test("missing amount_net blocks derived PayPal balance and does not use gross", () => {
+  const result = derivePayPalBalanceRow({
+    date: "2026-05-20",
+    channel: "пейпал евр",
+    currency: "EUR",
+    balances: [
+      { date: "2026-05-01", provider: "paypal", channel: "пейпал евр", currency: "EUR", amount: "100", source: "paypal_manual_balance", status: "ok" },
+    ],
+    operations: [
+      { date: "2026-05-10", fromChannel: "пейпал евр", currency: "EUR", amountGross: "40", amountNet: "", sheetRowNumber: 11, rawSourceId: "paypal-missing-net", ledgerV2: { date: "2026-05-10", operation: "expense", from_channel: "пейпал евр", currency: "EUR", amount_gross: "40", amount_net: "", raw_source_id: "paypal-missing-net" } },
+    ],
+  });
+
+  assert.equal(result.row, undefined);
+  assert.equal(result.blocked_reason, "missing_amount_net");
+  assert.deepEqual(result.blocked_rows, [
+    { row: 11, date: "2026-05-10", raw_source_id: "paypal-missing-net", reason: "missing_amount_net" },
+  ]);
+  assert.equal(result.ledger_delta, undefined);
+});
+
+test("derived PayPal balance rows are idempotent and preserve OAuth warning rows", () => {
+  const warning = { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", amount: "", currency: "USD", source: "paypal_auto", rawSourceId: "paypal:пейпал дол:USD", status: "needs_provider_permission" };
+  const derived = { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", amount: "130", currency: "USD", source: "paypal_derived_balance", rawSourceId: "paypal_derived_balance:2026-05-20:USD", status: "derived_from_confirmed_opening" };
+  const first = mergeBalanceRowsByDateChannelCurrency([warning], [derived]);
+  const second = mergeBalanceRowsByDateChannelCurrency(first, [{ ...derived, amount: "135" }]);
+
+  assert.equal(second.filter((row) => row.rawSourceId === "paypal_derived_balance:2026-05-20:USD").length, 1);
+  assert.equal(second.find((row) => row.rawSourceId === "paypal_derived_balance:2026-05-20:USD")?.amount, "135");
+  assert.equal(second.some((row) => row.rawSourceId === "paypal:пейпал дол:USD" && row.status === "needs_provider_permission"), true);
+});
+
+test("same-date manual PayPal balance blocks lower-priority derived row", () => {
+  const result = derivePayPalBalanceRow({
+    date: "2026-05-20",
+    channel: "пейпал дол",
+    currency: "USD",
+    balances: [
+      { date: "2026-05-01", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "100", source: "paypal_manual_balance", status: "ok" },
+      { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "130", source: "paypal_manual_balance", status: "ok" },
+    ],
+    operations: [],
+  });
+
+  assert.equal(result.row, undefined);
+  assert.equal(result.blocked_reason, "manual_or_provider_balance_exists");
 });
 
 test("manual PayPal balance save is idempotent and preserves provider status rows", async () => {
@@ -395,11 +482,16 @@ test("PayPal balances permission errors become structured status rows", async ()
   });
   const paypal = results.find((result) => result.provider === "paypal");
 
-  assert.equal(paypal.provider_current_balance_status, "needs_permission");
-  assert.deepEqual(paypal.rows.map((row) => row.status), [
+  assert.equal(paypal.provider_current_balance_status, "needs_initial_paypal_balance");
+  assert.deepEqual(paypal.rows.slice(0, 3).map((row) => row.status), [
     "needs_provider_permission",
     "needs_provider_permission",
     "needs_provider_permission",
+  ]);
+  assert.deepEqual(paypal.rows.slice(3).map((row) => `${row.source}|${row.status}`), [
+    "paypal_derived_balance|needs_initial_paypal_balance",
+    "paypal_derived_balance|needs_initial_paypal_balance",
+    "paypal_derived_balance|needs_initial_paypal_balance",
   ]);
   assert.match(paypal.error, /PayPal balances request failed \(403\)/);
 });

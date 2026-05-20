@@ -52,6 +52,7 @@ const state = {
     paypalSummary: null,
     paypalManualBalanceRequired: false,
     paypalManualBalanceSaving: false,
+    paypalDerivedBalanceLoading: false,
     paypalManualBalance: {
       date: "",
       USD: "",

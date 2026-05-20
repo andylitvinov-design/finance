@@ -96,6 +96,9 @@ test("getPayPalManualImportMessage shows manual guidance instead of generic bad 
 
 test("PayPal manual import UI exposes manual balance action and fields", () => {
   assert.match(uiJs, /Ввести остатки PayPal вручную/);
+  assert.match(uiJs, /Введите PayPal остаток один раз/);
+  assert.match(uiJs, /Рассчитать PayPal остатки автоматически/);
+  assert.match(uiJs, /runPayPalDerivedBalanceSnapshot/);
   assert.match(uiJs, /data-paypal-manual-balance-field="USD"/);
   assert.match(uiJs, /data-paypal-manual-balance-field="EUR"/);
   assert.match(uiJs, /data-paypal-manual-balance-field="CAD"/);
