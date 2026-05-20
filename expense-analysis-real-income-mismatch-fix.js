@@ -52,9 +52,7 @@
   }
 
   function ensureMetaChannel(meta, channel) {
-    if (!meta[channel]) {
-      meta[channel] = { explicitUsdRows: 0, rateDerivedRows: 0 };
-    }
+    if (!meta[channel]) meta[channel] = { explicitUsdRows: 0, rateDerivedRows: 0 };
     return meta[channel];
   }
 
@@ -62,7 +60,6 @@
     const startDate = getIsoDate(period?.startDate || "");
     const endDate = getIsoDate(period?.endDate || "");
     const meta = {};
-
     (rows || []).forEach((row) => {
       const date = getIsoDate(row?.date || "");
       if ((startDate || endDate) && !date) return;
@@ -76,11 +73,8 @@
       const channelMeta = ensureMetaChannel(meta, channel);
       const amountUsdRaw = String(row?.amountUsd ?? row?.amount_usd ?? "").trim();
       const hasExplicitUsd = amountUsdRaw && Math.abs(getNumber(amountUsdRaw)) > 0;
-      if (hasExplicitUsd) {
-        channelMeta.explicitUsdRows += 1;
-      } else {
-        channelMeta.rateDerivedRows += 1;
-      }
+      if (hasExplicitUsd) channelMeta.explicitUsdRows += 1;
+      else channelMeta.rateDerivedRows += 1;
     });
     return meta;
   }
@@ -118,15 +112,21 @@
       }
       const apiAmount = getRoundAmount(apiSummary?.realNetUsd);
       if (apiAmount !== ledgerAmount && !isExpectedRateDerivedFallbackMismatch(apiSummary, ledgerSummary) && typeof console !== "undefined" && typeof console.warn === "function") {
-        console.warn("[expense-analysis] API real income summary differs from Ledger fallback", {
-          channel,
-          apiRealNetUsd: apiAmount,
-          ledgerRealNetUsd: ledgerAmount,
-          startDate: period?.startDate || "",
-          endDate: period?.endDate || ""
-        });
+        console.warn("[expense-analysis] API real income summary differs from Ledger fallback", { channel, apiRealNetUsd: apiAmount, ledgerRealNetUsd: ledgerAmount, startDate: period?.startDate || "", endDate: period?.endDate || "" });
       }
     });
     return merged;
   };
+})();
+
+(function loadExpenseScreenshotMobileHotfix() {
+  if (typeof document === "undefined" || window.__expenseScreenshotMobileHotfixLoaderInstalled) return;
+  window.__expenseScreenshotMobileHotfixLoaderInstalled = true;
+  const script = document.createElement("script");
+  script.src = "./expense-screenshot-mobile-hotfix.js";
+  script.defer = true;
+  script.onerror = function () {
+    if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[expense-screenshot] mobile hotfix script failed to load");
+  };
+  document.head.appendChild(script);
 })();
