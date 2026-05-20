@@ -8,6 +8,7 @@ const PAYPAL_MCP_PAGE_SIZE = 100;
 const DEFAULT_PAYPAL_MCP_TOOL_NAME = "list_transactions";
 const PAYPAL_ERROR_EXCERPT_LENGTH = 300;
 const PAYPAL_MCP_FALLBACK_ACTION = "Use PayPal REST permissions or PayPal statement file import.";
+const PAYPAL_MANUAL_IMPORT_MESSAGE = "PayPal API is not available for this account or permissions. For personal PayPal accounts, use Activity/CSV manual import and confirm net only when the export proves it.";
 export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
@@ -59,7 +60,13 @@ export default async function handler(request, response) {
           fetchImpl: fetch
         });
       } catch (error) {
-        if (!mcpClientId || !mcpRefreshToken) throw error;
+        if (!mcpClientId || !mcpRefreshToken) {
+          return response.status(200).json(buildPayPalManualImportRequiredPayload(error, {
+            phase: getPayPalFailurePhase(error, "missing_credentials"),
+            providerStatus: getPayPalProviderStatus(error),
+            warnings: [buildPayPalRestFallbackWarning(error)]
+          }));
+        }
         const restWarning = buildPayPalRestFallbackWarning(error);
         try {
           result = await fetchPayPalStatementEntriesFromMcp({
@@ -73,17 +80,12 @@ export default async function handler(request, response) {
             fetchImpl: fetch
           });
         } catch (mcpError) {
-          if (isPayPalMcpFallbackUnavailableError(mcpError)) {
-            return response.status(400).json({
-              ok: false,
-              provider: mcpError.provider,
-              phase: mcpError.phase,
-              error: mcpError.userMessage,
-              warnings: uniquePayPalWarnings([restWarning]),
-              availableMcpTools: mcpError.availableMcpTools || []
-            });
-          }
-          throw mcpError;
+          return response.status(200).json(buildPayPalManualImportRequiredPayload(mcpError, {
+            phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
+            providerStatus: getPayPalProviderStatus(mcpError),
+            warnings: [restWarning],
+            availableMcpTools: mcpError.availableMcpTools || []
+          }));
         }
         result = {
           ...result,
@@ -95,16 +97,30 @@ export default async function handler(request, response) {
         };
       }
     } else {
-      result = await fetchPayPalStatementEntriesFromMcp({
-        startDate: payload.startDate,
-        endDate: payload.endDate,
-        clientId: mcpClientId,
-        refreshToken: mcpRefreshToken,
-        restClientId: clientId,
-        restClientSecret: clientSecret,
-        environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
-        fetchImpl: fetch
-      });
+      if (!mcpClientId || !mcpRefreshToken) {
+        return response.status(200).json(buildPayPalManualImportRequiredPayload(
+          "PayPal credentials are not configured. Set PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET or PAYPAL_MCP_CLIENT_ID/PAYPAL_MCP_REFRESH_TOKEN.",
+          { phase: "missing_credentials", providerStatus: "credentials_missing" }
+        ));
+      }
+      try {
+        result = await fetchPayPalStatementEntriesFromMcp({
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          clientId: mcpClientId,
+          refreshToken: mcpRefreshToken,
+          restClientId: clientId,
+          restClientSecret: clientSecret,
+          environment: process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT,
+          fetchImpl: fetch
+        });
+      } catch (mcpError) {
+        return response.status(200).json(buildPayPalManualImportRequiredPayload(mcpError, {
+          phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
+          providerStatus: getPayPalProviderStatus(mcpError),
+          availableMcpTools: mcpError.availableMcpTools || []
+        }));
+      }
     }
     if (Array.isArray(result?.warnings) && result.warnings.length) {
       for (const warning of result.warnings) {
@@ -115,7 +131,14 @@ export default async function handler(request, response) {
   } catch (error) {
     return response.status(400).json({
       ok: false,
-      error: getPayPalSafeErrorMessage(error)
+      provider: "paypal",
+      error: "paypal_provider_unavailable",
+      phase: getPayPalFailurePhase(error, "provider_import"),
+      message: getPayPalSafeErrorMessage(error),
+      fallback: "manual_activity_import",
+      canUseManualImport: true,
+      providerStatus: getPayPalProviderStatus(error),
+      shortExcerpt: getPayPalSafeErrorMessage(error)
     });
   }
 }
@@ -693,7 +716,7 @@ function createPayPalMcpFallbackUnavailableError(toolName, availableMcpTools, ca
   const message = `PayPal REST import failed and MCP fallback is unavailable because PayPal MCP tool ${selectedTool} is not exposed. ${PAYPAL_MCP_FALLBACK_ACTION}`;
   const error = new Error(message);
   error.provider = "paypal";
-  error.phase = "mcp_fallback";
+  error.phase = "mcp_tool_not_found";
   error.userMessage = message;
   error.availableMcpTools = Array.isArray(availableMcpTools) ? availableMcpTools : [];
   error.causeMessage = getPayPalSafeErrorMessage(cause);
@@ -703,6 +726,52 @@ function createPayPalMcpFallbackUnavailableError(toolName, availableMcpTools, ca
 
 function isPayPalMcpFallbackUnavailableError(error) {
   return Boolean(error?.isPayPalMcpFallbackUnavailable);
+}
+
+function buildPayPalManualImportRequiredPayload(error, options = {}) {
+  const phase = String(options.phase || getPayPalFailurePhase(error, "provider_import")).trim() || "provider_import";
+  const shortExcerpt = getPayPalSafeErrorMessage(error);
+  return {
+    ok: false,
+    provider: "paypal",
+    error: "paypal_manual_import_required",
+    phase,
+    message: PAYPAL_MANUAL_IMPORT_MESSAGE,
+    fallback: "manual_activity_import",
+    canUseManualImport: true,
+    providerStatus: String(options.providerStatus || getPayPalProviderStatus(error)).trim() || "provider_unavailable",
+    shortExcerpt,
+    ...(Array.isArray(options.warnings) && options.warnings.length ? { warnings: uniquePayPalWarnings(options.warnings) } : {}),
+    ...(Array.isArray(options.availableMcpTools) && options.availableMcpTools.length ? { availableMcpTools: options.availableMcpTools } : {})
+  };
+}
+
+function getPayPalFailurePhase(error, fallback = "provider_import") {
+  const explicit = String(error?.paypalPhase || error?.phase || "").trim();
+  if (explicit) return explicit;
+  const message = String(error?.message || error || "").toLowerCase();
+  if (/mcp.*tool.*not found|tool list_transactions not found|method not found/.test(message)) return "mcp_tool_not_found";
+  if (/mcp.*timed out|event stream timed out|request timed out/.test(message)) return "mcp_fallback";
+  if (/mcp.*non-json|mcp.*empty response|mcp.*failed/.test(message)) return "mcp_fallback";
+  if (/refresh token|mcp token/.test(message)) return "mcp_token";
+  if (/oauth|invalid_client|client authentication|unauthorized|authentication failed/.test(message)) return "oauth";
+  if (/transaction search|transaction request|reporting|permission|not_authorized|permission_denied/.test(message)) return "transaction_search";
+  if (/credential|client id|client secret/.test(message)) return "missing_credentials";
+  return fallback;
+}
+
+function getPayPalProviderStatus(error) {
+  if (error?.isPayPalMcpFallbackUnavailable) return "mcp_tool_not_found";
+  const status = Number(error?.paypalStatus || error?.status || 0);
+  const message = String(error?.message || error || "").toLowerCase();
+  const code = String(error?.paypalError || error?.paypalName || "").toLowerCase();
+  if (status === 401 || /invalid_client|client authentication failed|unauthorized|authentication failed/.test(`${message} ${code}`)) return "auth_failed";
+  if (/tool list_transactions not found|tool not found|method not found/.test(message)) return "mcp_tool_not_found";
+  if (status === 403 || /not_authorized|permission_denied|permission denied|permission|not authorized/.test(`${message} ${code}`)) return "permission_denied";
+  if (/transaction search|reporting.*unavailable|reporting.*permission|personal account|personal paypal|business account/.test(message)) return "reporting_unavailable";
+  if (/timed out|non-json|empty response|no transactions found/.test(message)) return "mcp_fallback_unavailable";
+  if (/credential|client id|client secret|refresh token/.test(message)) return "credentials_missing";
+  return "provider_unavailable";
 }
 
 export function buildPayPalProviderWarning(error, options = {}) {

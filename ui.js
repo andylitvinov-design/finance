@@ -384,6 +384,7 @@ function renderExpenseAccountingBlock() {
   upload.append(input, statementInput, privat24Input, payoneerInput, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
+  shell.appendChild(renderPayPalManualImportHelper());
   shell.appendChild(renderPrivat24ImportHelper());
   shell.appendChild(renderTdBankExpenseHelper());
   shell.appendChild(renderExpenseAccountingResultTabs());
@@ -394,6 +395,17 @@ function renderExpenseAccountingBlock() {
   const bottomSave = renderExpenseAccountingSaveButton();
   if (bottomSave) shell.appendChild(bottomSave);
   return shell;
+}
+
+function renderPayPalManualImportHelper() {
+  const helper = document.createElement("div");
+  helper.className = "expense-helper";
+  helper.innerHTML = `
+    <div class="expense-helper-title">PayPal personal import</div>
+    <div class="config-note">Для personal PayPal используйте Activity/CSV export через «Загрузить выписку». API может быть недоступен без business/reporting permissions.</div>
+    <div class="config-note">Net подтверждайте только из Activity/CSV или вручную; gross не используется как net автоматически.</div>
+  `;
+  return helper;
 }
 
 function renderPrivat24ImportHelper() {
@@ -2167,6 +2179,13 @@ async function readPayPalExpenseStatementPayload(response) {
   }
 }
 
+function getPayPalManualImportMessage(payload = {}) {
+  const phase = String(payload?.phase || "").trim();
+  const excerpt = String(payload?.shortExcerpt || "").trim();
+  const details = [phase ? `phase: ${phase}` : "", excerpt ? `details: ${excerpt}` : ""].filter(Boolean).join(" · ");
+  return `PayPal API не доступен для этого аккаунта/permissions. Для personal PayPal используйте импорт Activity/CSV или ручное подтверждение net.${details ? ` ${details}` : ""}`;
+}
+
 async function readProviderJsonPayload(response, providerName = "Provider") {
   const text = await response.text().catch(() => "");
   const raw = String(text || "").trim();
@@ -2197,6 +2216,11 @@ async function loadPayPalExpenseStatement() {
       body: JSON.stringify({ startDate, endDate })
     });
     const payload = await readPayPalExpenseStatementPayload(response);
+    if (payload && payload.ok === false && payload.canUseManualImport) {
+      state.expenseAccounting.warnings = payload.warnings || [];
+      setExpenseAccountingStatus(getPayPalManualImportMessage(payload), false);
+      return;
+    }
     if (!response.ok || !payload?.ok) {
       throw new Error(payload?.error || `PayPal вернул ошибку (${response.status}).`);
     }

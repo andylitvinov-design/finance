@@ -38,9 +38,11 @@ function createContext() {
   vm.runInContext(
     `${extractFunction(uiJs, "getShortPayPalResponseExcerpt")}\n` +
     `${extractFunction(uiJs, "readPayPalExpenseStatementPayload")}\n` +
+    `${extractFunction(uiJs, "getPayPalManualImportMessage")}\n` +
     "this.readPayPalExpenseStatementPayload = readPayPalExpenseStatementPayload;",
     context
   );
+  context.getPayPalManualImportMessage = context.getPayPalManualImportMessage || vm.runInContext("getPayPalManualImportMessage", context);
   return context;
 }
 
@@ -73,4 +75,21 @@ test("readPayPalExpenseStatementPayload converts non-JSON provider text into con
       return true;
     }
   );
+});
+
+test("getPayPalManualImportMessage shows manual guidance instead of generic bad request", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    provider: "paypal",
+    error: "paypal_manual_import_required",
+    phase: "mcp_fallback",
+    canUseManualImport: true,
+    shortExcerpt: "PayPal MCP tool list_transactions returned non-JSON: No transactions found"
+  });
+
+  assert.match(message, /PayPal API не доступен/);
+  assert.match(message, /Activity\/CSV/);
+  assert.match(message, /personal PayPal/);
+  assert.doesNotMatch(message, /плохой запрос|Bad Request|вернул ошибку \(400\)/i);
 });
