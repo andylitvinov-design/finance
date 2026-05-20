@@ -101,7 +101,7 @@ export function buildMissingLedgerAmountNetRepairPlan(values = [], options = {})
 
   const changes = rows.filter((row) => row.status === "change");
   const skipped = rows.filter((row) => row.status !== "change");
-  const errors = [];
+  const errors = validateConfirmations({ confirmations: options.confirmations || [], rows });
   if (options.apply && changes.some((row) => row.confirmation_required) && !options.confirmFile) {
     errors.push("--apply refuses confirmation-required rows without --confirm-file.");
   }
@@ -218,12 +218,46 @@ function matchesFilters(row, options = {}) {
 
 function findConfirmation({ row, indexes, rowNumber, options }) {
   const rawSourceId = String(row[indexes.raw_source_id] || "").trim();
+  const currency = String(row[indexes.currency] || "").trim().toUpperCase();
   return (options.confirmations || []).find((entry) => {
     const confirmedId = String(entry.raw_source_id ?? entry.rawSourceId ?? "").trim();
-    if (confirmedId && rawSourceId && confirmedId !== rawSourceId) return false;
     const confirmedRow = Number(entry.rowNumber ?? entry.sheetRowNumber ?? entry.sheet_row_number ?? 0);
-    return Boolean(confirmedId || (confirmedRow && confirmedRow === Number(rowNumber || 0)));
+    const confirmedCurrency = String(entry.currency || "").trim().toUpperCase();
+    const confirmedNet = formatNumber(entry.amount_net ?? entry.amountNet ?? "");
+    return Boolean(
+      confirmedId &&
+        confirmedId === rawSourceId &&
+        confirmedRow === Number(rowNumber || 0) &&
+        confirmedCurrency &&
+        confirmedCurrency === currency &&
+        confirmedNet
+    );
   }) || null;
+}
+
+function validateConfirmations({ confirmations = [], rows = [] } = {}) {
+  const errors = [];
+  if (!rows.length) return errors;
+  for (const entry of confirmations || []) {
+    const rawSourceId = String(entry.raw_source_id ?? entry.rawSourceId ?? "").trim();
+    const rowNumber = Number(entry.rowNumber ?? entry.sheetRowNumber ?? entry.sheet_row_number ?? 0);
+    const currency = String(entry.currency || "").trim().toUpperCase();
+    const amountNet = formatNumber(entry.amount_net ?? entry.amountNet ?? "");
+    if (!rawSourceId || !rowNumber || !currency || !amountNet) {
+      errors.push("Confirmation rows must include raw_source_id, rowNumber, currency, and amount_net.");
+      continue;
+    }
+    const exact = rows.find((row) =>
+      row.raw_source_id === rawSourceId &&
+      row.rowNumber === rowNumber &&
+      row.currency === currency &&
+      row.new_amount_net === amountNet
+    );
+    if (!exact) {
+      errors.push(`Confirmation did not match a missing amount_net Ledger row exactly: raw_source_id=${rawSourceId}, rowNumber=${rowNumber}, currency=${currency}, amount_net=${amountNet}.`);
+    }
+  }
+  return errors;
 }
 
 function buildIndexes(header = []) {
@@ -277,6 +311,7 @@ function parseAmount(value) {
 }
 
 function formatNumber(value) {
+  if (String(value ?? "").trim() === "") return "";
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "";
   return String(Math.round(numeric * 1000000) / 1000000);

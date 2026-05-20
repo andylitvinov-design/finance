@@ -55,8 +55,9 @@ test("PayPal missing fee returns structured warning and does not set false net f
   const plan = buildMissingLedgerAmountNetRepairPlan(values);
   const repaired = applyRepairPlanToValues(values, plan);
   const confirmedPlan = buildMissingLedgerAmountNetRepairPlan(values, {
-    confirmations: [{ raw_source_id: "5U351082V9506951V", amount_net: "35.12" }],
+    confirmations: [{ raw_source_id: "5U351082V9506951V", rowNumber: 2, currency: "EUR", amount_net: "36" }],
   });
+  const confirmedRepaired = applyRepairPlanToValues(values, confirmedPlan);
 
   assert.equal(plan.ok, true);
   assert.equal(plan.summary.detected_rows, 1);
@@ -65,8 +66,50 @@ test("PayPal missing fee returns structured warning and does not set false net f
   assert.equal(plan.skipped[0].confirmation_required, true);
   assert.match(plan.skipped[0].warning, /Gross was not used as net/);
   assert.equal(repaired[1][HEADER.indexOf("amount_net")] || "", "");
+  assert.equal(confirmedPlan.ok, true);
   assert.equal(confirmedPlan.summary.change_rows, 1);
-  assert.equal(confirmedPlan.changes[0].new_amount_net, "35.12");
+  assert.equal(confirmedPlan.changes[0].rowNumber, 2);
+  assert.equal(confirmedPlan.changes[0].raw_source_id, "5U351082V9506951V");
+  assert.equal(confirmedPlan.changes[0].currency, "EUR");
+  assert.equal(confirmedPlan.changes[0].new_amount_net, "36");
+  assert.equal(confirmedRepaired[1][HEADER.indexOf("amount_net")], "36");
+});
+
+test("PayPal confirmation must match raw_source_id, rowNumber, currency, and amount_net exactly", () => {
+  const values = [
+    HEADER,
+    ["2026-05-11", "income", "", "пейпал евр", "36", "EUR", "", "36", "", "", "service", "", "in", "fee_unavailable_personal_account", "paypal", "5U351082V9506951V"],
+  ];
+
+  for (const confirmation of [
+    { raw_source_id: "WRONG", rowNumber: 2, currency: "EUR", amount_net: "36" },
+    { raw_source_id: "5U351082V9506951V", rowNumber: 246, currency: "EUR", amount_net: "36" },
+    { raw_source_id: "5U351082V9506951V", rowNumber: 2, currency: "USD", amount_net: "36" },
+  ]) {
+    const plan = buildMissingLedgerAmountNetRepairPlan(values, { confirmations: [confirmation] });
+    const repaired = applyRepairPlanToValues(values, plan);
+
+    assert.equal(plan.ok, false);
+    assert.equal(plan.summary.change_rows, 0);
+    assert.match(plan.errors.join("\n"), /did not match a missing amount_net Ledger row exactly/);
+    assert.equal(repaired[1][HEADER.indexOf("amount_net")] || "", "");
+  }
+});
+
+test("confirmed PayPal repair is idempotent after amount_net is already filled", () => {
+  const values = [
+    HEADER,
+    ["2026-05-11", "income", "", "пейпал евр", "36", "EUR", "", "36", "", "36", "service", "", "in", "fee_unavailable_personal_account", "paypal", "5U351082V9506951V"],
+  ];
+
+  const plan = buildMissingLedgerAmountNetRepairPlan(values, {
+    confirmations: [{ raw_source_id: "5U351082V9506951V", rowNumber: 2, currency: "EUR", amount_net: "36" }],
+  });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.summary.detected_rows, 0);
+  assert.equal(plan.summary.change_rows, 0);
+  assert.deepEqual(plan.errors, []);
 });
 
 test("valid source=unknown row with amount_net is still included in period balance", () => {
