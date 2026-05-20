@@ -1299,7 +1299,7 @@ function buildLedgerRowsFromAccountingEntries(entries) {
       };
   (entries || []).forEach((entry, index) => {
     const date = normalizeIncomingSheetDateValue(entry.date);
-    const channel = canonicalManualFinanceChannel(entry.channel || "");
+    const channel = canonicalManualFinanceChannel(entry.channel || entry.fromChannel || entry.from_channel || entry.toChannel || entry.to_channel || "");
     const amount = Math.abs(parseLooseNumber(entry.accountAmount ?? entry.balanceAmount ?? entry.localAmount));
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
@@ -1402,6 +1402,36 @@ function buildLedgerRowsFromAccountingEntries(entries) {
           updatedAt: timestamp
         });
       }
+      return;
+    }
+    if (entry.direction === "transfer" || entry.operation === "transfer") {
+      const fromChannel = canonicalManualFinanceChannel(entry.fromChannel || entry.from_channel || entry.channel || "");
+      const toChannel = canonicalManualFinanceChannel(entry.toChannel || entry.to_channel || "");
+      const currency = String(entry.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase();
+      const transferGroupId = String(entry.transferGroupId || entry.transfer_group_id || rawSourceId).trim();
+      rows.push({
+        date,
+        operation: "transfer",
+        fromChannel,
+        toChannel,
+        amount: formatSheetNumber(amount),
+        currency,
+        amountUsd: normalizeLedgerAmountUsdForSave({ ...entry, amount, amountUsd: entry.usdAmount, currency }, { amountNumber: amount, currency, operation: "transfer", category: "exchange", fromChannel }),
+        amountGross: formatSheetNumber(amount),
+        amountFee: "",
+        amountNet: formatSheetNumber(amount),
+        category: "exchange",
+        direction: "neutral",
+        comment: entry.manualCounterpartyComment || entry.comment || entry.description || entry.transactionSubject || "internal transfer",
+        counterparty: entry.counterparty || entry.counterpartyName || entry.organization || "",
+        description: entry.description || entry.transactionSubject || "",
+        source: ledgerSource,
+        externalId: String(entry.externalId || entry.external_id || rawSourceId).trim(),
+        rawSourceId,
+        transferGroupId,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
       return;
     }
     rows.push({

@@ -79,6 +79,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   });
   annotateReconciliationSources(reconciliation, balanceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
+  annotateBinanceWalletDiagnostics(reconciliation, repository.operations || [], period);
   const yooMoneyProviderEvidence = await loadYooMoneyProviderEvidence(period, options);
   annotateProviderLedgerReconciliation(reconciliation, repository.operations || [], period, yooMoneyProviderEvidence);
   reconciliation.diagnostics = {
@@ -108,6 +109,99 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function annotateBinanceWalletDiagnostics(reconciliation, operations = [], period = {}) {
+  const wallets = ["Бинанс spot", "Binance funding", "binance save"];
+  const walletRows = wallets.map((channel) => {
+    const rows = (reconciliation.by_channel_currency || []).filter((row) => row.channel === channel);
+    return {
+      channel,
+      opening: round(rows.reduce((sum, row) => sum + Number(row.opening_balance || row.opening_fact_balance || 0), 0)),
+      movement: round(rows.reduce((sum, row) => sum + Number(row.real_delta || 0), 0)),
+      closing_fact: rows.some((row) => row.manual_provider_closing_balance !== null && row.manual_provider_closing_balance !== undefined)
+        ? round(rows.reduce((sum, row) => sum + Number(row.manual_provider_closing_balance || 0), 0))
+        : null,
+      difference: rows.some((row) => row.real_difference !== null && row.real_difference !== undefined)
+        ? round(rows.reduce((sum, row) => sum + Number(row.real_difference || 0), 0))
+        : null,
+      rows: rows.length,
+      statuses: countStatuses(rows),
+    };
+  });
+  const total = {
+    channel: "Binance total",
+    opening: round(walletRows.reduce((sum, row) => sum + Number(row.opening || 0), 0)),
+    movement: round(walletRows.reduce((sum, row) => sum + Number(row.movement || 0), 0)),
+    closing_fact: walletRows.some((row) => row.closing_fact !== null)
+      ? round(walletRows.reduce((sum, row) => sum + Number(row.closing_fact || 0), 0))
+      : null,
+    difference: walletRows.some((row) => row.difference !== null)
+      ? round(walletRows.reduce((sum, row) => sum + Number(row.difference || 0), 0))
+      : null,
+  };
+  const binanceOperations = (operations || []).filter((row) => isBinanceOperation(row) && isOperationInPeriod(row, period));
+  reconciliation.binance_wallet_diagnostics = {
+    wallets: walletRows,
+    total,
+    unmapped_operations: binanceOperations.filter((row) => !operationTouchesAnyChannel(row, wallets)).length,
+    skipped_needs_verification: binanceOperations.filter((row) => /needs[_ ]verification/i.test(`${row.reviewStatus || row.review_status || row.comment || ""}`)).length,
+  };
+}
+
+function operationTouchesAnyChannel(row = {}, channels = []) {
+  const values = [
+    row.fromChannel,
+    row.from_channel,
+    row.toChannel,
+    row.to_channel,
+    row.channel,
+    row.ledgerV2?.from_channel,
+    row.ledgerV2?.to_channel,
+    row.ledgerV2?.channel,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  return values.some((value) => channels.includes(value));
+}
+
+function isBinanceOperation(row = {}) {
+  const text = [
+    row.source,
+    row.rawSourceId,
+    row.raw_source_id,
+    row.externalId,
+    row.external_id,
+    row.fromChannel,
+    row.from_channel,
+    row.toChannel,
+    row.to_channel,
+    row.ledgerV2?.source,
+    row.ledgerV2?.external_id,
+    row.ledgerV2?.from_channel,
+    row.ledgerV2?.to_channel,
+  ].map((value) => String(value || "").trim()).join(" ");
+  return /binance|бинанс/i.test(text);
+}
+
+function isOperationInPeriod(row = {}, period = {}) {
+  const date = String(row.date || row.ledgerV2?.date || "").slice(0, 10);
+  if (!date) return false;
+  const from = String(period.from || "").slice(0, 10);
+  const to = String(period.to || "").slice(0, 10);
+  if (from && date < from) return false;
+  if (to && date > to) return false;
+  return true;
+}
+
+function countStatuses(rows = []) {
+  return rows.reduce((counts, row) => {
+    const status = String(row.status || "").trim() || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function round(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
 }
 
 function isAutoStatusOnlyRow(row = {}) {

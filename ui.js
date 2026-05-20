@@ -3035,6 +3035,9 @@ function inferGenericStatementChannel({ context = {}, currency = "", description
     if (/earn|saving|savings|flexible|save|стейкинг|сейв/.test(normalizedDescription)) {
       return findConfiguredChannelByAliases(["binance save", "бинанс save", "binance savings", "бинанс сейв"]);
     }
+    if (/funding|binance pay|pay wallet|фандинг/.test(normalizedDescription)) {
+      return findConfiguredChannelByAliases(["Binance funding", "binance funding", "funding", "binance pay"]);
+    }
     if (!currency || currency === "USD") {
       return findConfiguredChannelByAliases(["Бинанс spot", "binance spot", "бинанс spot"]);
     }
@@ -3915,13 +3918,15 @@ function prepareExpenseScreenshotImage(file) {
 function normalizeExpenseAccountingEntry(entry, index = 0) {
   const normalizedDate = normalizeIncomingSheetDateValue(entry.date);
   const fallbackDate = normalizeIncomingSheetDateValue(entry.uploadedAtDate) || elements.endDate.value;
-  const direction = entry.direction === "income" || entry.direction === "exchange" ? entry.direction : "expense";
+  const direction = ["income", "exchange", "transfer", "neutral"].includes(entry.direction) ? entry.direction : "expense";
   const receivedType = direction === "income" ? normalizeReceivedEntryType(entry.receivedType || entry.suggestedCategory || entry.category) : "";
   const normalized = {
     id: `expense-${Date.now()}-${index}`,
     date: normalizedDate || fallbackDate,
     dateSource: entry.dateSource === "screenshot" || normalizedDate ? "screenshot" : "upload_fallback",
     channel: entry.preserveBlankChannel ? "" : (canonicalManualFinanceChannel(entry.channel || "") || getManualFinanceChannels()[0]),
+    fromChannel: canonicalManualFinanceChannel(entry.fromChannel || entry.from_channel || ""),
+    toChannel: canonicalManualFinanceChannel(entry.toChannel || entry.to_channel || ""),
     direction,
     localAmount: Math.abs(parseLooseNumber(entry.localAmount)),
     currency: String(entry.currency || (entry.preserveBlankChannel ? "" : inferManualFinanceChannelCurrency(entry.channel))).trim().toUpperCase(),
@@ -3983,6 +3988,8 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     transactionEventCode: String(entry.transactionEventCode || "").trim(),
     referenceNumber: String(entry.referenceNumber || "").trim(),
     transferType: String(entry.transferType || "").trim(),
+    transferGroupId: String(entry.transferGroupId || entry.transfer_group_id || "").trim(),
+    transfer_group_id: String(entry.transferGroupId || entry.transfer_group_id || "").trim(),
     counterIban: String(entry.counterIban || "").trim(),
     counterEdrpou: String(entry.counterEdrpou || "").trim(),
     mcc: String(entry.mcc || "").trim(),
@@ -4255,6 +4262,7 @@ function filterExpenseOperationsRows(rows, filters) {
   const endDate = normalizeIncomingSheetDateValue(filters?.endDate || "");
   const sourceFilter = String(filters?.source || "all").trim();
   const operationFilter = String(filters?.operation || "all").trim();
+  const accountChannelFilter = String(filters?.accountChannel || "all").trim();
   const fromFilter = String(filters?.fromChannel || "all").trim();
   const toFilter = String(filters?.toChannel || "all").trim();
   return (rows || []).filter((row) => {
@@ -4262,6 +4270,7 @@ function filterExpenseOperationsRows(rows, filters) {
     if (endDate && row.date && row.date > endDate) return false;
     if (sourceFilter !== "all" && (row.displaySource || "unknown") !== sourceFilter) return false;
     if (operationFilter !== "all" && row.operation !== operationFilter) return false;
+    if (accountChannelFilter !== "all" && row.fromChannel !== accountChannelFilter && row.toChannel !== accountChannelFilter) return false;
     if (fromFilter !== "all" && row.fromChannel !== fromFilter) return false;
     if (toFilter !== "all" && row.toChannel !== toFilter) return false;
     return true;
@@ -4449,11 +4458,13 @@ function renderExpenseOperationsFilters(rows) {
   wrap.className = "expense-operations-filters";
   const sourceOptions = ["all", "manual", "mcp", "photo", "unknown"];
   const operationOptions = ["all", ...new Set(rows.map((row) => row.operation).filter(Boolean))];
+  const accountOptions = ["all", ...new Set(rows.flatMap((row) => [row.fromChannel, row.toChannel]).filter(Boolean))];
   const fromOptions = ["all", ...new Set(rows.map((row) => row.fromChannel).filter(Boolean))];
   const toOptions = ["all", ...new Set(rows.map((row) => row.toChannel).filter(Boolean))];
   [
     ["source", "source", sourceOptions],
     ["operation", "operation", operationOptions],
+    ["accountChannel", "account/channel", accountOptions],
     ["fromChannel", "from_channel", fromOptions],
     ["toChannel", "to_channel", toOptions],
   ].forEach(([key, label, options]) => {

@@ -163,6 +163,56 @@ test("exchange CAD out and USD in do not mix currencies", () => {
   );
 });
 
+test("Binance Earn internal transfer changes wallets but not combined Binance total", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-03-28",
+        operation: "transfer",
+        fromChannel: "Бинанс spot",
+        toChannel: "",
+        amountNet: "896",
+        balanceAmount: -896,
+        ledgerV2: {
+          date: "2026-03-28",
+          operation: "transfer",
+          from_channel: "Бинанс spot",
+          to_channel: "",
+          currency: "USDT",
+          amount_net: "896",
+          balance_amount: -896,
+        },
+      }),
+      operation({
+        date: "2026-03-28",
+        operation: "transfer",
+        fromChannel: "",
+        toChannel: "binance save",
+        amountNet: "896",
+        balanceAmount: 896,
+        ledgerV2: {
+          date: "2026-03-28",
+          operation: "transfer",
+          from_channel: "",
+          to_channel: "binance save",
+          currency: "USDT",
+          amount_net: "896",
+          balance_amount: 896,
+        },
+      }),
+    ],
+    [
+      { date: "2026-03-27", channel: "Бинанс spot", amount: "1000", currency: "USDT" },
+      { date: "2026-03-27", channel: "binance save", amount: "7000", currency: "USDT" },
+    ]
+  );
+
+  const byChannel = Object.fromEntries(result.rows.map((row) => [row.channel, row]));
+  assert.equal(byChannel["Бинанс spot"].net_change, -896);
+  assert.equal(byChannel["binance save"].net_change, 896);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.net_change, 0), 0);
+});
+
 test("provider reported balance mismatch returns mismatch status and difference", () => {
   const result = buildDailyCurrencyBalances(
     [operation({ ledgerV2: { amount_net: "300", balance_amount: 300 } })],

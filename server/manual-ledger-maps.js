@@ -45,6 +45,11 @@ export const MANUAL_LEDGER_SOURCES = [
   "revolut",
   "wise",
   "binance",
+  "binance_pay",
+  "binance_deposit",
+  "binance_withdrawal",
+  "binance_earn_interest",
+  "binance_csv",
   "monobank",
   "privatbank",
   "td_bank",
@@ -93,7 +98,8 @@ const DEFAULT_CHANNEL_MAP = {
   "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur", "payoneer euro account"],
   "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer - dol", "payoneer dollar", "payoneer dollar account"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],
-  "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings"],
+  "Binance funding": ["binance funding", "funding", "funding wallet", "binance pay", "бинанс funding", "бинанс фандинг"],
+  "binance save": ["binance save", "бинанс save", "бинанс сейв", "binance savings", "earn", "simple earn", "flexible earn", "locked earn"],
   "Налично -я-евр": ["налично я евр", "налично -я-евр", "cash eur"],
   "местная валюты": ["местная валюта", "местная валюты", "local currency"],
   "БАНК КАНАДА cad": ["bank canada cad", "банк канада cad", "canada bank cad"],
@@ -209,7 +215,7 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["payoneer"].includes(normalizedToken)) return "payoneer";
   if (["revolut", "револют", "revolut_usd", "revolut_dol"].includes(normalizedToken)) return "revolut";
   if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
-  if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";
+  if (["binance", "binance_spot", "binance_funding", "binance_pay", "binance_save", "binance_savings", "binance_earn", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";
   if (["monobank", "mono"].includes(normalizedToken)) return "monobank";
   if (["privatbank", "privat24", "privat_24"].includes(normalizedToken)) return "privatbank";
   if (["tdbank", "td_bank"].includes(normalizedToken)) return "td_bank";

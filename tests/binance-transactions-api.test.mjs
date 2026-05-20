@@ -7,9 +7,11 @@ import {
   fetchBinanceStatementEntries,
   fetchBinanceSignedJson,
   getBinanceProviderConfigFromEnv,
+  normalizeBinanceCsvTransaction,
   normalizeBinanceDeposit,
   normalizeBinancePayTransaction,
   normalizeBinanceWithdrawal,
+  parseBinanceTransactionHistoryCsv,
 } from "../server/binance-transactions.js";
 import apiHandler from "../api/index.js";
 
@@ -155,8 +157,8 @@ test("Binance deposit response normalizes to spot income with positive net USD",
     txId: "0xdeposit"
   });
 
-  assert.equal(entry.source, "binance");
-  assert.equal(entry.sourceTransactionId, "dep-1");
+  assert.equal(entry.source, "binance_deposit");
+  assert.match(entry.sourceTransactionId, /^binance_deposit:2026-05-01T04:01:00Z:125.5:USDT:dep-1$/);
   assert.equal(entry.date, "2026-05-01");
   assert.equal(entry.channel, "Бинанс spot");
   assert.equal(entry.direction, "income");
@@ -182,8 +184,8 @@ test("Binance withdrawal response normalizes to out direction and is excluded fr
     txId: "0xwithdrawal"
   });
 
-  assert.equal(entry.source, "binance");
-  assert.equal(entry.sourceTransactionId, "wd-1");
+  assert.equal(entry.source, "binance_withdrawal");
+  assert.match(entry.sourceTransactionId, /^binance_withdrawal:2026-05-02T05:33:20Z:24:USDT:wd-1$/);
   assert.equal(entry.direction, "out");
   assert.equal(entry.localAmount, 25);
   assert.equal(entry.feeAmount, 1);
@@ -191,7 +193,7 @@ test("Binance withdrawal response normalizes to out direction and is excluded fr
   assert.equal(entry.realNetUsd, 24);
 });
 
-test("Binance Pay receive normalizes to spot income with deterministic source id", () => {
+test("Binance Pay receive normalizes to Funding income with deterministic source id", () => {
   const entry = normalizeBinancePayTransaction({
     orderType: "C2C",
     transactionId: "pay-receive-1",
@@ -206,7 +208,8 @@ test("Binance Pay receive normalizes to spot income with deterministic source id
   assert.equal(entry.source, "binance_pay");
   assert.equal(entry.sourceTransactionId, "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios");
   assert.equal(entry.date, "2026-05-08");
-  assert.equal(entry.channel, "Бинанс spot");
+  assert.equal(entry.channel, "Binance funding");
+  assert.equal(entry.toChannel, "Binance funding");
   assert.equal(entry.direction, "income");
   assert.equal(entry.counterparty, "Arsenchios");
   assert.equal(entry.localAmount, 915.5);
@@ -216,14 +219,14 @@ test("Binance Pay receive normalizes to spot income with deterministic source id
   assert.match(entry.description, /Binance Pay Receive Crypto from Arsenchios/);
 });
 
-test("Binance Pay send normalizes to spot outflow with negative net amount", () => {
+test("Binance Pay send normalizes to funding outflow when wallet evidence says Funding", () => {
   const entry = normalizeBinancePayTransaction({
     orderType: "C2C",
     transactionId: "pay-send-1",
     transactionTime: 1777645137000,
     amount: "-700",
     currency: "USDT",
-    walletType: 2,
+    walletType: "Funding",
     payerInfo: { binanceId: "me" },
     receiverInfo: { name: "RudGard", binanceId: "receiver-1" }
   });
@@ -231,7 +234,8 @@ test("Binance Pay send normalizes to spot outflow with negative net amount", () 
   assert.equal(entry.source, "binance_pay");
   assert.equal(entry.sourceTransactionId, "binance_pay_send:2026-05-01T14:18:57Z:700:USDT:RudGard");
   assert.equal(entry.date, "2026-05-01");
-  assert.equal(entry.channel, "Бинанс spot");
+  assert.equal(entry.channel, "Binance funding");
+  assert.equal(entry.fromChannel, "Binance funding");
   assert.equal(entry.direction, "out");
   assert.equal(entry.counterparty, "RudGard");
   assert.equal(entry.localAmount, 700);
@@ -319,13 +323,13 @@ test("fetchBinanceStatementEntries reads account, deposits, withdrawals, and pay
   ]);
   assert.equal(result.transactionCount, 4);
   assert.equal(result.entries.length, 4);
-  assert.equal(result.entries[0].source, "binance");
+  assert.equal(result.entries[0].source, "binance_deposit");
   assert.equal(result.entries[0].direction, "income");
   assert.equal(result.entries[1].direction, "out");
   assert.equal(result.entries[2].source, "binance_pay");
   assert.equal(result.entries[2].sourceTransactionId, "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios");
   assert.equal(result.entries[3].sourceTransactionId, "binance_pay_send:2026-05-01T14:18:57Z:700:USDT:RudGard");
-  assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok", pay: "ok" });
+  assert.deepEqual(result.endpointStatus, { account: "ok", deposits: "ok", withdrawals: "ok", pay: "ok", csv: "not_provided", email: "not_provided" });
   assert.equal(result.summary.totalsByCurrency.USDT.income, 925.5);
   assert.equal(result.summary.totalsByCurrency.USDT.out, 703);
   assert.equal(result.summary.totalsByCurrency.USDT.net, 222.5);
@@ -374,9 +378,43 @@ test("Binance Pay duplicate imports are idempotent by raw source id and do not d
   });
 
   const sourceIds = result.entries.map((entry) => entry.sourceTransactionId);
-  assert.equal(sourceIds.filter((id) => id === "dep-103").length, 1);
+  assert.equal(sourceIds.filter((id) => /^binance_deposit:/.test(id)).length, 1);
   assert.equal(
     sourceIds.filter((id) => id === "binance_pay_receive:2026-05-08T13:30:50Z:915.5:USDT:Arsenchios").length,
-    2
+    1
   );
+});
+
+test("Binance transaction history CSV maps Pay, Deposit, Earn transfers, and interest by wallet", () => {
+  const rows = parseBinanceTransactionHistoryCsv([
+    "UTC Time,Account,Operation,Coin,Change,Remark,Status",
+    "2026-05-08 13:30:50,Funding,Binance Pay,USDT,915.5,from Arsenchios,Completed",
+    "2026-05-01 14:18:57,Funding,Binance Pay,USDT,-700,to RudGard,Completed",
+    "2026-05-14 13:37:33,Spot,Deposit,USDT,103,tx 0xabc,Completed",
+    "2026-03-28 10:00:00,Spot,Simple Earn Flexible Subscription,USDT,-896,subscribe,Completed",
+    "2026-03-29 10:00:00,Spot,Simple Earn Flexible Redemption,USDT,896,redeem,Completed",
+    "2026-03-30 10:00:00,Earn,Simple Earn Flexible Interest,USDT,1.25,interest,Completed",
+  ].join("\n"));
+
+  const entries = rows.flatMap((row, index) => normalizeBinanceCsvTransaction(row, index));
+  assert.equal(entries.find((entry) => entry.rawSourceId.startsWith("binance_pay_receive:"))?.toChannel, "Binance funding");
+  assert.equal(entries.find((entry) => entry.rawSourceId.startsWith("binance_pay_send:"))?.fromChannel, "Binance funding");
+  assert.equal(entries.find((entry) => entry.rawSourceId.startsWith("binance_deposit:"))?.toChannel, "Бинанс spot");
+
+  const subscribe = entries.filter((entry) => entry.transferGroupId?.startsWith("binance_earn_subscribe:"));
+  assert.equal(subscribe.length, 2);
+  assert.equal(subscribe.find((entry) => entry.direction === "out")?.fromChannel, "Бинанс spot");
+  assert.equal(subscribe.find((entry) => entry.direction === "income")?.toChannel, "binance save");
+  assert.equal(subscribe.reduce((sum, entry) => sum + Number(entry.netAmount || 0), 0), 0);
+
+  const redemption = entries.filter((entry) => entry.transferGroupId?.startsWith("binance_earn_redemption:"));
+  assert.equal(redemption.length, 2);
+  assert.equal(redemption.find((entry) => entry.direction === "out")?.fromChannel, "binance save");
+  assert.equal(redemption.find((entry) => entry.direction === "income")?.toChannel, "Бинанс spot");
+  assert.equal(redemption.reduce((sum, entry) => sum + Number(entry.netAmount || 0), 0), 0);
+
+  const interest = entries.find((entry) => entry.rawSourceId.startsWith("binance_earn_interest:"));
+  assert.equal(interest.toChannel, "binance save");
+  assert.equal(interest.source, "binance_earn_interest");
+  assert.match(interest.comment, /wallet evidence/);
 });

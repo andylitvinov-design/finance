@@ -72,6 +72,7 @@
           endDate: elements.endDate.value,
           operation: "all",
           source: "all",
+          accountChannel: "all",
           fromChannel: "all",
           toChannel: "all"
         })

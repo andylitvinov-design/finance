@@ -51,6 +51,7 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "privatbank", channel: "приват-фоп", currency: "UAH", source: "privatbank_auto" },
   { provider: "yoomoney", channel: "Яндекс руб", currency: "RUB", source: "yoomoney_auto" },
   { provider: "binance", channel: "Бинанс spot", currency: "USDT", source: "binance_auto" },
+  { provider: "binance", channel: "Binance funding", currency: "USDT", source: "binance_auto" },
   { provider: "binance", channel: "binance save", currency: "USDT", source: "binance_auto" },
   { provider: "tdbank", channel: "БАНК КАНАДА cad", currency: "CAD", source: "tdbank_auto" },
   { provider: "payoneer", channel: "Payoneer - eur", currency: "EUR", source: "payoneer_auto" },

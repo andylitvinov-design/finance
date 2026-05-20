@@ -10,6 +10,7 @@ import {
 
 const CHANNELS = [
   "Бинанс spot",
+  "Binance funding",
   "binance save",
   "пейпал дол",
   "трансервайз дол",
@@ -26,8 +27,10 @@ test("server ledger source vocabulary includes Binance as a first-class manual s
 
 test("server ledger infers Binance source from raw_source_id and channels", () => {
   assert.equal(resolveManualLedgerSource("", "binance:txn-1"), "binance");
+  assert.equal(resolveManualLedgerSource("binance_pay", "binance_pay_send:1"), "binance_pay");
   assert.equal(resolveManualLedgerSource("", "usdt:txn-1"), "binance");
   assert.equal(resolveManualLedgerSource("", "", "", { to_channel: "Бинанс spot" }), "binance");
+  assert.equal(resolveManualLedgerSource("", "", "", { from_channel: "Binance funding" }), "binance");
   assert.equal(resolveManualLedgerSource("", "", "", { from_channel: "binance save" }), "binance");
 });
 
@@ -41,6 +44,7 @@ test("server ledger keeps existing channel precedence when exchange rows mention
 test("server ledger keeps Binance spot and Binance save as distinct balance channels", () => {
   assert.equal(normalizeManualLedgerChannel("binance spot", CHANNELS), "Бинанс spot");
   assert.equal(normalizeManualLedgerChannel("бинанс", CHANNELS), "Бинанс spot");
+  assert.equal(normalizeManualLedgerChannel("funding wallet", CHANNELS), "Binance funding");
   assert.equal(normalizeManualLedgerChannel("binance save", CHANNELS), "binance save");
   assert.equal(normalizeManualLedgerChannel("binance savings", CHANNELS), "binance save");
 });

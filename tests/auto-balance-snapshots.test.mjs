@@ -438,6 +438,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
   assert.ok(calls.some((call) => call.url.includes("/v1/reporting/balances")));
   assert.deepEqual(rows.filter((row) => row.provider === "binance").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Бинанс spot|USDT|103|ok",
+    "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT|10|ok",
   ]);
   assert.deepEqual(rows.filter((row) => row.provider === "yoomoney").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
@@ -531,6 +532,7 @@ test("Binance Earn permission failure preserves spot balance and writes save per
   assert.equal(binance.provider_current_balance_status, "available");
   assert.deepEqual(binance.rows.map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Бинанс spot|USDT|10|ok",
+    "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT||needs_provider_permission",
   ]);
 });

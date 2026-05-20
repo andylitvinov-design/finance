@@ -42,6 +42,7 @@ const state = {
     operationsFilters: {
       source: "all",
       operation: "all",
+      accountChannel: "all",
       fromChannel: "all",
       toChannel: "all"
     },
