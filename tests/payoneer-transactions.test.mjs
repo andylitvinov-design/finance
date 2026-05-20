@@ -47,6 +47,25 @@ test("parsePayoneerStatementRows maps income with gross fee and net to ledger en
   assert.equal(entry.usdAmount, 97);
 });
 
+test("parsePayoneerStatementRows supports decorated real export headers", () => {
+  const result = parsePayoneerStatementRows([
+    ["Transaction Date (UTC)", "Reference Number", "Transaction Description", "Currency Code", "Gross Amount (USD)", "Transaction Fee (USD)", "Net Amount (USD)"],
+    ["2026-05-14 12:30:00", "PYO-REAL-1", "Payment from client", "USD", "$1,000.00", "$30.00", "$970.00"],
+  ]);
+
+  assert.equal(result.entries.length, 1);
+  const entry = result.entries[0];
+  assert.equal(entry.date, "2026-05-14");
+  assert.equal(entry.channel, "Payoneer - dol");
+  assert.equal(entry.direction, "income");
+  assert.equal(entry.sourceTransactionId, "PYO-REAL-1");
+  assert.equal(entry.grossAmount, 1000);
+  assert.equal(entry.feeAmount, 30);
+  assert.equal(entry.netAmount, 970);
+  assert.equal(entry.amount_net, 970);
+  assert.deepEqual(result.warnings, []);
+});
+
 test("normalizePayoneerTransaction determines expense before amount normalization", () => {
   const headerMap = {
     date: 0,
