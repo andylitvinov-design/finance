@@ -270,6 +270,55 @@ test("manual fact still beats same-date blank auto status row", async () => {
   assert.equal(row.sourceSheet, "Остатки");
 });
 
+test("PayPal manual balance in Авто Остатки is factual and keeps provider warning separately", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-20", to: "2026-05-20" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [
+        {
+          date: "2026-05-20",
+          toChannel: "пейпал дол",
+          currency: "USD",
+          amountNet: "23.45",
+          balanceAmount: 23.45,
+          ledgerV2: {
+            date: "2026-05-20",
+            operation: "income",
+            to_channel: "пейпал дол",
+            currency: "USD",
+            amount_net: "23.45",
+            balance_amount: 23.45,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-05-19", channel: "пейпал дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "", source: "paypal_auto", sourceSheet: "Авто Остатки", status: "needs_provider_permission", comment: "PayPal OAuth failed (401)", sourceRow: 9 },
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "123.45", source: "paypal_manual_balance", sourceSheet: "Авто Остатки", status: "ok", comment: "manual PayPal balance because REST balance API unavailable for personal account", sourceRow: 10 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "пейпал дол");
+  assert.equal(row.status, "ok");
+  assert.equal(row.factual_closing_balance, 123.45);
+  assert.equal(row.balanceSource, "manual_fact");
+  assert.equal(row.factStatus, "confirmed");
+  assert.equal(row.needsManualConfirmation, false);
+  assert.equal(row.sourceSheet, "Авто Остатки");
+  assert.equal(row.sourceRow, 10);
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_rows_loaded, 1);
+  assert.deepEqual(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_counts, {
+    needs_provider_permission: 1,
+  });
+});
+
 test("manual period-start opening overrides auto and auto-only fact stays pending", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-03" },

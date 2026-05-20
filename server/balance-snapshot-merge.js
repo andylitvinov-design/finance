@@ -22,10 +22,11 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
       autoIgnored += 1;
       continue;
     }
+    const source = normalizeBalanceSource(row, "provider_auto");
     autoFallbackRows.push({
       ...row,
-      source: "provider_auto",
-      fact_source: "provider_auto",
+      source,
+      fact_source: source,
       sourceSheet: row.sourceSheet || AUTO_BALANCE_SHEET_NAME,
     });
   }
@@ -57,6 +58,7 @@ function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
     row.comment,
     row.sourceSheet,
   ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/paypal_manual_balance|paypal_manual_confirmed_balance|manual paypal balance|manual confirmed|manual fact/.test(text)) return "manual_fact";
   if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
   return fallback;
 }

@@ -93,3 +93,12 @@ test("getPayPalManualImportMessage shows manual guidance instead of generic bad 
   assert.match(message, /personal PayPal/);
   assert.doesNotMatch(message, /плохой запрос|Bad Request|вернул ошибку \(400\)/i);
 });
+
+test("PayPal manual import UI exposes manual balance action and fields", () => {
+  assert.match(uiJs, /Ввести остатки PayPal вручную/);
+  assert.match(uiJs, /data-paypal-manual-balance-field="USD"/);
+  assert.match(uiJs, /data-paypal-manual-balance-field="EUR"/);
+  assert.match(uiJs, /data-paypal-manual-balance-field="CAD"/);
+  assert.match(uiJs, /savePayPalManualBalance/);
+  assert.doesNotMatch(uiJs, /gross.*as net|amount_gross.*amount_net/i);
+});

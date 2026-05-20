@@ -9,7 +9,9 @@ import {
   AUTO_BALANCE_SHEET_NAME,
   EXPECTED_PROVIDER_BALANCES,
   collectProviderBalanceRows,
+  buildPayPalManualBalanceRows,
   mergeBalanceRowsByDateChannelCurrency,
+  savePayPalManualBalanceRows,
   runAutoBalanceSnapshots,
 } from "../server/auto-balance-snapshots.js";
 
@@ -35,6 +37,98 @@ function createResponseRecorder() {
     },
   };
 }
+
+test("manual PayPal balance input creates factual auto balance rows including zero CAD", () => {
+  const rows = buildPayPalManualBalanceRows({
+    date: "2026-05-20",
+    USD: "123.45",
+    EUR: "67,89",
+    CAD: "0",
+    comment: "confirmed in PayPal UI",
+    fetchedAt: "2026-05-20T10:00:00.000Z",
+  });
+
+  assert.deepEqual(rows.map((row) => `${row.provider}|${row.channel}|${row.currency}|${row.amount}|${row.status}|${row.source}|${row.rawSourceId}`), [
+    "paypal|пейпал дол|USD|123,45|ok|paypal_manual_balance|paypal_manual_balance:2026-05-20:USD",
+    "paypal|пейпал евр|EUR|67,89|ok|paypal_manual_balance|paypal_manual_balance:2026-05-20:EUR",
+    "paypal|пейпал сad|CAD|0|zero_balance|paypal_manual_balance|paypal_manual_balance:2026-05-20:CAD",
+  ]);
+  assert.equal(rows.every((row) => /REST balance API unavailable for personal account/.test(row.comment)), true);
+  assert.equal(rows.some((row) => Object.hasOwn(row, "amountNet") || Object.hasOwn(row, "amount_net")), false);
+});
+
+test("manual PayPal balance input rejects empty and malformed values", () => {
+  assert.throws(
+    () => buildPayPalManualBalanceRows({ date: "2026-05-20", USD: "", EUR: "67.89", CAD: "0" }),
+    /USD balance is required/
+  );
+  assert.throws(
+    () => buildPayPalManualBalanceRows({ date: "2026-05-20", USD: "123.45", EUR: "not-a-number", CAD: "0" }),
+    /EUR balance must be numeric/
+  );
+  assert.throws(
+    () => buildPayPalManualBalanceRows({ date: "20.05.2026", USD: "123.45", EUR: "67.89", CAD: "0" }),
+    /date must be YYYY-MM-DD/
+  );
+});
+
+test("manual PayPal balance save is idempotent and preserves provider status rows", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "finance@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  let values = [
+    ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+    ["2026-05-20", "paypal", "пейпал дол", "", "USD", "", "", "paypal_auto", "2026-05-20T00:00:00.000Z", "paypal:пейпал дол:USD", "needs_provider_permission", "PayPal OAuth failed (401): Client Authentication failed"],
+    ["2026-05-20", "paypal", "пейпал дол", "999", "USD", "1", "999", "paypal_auto", "2026-05-20T00:00:00.000Z", "paypal-api-usd", "ok", "provider factual API row"],
+  ];
+  const writes = [];
+  const fetchImpl = async (url, options = {}) => {
+    const target = String(url);
+    if (target.endsWith("/token")) return jsonResponse({ access_token: "google-token" });
+    if (target === `https://sheets.googleapis.com/v4/spreadsheets/${MANUAL_SPREADSHEET_ID}`) {
+      return jsonResponse({ sheets: [{ properties: { title: AUTO_BALANCE_SHEET_NAME } }] });
+    }
+    if (target.includes(`/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${ENCODED_AUTO_RANGE}`) && (options.method || "GET") === "GET") {
+      return jsonResponse({ values });
+    }
+    if (target.includes(`/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${ENCODED_AUTO_RANGE}`) && options.method === "PUT") {
+      const payload = JSON.parse(options.body);
+      values = payload.values;
+      writes.push(payload.values);
+      return jsonResponse({ updatedRows: payload.values.length });
+    }
+    throw new Error(`Unexpected URL ${target}`);
+  };
+
+  const input = {
+    date: "2026-05-20",
+    USD: "123.45",
+    EUR: "67.89",
+    CAD: "0",
+    fetchedAt: "2026-05-20T10:00:00.000Z",
+  };
+
+  try {
+    const first = await savePayPalManualBalanceRows(input, { fetchImpl });
+    const second = await savePayPalManualBalanceRows(input, { fetchImpl });
+    const dataRows = values.slice(1);
+
+    assert.equal(first.rowCount, 3);
+    assert.equal(first.inserted, 3);
+    assert.equal(second.rowCount, 3);
+    assert.equal(second.inserted, 0);
+    assert.equal(second.updated, 3);
+    assert.equal(writes.length, 2);
+    assert.equal(dataRows.filter((row) => row[9] === "paypal_manual_balance:2026-05-20:USD").length, 1);
+    assert.equal(dataRows.some((row) => row[9] === "paypal:пейпал дол:USD" && row[10] === "needs_provider_permission"), true);
+    assert.equal(dataRows.some((row) => row[9] === "paypal-api-usd" && row[7] === "paypal_auto" && row[3] === "999"), true);
+  } finally {
+    restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
+    restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);
+  }
+});
 
 function jsonResponse(payload, status = 200) {
   return {

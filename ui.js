@@ -400,12 +400,80 @@ function renderExpenseAccountingBlock() {
 function renderPayPalManualImportHelper() {
   const helper = document.createElement("div");
   helper.className = "expense-helper";
+  const draft = state.expenseAccounting.paypalManualBalance || {};
+  const showBalanceForm = Boolean(state.expenseAccounting.paypalManualBalanceRequired);
   helper.innerHTML = `
     <div class="expense-helper-title">PayPal personal import</div>
     <div class="config-note">Для personal PayPal используйте Activity/CSV export через «Загрузить выписку». API может быть недоступен без business/reporting permissions.</div>
     <div class="config-note">Net подтверждайте только из Activity/CSV или вручную; gross не используется как net автоматически.</div>
+    ${showBalanceForm ? `
+      <div class="expense-helper-title">Ввести остатки PayPal вручную</div>
+      <div class="manual-paypal-balance-grid">
+        <label>Date <input class="finance-input" type="date" data-paypal-manual-balance-field="date" value="${escapeHtml(draft.date || elements.endDate.value || "")}"></label>
+        <label>USD <input class="finance-input" type="text" inputmode="decimal" data-paypal-manual-balance-field="USD" value="${escapeHtml(draft.USD || "")}"></label>
+        <label>EUR <input class="finance-input" type="text" inputmode="decimal" data-paypal-manual-balance-field="EUR" value="${escapeHtml(draft.EUR || "")}"></label>
+        <label>CAD <input class="finance-input" type="text" inputmode="decimal" data-paypal-manual-balance-field="CAD" value="${escapeHtml(draft.CAD || "")}"></label>
+        <label>Comment <input class="finance-input" type="text" data-paypal-manual-balance-field="comment" value="${escapeHtml(draft.comment || "")}"></label>
+      </div>
+      <div class="expense-actions">
+        <button type="button" class="primary" data-paypal-manual-balance-save>${state.expenseAccounting.paypalManualBalanceSaving ? "Сохраняю..." : "save to Авто Остатки"}</button>
+      </div>
+    ` : ""}
   `;
+  helper.querySelectorAll("[data-paypal-manual-balance-field]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const field = event.target.dataset.paypalManualBalanceField;
+      state.expenseAccounting.paypalManualBalance = {
+        ...(state.expenseAccounting.paypalManualBalance || {}),
+        [field]: event.target.value
+      };
+    });
+  });
+  const saveButton = helper.querySelector("[data-paypal-manual-balance-save]");
+  if (saveButton) {
+    saveButton.disabled = state.expenseAccounting.paypalManualBalanceSaving;
+    saveButton.addEventListener("click", savePayPalManualBalance);
+  }
   return helper;
+}
+
+async function savePayPalManualBalance() {
+  const draft = state.expenseAccounting.paypalManualBalance || {};
+  const payload = {
+    date: normalizeIncomingSheetDateValue(draft.date || elements.endDate.value),
+    USD: draft.USD,
+    EUR: draft.EUR,
+    CAD: draft.CAD,
+    comment: draft.comment,
+    apply: true,
+    dryRun: false
+  };
+  state.expenseAccounting.paypalManualBalanceSaving = true;
+  setExpenseAccountingStatus("Сохраняю PayPal остатки в Авто Остатки...", false);
+  renderTabs();
+  try {
+    const response = await fetch("./api/paypal-manual-balance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.ok) {
+      throw new Error(result?.error || `PayPal manual balance save failed (${response.status}).`);
+    }
+    state.expenseAccounting.paypalManualBalanceRequired = false;
+    setExpenseAccountingStatus(`PayPal остатки сохранены в Авто Остатки: ${result.rowCount || 0} строк. Обновляю сверку...`, false);
+    if (typeof loadDashboardDataDeduped === "function") {
+      await loadDashboardDataDeduped();
+    } else {
+      renderTabs();
+    }
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось сохранить PayPal остатки.", true);
+    renderTabs();
+  } finally {
+    state.expenseAccounting.paypalManualBalanceSaving = false;
+  }
 }
 
 function renderPrivat24ImportHelper() {
@@ -2218,6 +2286,15 @@ async function loadPayPalExpenseStatement() {
     const payload = await readPayPalExpenseStatementPayload(response);
     if (payload && payload.ok === false && payload.canUseManualImport) {
       state.expenseAccounting.warnings = payload.warnings || [];
+      state.expenseAccounting.paypalManualBalanceRequired = true;
+      state.expenseAccounting.paypalManualBalance = {
+        ...(state.expenseAccounting.paypalManualBalance || {}),
+        date: endDate || startDate || formatDateInputValue(new Date()),
+        USD: state.expenseAccounting.paypalManualBalance?.USD || "",
+        EUR: state.expenseAccounting.paypalManualBalance?.EUR || "",
+        CAD: state.expenseAccounting.paypalManualBalance?.CAD || "",
+        comment: state.expenseAccounting.paypalManualBalance?.comment || ""
+      };
       setExpenseAccountingStatus(getPayPalManualImportMessage(payload), false);
       return;
     }
