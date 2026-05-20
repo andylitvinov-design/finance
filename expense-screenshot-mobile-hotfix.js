@@ -18,28 +18,9 @@
     return "";
   }
   function accepted(file) { return IMG_MIME.test(String(file?.type || "")) || IMG_EXT.test(String(file?.name || "")); }
-  function readByFileReader(file) {
-    return new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onerror = () => reject(new Error(`read failed: ${file?.name || "screenshot"}`));
-      r.onload = () => resolve(String(r.result || ""));
-      r.readAsDataURL(file);
-    });
-  }
-  function toDataUrl(buffer, type) {
-    const bytes = new Uint8Array(buffer);
-    let out = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return `data:${type};base64,${btoa(out)}`;
-  }
-  async function readDataUrl(file, type) {
-    try {
-      const dataUrl = await readByFileReader(file);
-      if (/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) return dataUrl;
-    } catch {}
-    if (typeof file?.arrayBuffer !== "function") throw new Error(`Не удалось прочитать ${file?.name || "скриншот"}.`);
-    return toDataUrl(await file.arrayBuffer(), type);
-  }
+  function readByFileReader(file) { return new Promise((resolve, reject) => { const r = new FileReader(); r.onerror = () => reject(new Error(`read failed: ${file?.name || "screenshot"}`)); r.onload = () => resolve(String(r.result || "")); r.readAsDataURL(file); }); }
+  function toDataUrl(buffer, type) { const bytes = new Uint8Array(buffer); let out = ""; for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return `data:${type};base64,${btoa(out)}`; }
+  async function readDataUrl(file, type) { try { const dataUrl = await readByFileReader(file); if (/^data:image\/(png|jpe?g|webp);base64,/i.test(dataUrl)) return dataUrl; } catch {} if (typeof file?.arrayBuffer !== "function") throw new Error(`Не удалось прочитать ${file?.name || "скриншот"}.`); return toDataUrl(await file.arrayBuffer(), type); }
   function decode(dataUrl) { return new Promise((resolve, reject) => { const img = new Image(); img.onerror = reject; img.onload = () => resolve(img); img.src = dataUrl; }); }
 
   async function patchedPrepareExpenseScreenshotImage(file) {
@@ -71,40 +52,42 @@
     return m ? `${uiYear()}-${MONTHS[m[2]]}-${String(m[1]).padStart(2, "0")}` : "";
   }
 
-  function parseAmount(line) {
+  function looksLikePrivatContext(text) {
+    const raw = String(text || "").toLowerCase();
+    return /privat|приват|історія|история|карт|рахунок|рахун|uah|грн|₴|клієнт заплатив|клиент заплатил/.test(raw) && !/яндекс|yandex|yoomoney|юmoney|юмани/.test(raw);
+  }
+  function lineLooksLikeYandex(line, fullText) { return /яндекс|yandex|yoomoney|юmoney|юмани|кошелек|кошел[её]к/i.test(`${line || ""}\n${fullText || ""}`); }
+
+  function parseAmount(line, fullText) {
     const raw = String(line || "").replace(/\u00a0/g, " ");
     const m = raw.match(/([+-])\s*(\d[\d\s.,]*\d|\d)\s*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/i);
     if (!m) return null;
     const amount = Math.abs(parseLooseNumber(m[2]));
     if (!amount) return null;
     const cur = String(m[3]).toLowerCase();
-    const currency = /uah|грн|₴/.test(cur) ? "UAH" : /eur|€/.test(cur) ? "EUR" : /rub|руб/.test(cur) ? "RUB" : /cad|c\$/.test(cur) ? "CAD" : "USD";
+    let currency = /uah|грн|₴/.test(cur) ? "UAH" : /eur|€/.test(cur) ? "EUR" : /rub|руб/.test(cur) ? "RUB" : /cad|c\$/.test(cur) ? "CAD" : "USD";
+    if (currency === "RUB" && looksLikePrivatContext(fullText) && !lineLooksLikeYandex(line, fullText)) currency = "UAH";
     return { amount, currency, direction: m[1] === "+" ? "income" : "expense" };
   }
-  function privatUahChannel() {
-    const channels = getManualFinanceChannels();
-    return channels.find((x) => /приват\s*24.*грн/i.test(String(x || ""))) || "приват 24-грн";
-  }
-  function usefulName(line) {
-    const raw = String(line || "").trim();
-    if (!raw || /^\d{1,2}:\d{2}$/.test(raw)) return false;
-    if (/^(історія|история|аналітика|аналитика|choose files?|no file chosen)$/i.test(raw)) return false;
-    if (/^[•.*\s-]*\d{3,4}$/.test(raw)) return false;
-    return true;
-  }
+  function privatUahChannel() { const channels = getManualFinanceChannels(); return channels.find((x) => /приват\s*24.*грн/i.test(String(x || ""))) || "приват 24-грн"; }
+  function usefulName(line) { const raw = String(line || "").trim(); if (!raw || /^\d{1,2}:\d{2}$/.test(raw)) return false; if (/^(історія|история|аналітика|аналитика|choose files?|no file chosen)$/i.test(raw)) return false; if (/^[•.*\s-]*\d{3,4}$/.test(raw)) return false; return true; }
 
   function patchedParseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
     const original = originalParseOcrText ? originalParseOcrText(text, sourceImageIndex, uploadedAtDate) : { entries: [], warnings: [] };
     const lines = String(text || "").split(/\n+/).map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+    const fullText = lines.join("\n");
+    const privatContext = looksLikePrivatContext(fullText);
     const entries = [];
     let currentDate = "";
     let prev = "";
     for (const line of lines) {
       const date = patchedExtractExpenseOcrDate(line);
       if (date) { currentDate = date; prev = ""; continue; }
-      const amount = parseAmount(line);
+      const amount = parseAmount(line, fullText);
       if (!amount) { if (usefulName(line)) prev = line; continue; }
+      if (amount.currency === "RUB" && privatContext && !lineLooksLikeYandex(line, fullText)) continue;
       const channel = amount.currency === "UAH" ? privatUahChannel() : inferExpenseOcrChannel(line);
+      if (privatContext && amount.currency !== "UAH" && !lineLooksLikeYandex(line, fullText)) continue;
       const organization = prev || line.replace(/[+-]\s*\d[\d\s.,]*(UAH|грн|₴|USD|\$|EUR|€|RUB|руб|CAD|C\$)/ig, "").trim();
       entries.push(normalizeExpenseAccountingEntry({
         date: currentDate || uploadedAtDate,
@@ -119,13 +102,13 @@
         receivedType: amount.direction === "income" ? "serviceincome" : "",
         organization,
         counterparty: organization,
-        confidence: 0.78,
+        confidence: 0.8,
         source: "browser_ocr_strict",
         sourceImageIndex
       }, entries.length));
       prev = "";
     }
-    if (entries.length) return { entries, warnings: ["Browser OCR strict currency parser used; broad OCR rows suppressed."] };
+    if (entries.length) return { entries, warnings: [privatContext ? "Privat24 OCR context detected; non-UAH/YooMoney rows suppressed." : "Browser OCR strict currency parser used; broad OCR rows suppressed."] };
     return { entries: original.entries || [], warnings: [...(original.warnings || []), ...((original.entries || []).length ? [] : ["Browser OCR did not find expense-like rows."])] };
   }
 
