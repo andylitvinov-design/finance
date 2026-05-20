@@ -1,0 +1,104 @@
+---
+description: Finance app debugging, guarded repair, and verification rules for Cursor Composer.
+globs: "**/*"
+alwaysApply: true
+---
+
+# Finance App Cursor Rules
+
+You are working in the `andylitvinov-design/finance` repository for the Ezohata incoming ledger / finance analytics app.
+
+Primary goal: find the real failing layer, apply the smallest safe fix, verify with tests and live/API evidence, and report clearly.
+
+## Core workflow
+
+1. Start from evidence, not assumptions.
+2. Identify the failing layer before changing code:
+   - deploy/source
+   - provider/import
+   - normalization
+   - ledger save
+   - balance/reconciliation
+   - analytics aggregation
+   - UI rendering
+   - data repair / Google Sheet row semantics
+3. State evidence for and against likely layers.
+4. Make the minimal safe patch.
+5. Add or update tests near the changed logic.
+6. Run relevant verification commands.
+7. Report changed files, root cause, verification, and remaining risks.
+
+## Safety constraints
+
+- Do not change secrets, `.env`, API keys, service-account credentials, Vercel env values, or auth tokens.
+- Do not perform broad rewrites when a surgical patch is possible.
+- Do not silently change financial semantics.
+- Do not edit Ledger, Остатки, Авто Остатки, or provider data without a guarded dry-run/apply script.
+- Do not infer net from gross when fee/net evidence is missing.
+- Do not use `amount` fallback if the current contract requires `amount_net`.
+- Do not hide warnings or mismatches just to make UI look green.
+- Do not delete rows or remove legacy auto rows unless explicitly requested.
+
+## Finance semantics
+
+- `amount_net` is the calculation source of truth where the Ledger v2 contract requires it.
+- PayPal gross, fee, and net must stay distinct. If fee is unavailable, propagate a warning instead of pretending gross equals net.
+- Wise card rows should preserve the real money movement semantics. Be careful with gross, fee, net, refunds, and card reversals.
+- Transfers and exchanges must not be counted as income/expense unless the domain model explicitly says so.
+- Opening balances and target-date facts must be resolved by explicit priority rules; do not mix old snapshots with current facts without showing status.
+- Provider auto balances and manual facts must be visibly distinguished when reconciling.
+
+## Verification expectations
+
+Prefer small, targeted verification first, then full guard checks.
+
+Typical commands:
+
+```bash
+node --test tests/*.test.*
+node --check <changed-js-file>
+bash scripts/release-guard.sh
+npm run build
+```
+
+When live verification is relevant, check:
+
+```bash
+curl -sS https://ezohata-incoming-ledger.vercel.app/api/status
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/audit-snapshot?from=YYYY-MM-DD&to=YYYY-MM-DD'
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/period-balance-reconciliation?from=YYYY-MM-DD&to=YYYY-MM-DD'
+```
+
+If production is involved, always compare expected commit/source with live `/api/status` fields:
+
+- `commitSha`
+- `commitRef`
+- `gitRepoSlug`
+- `googleSheetReadOk`
+- `status`
+
+## Guarded data repair rules
+
+For data repairs:
+
+1. Write a script with dry-run default.
+2. Dry-run must print exact target rows and fields.
+3. Apply mode must require an explicit flag such as `--apply`.
+4. The script must refuse ambiguous matches.
+5. The script must report before/after values.
+6. Add a test for target detection and safety refusal.
+7. Never change more rows than the user explicitly approved or the evidence uniquely proves.
+
+## Reporting format
+
+Final report must include:
+
+- Failing layer
+- Root cause
+- Changed files
+- Verification commands and results
+- Live/deploy status if checked
+- Data rows changed, if any
+- Remaining risks or manual confirmations needed
+
+Use concise technical language. Avoid long logs. Include only the important evidence.
