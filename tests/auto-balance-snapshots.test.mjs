@@ -7,6 +7,7 @@ import { generateKeyPairSync } from "node:crypto";
 import handler from "../api/index.js";
 import {
   AUTO_BALANCE_SHEET_NAME,
+  EXPECTED_PROVIDER_BALANCES,
   collectProviderBalanceRows,
   mergeBalanceRowsByDateChannelCurrency,
   runAutoBalanceSnapshots,
@@ -77,6 +78,11 @@ test("provider unavailable creates dated status rows instead of fake zero rows",
   assert.equal(result.saved_rows, 0);
   assert.equal(result.target_sheet, AUTO_BALANCE_SHEET_NAME);
   assert.ok(result.rows_preview.length > 0);
+  assert.equal(result.rows_preview.length, EXPECTED_PROVIDER_BALANCES.length);
+  assert.deepEqual(
+    result.rows_preview.map((row) => `${row.provider}|${row.channel}|${row.currency}`).sort(),
+    EXPECTED_PROVIDER_BALANCES.map((row) => `${row.provider}|${row.channel}|${row.currency}`).sort()
+  );
   assert.equal(result.provider_current_balance_status.wise, "needs_permission");
   assert.equal(result.provider_current_balance_status.monobank, "needs_permission");
   assert.deepEqual(Object.keys(result.provider_current_balance_status).sort(), [
@@ -184,6 +190,24 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
         },
       };
     }
+    if (value.includes("/sapi/v1/simple-earn/flexible/position")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ rows: [{ asset: "USDT", totalAmount: "7.25", productId: "USDT001" }] });
+        },
+      };
+    }
+    if (value.includes("/sapi/v1/simple-earn/locked/position")) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ rows: [{ asset: "USDT", amount: "2.75", positionId: 123 }] });
+        },
+      };
+    }
     if (value.endsWith("/api/account-info")) {
       return jsonResponse({ account: "4100", balance: "1234.56", currency: "643" });
     }
@@ -227,11 +251,13 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
   const rows = results.flatMap((result) => result.rows);
 
   assert.ok(calls.some((call) => call.url.includes("/api/v3/account")));
+  assert.ok(calls.some((call) => call.url.includes("/sapi/v1/simple-earn/flexible/position")));
+  assert.ok(calls.some((call) => call.url.includes("/sapi/v1/simple-earn/locked/position")));
   assert.ok(calls.some((call) => call.url.endsWith("/api/account-info")));
   assert.ok(calls.some((call) => call.url.includes("/v1/reporting/balances")));
   assert.deepEqual(rows.filter((row) => row.provider === "binance").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Бинанс spot|USDT|103|ok",
-    "binance save|USDT||provider_not_implemented",
+    "binance save|USDT|10|ok",
   ]);
   assert.deepEqual(rows.filter((row) => row.provider === "yoomoney").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Яндекс руб|RUB|1234,56|ok",
@@ -277,11 +303,96 @@ test("PayPal balances permission errors become structured status rows", async ()
 
   assert.equal(paypal.provider_current_balance_status, "needs_permission");
   assert.deepEqual(paypal.rows.map((row) => row.status), [
-    "needs_permission",
-    "needs_permission",
-    "needs_permission",
+    "needs_provider_permission",
+    "needs_provider_permission",
+    "needs_provider_permission",
   ]);
   assert.match(paypal.error, /PayPal balances request failed \(403\)/);
+});
+
+test("Binance Earn permission failure preserves spot balance and writes save permission status", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-05-20",
+    env: {
+      BINANCE_API_KEY: "binance-key",
+      BINANCE_API_SECRET: "binance-secret",
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.includes("/api/v3/account")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ balances: [{ asset: "USDT", free: "10", locked: "0" }] });
+          },
+        };
+      }
+      if (value.includes("/sapi/v1/simple-earn/")) {
+        return {
+          ok: false,
+          status: 403,
+          async text() {
+            return JSON.stringify({ code: -2015, msg: "Invalid API-key, IP, or permissions for action." });
+          },
+        };
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+  const binance = results.find((result) => result.provider === "binance");
+
+  assert.equal(binance.provider_current_balance_status, "available");
+  assert.deepEqual(binance.rows.map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
+    "Бинанс spot|USDT|10|ok",
+    "binance save|USDT||needs_provider_permission",
+  ]);
+});
+
+test("Binance Earn flexible and locked positions normalize into one save row", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-05-20",
+    env: {
+      BINANCE_API_KEY: "binance-key",
+      BINANCE_API_SECRET: "binance-secret",
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.includes("/api/v3/account")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ balances: [{ asset: "USDT", free: "0", locked: "0" }] });
+          },
+        };
+      }
+      if (value.includes("/sapi/v1/simple-earn/flexible/position")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ rows: [{ asset: "USDT", totalAmount: "11.5" }] });
+          },
+        };
+      }
+      if (value.includes("/sapi/v1/simple-earn/locked/position")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ rows: [{ asset: "USDT", amount: "3.25" }] });
+          },
+        };
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+  const saveRow = results.find((result) => result.provider === "binance").rows.find((row) => row.channel === "binance save");
+
+  assert.equal(saveRow.currency, "USDT");
+  assert.equal(saveRow.amount, "14,75");
+  assert.equal(saveRow.status, "ok");
 });
 
 test("non-JSON provider response becomes structured JSON error rows", async () => {
@@ -350,6 +461,7 @@ test("auto snapshot save writes merged Авто Остатки values through Go
         values: [
           ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
           ["2026-05-17", "wise", "трансервайз дол", "1", "USD", "1", "1", "wise_auto", "old", "wise:old", "ok", "old"],
+          ["2026-05-16", "payoneer", "Payoneer - dol", "", "USD", "1", "", "payoneer_auto", "old", "payoneer:Payoneer - dol:USD", "provider_not_implemented", "existing status"],
         ],
       });
     }
@@ -384,6 +496,7 @@ test("auto snapshot save writes merged Авто Остатки values through Go
     assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз дол" && row[3] === "120,45" && row[10] === "ok"));
     assert.ok(writes[0].some((row) => row[1] === "wise" && row[2] === "трансервайз евро" && row[10] === "missing_provider_balance"));
     assert.ok(writes[0].some((row) => row[1] === "paypal" && row[2] === "пейпал дол" && row[10] === "needs_provider_permission"));
+    assert.ok(writes[0].some((row) => row[0] === "2026-05-16" && row[1] === "payoneer" && row[2] === "Payoneer - dol" && row[3] === "" && row[10] === "provider_not_implemented"));
   } finally {
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);

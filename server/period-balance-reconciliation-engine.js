@@ -7,6 +7,10 @@ const STATUS = {
   CARRIED_FORWARD: "carried_forward_conditional",
   MISSING_AMOUNT_NET: "missing_amount_net",
   NEEDS_VERIFICATION: "needs_verification",
+  PROVIDER_NOT_IMPLEMENTED: "provider_not_implemented",
+  NEEDS_PROVIDER_PERMISSION: "needs_provider_permission",
+  PROVIDER_ERROR: "provider_error",
+  NOT_SUPPORTED_FOR_ACCOUNT: "not_supported_for_account",
   NO_DATA: "no_data",
 };
 
@@ -29,6 +33,7 @@ export function buildPeriodBalanceReconciliation({
     ...planned.byKey.keys(),
     ...balanceIndex.keysBeforePeriod(from),
     ...balanceIndex.keysInPeriod({ from, to }),
+    ...balanceIndex.statusKeysInPeriod({ from, to }),
   ]);
 
   const rows = Array.from(accountKeys)
@@ -120,6 +125,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   let status = STATUS.OK;
   if (missingAmountNetRows) {
     status = STATUS.MISSING_AMOUNT_NET;
+  } else if (isProviderLimitationStatus(factBalance.status) && manualProviderClosing === null) {
+    status = factBalance.status;
   } else if (opening === null && (hasMovement || hasPlan)) {
     status = STATUS.MISSING_OPENING;
   } else if (manualProviderClosing === null && (hasMovement || hasPlan || opening !== null)) {
@@ -168,6 +175,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     computed_status: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
     balanceSource: factBalance.status === "confirmed" ? "manual_fact" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing"),
     needsManualConfirmation: factBalance.status !== "confirmed",
+    providerStatus: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
+    provider_status: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
     provider: factBalance.provider || null,
     sourceSheet: factBalance.sourceSheet || "",
     sourceRow: factBalance.sourceRow || null,
@@ -233,6 +242,23 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
   const normalizedTargetDate = normalizeDate(targetDate);
   const snapshot = balanceIndex?.findClosing?.(key, { to: normalizedTargetDate }) || null;
   if (!snapshot) {
+    const providerStatus = balanceIndex?.findStatus?.(key, normalizedTargetDate) || null;
+    if (providerStatus && isProviderLimitationStatus(providerStatus.status)) {
+      return {
+        status: providerStatus.status,
+        amount: null,
+        date: providerStatus.date,
+        sourceSheet: providerStatus.sourceSheet || "Авто Остатки",
+        sourceRow: providerStatus.sourceRow || null,
+        sourceType: "provider status",
+        provider: providerStatus.provider || null,
+        comment: providerStatus.comment || "",
+        warning: providerStatus.comment || providerStatus.status,
+        repairHint: providerStatus.status === STATUS.NEEDS_PROVIDER_PERMISSION
+          ? `configure provider permission for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}`
+          : `provider balance status for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}: ${providerStatus.status}`,
+      };
+    }
     const nearest = balanceIndex?.findNearest?.(key, normalizedTargetDate) || null;
     const warning = nearest?.date
       ? `manual/provider fact exists for ${nearest.date}, but period end is ${normalizedTargetDate || "selected date"}; exact date fact is missing.`
@@ -425,13 +451,30 @@ function buildPlannedMovementIndex(plannedRows, period) {
 
 function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
   const byKey = new Map();
+  const statusByKey = new Map();
   for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows)) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
     const amount = parseNumber(row?.balanceAmount ?? row?.amount);
-    if (!date || !channel || !currency || amount === null) continue;
     const key = makeKey(channel, currency);
+    const rowStatus = normalizeProviderBalanceStatus(row?.status || row?.autoBalanceStatus || row?.auto_balance_status);
+    if (date && channel && currency && rowStatus && !["ok", "zero_balance"].includes(rowStatus)) {
+      const statusRows = statusByKey.get(key) || [];
+      statusRows.push({
+        date,
+        channel,
+        currency,
+        status: rowStatus,
+        source: row?.source || row?.fact_source || row?.provider || "",
+        provider: row?.provider || null,
+        sourceSheet: row?.sourceSheet || "",
+        sourceRow: row?.sourceRow || null,
+        comment: row?.comment || "",
+      });
+      statusByKey.set(key, statusRows);
+    }
+    if (!date || !channel || !currency || amount === null) continue;
     const rows = byKey.get(key) || [];
     rows.push({
       date,
@@ -448,6 +491,7 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     byKey.set(key, rows);
   }
   for (const rows of byKey.values()) rows.sort(compareBalanceSnapshots);
+  for (const rows of statusByKey.values()) rows.sort((left, right) => left.date.localeCompare(right.date));
 
   return {
     findOpening(key, from) {
@@ -480,6 +524,12 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
       const afterDistance = Math.abs(new Date(`${after.date}T00:00:00Z`) - targetDate);
       return afterDistance < beforeDistance ? after : before;
     },
+    findStatus(key, to) {
+      const rows = statusByKey.get(key) || [];
+      if (!rows.length) return null;
+      if (!to) return rows.at(-1) || null;
+      return rows.find((row) => row.date === to) || null;
+    },
     keysBeforePeriod(from) {
       if (!from) return Array.from(byKey.keys());
       return Array.from(byKey.entries())
@@ -488,6 +538,11 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     },
     keysInPeriod(period) {
       return Array.from(byKey.entries())
+        .filter(([, rows]) => rows.some((row) => isInPeriod(row.date, period)))
+        .map(([key]) => key);
+    },
+    statusKeysInPeriod(period) {
+      return Array.from(statusByKey.entries())
         .filter(([, rows]) => rows.some((row) => isInPeriod(row.date, period)))
         .map(([key]) => key);
     },
@@ -528,6 +583,21 @@ function getResolvedBalanceSource(row = {}) {
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
   if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider_auto";
   return "manual_fact";
+}
+
+function normalizeProviderBalanceStatus(value) {
+  const status = String(value || "").trim();
+  if (status === "needs_permission") return STATUS.NEEDS_PROVIDER_PERMISSION;
+  return status;
+}
+
+function isProviderLimitationStatus(status) {
+  return [
+    STATUS.PROVIDER_NOT_IMPLEMENTED,
+    STATUS.NEEDS_PROVIDER_PERMISSION,
+    STATUS.PROVIDER_ERROR,
+    STATUS.NOT_SUPPORTED_FOR_ACCOUNT,
+  ].includes(String(status || "").trim());
 }
 
 function buildCurrencyRows(rows) {
@@ -582,7 +652,8 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
     + (statusCounts[STATUS.MISSING_PROVIDER] || 0)
     + (statusCounts[STATUS.MISSING_CLOSING] || 0)
     + (statusCounts[STATUS.MISSING_AMOUNT_NET] || 0)
-    + (statusCounts[STATUS.NEEDS_VERIFICATION] || 0);
+    + (statusCounts[STATUS.NEEDS_VERIFICATION] || 0)
+    + countProviderLimitationStatuses(statusCounts);
 
   return {
     status: failed ? "failed" : incomplete ? "blocked" : "ok",
@@ -601,6 +672,10 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
       [STATUS.CARRIED_FORWARD]: statusCounts[STATUS.CARRIED_FORWARD] || 0,
       [STATUS.MISSING_AMOUNT_NET]: statusCounts[STATUS.MISSING_AMOUNT_NET] || 0,
       [STATUS.NEEDS_VERIFICATION]: statusCounts[STATUS.NEEDS_VERIFICATION] || 0,
+      [STATUS.PROVIDER_NOT_IMPLEMENTED]: statusCounts[STATUS.PROVIDER_NOT_IMPLEMENTED] || 0,
+      [STATUS.NEEDS_PROVIDER_PERMISSION]: statusCounts[STATUS.NEEDS_PROVIDER_PERMISSION] || 0,
+      [STATUS.PROVIDER_ERROR]: statusCounts[STATUS.PROVIDER_ERROR] || 0,
+      [STATUS.NOT_SUPPORTED_FOR_ACCOUNT]: statusCounts[STATUS.NOT_SUPPORTED_FOR_ACCOUNT] || 0,
       [STATUS.NO_DATA]: statusCounts[STATUS.NO_DATA] || 0,
     },
     blocked: incomplete,
@@ -625,6 +700,10 @@ function buildDiagnosis(row) {
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным.";
   if (row.status === STATUS.MISSING_OPENING) return "Нет начального Остатки перед периодом, но есть план/движение.";
   if (row.status === STATUS.MISSING_PROVIDER) return "Нет фактического остатка на дату; сверка по этому счету заблокирована до ввода баланса провайдера.";
+  if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "Автоматический остаток для этого провайдера не реализован; нужен ручной факт или новый API-адаптер.";
+  if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "Провайдерский остаток доступен только после настройки токена или разрешений.";
+  if (row.status === STATUS.PROVIDER_ERROR) return "Провайдерский остаток не получен из-за ошибки API; статус сохранен в Авто Остатки.";
+  if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Провайдерский остаток не поддерживается для текущего аккаунта.";
   if (row.status === STATUS.MISSING_CLOSING) return "Есть план/движение, но нет нового фактического Остатки за период.";
   if (row.status === STATUS.MISMATCH) return "Расхождение: фактический конечный остаток не равен реальному расчетному остатку.";
   return "Нужна проверка: не хватает данных для полной сверки периода.";
@@ -662,6 +741,7 @@ function buildDiagnostics({
   if (status === STATUS.MISSING_AMOUNT_NET || missingAmountNetRows) categories.push("amount_net issue");
   if (status === STATUS.MISSING_OPENING || opening === null) categories.push("missing opening balance");
   if (status === STATUS.MISSING_PROVIDER || displayedFactClosing === null) categories.push("missing provider balance");
+  if (isProviderLimitationStatus(status)) categories.push(status);
   return {
     categories: Array.from(new Set(categories)),
     has_exact_provider_balance: Boolean(closingSnapshot),
@@ -681,6 +761,10 @@ function buildFixAction(row) {
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Заполнить amount_net у Ledger строк по этому счету/валюте.";
   if (row.status === STATUS.MISSING_OPENING) return "Добавить Остатки до начала периода по этому счету/валюте.";
   if (row.status === STATUS.MISSING_PROVIDER) return "Добавить фактический остаток на дату окончания периода по этому счету/валюте.";
+  if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "Оставить статус в Авто Остатки или добавить ручной факт в Остатки.";
+  if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "Настроить разрешение провайдера, затем повторить auto-balance snapshot.";
+  if (row.status === STATUS.PROVIDER_ERROR) return "Проверить ошибку провайдера и повторить auto-balance snapshot.";
+  if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "Оставить статус или добавить ручной факт, если провайдер не поддерживает API-баланс.";
   if (row.status === STATUS.MISSING_CLOSING) return "Добавить фактический конечный Остатки за период по этому счету/валюте.";
   if (row.status === STATUS.MISMATCH) return "Проверить Ledger movements, amount_net и строку Остатки за период.";
   return "Проверить дату, счет, валюту и сумму в Ledger/Остатки.";
@@ -693,6 +777,10 @@ function buildRepairAction(row) {
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "fix_amount_net";
   if (row.status === STATUS.MISSING_OPENING) return "enter_opening_fact";
   if (row.status === STATUS.MISSING_PROVIDER) return "enter_manual_provider_fact";
+  if (row.status === STATUS.PROVIDER_NOT_IMPLEMENTED) return "provider_not_implemented_or_enter_manual_fact";
+  if (row.status === STATUS.NEEDS_PROVIDER_PERMISSION) return "configure_provider_permission";
+  if (row.status === STATUS.PROVIDER_ERROR) return "retry_provider_snapshot";
+  if (row.status === STATUS.NOT_SUPPORTED_FOR_ACCOUNT) return "provider_not_supported_or_enter_manual_fact";
   if (row.status === STATUS.MISSING_CLOSING) return "enter_closing_fact";
   if (row.status === STATUS.MISMATCH) return "investigate_mismatch";
   return "needs_verification";
@@ -708,6 +796,17 @@ function buildRepairTemplate({ status, channel, currency, to, movementDate, calc
       amount: null,
       expected_closing_hint: calculatedClosing,
       safe_fill: "amount must be factual provider/manual balance; expected_closing_hint is not an auto-fill value",
+    };
+  }
+  if (isProviderLimitationStatus(status)) {
+    return {
+      sheet: "Авто Остатки",
+      date: to || "",
+      channel,
+      currency,
+      amount: null,
+      provider_status: status,
+      safe_fill: "status row is diagnostic only; do not write computed closing as factual balance",
     };
   }
   if (status === STATUS.MISSING_OPENING) {
@@ -757,6 +856,10 @@ function getFixPriority(status) {
     [STATUS.MISMATCH]: 1,
     [STATUS.MISSING_OPENING]: 2,
     [STATUS.MISSING_PROVIDER]: 3,
+    [STATUS.NEEDS_PROVIDER_PERMISSION]: 3,
+    [STATUS.PROVIDER_NOT_IMPLEMENTED]: 3,
+    [STATUS.PROVIDER_ERROR]: 3,
+    [STATUS.NOT_SUPPORTED_FOR_ACCOUNT]: 3,
     [STATUS.MISSING_CLOSING]: 4,
     [STATUS.NEEDS_VERIFICATION]: 4,
     [STATUS.CARRIED_FORWARD]: 8,
@@ -768,10 +871,17 @@ function getFixPriority(status) {
 
 function resolveCurrencyStatus(statusCounts) {
   if (statusCounts[STATUS.MISSING_AMOUNT_NET] || statusCounts[STATUS.MISMATCH]) return "failed";
-  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION]) return "blocked";
+  if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION] || countProviderLimitationStatuses(statusCounts)) return "blocked";
   if (statusCounts[STATUS.CARRIED_FORWARD]) return STATUS.CARRIED_FORWARD;
   if (statusCounts[STATUS.NO_DATA]) return STATUS.NO_DATA;
   return STATUS.OK;
+}
+
+function countProviderLimitationStatuses(statusCounts = {}) {
+  return (statusCounts[STATUS.PROVIDER_NOT_IMPLEMENTED] || 0)
+    + (statusCounts[STATUS.NEEDS_PROVIDER_PERMISSION] || 0)
+    + (statusCounts[STATUS.PROVIDER_ERROR] || 0)
+    + (statusCounts[STATUS.NOT_SUPPORTED_FOR_ACCOUNT] || 0);
 }
 
 function getMovementChannel(row, amount) {

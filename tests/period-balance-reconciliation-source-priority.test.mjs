@@ -177,3 +177,95 @@ test("carried-forward opening row is not labeled as closing manual fact", async 
   assert.equal(row.factStatus, "missing");
   assert.match(row.repairHint, /add fact balance/);
 });
+
+test("blank auto status row does not become factual balance and reports provider limitation", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [
+        {
+          date: "2026-05-10",
+          toChannel: "Payoneer - dol",
+          currency: "USD",
+          amountNet: "20",
+          balanceAmount: 20,
+          ledgerV2: {
+            date: "2026-05-10",
+            operation: "income",
+            to_channel: "Payoneer - dol",
+            currency: "USD",
+            amount_net: "20",
+            balance_amount: 20,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-04-30", channel: "Payoneer - dol", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-17", provider: "payoneer", channel: "Payoneer - dol", currency: "USD", amount: "", source: "provider_auto", sourceSheet: "Авто Остатки", status: "provider_not_implemented", comment: "Payoneer current-balance snapshot endpoint is not wired yet.", sourceRow: 11 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "Payoneer - dol");
+  assert.equal(row.status, "provider_not_implemented");
+  assert.equal(row.factual_closing_balance, null);
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.balanceSource, "missing");
+  assert.equal(row.factStatus, "provider_not_implemented");
+  assert.equal(row.sourceSheet, "Авто Остатки");
+  assert.equal(row.sourceRow, 11);
+  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.provider_not_implemented, 1);
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_rows_loaded, 1);
+  assert.deepEqual(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_counts, {
+    provider_not_implemented: 1,
+  });
+});
+
+test("manual fact still beats same-date blank auto status row", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [
+        {
+          date: "2026-05-10",
+          toChannel: "пейпал дол",
+          currency: "USD",
+          amountNet: "20",
+          balanceAmount: 20,
+          ledgerV2: {
+            date: "2026-05-10",
+            operation: "income",
+            to_channel: "пейпал дол",
+            currency: "USD",
+            amount_net: "20",
+            balance_amount: 20,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-04-30", channel: "пейпал дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-17", channel: "пейпал дол", currency: "USD", amount: "120", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-17", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "", source: "provider_auto", sourceSheet: "Авто Остатки", status: "needs_provider_permission", comment: "PayPal permission missing", sourceRow: 12 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "пейпал дол");
+  assert.equal(row.status, "ok");
+  assert.equal(row.factual_closing_balance, 120);
+  assert.equal(row.balanceSource, "manual_fact");
+  assert.equal(row.factStatus, "confirmed");
+  assert.equal(row.sourceSheet, "Остатки");
+});

@@ -146,6 +146,42 @@ export async function fetchBinanceCurrentBalances(options = {}) {
   return normalizeBinanceCurrentBalances(result.payload);
 }
 
+export async function fetchBinanceEarnCurrentBalances(options = {}) {
+  const apiKey = String(options.apiKey || "").trim();
+  const apiSecret = String(options.apiSecret || "").trim();
+  if (!apiKey || !apiSecret) {
+    throw new Error("Binance credentials are not configured. Set BINANCE_API_KEY and BINANCE_API_SECRET.");
+  }
+  const signedOptions = {
+    fetchImpl: options.fetchImpl || fetch,
+    baseUrl: String(options.baseUrl || BINANCE_BASE_URL).replace(/\/+$/, ""),
+    apiKey,
+    apiSecret,
+    now: typeof options.now === "function" ? options.now : Date.now,
+    query: { asset: options.asset || "USDT" },
+  };
+  const flexible = await fetchBinanceSignedJson({
+    ...signedOptions,
+    path: "/sapi/v1/simple-earn/flexible/position",
+  });
+  const locked = await fetchBinanceSignedJson({
+    ...signedOptions,
+    path: "/sapi/v1/simple-earn/locked/position",
+  });
+  const errors = [];
+  if (!flexible.ok) errors.push(`/sapi/v1/simple-earn/flexible/position: ${flexible.error || `HTTP ${flexible.status || "unknown"}`}`);
+  if (!locked.ok) errors.push(`/sapi/v1/simple-earn/locked/position: ${locked.error || `HTTP ${locked.status || "unknown"}`}`);
+  if (errors.length === 2) {
+    const error = new Error(errors.join("; "));
+    error.status = flexible.status || locked.status || 0;
+    throw error;
+  }
+  return normalizeBinanceEarnCurrentBalances({
+    flexible: flexible.ok ? flexible.payload : {},
+    locked: locked.ok ? locked.payload : {},
+  });
+}
+
 export function normalizeBinanceCurrentBalances(account = {}) {
   const balances = Array.isArray(account?.balances) ? account.balances : [];
   return balances
@@ -163,6 +199,35 @@ export function normalizeBinanceCurrentBalances(account = {}) {
       };
     })
     .filter((balance) => balance.currency && Number.isFinite(balance.amount));
+}
+
+export function normalizeBinanceEarnCurrentBalances(payload = {}) {
+  const totals = new Map();
+  const rows = [
+    ...extractBinancePayloadRows(payload.flexible),
+    ...extractBinancePayloadRows(payload.locked),
+  ];
+  for (const row of rows) {
+    const currency = normalizeBinanceCurrency(row.asset || row.coin);
+    if (!currency) continue;
+    const amount = parseBinanceSignedAmount(firstNonEmpty(row.totalAmount, row.amount));
+    totals.set(currency, roundBinanceAmount((totals.get(currency) || 0) + amount));
+  }
+  return Array.from(totals.entries())
+    .map(([currency, amount]) => ({
+      id: `binance-earn-${currency}`,
+      currency,
+      amount,
+      wallet: "earn",
+      raw: rows.filter((row) => normalizeBinanceCurrency(row.asset || row.coin) === currency),
+    }))
+    .filter((balance) => balance.currency && Number.isFinite(balance.amount));
+}
+
+function extractBinancePayloadRows(payload = {}) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  return [];
 }
 
 export async function fetchBinanceSignedJson(options = {}) {
