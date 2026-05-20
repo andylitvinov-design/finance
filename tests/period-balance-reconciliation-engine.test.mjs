@@ -257,6 +257,159 @@ test("period-start snapshot is opening balance and same-day movement is excluded
   assert.equal(row.real_difference, 0);
 });
 
+test("EOD opening excludes same-day Binance Pay movement after snapshot", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [
+      {
+        date: "2026-05-01",
+        fromChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "700",
+        balanceAmount: -700,
+        ledgerV2: {
+          date: "2026-05-01",
+          operation: "expense",
+          from_channel: "Бинанс spot",
+          currency: "USDT",
+          amount_net: "700",
+          balance_amount: -700,
+        },
+      },
+      {
+        date: "2026-05-02",
+        toChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "100",
+        balanceAmount: 100,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "income",
+          to_channel: "Бинанс spot",
+          currency: "USDT",
+          amount_net: "100",
+          balance_amount: 100,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1093", source: "manual_confirmed_balance" },
+      { date: "2026-05-20", channel: "Бинанс spot", currency: "USDT", amount: "1193", source: "manual_confirmed_balance" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance_date, "2026-05-01");
+  assert.equal(row.opening_balance, 1093);
+  assert.equal(row.real_delta, 100);
+  assert.equal(row.movement_rows, 1);
+  assert.equal(row.calculated_closing_balance, 1193);
+});
+
+test("same-day period uses previous EOD opening and target date as EOD closing", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-01" },
+    operations: [
+      {
+        date: "2026-05-01",
+        fromChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "700",
+        balanceAmount: -700,
+        ledgerV2: {
+          date: "2026-05-01",
+          operation: "expense",
+          from_channel: "Бинанс spot",
+          currency: "USDT",
+          amount_net: "700",
+          balance_amount: -700,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-04-30", channel: "Бинанс spot", currency: "USDT", amount: "1793", source: "manual_confirmed_balance" },
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1093", source: "manual_confirmed_balance" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance_date, "2026-04-30");
+  assert.equal(row.opening_balance, 1793);
+  assert.equal(row.real_delta, -700);
+  assert.equal(row.calculated_closing_balance, 1093);
+  assert.equal(row.factual_closing_balance, 1093);
+});
+
+test("Binance USDT opening facts do not use USD rows as USDT facts", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [
+      {
+        date: "2026-05-02",
+        toChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "100",
+        balanceAmount: 100,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "Бинанс spot", currency: "USDT", amount_net: "100", balance_amount: 100 },
+      },
+      {
+        date: "2026-05-02",
+        toChannel: "binance save",
+        currency: "USDT",
+        amountNet: "10",
+        balanceAmount: 10,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "binance save", currency: "USDT", amount_net: "10", balance_amount: 10 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "9999", source: "stale" },
+      { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "8769", source: "stale" },
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1093", source: "manual_confirmed_balance" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "7432", source: "manual_confirmed_balance" },
+      { date: "2026-05-20", channel: "Бинанс spot", currency: "USDT", amount: "1193", source: "manual_confirmed_balance" },
+      { date: "2026-05-20", channel: "binance save", currency: "USDT", amount: "7442", source: "manual_confirmed_balance" },
+    ],
+  });
+
+  const spot = result.by_channel_currency.find((row) => row.channel === "Бинанс spot" && row.currency === "USDT");
+  const save = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDT");
+
+  assert.equal(spot.opening_balance_date, "2026-05-01");
+  assert.equal(spot.opening_balance, 1093);
+  assert.equal(spot.status, "ok");
+  assert.equal(save.opening_balance_date, "2026-05-01");
+  assert.equal(save.opening_balance, 7432);
+  assert.equal(save.status, "ok");
+});
+
+test("manual confirmed opening outranks stale same-date balance rows", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [
+      {
+        date: "2026-05-02",
+        toChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "100",
+        balanceAmount: 100,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "Бинанс spot", currency: "USDT", amount_net: "100", balance_amount: 100 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1093", source: "manual_confirmed_balance" },
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1090", source: "provider_auto", sourceSheet: "Авто Остатки" },
+      { date: "2026-05-20", channel: "Бинанс spot", currency: "USDT", amount: "1193", source: "manual_confirmed_balance" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.opening_balance, 1093);
+  assert.equal(row.calculated_closing_balance, 1193);
+  assert.equal(row.status, "ok");
+});
+
 test("day-after period still uses previous-day snapshot and includes period movement", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-02", to: "2026-05-03" },

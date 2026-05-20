@@ -369,6 +369,8 @@ function buildRealMovementIndex(operations, period) {
 }
 
 function getMovementWindowStart(openingDate, from) {
+  // Balance snapshots are EOD 23:59. Same-day movements are included in the
+  // snapshot and must not be counted again after that snapshot.
   if (!openingDate) return from;
   const afterOpening = addDays(openingDate, 1);
   if (!from) return afterOpening;
@@ -506,8 +508,12 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     findOpening(key, { from, to } = {}) {
       const rows = byKey.get(key) || [];
       if (!from) return rows[0] || null;
-      if (from && to && from === to) return rows.filter((row) => row.date < from).at(-1) || null;
-      return rows.filter((row) => row.date <= from).at(-1) || null;
+      // Balance snapshots are EOD 23:59. For multi-day periods, the from-date
+      // snapshot is an opening EOD fact and same-day movements start next day.
+      // For same-day periods, use the previous EOD snapshot to avoid treating
+      // the same EOD fact as both opening and closing.
+      if (from && to && from === to) return latestPreferred(rows.filter((row) => row.date < from));
+      return latestPreferred(rows.filter((row) => row.date <= from));
     },
     findClosing(key, { from, to }) {
       const rows = byKey.get(key) || [];
@@ -516,8 +522,8 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     },
     findLatestBeforeOrOn(key, to) {
       const rows = byKey.get(key) || [];
-      if (!to) return rows.at(-1) || null;
-      return rows.filter((row) => row.date <= to).at(-1) || null;
+      if (!to) return latestPreferred(rows);
+      return latestPreferred(rows.filter((row) => row.date <= to));
     },
     findNearest(key, to) {
       const rows = byKey.get(key) || [];
@@ -557,6 +563,14 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
         .map(([key]) => key);
     },
   };
+}
+
+function latestPreferred(rows = []) {
+  if (!rows.length) return null;
+  const latestDate = rows.at(-1)?.date;
+  return rows
+    .filter((row) => row.date === latestDate)
+    .sort((left, right) => balanceSourcePriority(left) - balanceSourcePriority(right))[0] || null;
 }
 
 function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = []) {

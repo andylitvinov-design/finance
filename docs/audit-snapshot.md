@@ -158,7 +158,9 @@ Phase 1 deliberately returns aggregates only. Sanitized rows are deferred until 
 
 `daily_balances` is additive and does not change `balances.by_channel`. It uses only Ledger `amount_net` / `balance_amount`; rows without `amount_net` are excluded and counted.
 
-`Остатки` rows are treated as end-of-day provider/manual balance snapshots by date + channel + currency. A prior snapshot becomes the opening balance for later ledger movement; a same-day snapshot is compared with computed closing balance as `provider_reported_balance`.
+`Остатки`, `Авто Остатки`, and planned balance snapshots are end-of-day balances at 23:59 local day by date + channel + currency. All movements on the same date are already included in that date's snapshot.
+
+For period reconciliation, a period-start snapshot is the opening EOD fact for that date, so movement starts on the next day. For same-day periods (`from=to`), the engine uses the previous EOD snapshot as opening and the selected date's 23:59 snapshot as closing to avoid double-counting same-day movement.
 
 ## needs verification
 
