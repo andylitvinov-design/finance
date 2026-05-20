@@ -532,6 +532,39 @@ test("buildLedgerRowsFromAccountingEntries keeps Wise expense net equal to balan
   assert.equal(rows[0].rawSourceId, "CARD-3800823225");
 });
 
+test("buildLedgerRowsFromAccountingEntries saves Wise card account amount while preserving local metadata in comment", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-09",
+      channel: "трансервайз дол",
+      localAmount: 108.36,
+      localCurrency: "EUR",
+      accountAmount: 128.08,
+      currency: "USD",
+      usdAmount: 128.08,
+      amountNet: 128.08,
+      category: "business",
+      direction: "expense",
+      source: "wise",
+      externalId: "CARD-3771546317",
+      sourceTransactionId: "CARD-3771546317",
+      description: "Card transaction of 108.36 EUR issued by YellowSquare"
+    }
+  ]));
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].date, "2026-05-09");
+  assert.equal(rows[0].source, "wise");
+  assert.equal(rows[0].fromChannel, "трансервайз дол");
+  assert.equal(rows[0].amount, "128,0800");
+  assert.equal(rows[0].currency, "USD");
+  assert.equal(rows[0].amountUsd, "128,0800");
+  assert.equal(rows[0].amountNet, "128,0800");
+  assert.equal(rows[0].direction, "out");
+  assert.equal(rows[0].comment, "Card transaction of 108.36 EUR issued by YellowSquare");
+});
+
 test("Wise refund income saves as Ledger income into Wise channel", () => {
   const context = buildLedgerTestContext();
   const rows = plain(context.buildLedgerRowsFromAccountingEntries([
