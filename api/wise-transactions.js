@@ -174,7 +174,13 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
 
 function resolveWiseTransactionDirection(transaction = {}, amount = {}) {
   if (isWiseCardTransaction(transaction)) {
-    return hasWiseRefundMarker(transaction) ? "income" : "expense";
+    if (hasWiseRefundMarker(transaction)) return "income";
+    const numericAmount = Number(amount?.value || 0);
+    const transactionType = String(transaction?.type || "").trim().toUpperCase();
+    if (transactionType === "CREDIT" && numericAmount > 0 && !hasWiseOrdinaryCardPurchaseMarker(transaction)) {
+      return "income";
+    }
+    return "expense";
   }
 
   const numericAmount = Number(amount?.value || 0);
@@ -204,6 +210,12 @@ function hasWiseRefundMarker(transaction = {}) {
     details.status
   ].map((value) => String(value || "").trim().toLowerCase());
   return candidates.some((text) => /\b(refund|refunded|reversal|reversed|chargeback)\b/.test(text));
+}
+
+function hasWiseOrdinaryCardPurchaseMarker(transaction = {}) {
+  const details = transaction?.details || {};
+  const description = String(details.description || "").trim().toLowerCase();
+  return /\b(card transaction at|card payment to|payment to|purchase at|paid at)\b/.test(description);
 }
 
 export function summarizeWiseStatementEntries(entries = []) {
