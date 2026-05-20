@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import autoBalanceSnapshotsHandler from "../server/auto-balance-snapshots.js";
 import payoneerTransactionsHandler from "../server/payoneer-transactions.js";
+import revolutTransactionsHandler from "../server/revolut-transactions.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
@@ -31,6 +32,7 @@ const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const AUTO_BALANCE_SNAPSHOTS_ACTION = "autoBalanceSnapshots";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
+const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
@@ -173,6 +175,10 @@ export default async function handler(request, response) {
 
   if (debugAction === PAYONEER_TRANSACTIONS_ACTION) {
     return await payoneerTransactionsHandler(request, response);
+  }
+
+  if (debugAction === REVOLUT_TRANSACTIONS_ACTION) {
+    return await revolutTransactionsHandler(request, response);
   }
 
   if (debugAction === PAYPAL_MANUAL_BALANCE_ACTION) {
@@ -1123,6 +1129,7 @@ function isLedgerProviderIncomeSource(row) {
     "wise",
     "transferwise",
     "payoneer",
+    "revolut",
     "binance"
   ].includes(normalizedSource)) return true;
   const rawSourceId = String(
@@ -1133,7 +1140,7 @@ function isLedgerProviderIncomeSource(row) {
     row?.ledgerV2?.raw_source_id ||
     ""
   ).trim().toLowerCase();
-  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|payoneer|binance|usdt|usdc|crypto|mcp):/.test(rawSourceId);
+  return /^(paypal|wise|yoomoney|youmoney|yandex|monobank|tdbank|td_bank|payoneer|revolut|binance|usdt|usdc|crypto|mcp):/.test(rawSourceId);
 }
 
 function getNormalizedLedgerFactOperation(row) {
@@ -1440,6 +1447,7 @@ function resolvePaymentChannel(value) {
   if (/wise.*eur|transf?erwise.*eur|трансервайз.*евро/.test(normalized)) return "трансервайз евро";
   if (/payoneer.*(?:usd|дол)|(?:usd|дол).*payoneer/.test(normalized)) return "Payoneer - dol";
   if (/payoneer.*(?:eur|евр|euro)|(?:eur|евр|euro).*payoneer/.test(normalized)) return "Payoneer - eur";
+  if (/(revolut|револют).*(usd|дол)|(usd|дол).*(revolut|револют)|^revolut$|^револют$/.test(normalized)) return "REVOLUT дол";
   if (/binance.*sav|бинанс.*сейв/.test(normalized)) return "binance save";
   if (/(binance|бинанс|crypto|крипт|usdt|usdc)/.test(normalized)) return "Бинанс spot";
   if (/(mono|monobank|монобанк).*(uah|грн|грив)|(?:uah|грн|грив).*(mono|monobank|монобанк)/.test(normalized)) {

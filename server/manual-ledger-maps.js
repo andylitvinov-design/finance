@@ -42,6 +42,7 @@ export const MANUAL_LEDGER_SOURCES = [
   "paypal_manual",
   "paypal_personal_manual",
   "payoneer",
+  "revolut",
   "wise",
   "binance",
   "monobank",
@@ -88,7 +89,7 @@ const DEFAULT_CHANNEL_MAP = {
   "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
   "трансервайз дол": ["wise usd", "transferwise usd", "трансервайз дол", "wise дол"],
   "трансервайз евро": ["wise eur", "wise euro", "transferwise eur", "трансервайз евро", "трансервайз евр"],
-  "REVOLUT дол": ["revolut", "revolut usd", "револют", "револют дол"],
+  "REVOLUT дол": ["revolut", "revolut usd", "revolut_usd", "revolut dol", "револют", "револют дол"],
   "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur", "payoneer euro account"],
   "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer - dol", "payoneer dollar", "payoneer dollar account"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],
@@ -206,6 +207,7 @@ export function normalizeManualLedgerSource(value, fallback = "") {
   if (["paypal_manual", "paypal_personal", "paypal_personal_manual", "manual_provider_confirmed"].includes(normalizedToken)) return normalizedToken === "paypal_manual" ? "paypal_manual" : "paypal_personal_manual";
   if (["paypal", "paypal_mcp"].includes(normalizedToken)) return "paypal";
   if (["payoneer"].includes(normalizedToken)) return "payoneer";
+  if (["revolut", "револют", "revolut_usd", "revolut_dol"].includes(normalizedToken)) return "revolut";
   if (["wise", "transferwise"].includes(normalizedToken)) return "wise";
   if (["binance", "binance_spot", "binance_save", "binance_savings", "crypto", "usdt", "usdt_trc20", "usdt_erc20", "usdc", "usdc_trc20", "usdc_erc20", "trc20", "erc20"].includes(normalizedToken)) return "binance";
   if (["monobank", "mono"].includes(normalizedToken)) return "monobank";
@@ -224,6 +226,7 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (!raw) return "";
   if (/^migration:/i.test(raw)) return "migration";
   if (/^(paypal|pp|txn[-_:]paypal)/i.test(raw)) return "paypal";
+  if (/^revolut[:_-]/i.test(raw)) return "revolut";
   if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
   if (/^(binance|crypto|usdt|usdc|trc20|erc20)[:_-]/i.test(raw)) return "binance";
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
@@ -240,6 +243,7 @@ function inferManualLedgerSourceFromChannels(...values) {
     const normalized = normalizeToken(value);
     if (!normalized) continue;
     if (/(paypal|пейпал)/.test(normalized)) return "paypal";
+    if (/(revolut|револют)/.test(normalized)) return "revolut";
     if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
     if (/(binance|бинанс|crypto|крипт|usdt|usdc|trc20|erc20)/.test(normalized)) return "binance";
     if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";

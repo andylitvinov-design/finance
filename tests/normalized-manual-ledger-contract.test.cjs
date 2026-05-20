@@ -119,6 +119,10 @@ test("ledger v2 source normalization maps provider aliases to contract vocabular
   assert.equal(contract.normalizeLedgerRow({ source: "privat24" }).source, "privatbank");
   assert.equal(contract.normalizeLedgerRow({ source: "paypal mcp" }).source, "paypal");
   assert.equal(contract.normalizeLedgerRow({ source: "tdbank" }).source, "td_bank");
+  assert.equal(contract.normalizeLedgerRow({ source: "revolut" }).source, "revolut");
+  assert.equal(contract.normalizeLedgerRow({ source: "револют" }).source, "revolut");
+  assert.equal(contract.normalizeLedgerRow({ source: "revolut_usd" }).source, "revolut");
+  assert.equal(contract.normalizeLedgerRow({ source: "revolut dol" }).source, "revolut");
   assert.equal(contract.normalizeLedgerRow({ source: "photo" }).source, "photo");
   assert.equal(contract.normalizeLedgerRow({ source: "file_import" }).source, "file_import");
   assert.equal(contract.normalizeLedgerRow({ source: "csv_import" }).source, "csv_import");
