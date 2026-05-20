@@ -173,17 +173,37 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
 }
 
 function resolveWiseTransactionDirection(transaction = {}, amount = {}) {
+  if (isWiseCardTransaction(transaction)) {
+    return hasWiseRefundMarker(transaction) ? "income" : "expense";
+  }
+
   const numericAmount = Number(amount?.value || 0);
   if (numericAmount > 0) return "income";
   if (numericAmount < 0) return "expense";
 
   const transactionType = String(transaction?.type || "").trim().toUpperCase();
+  return transactionType === "CREDIT" ? "income" : "expense";
+}
+
+function isWiseCardTransaction(transaction = {}) {
   const details = transaction?.details || {};
+  const type = String(details.type || transaction?.type || "").trim().toUpperCase();
+  const reference = String(transaction?.referenceNumber || "").trim().toUpperCase();
   const description = String(details.description || "").trim().toLowerCase();
-  if (transactionType === "CREDIT" || /\b(refund|refunded|reversal|chargeback)\b/.test(description)) {
-    return "income";
-  }
-  return "expense";
+  return type === "CARD" || reference.startsWith("CARD-") || /\bcard (transaction|payment)\b/.test(description);
+}
+
+function hasWiseRefundMarker(transaction = {}) {
+  const details = transaction?.details || {};
+  const candidates = [
+    transaction?.type,
+    transaction?.referenceNumber,
+    details.type,
+    details.description,
+    details.category,
+    details.status
+  ].map((value) => String(value || "").trim().toLowerCase());
+  return candidates.some((text) => /\b(refund|refunded|reversal|reversed|chargeback)\b/.test(text));
 }
 
 export function summarizeWiseStatementEntries(entries = []) {

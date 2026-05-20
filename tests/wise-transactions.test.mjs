@@ -11,7 +11,12 @@ const EUR_BALANCE = {
   currency: "EUR"
 };
 
-test("Wise card refund keeps income direction from positive amount", () => {
+const USD_BALANCE = {
+  balanceId: "usd-balance",
+  currency: "USD"
+};
+
+test("Wise card refund keeps income direction when refund marker is present", () => {
   const entry = normalizeWiseTransaction({
     date: "2026-05-18T10:00:00.000Z",
     referenceNumber: "CARD-REFUND-YELLOWSQUARE-55-60",
@@ -29,6 +34,24 @@ test("Wise card refund keeps income direction from positive amount", () => {
   assert.equal(entry.currency, "EUR");
   assert.equal(entry.channel, "трансервайз евро");
   assert.equal(entry.suggestedCategory, "serviceIncome");
+});
+
+test("Wise positive CARD transaction without refund marker remains expense", () => {
+  const entry = normalizeWiseTransaction({
+    date: "2026-05-08T12:00:00.000Z",
+    referenceNumber: "CARD-3766611855",
+    type: "CREDIT",
+    amount: { value: "4.40", currency: "USD" },
+    details: {
+      description: "Card transaction at Bolt",
+      type: "CARD"
+    }
+  }, USD_BALANCE, "profile-1");
+
+  assert.equal(entry.sourceTransactionId, "CARD-3766611855");
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.suggestedCategory, "business");
+  assert.equal(entry.localAmount, 4.4);
 });
 
 test("Wise card payment keeps expense direction from negative amount", () => {
