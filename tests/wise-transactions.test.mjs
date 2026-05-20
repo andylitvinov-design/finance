@@ -33,7 +33,7 @@ test("Wise card refund keeps income direction when refund marker is present", ()
   assert.equal(entry.netAmount, 55.6);
   assert.equal(entry.currency, "EUR");
   assert.equal(entry.channel, "трансервайз евро");
-  assert.equal(entry.suggestedCategory, "serviceIncome");
+  assert.equal(entry.suggestedCategory, "servicein");
 });
 
 test("Wise positive CARD transaction without refund marker remains expense", () => {
