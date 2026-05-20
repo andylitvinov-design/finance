@@ -11,6 +11,7 @@ import {
   MANUAL_SPREADSHEET_ID,
   SHEETS_API_BASE_URL,
   getManualGoogleSheetsAccessToken,
+  loadManualRepositoryFromGoogleSheets,
 } from "./manual-google-sheets.js";
 
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -18,7 +19,16 @@ export const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
 export const AUTO_BALANCE_HEADERS = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
 const SNAPSHOT_COMMENT = "auto daily provider snapshot";
 const PAYPAL_MANUAL_BALANCE_SOURCE = "paypal_manual_balance";
+const PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE = "paypal_manual_confirmed_balance";
+const PAYPAL_DERIVED_BALANCE_SOURCE = "paypal_derived_balance";
 const PAYPAL_MANUAL_BALANCE_COMMENT = "manual PayPal balance because REST balance API unavailable for personal account";
+const PAYPAL_DERIVED_BALANCE_COMMENT_PREFIX = "Derived from latest confirmed PayPal balance";
+const PAYPAL_DERIVED_BALANCE_COMMENT_SUFFIX = "plus Ledger amount_net movements because PayPal REST balance API is unavailable for this account.";
+const PAYPAL_DERIVED_CHANNELS = [
+  { provider: "paypal", channel: "пейпал дол", currency: "USD", source: PAYPAL_DERIVED_BALANCE_SOURCE },
+  { provider: "paypal", channel: "пейпал евр", currency: "EUR", source: PAYPAL_DERIVED_BALANCE_SOURCE },
+  { provider: "paypal", channel: "пейпал сad", currency: "CAD", source: PAYPAL_DERIVED_BALANCE_SOURCE },
+];
 const FALLBACK_USD_RATES = {
   USD: 1,
   EUR: 1.16,
@@ -162,9 +172,11 @@ function buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, w
       provider: result.provider,
       provider_current_balance_status: result.provider_current_balance_status,
       rows: result.rows?.length || 0,
-      writable_rows: result.rows?.filter((row) => row.status === "ok" || row.status === "zero_balance").length || 0,
+      writable_rows: result.rows?.filter((row) => ["ok", "zero_balance", "derived_from_confirmed_opening"].includes(row.status)).length || 0,
       skipped_rows: result.skipped_rows?.length || 0,
       error: result.error || null,
+      original_provider_error: result.original_provider_error || null,
+      derived: result.derived || null,
     })),
     warnings: unique(warnings).slice(0, 20),
     rows_preview: rows.slice(0, 30),
@@ -288,19 +300,180 @@ async function collectPayPalBalanceRows({ date, env, fetchImpl }) {
     return { provider, provider_current_balance_status: "available", rows, skipped_rows };
   } catch (error) {
     const status = isPermissionError(error) ? "needs_permission" : (isNotSupportedAccountError(error) ? "not_supported_for_account" : "error");
+    const providerStatusRows = buildExpectedProviderRows({
+      provider,
+      date,
+      status: status === "error" ? "provider_error" : mapUnavailableStatus(status),
+      comment: String(error?.message || error),
+    });
+    if (["needs_permission", "not_supported_for_account"].includes(status)) {
+      const derived = await collectDerivedPayPalBalanceRows({ date, fetchImpl, originalError: error });
+      return {
+        provider,
+        provider_current_balance_status: derived.provider_current_balance_status,
+        rows: [...providerStatusRows, ...derived.rows],
+        skipped_rows: [],
+        error: String(error?.message || error),
+        original_provider_error: String(error?.message || error),
+        derived: derived.derived,
+      };
+    }
     return {
       provider,
       provider_current_balance_status: status,
-      rows: buildExpectedProviderRows({
-        provider,
-        date,
-        status: status === "error" ? "provider_error" : mapUnavailableStatus(status),
-        comment: String(error?.message || error),
-      }),
+      rows: providerStatusRows,
       skipped_rows: [],
       error: String(error?.message || error),
     };
   }
+}
+
+async function collectDerivedPayPalBalanceRows({ date, fetchImpl, originalError }) {
+  let repository = null;
+  try {
+    repository = await loadManualRepositoryFromGoogleSheets({ fetchImpl });
+  } catch (error) {
+    repository = { ok: false, warning: String(error?.message || error) };
+  }
+
+  if (!repository?.ok) {
+    return {
+      provider_current_balance_status: "needs_initial_paypal_balance",
+      rows: PAYPAL_DERIVED_CHANNELS.map((expected) => buildPayPalDerivedStatusRow({
+        ...expected,
+        date,
+        status: "needs_initial_paypal_balance",
+        comment: "Enter one confirmed PayPal opening balance first; future dates can be auto-derived.",
+      })),
+      derived: PAYPAL_DERIVED_CHANNELS.map((expected) => ({
+        channel: expected.channel,
+        currency: expected.currency,
+        written: false,
+        blocked_reason: "repository_unavailable",
+        original_provider_error: String(originalError?.message || originalError || ""),
+        repository_warning: repository?.warning || null,
+      })),
+    };
+  }
+
+  const balances = [
+    ...(Array.isArray(repository.balances) ? repository.balances : []),
+    ...(Array.isArray(repository.autoBalances) ? repository.autoBalances : []),
+  ];
+  const operations = Array.isArray(repository.operations) ? repository.operations : [];
+  const rows = [];
+  const derived = [];
+
+  for (const expected of PAYPAL_DERIVED_CHANNELS) {
+    const result = derivePayPalBalanceRow({
+      date,
+      channel: expected.channel,
+      currency: expected.currency,
+      balances,
+      operations,
+    });
+    derived.push({
+      channel: expected.channel,
+      currency: expected.currency,
+      opening_date: result.opening_date || null,
+      opening_amount: result.opening_amount ?? null,
+      ledger_delta: result.ledger_delta ?? null,
+      calculated_balance: result.calculated_balance ?? null,
+      movement_row_count: result.movement_row_count || 0,
+      written: Boolean(result.row),
+      blocked_reason: result.blocked_reason || null,
+      blocked_rows: result.blocked_rows || [],
+    });
+    rows.push(result.row || buildPayPalDerivedStatusRow({
+      ...expected,
+      date,
+      status: result.blocked_reason || "needs_initial_paypal_balance",
+      comment: result.comment || "Enter one confirmed PayPal opening balance first; future dates can be auto-derived.",
+    }));
+  }
+
+  return {
+    provider_current_balance_status: rows.some((row) => row.status === "derived_from_confirmed_opening")
+      ? "derived_from_ledger"
+      : "needs_initial_paypal_balance",
+    rows,
+    derived,
+  };
+}
+
+export function derivePayPalBalanceRow({ date, channel, currency, balances = [], operations = [] } = {}) {
+  const normalizedDate = normalizeIsoDate(date);
+  const normalizedChannel = String(channel || "").trim();
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (!normalizedDate || !normalizedChannel || !normalizedCurrency) {
+    return { blocked_reason: "invalid_target" };
+  }
+  const sameDateFactual = findSameDatePayPalFactualBalance({ date: normalizedDate, channel: normalizedChannel, currency: normalizedCurrency, balances });
+  if (sameDateFactual) {
+    return {
+      blocked_reason: "manual_or_provider_balance_exists",
+      comment: "Manual or provider PayPal balance already exists for this date; derived row is lower priority.",
+    };
+  }
+  const opening = findLatestConfirmedPayPalOpeningBalance({ date: normalizedDate, channel: normalizedChannel, currency: normalizedCurrency, balances });
+  if (!opening) {
+    return {
+      blocked_reason: "needs_initial_paypal_balance",
+      comment: "Enter one confirmed PayPal opening balance first; future dates can be auto-derived.",
+    };
+  }
+  const movements = collectPayPalLedgerMovements({
+    openingDate: opening.date,
+    targetDate: normalizedDate,
+    channel: normalizedChannel,
+    currency: normalizedCurrency,
+    operations,
+  });
+  if (movements.blocked_rows.length) {
+    return {
+      opening_date: opening.date,
+      opening_amount: opening.amount,
+      movement_row_count: movements.rows.length,
+      blocked_reason: "missing_amount_net",
+      blocked_rows: movements.blocked_rows,
+      comment: "PayPal derived balance blocked because at least one relevant Ledger movement is missing amount_net.",
+    };
+  }
+  const calculated = roundMoney(opening.amount + movements.ledger_delta);
+  return {
+    row: buildSnapshotRow({
+      provider: "paypal",
+      channel: normalizedChannel,
+      currency: normalizedCurrency,
+      date: normalizedDate,
+      amount: calculated,
+      source: PAYPAL_DERIVED_BALANCE_SOURCE,
+      rawSourceId: `${PAYPAL_DERIVED_BALANCE_SOURCE}:${normalizedDate}:${normalizedCurrency}`,
+      status: "derived_from_confirmed_opening",
+      comment: `${PAYPAL_DERIVED_BALANCE_COMMENT_PREFIX} on ${opening.date} ${PAYPAL_DERIVED_BALANCE_COMMENT_SUFFIX}`,
+    }),
+    opening_date: opening.date,
+    opening_amount: opening.amount,
+    ledger_delta: movements.ledger_delta,
+    calculated_balance: calculated,
+    movement_row_count: movements.rows.length,
+    blocked_rows: [],
+  };
+}
+
+function buildPayPalDerivedStatusRow({ date, channel, currency, status, comment }) {
+  return buildSnapshotRow({
+    provider: "paypal",
+    channel,
+    currency,
+    date,
+    amount: "",
+    amountUsd: "",
+    source: PAYPAL_DERIVED_BALANCE_SOURCE,
+    rawSourceId: `${PAYPAL_DERIVED_BALANCE_SOURCE}:${normalizeIsoDate(date)}:${String(currency || "").trim().toUpperCase()}`,
+    status,
+    comment,
+  });
 }
 
 async function collectYooMoneyBalanceRows({ date, env, fetchImpl }) {
@@ -599,6 +772,115 @@ function parseRequiredManualBalanceAmount(value, currency) {
   return numeric;
 }
 
+function findSameDatePayPalFactualBalance({ date, channel, currency, balances = [] }) {
+  return (balances || []).find((row) =>
+    normalizeIsoDate(row?.date) === date &&
+    sameBalanceChannelCurrency(row, channel, currency) &&
+    isPayPalFactualOpening(row) &&
+    Number.isFinite(parseSheetNumber(row?.balanceAmount ?? row?.amount))
+  ) || null;
+}
+
+function findLatestConfirmedPayPalOpeningBalance({ date, channel, currency, balances = [] }) {
+  return (balances || [])
+    .filter((row) =>
+      normalizeIsoDate(row?.date) &&
+      normalizeIsoDate(row.date) <= date &&
+      sameBalanceChannelCurrency(row, channel, currency) &&
+      isPayPalConfirmedOpening(row)
+    )
+    .map((row) => ({
+      ...row,
+      date: normalizeIsoDate(row.date),
+      amount: parseSheetNumber(row?.balanceAmount ?? row?.amount),
+      priority: getPayPalOpeningPriority(row),
+    }))
+    .filter((row) => Number.isFinite(row.amount))
+    .sort((left, right) => {
+      const dateDiff = right.date.localeCompare(left.date);
+      if (dateDiff) return dateDiff;
+      return left.priority - right.priority;
+    })[0] || null;
+}
+
+function isPayPalConfirmedOpening(row = {}) {
+  const status = String(row?.status || row?.autoBalanceStatus || row?.auto_balance_status || "ok").trim();
+  if (!["ok", "zero_balance", "derived_from_confirmed_opening"].includes(status)) return false;
+  return getPayPalOpeningPriority(row) < 99;
+}
+
+function isPayPalFactualOpening(row = {}) {
+  const priority = getPayPalOpeningPriority(row);
+  return priority === 0 || priority === 1;
+}
+
+function getPayPalOpeningPriority(row = {}) {
+  const source = String(row?.source || row?.fact_source || row?.balanceSource || row?.balance_source || "").trim().toLowerCase();
+  const comment = String(row?.comment || "").trim().toLowerCase();
+  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE].includes(source)) return 0;
+  if (source === "manual_fact" && /paypal|пейпал/.test(String(row?.provider || row?.channel || "").toLowerCase())) return 0;
+  if (source === "paypal_auto" || (source === "provider_auto" && String(row?.provider || "").toLowerCase() === "paypal")) return 1;
+  if (source === PAYPAL_DERIVED_BALANCE_SOURCE && /derived from latest confirmed paypal balance/.test(comment)) return 2;
+  return 99;
+}
+
+function sameBalanceChannelCurrency(row = {}, channel, currency) {
+  return String(row?.channel || row?.accountName || row?.account || "").trim() === channel &&
+    String(row?.currency || "").trim().toUpperCase() === currency;
+}
+
+function collectPayPalLedgerMovements({ openingDate, targetDate, channel, currency, operations = [] }) {
+  const rows = [];
+  const blocked_rows = [];
+  let ledger_delta = 0;
+  for (const row of operations || []) {
+    const ledger = row?.ledgerV2 || {};
+    const rowDate = normalizeIsoDate(row?.date || ledger.date);
+    if (!rowDate || rowDate <= openingDate || rowDate > targetDate) continue;
+    if (String(row?.currency || ledger.currency || "").trim().toUpperCase() !== currency) continue;
+    const fromChannel = String(row?.fromChannel || ledger.from_channel || "").trim();
+    const toChannel = String(row?.toChannel || ledger.to_channel || "").trim();
+    if (fromChannel !== channel && toChannel !== channel) continue;
+    const amountNetRaw = row?.amountNet ?? row?.amount_net ?? ledger.amount_net;
+    const amountNet = parseSheetNumber(amountNetRaw);
+    const rowRef = {
+      row: row?.sheetRowNumber || row?.sourceRow || null,
+      date: rowDate,
+      raw_source_id: row?.rawSourceId || row?.raw_source_id || ledger.raw_source_id || ledger.external_id || "",
+      reason: "missing_amount_net",
+    };
+    if (!String(amountNetRaw ?? "").trim() || !Number.isFinite(amountNet)) {
+      blocked_rows.push(rowRef);
+      continue;
+    }
+    const signed = getSignedLedgerAmountNet(row, amountNet, channel);
+    if (!Number.isFinite(signed)) {
+      blocked_rows.push({ ...rowRef, reason: "invalid_signed_amount_net" });
+      continue;
+    }
+    rows.push(row);
+    ledger_delta += signed;
+  }
+  return { rows, blocked_rows, ledger_delta: roundMoney(ledger_delta) };
+}
+
+function getSignedLedgerAmountNet(row = {}, amountNet, channel) {
+  const ledger = row?.ledgerV2 || {};
+  const balanceAmount = parseSheetNumber(row?.balanceAmount ?? ledger.balance_amount);
+  if (Number.isFinite(balanceAmount)) return balanceAmount;
+  const operation = String(row?.operation || ledger.operation || "").trim().toLowerCase();
+  const direction = String(row?.direction || ledger.direction || "").trim().toLowerCase();
+  const fromChannel = String(row?.fromChannel || ledger.from_channel || "").trim();
+  const toChannel = String(row?.toChannel || ledger.to_channel || "").trim();
+  if (operation === "income" || direction === "in" || toChannel === channel) return amountNet;
+  if (operation === "expense" || direction === "out" || fromChannel === channel) return -Math.abs(amountNet);
+  return amountNet;
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value) * 10000) / 10000;
+}
+
 function mergePayPalManualBalanceRows(existingRows = [], replacementRows = []) {
   const replacementByRawSourceId = new Map(
     (replacementRows || []).map((row) => [String(row.rawSourceId || "").trim(), row]).filter(([rawSourceId]) => rawSourceId)
@@ -657,12 +939,25 @@ export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replace
 }
 
 function balanceRowKey(row) {
+  if (isPayPalDerivedBalanceRow(row)) {
+    return [
+      normalizeIsoDate(row?.date),
+      normalizeProvider(row?.provider),
+      String(row?.rawSourceId || row?.raw_source_id || "").trim(),
+    ].join("|");
+  }
   return [
     normalizeIsoDate(row?.date),
     normalizeProvider(row?.provider),
     String(row?.channel || "").trim(),
     String(row?.currency || "").trim().toUpperCase(),
   ].join("|");
+}
+
+function isPayPalDerivedBalanceRow(row = {}) {
+  return normalizeProvider(row?.provider) === "paypal" &&
+    String(row?.source || "").trim().toLowerCase() === PAYPAL_DERIVED_BALANCE_SOURCE &&
+    String(row?.rawSourceId || row?.raw_source_id || "").trim();
 }
 
 async function ensureBalanceSheetExists({ accessToken, fetchImpl }) {
@@ -756,6 +1051,7 @@ function normalizeProvider(value) {
 
 function normalizeAutoSource(value, provider) {
   const raw = String(value || "").trim().toLowerCase();
+  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYPAL_DERIVED_BALANCE_SOURCE].includes(raw)) return raw;
   if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeProvider(provider);
   if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;

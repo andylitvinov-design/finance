@@ -319,6 +319,106 @@ test("PayPal manual balance in Авто Остатки is factual and keeps prov
   });
 });
 
+test("PayPal derived balance is used below manual/provider factual rows and keeps warning separately", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-20" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [
+        {
+          date: "2026-05-10",
+          toChannel: "пейпал дол",
+          currency: "USD",
+          amountNet: "30",
+          balanceAmount: 30,
+          ledgerV2: {
+            date: "2026-05-10",
+            operation: "income",
+            to_channel: "пейпал дол",
+            currency: "USD",
+            amount_net: "30",
+            balance_amount: 30,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "", source: "paypal_auto", sourceSheet: "Авто Остатки", status: "needs_provider_permission", comment: "PayPal OAuth failed (401)", sourceRow: 9 },
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "130", source: "paypal_derived_balance", sourceSheet: "Авто Остатки", status: "derived_from_confirmed_opening", comment: "Derived from latest confirmed PayPal balance on 2026-05-01 plus Ledger amount_net movements because PayPal REST balance API is unavailable for this account.", sourceRow: 10 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "пейпал дол");
+  assert.equal(row.status, "ok");
+  assert.equal(row.factual_closing_balance, 130);
+  assert.equal(row.balanceSource, "derived_balance");
+  assert.equal(row.factStatus, "derived_pending");
+  assert.equal(row.factSource, "derived");
+  assert.equal(row.needsManualConfirmation, true);
+  assert.equal(row.sourceSheet, "Авто Остатки");
+  assert.equal(row.sourceRow, 10);
+  assert.deepEqual(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_counts, {
+    needs_provider_permission: 1,
+  });
+});
+
+test("same-date manual PayPal factual balance outranks derived", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-20" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-20", channel: "пейпал дол", currency: "USD", amount: "140", source: "paypal_manual_balance", sourceSheet: "Авто Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "130", source: "paypal_derived_balance", sourceSheet: "Авто Остатки", status: "derived_from_confirmed_opening", comment: "Derived from latest confirmed PayPal balance on 2026-05-01 plus Ledger amount_net movements because PayPal REST balance API is unavailable for this account.", sourceRow: 10 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "пейпал дол");
+  assert.equal(row.factual_closing_balance, 140);
+  assert.equal(row.balanceSource, "manual_fact");
+  assert.equal(row.factStatus, "confirmed");
+});
+
+test("same-date PayPal provider factual balance outranks derived", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-20" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "150", source: "paypal_auto", sourceSheet: "Авто Остатки", status: "ok", comment: "provider factual API row", sourceRow: 9 },
+        { date: "2026-05-20", provider: "paypal", channel: "пейпал дол", currency: "USD", amount: "130", source: "paypal_derived_balance", sourceSheet: "Авто Остатки", status: "derived_from_confirmed_opening", comment: "Derived from latest confirmed PayPal balance on 2026-05-01 plus Ledger amount_net movements because PayPal REST balance API is unavailable for this account.", sourceRow: 10 },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "пейпал дол");
+  assert.equal(row.factual_closing_balance, 150);
+  assert.equal(row.balanceSource, "provider_auto");
+  assert.equal(row.factStatus, "auto_pending");
+  assert.equal(row.sourceRow, 9);
+});
+
 test("manual period-start opening overrides auto and auto-only fact stays pending", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-03" },

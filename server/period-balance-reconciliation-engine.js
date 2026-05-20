@@ -115,7 +115,9 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const displayedFactClosing = manualProviderClosing;
   const factSource = factBalance.status === "confirmed"
     ? "manual"
-    : factBalance.status === "auto_pending"
+    : factBalance.status === "derived_pending"
+      ? "derived"
+      : factBalance.status === "auto_pending"
       ? "provider"
       : "missing";
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
@@ -173,7 +175,9 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     repair_hint: factBalance.repairHint,
     computedStatus: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
     computed_status: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
-    balanceSource: factBalance.status === "confirmed" ? "manual_fact" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing"),
+    balanceSource: factBalance.status === "confirmed"
+      ? "manual_fact"
+      : (factBalance.status === "derived_pending" ? "derived_balance" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing")),
     needsManualConfirmation: factBalance.status !== "confirmed",
     providerStatus: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
     provider_status: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
@@ -278,19 +282,22 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
   }
   const balanceSource = getResolvedBalanceSource(snapshot);
   const auto = balanceSource === "provider_auto";
+  const derived = balanceSource === "derived_balance";
   return {
-    status: auto ? "auto_pending" : "confirmed",
+    status: derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed"),
     amount: round(snapshot.amount),
     date: snapshot.date,
-    sourceSheet: snapshot.sourceSheet || (auto ? "Авто Остатки" : "Остатки"),
+    sourceSheet: snapshot.sourceSheet || (auto || derived ? "Авто Остатки" : "Остатки"),
     sourceRow: snapshot.sourceRow || null,
-    sourceType: auto ? "auto" : "manual fact",
+    sourceType: derived ? "derived" : (auto ? "auto" : "manual fact"),
     provider: snapshot.provider || null,
     comment: snapshot.comment || "",
-    warning: auto ? "needs manual confirmation" : null,
-    repairHint: auto
+    warning: derived ? "derived from confirmed opening and Ledger amount_net" : (auto ? "needs manual confirmation" : null),
+    repairHint: derived
+      ? `review derived PayPal balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date}`
+      : (auto
       ? `confirm auto balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date} in Остатки`
-      : null,
+      : null),
   };
 }
 
@@ -314,6 +321,7 @@ function buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to
 function getBalanceFactSource(row) {
   const resolved = getResolvedBalanceSource(row);
   if (resolved === "provider_auto") return "provider";
+  if (resolved === "derived_balance") return "derived";
   if (resolved === "manual_fact") return "manual";
   return "missing";
 }
@@ -460,7 +468,7 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
     const amount = parseNumber(row?.balanceAmount ?? row?.amount);
     const key = makeKey(channel, currency);
     const rowStatus = normalizeProviderBalanceStatus(row?.status || row?.autoBalanceStatus || row?.auto_balance_status);
-    if (date && channel && currency && rowStatus && !["ok", "zero_balance"].includes(rowStatus)) {
+    if (date && channel && currency && rowStatus && !["ok", "zero_balance", "derived_from_confirmed_opening"].includes(rowStatus)) {
       const statusRows = statusByKey.get(key) || [];
       statusRows.push({
         date,
@@ -574,15 +582,20 @@ function compareBalanceSnapshots(left, right) {
 }
 
 function balanceSourcePriority(row) {
-  return getResolvedBalanceSource(row) === "manual_fact" ? 0 : 1;
+  const source = getResolvedBalanceSource(row);
+  if (source === "manual_fact") return 0;
+  if (source === "provider_auto") return 1;
+  if (source === "derived_balance") return 2;
+  return 3;
 }
 
 function getResolvedBalanceSource(row = {}) {
-  const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
-  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "missing") return explicit;
-  if (isManualBalanceSource(row)) return "manual_fact";
   const source = normalizeText(`${row?.source || ""} ${row?.fact_source || ""} ${row?.provider || ""} ${row?.comment || ""}`);
   if (/manual confirmed|manual balance|manual fact|paypal manual balance|paypal manual confirmed|paypal_manual_balance|paypal_manual_confirmed_balance/.test(source)) return "manual_fact";
+  if (/paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(source)) return "derived_balance";
+  const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
+  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "derived_balance" || explicit === "missing") return explicit;
+  if (isManualBalanceSource(row)) return "manual_fact";
   if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(source)) return "provider_auto";
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
   if (/provider|wise|paypal|binance|mono|monobank|privat|yoomoney|провайдер|банк/.test(source)) return "provider_auto";

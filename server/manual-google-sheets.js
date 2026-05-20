@@ -1076,6 +1076,7 @@ function normalizeAutoBalanceProvider(provider, source = "", comment = "") {
 
 function normalizeAutoBalanceSource(source, provider) {
   const raw = String(source || "").trim().toLowerCase();
+  if (["paypal_manual_balance", "paypal_manual_confirmed_balance", "paypal_derived_balance"].includes(raw)) return raw;
   if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeAutoBalanceProvider(provider);
   if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
