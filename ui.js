@@ -282,6 +282,15 @@ function renderExpenseAccountingBlock() {
     await importPayoneerStatementFile(payoneerInput.files?.[0] || null);
     payoneerInput.value = "";
   });
+  const revolutInput = document.createElement("input");
+  revolutInput.type = "file";
+  revolutInput.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+  revolutInput.disabled = state.expenseAccounting.loading || state.expenseAccounting.revolutImportLoading;
+  revolutInput.style.display = "none";
+  revolutInput.addEventListener("change", async () => {
+    await importRevolutStatementFile(revolutInput.files?.[0] || null);
+    revolutInput.value = "";
+  });
   const statementInput = document.createElement("input");
   statementInput.type = "file";
   statementInput.accept = "image/*,.pdf,.csv,.xlsx,.xls,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
@@ -311,6 +320,7 @@ function renderExpenseAccountingBlock() {
   actions.className = "expense-actions";
   const statementLoading = state.expenseAccounting.paypalLoading
     || state.expenseAccounting.payoneerLoading
+    || state.expenseAccounting.revolutImportLoading
     || state.expenseAccounting.wiseLoading
     || state.expenseAccounting.yoomoneyLoading
     || state.expenseAccounting.statementImportLoading
@@ -330,6 +340,12 @@ function renderExpenseAccountingBlock() {
   payoneerButton.textContent = state.expenseAccounting.payoneerLoading ? "Импортирую Payoneer..." : "Импорт Payoneer CSV/XLSX";
   payoneerButton.disabled = state.expenseAccounting.loading || statementLoading;
   payoneerButton.addEventListener("click", () => payoneerInput.click());
+  const revolutButton = document.createElement("button");
+  revolutButton.type = "button";
+  revolutButton.className = "secondary";
+  revolutButton.textContent = state.expenseAccounting.revolutImportLoading ? "Импортирую Revolut..." : "Импорт Revolut CSV/XLSX";
+  revolutButton.disabled = state.expenseAccounting.loading || statementLoading;
+  revolutButton.addEventListener("click", () => revolutInput.click());
   const wiseButton = document.createElement("button");
   wiseButton.type = "button";
   wiseButton.className = "secondary";
@@ -380,8 +396,8 @@ function renderExpenseAccountingBlock() {
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", startOrContinueTdImport);
-  actions.append(parseButton, statementImportButton, paypalButton, payoneerButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
-  upload.append(input, statementInput, privat24Input, payoneerInput, tdBankCsvInput, actions);
+  actions.append(parseButton, statementImportButton, paypalButton, payoneerButton, revolutButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  upload.append(input, statementInput, privat24Input, payoneerInput, revolutInput, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderPayPalManualImportHelper());
@@ -2769,6 +2785,89 @@ async function importExpenseStatementFile(file) {
   }
 }
 
+async function importRevolutStatementFile(file) {
+  if (!file) {
+    setExpenseAccountingStatus("Выберите файл Revolut CSV/XLSX.", true);
+    renderTabs();
+    return;
+  }
+  const fileType = detectExpenseStatementFileType(file);
+  if (!["csv", "xlsx"].includes(fileType)) {
+    setExpenseAccountingStatus("Revolut import принимает только CSV/XLSX выписку.", true);
+    renderTabs();
+    return;
+  }
+  state.expenseAccounting.revolutImportLoading = true;
+  setExpenseAccountingStatus("Готовлю preview Revolut statement...", false);
+  renderTabs();
+  try {
+    const result = await parseRevolutStatementFile(file);
+    const entries = (result.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
+    state.expenseAccounting.entries = [
+      ...state.expenseAccounting.entries,
+      ...entries
+    ];
+    state.expenseAccounting.warnings = result.warnings || [];
+    state.expenseAccounting.revolutSummary = result.summary || null;
+    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    setExpenseAccountingStatus(buildRevolutPreviewStatus(result), !entries.length && Boolean(result.error));
+  } catch (error) {
+    setExpenseAccountingStatus(error.message || "Не удалось импортировать Revolut statement.", true);
+  } finally {
+    state.expenseAccounting.revolutImportLoading = false;
+    renderTabs();
+  }
+}
+
+async function parseRevolutStatementFile(file) {
+  const fileType = detectExpenseStatementFileType(file);
+  const text = fileType === "xlsx"
+    ? await readGenericXlsxFileAsCsv(file)
+    : await file.text();
+  const response = await fetch("/api/revolut-transactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      dryRun: true,
+      startDate: elements.startDate.value,
+      endDate: elements.endDate.value
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) {
+    const message = payload.error || (payload.errors || []).join("; ") || "Revolut statement preview failed.";
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function buildRevolutPreviewStatus(result = {}) {
+  const imported = Number(result.imported || result.entries?.length || 0);
+  const skipped = Number(result.skipped || result.skippedRows?.length || 0);
+  const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0;
+  const totals = formatRevolutSummaryTotals(result.summary);
+  if (!imported) return `Revolut preview: imported rows 0, skipped rows ${skipped}, warnings ${warningCount}.`;
+  return `Revolut preview: imported rows ${imported}, skipped rows ${skipped}, warnings ${warningCount}. ${totals}`.trim();
+}
+
+function formatRevolutSummaryTotals(summary = {}) {
+  const totals = summary?.totalsByCurrency || {};
+  const parts = Object.entries(totals).map(([currency, value]) => {
+    const income = formatCompactAmount(value?.income || 0);
+    const expense = formatCompactAmount(value?.expense || 0);
+    const net = formatCompactAmount(value?.net || 0);
+    return `${currency}: income ${income}, expense ${expense}, net ${net}`;
+  });
+  return parts.length ? `Totals by currency: ${parts.join("; ")}.` : "Totals by currency: none.";
+}
+
+function formatCompactAmount(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return String(Math.round((numeric + Number.EPSILON) * 100) / 100);
+}
+
 function detectExpenseStatementFileType(file) {
   const name = String(file?.name || "").toLowerCase();
   const type = String(file?.type || "").toLowerCase();
@@ -4257,6 +4356,8 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
     sourceImageIndex: Number(entry.sourceImageIndex || 0),
     source: String(entry.source || "").trim(),
     sourceTransactionId: String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim(),
+    rawSourceId: String(entry.rawSourceId || entry.raw_source_id || "").trim(),
+    raw_source_id: String(entry.rawSourceId || entry.raw_source_id || "").trim(),
     reviewStatus: String(entry.reviewStatus || entry.review_status || "").trim(),
     review_status: String(entry.reviewStatus || entry.review_status || "").trim()
   };
@@ -4295,6 +4396,7 @@ async function saveExpenseAccountingEntries() {
     state.expenseAccounting.entries = [];
     state.expenseAccounting.paypalSummary = null;
     state.expenseAccounting.payoneerSummary = null;
+    state.expenseAccounting.revolutSummary = null;
     state.expenseAccounting.wiseSummary = null;
     state.expenseAccounting.yoomoneySummary = null;
     state.expenseAccounting.monobankSummary = null;

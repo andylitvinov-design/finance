@@ -47,6 +47,10 @@ function buildGenericImportContext() {
       }
     },
     navigator: {},
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ ok: true, imported: 0, skipped: 0, entries: [], skippedRows: [], warnings: [], summary: { totalsByCurrency: {} } })
+    }),
     normalizeIncomingSheetDateValue(value) {
       const raw = String(value || "").trim();
       const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -115,6 +119,9 @@ function buildGenericImportContext() {
     "this.parseGenericStatementText = parseGenericStatementText;\n" +
     "this.parseGenericStatementXlsx = parseGenericStatementXlsx;\n" +
     "this.parseExpenseStatementFile = parseExpenseStatementFile;\n" +
+    "this.importRevolutStatementFile = importRevolutStatementFile;\n" +
+    "this.parseRevolutStatementFile = parseRevolutStatementFile;\n" +
+    "this.buildRevolutPreviewStatus = buildRevolutPreviewStatus;\n" +
     "this.detectExpenseStatementFileType = detectExpenseStatementFileType;\n" +
     "this.detectGenericStatementProvider = detectGenericStatementProvider;\n" +
     "this.saveExpenseAccountingEntries = saveExpenseAccountingEntries;\n" +
@@ -129,6 +136,76 @@ test("expense UI exposes the generic statement import control", () => {
   assert.match(uiJs, /Загрузить выписку/);
   assert.match(uiJs, /importExpenseStatementFile/);
   assert.match(uiJs, /image\/\*,\.pdf,\.csv,\.xlsx,\.xls,text\/csv,application\/pdf/);
+});
+
+test("expense UI exposes Revolut CSV/XLSX import as statement source of truth", () => {
+  assert.match(uiJs, /Импорт Revolut CSV\/XLSX/);
+  assert.match(uiJs, /importRevolutStatementFile/);
+  assert.match(uiJs, /\/api\/revolut-transactions/);
+  assert.doesNotMatch(uiJs, /Revolut OAuth|revolut oauth/i);
+});
+
+test("Revolut CSV import preview shows totals and keeps signed net", async () => {
+  const context = buildGenericImportContext();
+  context.fetch = async (url, options) => {
+    assert.equal(url, "/api/revolut-transactions");
+    const body = JSON.parse(options.body);
+    assert.equal(body.dryRun, true);
+    assert.match(body.text, /rev-in-1/);
+    return {
+      ok: true,
+      json: async () => ({
+        ok: true,
+        imported: 2,
+        skipped: 1,
+        warnings: ["Revolut row skipped (PENDING: row 3)."],
+        summary: { totalsByCurrency: { USD: { income: 100, expense: 25.5, net: 74.5 } } },
+        entries: [
+          {
+            date: "2026-05-01",
+            source: "revolut",
+            channel: "REVOLUT дол",
+            direction: "income",
+            localAmount: 100,
+            currency: "USD",
+            amount_net: 100,
+            netAmount: 100,
+            sourceTransactionId: "rev-in-1",
+            rawSourceId: "revolut:rev-in-1",
+            raw_source_id: "revolut:rev-in-1"
+          },
+          {
+            date: "2026-05-02",
+            source: "revolut",
+            channel: "REVOLUT дол",
+            direction: "expense",
+            localAmount: 25.5,
+            currency: "USD",
+            amount_fee: 0.5,
+            amount_net: -25.5,
+            netAmount: -25.5,
+            sourceTransactionId: "rev-out-1",
+            rawSourceId: "revolut:rev-out-1",
+            raw_source_id: "revolut:rev-out-1"
+          }
+        ]
+      })
+    };
+  };
+
+  await context.importRevolutStatementFile({
+    name: "revolut.csv",
+    type: "text/csv",
+    text: async () => "Completed Date UTC,Transaction ID,Description,Amount,Fee,Currency,State\n2026-05-01,rev-in-1,Client,100,0,USD,COMPLETED"
+  });
+
+  assert.equal(context.state.expenseAccounting.entries.length, 2);
+  assert.equal(context.state.expenseAccounting.entries[0].source, "revolut");
+  assert.equal(context.state.expenseAccounting.entries[0].rawSourceId, "revolut:rev-in-1");
+  assert.equal(context.state.expenseAccounting.entries[1].amount_net, -25.5);
+  assert.match(context.lastStatus.message, /imported rows 2/);
+  assert.match(context.lastStatus.message, /skipped rows 1/);
+  assert.match(context.lastStatus.message, /USD: income 100, expense 25.5, net 74.5/);
 });
 
 test("generic CSV detects TD Bank, maps debit and credit rows, and ignores balance as amount", () => {

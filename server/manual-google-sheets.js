@@ -126,6 +126,7 @@ function inferChannelCurrency(channel) {
   if (/руб/i.test(normalized)) return "RUB";
   if (/грн/i.test(normalized)) return "UAH";
   if (/(евр|eur|euro)/i.test(normalized)) return "EUR";
+  if (/(фунт|gbp|pound)/i.test(normalized)) return "GBP";
   if (/(cad|кад|канада)/i.test(normalized)) return "CAD";
   if (/(дол|usd|binance|payoneer - dol|revolut|wise|transferwise|трансервайз)/i.test(normalized)) return "USD";
   if (/местная/i.test(normalized)) return "LOCAL";
@@ -140,7 +141,7 @@ function canonicalManualExpenseChannel(value) {
 
 const MANUAL_FINANCE_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
-  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
+  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","REVOLUT евро","REVOLUT фунт","Payoneer - eur","Payoneer - dol",
   "Бинанс spot","Binance funding","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];
 

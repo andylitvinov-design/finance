@@ -125,13 +125,42 @@ test("completed UTC date wins over started UTC and local dates", () => {
 test("non-USD row stays needs_review with blank channel when no canonical channel exists", () => {
   const result = parseRevolutStatementRows([
     REVOLUT_HEADERS,
-    ["2026-05-04 08:00:00", "", "", "", "rev-eur", "TRANSFER", "EUR transfer", "EUR current", "10", "", "EUR", "completed"],
+    ["2026-05-04 08:00:00", "", "", "", "rev-mxn", "TRANSFER", "MXN transfer", "MXN current", "10", "", "MXN", "completed"],
   ]);
 
-  assert.equal(result.entries[0].currency, "EUR");
+  assert.equal(result.entries[0].currency, "MXN");
   assert.equal(result.entries[0].channel, "");
   assert.equal(result.entries[0].amount_usd, "");
   assert.equal(result.entries[0].review_status, "needs_review");
+});
+
+test("EUR and GBP rows map to canonical Revolut channels", () => {
+  const result = parseRevolutStatementRows([
+    REVOLUT_HEADERS,
+    ["2026-05-04 08:00:00", "", "", "", "rev-eur", "TRANSFER", "EUR transfer", "EUR current", "10", "", "EUR", "completed"],
+    ["2026-05-04 09:00:00", "", "", "", "rev-gbp", "TRANSFER", "GBP transfer", "GBP current", "-7", "", "GBP", "completed"],
+  ]);
+
+  assert.deepEqual(result.entries.map((entry) => entry.channel), ["REVOLUT евро", "REVOLUT фунт"]);
+  assert.deepEqual(result.entries.map((entry) => entry.review_status), ["", ""]);
+});
+
+test("summary exposes imported rows skipped rows warnings and totals by currency", () => {
+  const result = parseRevolutStatementRows([
+    REVOLUT_HEADERS,
+    ["2026-05-01 10:00:00", "", "", "", "rev-in-1", "TRANSFER", "Client payment", "USD current", "100.00", "0.00", "USD", "COMPLETED"],
+    ["2026-05-02 11:00:00", "", "", "", "rev-out-1", "CARD", "Card payment", "USD current", "-25.50", "0.50", "USD", "COMPLETED"],
+    ["2026-05-03 12:00:00", "", "", "", "rev-pending", "TRANSFER", "Pending transfer", "USD current", "50.00", "", "USD", "PENDING"],
+  ]);
+
+  assert.equal(result.entries.length, 2);
+  assert.equal(result.skippedRows.length, 1);
+  assert.match(result.warnings.join("\n"), /pending/i);
+  assert.deepEqual(result.summary.totalsByCurrency.USD, {
+    income: 100,
+    expense: 25.5,
+    net: 74.5,
+  });
 });
 
 test("handler OPTIONS returns 200 structured JSON", async () => {

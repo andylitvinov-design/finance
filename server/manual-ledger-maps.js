@@ -95,6 +95,8 @@ const DEFAULT_CHANNEL_MAP = {
   "трансервайз дол": ["wise usd", "transferwise usd", "трансервайз дол", "wise дол"],
   "трансервайз евро": ["wise eur", "wise euro", "transferwise eur", "трансервайз евро", "трансервайз евр"],
   "REVOLUT дол": ["revolut", "revolut usd", "revolut_usd", "revolut dol", "револют", "револют дол"],
+  "REVOLUT евро": ["revolut eur", "revolut euro", "revolut_eur", "revolut евро", "револют евро", "револют евр"],
+  "REVOLUT фунт": ["revolut gbp", "revolut pound", "revolut_gbp", "revolut фунт", "револют фунт"],
   "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur", "payoneer euro account"],
   "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer - dol", "payoneer dollar", "payoneer dollar account"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],
