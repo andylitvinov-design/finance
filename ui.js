@@ -2256,8 +2256,8 @@ async function parseExpenseScreenshotFiles(files) {
     setExpenseAccountingStatus(
       state.expenseAccounting.entries.length
         ? `Распознано строк: ${state.expenseAccounting.entries.length} (Spent: ${counts.spent}, Received: ${counts.received}). Проверьте значения перед внесением.`
-        : "Скриншоты разобраны, но расходов не найдено.",
-      false
+        : "Текст распознан, но транзакции не найдены. Проверь формат скриншота или добавь вручную.",
+      !state.expenseAccounting.entries.length
     );
   } catch (error) {
     try {
@@ -3952,8 +3952,91 @@ function parseExpenseOcrText(text, sourceImageIndex = 0, uploadedAtDate = "") {
     }, entries.length));
     currentContext = "";
   });
+  if (!entries.length && lines.length) {
+    const cardReceiptEntries = parseCardReceiptExpenseOcrEntries(lines, rawText, sourceImageIndex, fallbackDate);
+    if (cardReceiptEntries.length) return { entries: cardReceiptEntries, warnings };
+  }
   if (!entries.length && lines.length) warnings.push(`OCR text had ${lines.length} lines, but no amount rows were recognized.`);
   return { entries, warnings };
+}
+
+function parseCardReceiptExpenseOcrEntries(lines, rawText, sourceImageIndex, fallbackDate) {
+  const fullText = [rawText, ...lines].join("\n");
+  if (!isCardReceiptExpenseOcrContext(fullText)) return [];
+  const screenshotDate = lines.map(extractExpenseOcrDate).find(Boolean);
+  const date = screenshotDate || fallbackDate;
+  const entries = [];
+  lines.forEach((line, index) => {
+    const amountInfo = extractUnsignedCardReceiptAmount(line);
+    if (!amountInfo) return;
+    const merchant = findCardReceiptMerchant(lines, index);
+    entries.push(normalizeExpenseAccountingEntry({
+      date,
+      dateSource: screenshotDate ? "screenshot" : "upload_fallback",
+      uploadedAtDate: fallbackDate,
+      channel: inferCardReceiptOcrChannel(fullText, amountInfo.currency),
+      direction: "expense",
+      localAmount: amountInfo.amount,
+      currency: amountInfo.currency,
+      usdAmount: null,
+      suggestedCategory: inferExpenseOcrCategory(merchant || fullText),
+      organization: merchant,
+      counterparty: merchant,
+      confidence: 0.68,
+      source: "browser_ocr",
+      sourceImageIndex
+    }, entries.length));
+  });
+  return entries;
+}
+
+function isCardReceiptExpenseOcrContext(text) {
+  const normalized = normalizeLookupText(text);
+  return /(google wallet|payoneer|card|\bpel\b|completed|purchase made|transaction)/.test(normalized)
+    && /(completed|purchase made|paid|payment|transaction)/.test(normalized);
+}
+
+function extractUnsignedCardReceiptAmount(line) {
+  const normalizedLine = String(line || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalizedLine || /[+-]/.test(normalizedLine)) return null;
+  if (/(card|карта|account|рахунок|счет|balance|available|остат|залиш|баланс|fee|комисс|total|итог)/i.test(normalizedLine)) return null;
+  const match = normalizedLine.match(/^(?:([€$₴]|US\$|C\$)\s*(\d[\d\s.,]*\d|\d)|(\d[\d\s.,]*\d|\d)\s*(EUR|USD|CAD|UAH|RUB|евро|дол|грн|руб|€|\$|₴))$/i);
+  if (!match) return null;
+  const amount = Math.abs(parseLooseNumber(match[2] || match[3]));
+  if (!amount) return null;
+  return { amount, currency: normalizeExpenseOcrCurrency(match[1] || match[4] || normalizedLine) };
+}
+
+function findCardReceiptMerchant(lines, amountIndex) {
+  for (let index = amountIndex - 1; index >= 0; index -= 1) {
+    const line = String(lines[index] || "").trim();
+    if (isCardReceiptMerchantLine(line)) return cleanupExpenseOcrOrganization(line);
+  }
+  for (let index = amountIndex + 1; index < lines.length; index += 1) {
+    const line = String(lines[index] || "").trim();
+    if (isCardReceiptMerchantLine(line)) return cleanupExpenseOcrOrganization(line);
+  }
+  return "";
+}
+
+function isCardReceiptMerchantLine(line) {
+  const normalized = normalizeLookupText(line);
+  if (!normalized || extractExpenseOcrDate(line) || extractUnsignedCardReceiptAmount(line)) return false;
+  if (/^(completed|pending|declined|purchase made|transaction|google wallet)$/i.test(normalized)) return false;
+  if (/(payoneer|card|\bpel\b|account|••|\*\*\d{2,4}|[•*]{2,}\d{2,4})/i.test(line)) return false;
+  return /[A-Za-zА-Яа-яІіЇїЄєҐґ]/.test(line);
+}
+
+function inferCardReceiptOcrChannel(text, currency) {
+  const normalized = normalizeLookupText(text);
+  if (/payoneer/.test(normalized)) {
+    const payoneerChannel = getManualFinanceChannels().find((channel) => {
+      const channelText = normalizeLookupText(channel);
+      return /payoneer/.test(channelText) && inferManualFinanceChannelCurrency(channel) === currency;
+    });
+    if (payoneerChannel) return payoneerChannel;
+  }
+  return inferExpenseOcrChannel(`${text} ${currency}`, text);
 }
 
 function isPrivat24ExpenseOcrContext(text) {
@@ -4031,6 +4114,13 @@ function extractExpenseOcrDate(line) {
   const raw = String(line || "");
   const iso = raw.match(/\b(20\d{2})[-./](\d{1,2})[-./](\d{1,2})\b/);
   if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, "0")}-${String(iso[3]).padStart(2, "0")}`;
+  const englishMonth = raw.match(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)?[,]?\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i);
+  if (englishMonth) {
+    const months = { jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12 };
+    const year = englishMonth[3] || getExpenseOcrPeriodYear();
+    const month = months[String(englishMonth[1] || "").toLowerCase()];
+    return year && month ? `${year}-${String(month).padStart(2, "0")}-${String(englishMonth[2]).padStart(2, "0")}` : "";
+  }
   const monthDate = raw.toLowerCase().match(/(?:^|[^\d])(\d{1,2})\s+(січня|января|лютого|февраля|березня|марта|квітня|апреля|травня|мая|червня|июня|липня|июля|серпня|августа|вересня|сентября|жовтня|октября|листопада|ноября|грудня|декабря)(?=$|[^\p{L}])/iu);
   if (monthDate) {
     const months = {
@@ -4052,6 +4142,9 @@ function extractExpenseOcrDate(line) {
   }
   const dotted = raw.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](20\d{2}))?\b/);
   if (dotted) {
+    const day = Number(dotted[1]);
+    const month = Number(dotted[2]);
+    if (day < 1 || day > 31 || month < 1 || month > 12) return "";
     const year = dotted[3] || getExpenseOcrPeriodYear();
     return year ? `${year}-${String(dotted[2]).padStart(2, "0")}-${String(dotted[1]).padStart(2, "0")}` : "";
   }
@@ -4108,7 +4201,7 @@ function normalizeExpenseOcrCurrency(value) {
   const raw = String(value || "").toLowerCase();
   if (/uah|грн/.test(raw)) return "UAH";
   if (/rub|руб/.test(raw)) return "RUB";
-  if (/eur|евро/.test(raw)) return "EUR";
+  if (/eur|евро|€/.test(raw)) return "EUR";
   if (/cad|c\$|канада/.test(raw)) return "CAD";
   if (/usd|дол|\$/.test(raw)) return "USD";
   return inferManualFinanceChannelCurrency(getManualFinanceChannels()[0]);
@@ -4155,6 +4248,8 @@ function cleanupExpenseOcrOrganization(line) {
     .replace(/\b(20\d{2}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[./-]\d{1,2}(?:[./-]20\d{2})?)\b/g, "")
     .replace(/privat\s*24|privatbank|приват\s*24|приватбанк/ig, "")
     .replace(/[+-]?\s?\d[\d\s.,]*(?:\s*)(uah|грн|rub|руб|usd|дол|\$|eur|евро|cad|c\$)?/ig, "")
+    .replace(/\b(uah|грн|rub|руб|usd|дол|eur|евро|cad|c\$)\b/ig, "")
+    .replace(/[€$₴]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 140);
