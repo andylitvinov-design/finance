@@ -126,6 +126,7 @@ const elements = {
   metricOrders: document.getElementById("metricOrders"),
   metricBalances: document.getElementById("metricBalances"),
   metricTransfers: document.getElementById("metricTransfers"),
+  metricPersonalOrdersAfterDiscount: document.getElementById("metricPersonalOrdersAfterDiscount"),
   metricMyServices: document.getElementById("metricMyServices"),
   metricProfit: document.getElementById("metricProfit"),
   metricMyCosts: document.getElementById("metricMyCosts"),
