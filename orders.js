@@ -288,7 +288,7 @@ function recalculateManualOrderRow(row) {
     output[3] = formatSheetNumber(cost);
     output[4] = output[4] || "50%";
     const discount = parseLooseNumber(output[4]);
-    output[5] = Number.isFinite(discount) ? formatSheetNumber(cost * (100 - discount) / 100) : "";
+    output[5] = Number.isFinite(discount) ? formatSheetNumber(cost * discount / 100) : "";
   }
   return output;
 }
