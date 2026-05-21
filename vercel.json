@@ -9,6 +9,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api",
+      "destination": "/api/index"
+    },
+    {
       "source": "/api/auto-balance-snapshots",
       "destination": "/api/index?action=autoBalanceSnapshots"
     },
