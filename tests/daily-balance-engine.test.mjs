@@ -97,6 +97,59 @@ test("opening plus income minus expense calculates closing balance", () => {
   });
 });
 
+test("no-movement EOD fact between movement days becomes the next opening", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-04-28",
+        toChannel: "Яндекс руб",
+        currency: "RUB",
+        amountNet: "438.98",
+        balanceAmount: 438.98,
+        ledgerV2: {
+          date: "2026-04-28",
+          operation: "income",
+          to_channel: "Яндекс руб",
+          currency: "RUB",
+          amount_net: "438.98",
+          balance_amount: 438.98,
+        },
+      }),
+      operation({
+        date: "2026-05-05",
+        operation: "exchange_out",
+        fromChannel: "Яндекс руб",
+        toChannel: "",
+        currency: "RUB",
+        amountNet: "74771.5",
+        balanceAmount: -74771.5,
+        ledgerV2: {
+          date: "2026-05-05",
+          operation: "exchange",
+          from_channel: "Яндекс руб",
+          to_channel: "",
+          currency: "RUB",
+          amount_net: "74771.5",
+          balance_amount: -74771.5,
+        },
+      }),
+    ],
+    [
+      { date: "2026-04-27", channel: "Яндекс руб", amount: "142419.9", currency: "RUB" },
+      { date: "2026-04-28", channel: "Яндекс руб", amount: "142858.88", currency: "RUB" },
+      { date: "2026-05-01", channel: "Яндекс руб", amount: "145614", currency: "RUB" },
+      { date: "2026-05-05", channel: "Яндекс руб", amount: "68087.38", currency: "RUB" },
+    ]
+  );
+
+  const may5 = result.rows.find((row) => row.date === "2026-05-05");
+  assert.equal(may5.opening_balance, 145614);
+  assert.equal(may5.closing_balance, 70842.5);
+  assert.equal(may5.provider_reported_balance, 68087.38);
+  assert.equal(may5.difference, -2755.12);
+  assert.equal(may5.status, "mismatch");
+});
+
 test("missing amount_net row is excluded and counted", () => {
   const result = buildDailyCurrencyBalances(
     [

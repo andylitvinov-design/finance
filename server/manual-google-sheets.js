@@ -1060,6 +1060,7 @@ function normalizeAutoBalanceStatus(status) {
 
 function classifyBalanceSource({ source = "", comment = "" } = {}) {
   const text = normalizeLookupText(`${source} ${comment}`);
+  if (/manual owner confirmed|manual_owner_confirmed|owner confirmed|owner_confirmed/.test(text)) return "manual_fact";
   if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(text)) return "provider_auto";
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(text)) return "provider_auto";
   return "manual_fact";

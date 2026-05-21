@@ -41,9 +41,12 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
 
   for (const movementRows of movements.byKey.values()) {
     let carriedOpening = null;
+    let lastMovementDate = null;
     for (const movement of movementRows) {
-      const opening = carriedOpening === null
-        ? findOpeningBalance(movement, balanceIndex)
+      const openingSnapshot = findOpeningSnapshot(movement, balanceIndex);
+      const hasNewOpeningAnchor = openingSnapshot && (!lastMovementDate || openingSnapshot.date > lastMovementDate);
+      const opening = carriedOpening === null || hasNewOpeningAnchor
+        ? (openingSnapshot?.amount ?? null)
         : carriedOpening;
       const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
       const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`);
@@ -74,6 +77,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
       carriedOpening = shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot })
         ? closing
         : providerReported ?? closing;
+      lastMovementDate = movement.date;
     }
   }
 
@@ -393,10 +397,18 @@ function setPreferredSnapshot(map, key, row) {
 }
 
 function findOpeningBalance(movement, balanceIndex) {
+  const openingSnapshot = findOpeningSnapshot(movement, balanceIndex);
+  return openingSnapshot ? round(openingSnapshot.amount) : null;
+}
+
+function findOpeningSnapshot(movement, balanceIndex) {
   const snapshots = balanceIndex.byKey.get(movement.key) || [];
   const openingSnapshot = snapshots.filter((row) => row.date < movement.date).at(-1);
   if (!openingSnapshot) return null;
-  return round(openingSnapshot.amount);
+  return {
+    ...openingSnapshot,
+    amount: round(openingSnapshot.amount),
+  };
 }
 
 function findCoverageOpeningSnapshot(balanceIndex, key, from) {
