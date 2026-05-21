@@ -162,6 +162,7 @@
   function bindAuditLauncherButton() {
     const launcher = root.document?.getElementById?.("auditLauncherButton");
     if (!launcher || launcher.__ezohataAuditLauncherBound) return Boolean(launcher);
+    if (String(launcher.textContent || "").trim() !== AUDIT_TAB_LABEL) return false;
     launcher.__ezohataAuditLauncherBound = true;
     launcher.addEventListener("click", () => {
       const appState = getState();

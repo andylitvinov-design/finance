@@ -72,6 +72,17 @@ button:disabled { cursor: wait; opacity: 0.6; transform: none; }
 .secondary { background: #ece2d3; color: var(--ink); }
 .ghost { background: #fff; color: var(--accent); border: 1px solid var(--line); }
 .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.balance-summary-block {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+.balance-summary-block ol { margin: 0; padding-left: 22px; }
+.balance-summary-block li { margin: 4px 0; }
+.balance-summary-diagnostics { margin-top: 10px; color: var(--muted); font-size: 13px; }
 .metric {
   padding: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(247,239,230,0.85));
   border: 1px solid var(--line); border-radius: 18px;

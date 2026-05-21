@@ -192,6 +192,7 @@ test("audit site tab is appended as UI-only tab without mutating data tab config
 test("static audit launcher button click renders audit panel without mutating data tab config", () => {
   setupDom();
   const launcher = new FakeNode("button");
+  launcher.textContent = "Аудит";
   global.document.nodesById.auditLauncherButton = launcher;
   const originalTabs = global.state.config.tabs;
 
