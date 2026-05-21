@@ -16,10 +16,15 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
     .map(balanceKey));
   const autoFallbackRows = [];
   let autoIgnored = 0;
+  let autoIgnoredStaleCurrent = 0;
 
   for (const row of autoBalances || []) {
     if (manualFactKeys.has(balanceKey(row))) {
       autoIgnored += 1;
+      continue;
+    }
+    if (isStaleCurrentOnlyAutoSnapshot(row)) {
+      autoIgnoredStaleCurrent += 1;
       continue;
     }
     const source = normalizeBalanceSource(row, "provider_auto");
@@ -40,6 +45,8 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
     autoIgnored,
     auto_balance_rows_used_as_fallback: autoFallbackRows.length,
     auto_balance_rows_ignored_due_to_manual: autoIgnored,
+    autoIgnoredStaleCurrent,
+    auto_balance_rows_ignored_as_stale_current: autoIgnoredStaleCurrent,
   };
 }
 
@@ -63,6 +70,23 @@ function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
   if (/paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(text)) return "derived_balance";
   if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
   return fallback;
+}
+
+function isStaleCurrentOnlyAutoSnapshot(row = {}) {
+  const source = normalizeBalanceSource(row, "provider_auto");
+  if (source !== "provider_auto") return false;
+  const rowDate = normalizeDate(row.date);
+  const fetchedDate = normalizeDate(String(row.fetchedAt || row.fetched_at || "").slice(0, 10));
+  if (!rowDate || !fetchedDate || rowDate === fetchedDate) return false;
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+    row.status,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  return /auto daily provider snapshot|current[- ]?balance|current balance|provider current/.test(text);
 }
 
 function normalizeDate(value) {

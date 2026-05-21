@@ -248,7 +248,7 @@ test("vercel cron points daily UTC schedule to auto balance snapshots endpoint",
 
 test("provider unavailable creates dated status rows instead of fake zero rows", async () => {
   const result = await runAutoBalanceSnapshots({
-    query: { date: "2026-05-17", dryRun: "1" },
+    query: { date: "2026-05-17", currentDate: "2026-05-17", dryRun: "1" },
     env: {},
     fetchImpl: async () => {
       throw new Error("fetch should not be called without provider credentials in dry-run collection");
@@ -331,6 +331,7 @@ test("Wise and Monobank balances produce complete expected provider rows, includ
 
   const results = await collectProviderBalanceRows({
     date: "2026-05-17",
+    currentDate: "2026-05-17",
     env: {
       WISE_API_TOKEN: "wise-token",
       WISE_PROFILE_ID: "111",
@@ -420,6 +421,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
 
   const results = await collectProviderBalanceRows({
     date: "2026-05-19",
+    currentDate: "2026-05-19",
     env: {
       BINANCE_API_KEY: "binance-key",
       BINANCE_API_SECRET: "binance-secret",
@@ -500,6 +502,7 @@ test("PayPal balances permission errors become structured status rows", async ()
 test("Binance Earn permission failure preserves spot balance and writes save permission status", async () => {
   const results = await collectProviderBalanceRows({
     date: "2026-05-20",
+    currentDate: "2026-05-20",
     env: {
       BINANCE_API_KEY: "binance-key",
       BINANCE_API_SECRET: "binance-secret",
@@ -540,6 +543,7 @@ test("Binance Earn permission failure preserves spot balance and writes save per
 test("Binance Earn flexible and locked positions normalize into one save row", async () => {
   const results = await collectProviderBalanceRows({
     date: "2026-05-20",
+    currentDate: "2026-05-20",
     env: {
       BINANCE_API_KEY: "binance-key",
       BINANCE_API_SECRET: "binance-secret",
@@ -589,6 +593,7 @@ test("non-JSON provider response becomes structured JSON error rows", async () =
     query: {
       action: "autoBalanceSnapshots",
       date: "2026-05-17",
+      currentDate: "2026-05-17",
       dryRun: "1",
     },
   };
@@ -665,7 +670,7 @@ test("auto snapshot save writes merged Авто Остатки values through Go
 
   try {
     const result = await runAutoBalanceSnapshots({
-      query: { date: "2026-05-17" },
+      query: { date: "2026-05-17", currentDate: "2026-05-17" },
       env: { WISE_API_TOKEN: "wise-token", WISE_PROFILE_ID: "111" },
       fetchImpl: async (url, options) => {
         const value = String(url);
@@ -688,6 +693,36 @@ test("auto snapshot save writes merged Авто Остатки values through Go
   } finally {
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL", previousEmail);
     restoreEnv("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY", previousKey);
+  }
+});
+
+test("current-only providers do not write amount rows for historical dates", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-05-20",
+    currentDate: "2026-05-21",
+    env: {
+      WISE_API_TOKEN: "wise-token",
+      WISE_PROFILE_ID: "111",
+      MONOBANK_API_TOKEN: "mono-token",
+      YOOMONEY_ACCESS_TOKEN: "yoomoney-token",
+      BINANCE_API_KEY: "binance-key",
+      BINANCE_API_SECRET: "binance-secret",
+    },
+    fetchImpl: async (url) => {
+      throw new Error(`Current-only historical guard should not call provider API: ${url}`);
+    },
+  });
+
+  for (const provider of ["wise", "monobank", "yoomoney", "binance"]) {
+    const result = results.find((row) => row.provider === provider);
+    assert.equal(result.provider_current_balance_status, "current_only_not_historical");
+    assert.ok(result.rows.length > 0);
+    assert.equal(result.rows.every((row) =>
+      row.status === "current_only_not_historical" &&
+      row.amount === "" &&
+      row.usdAmount === "" &&
+      row.date === "2026-05-20"
+    ), true);
   }
 });
 

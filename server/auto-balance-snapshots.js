@@ -29,6 +29,8 @@ const PAYPAL_DERIVED_CHANNELS = [
   { provider: "paypal", channel: "пейпал евр", currency: "EUR", source: PAYPAL_DERIVED_BALANCE_SOURCE },
   { provider: "paypal", channel: "пейпал сad", currency: "CAD", source: PAYPAL_DERIVED_BALANCE_SOURCE },
 ];
+const CURRENT_ONLY_NOT_HISTORICAL_STATUS = "current_only_not_historical";
+const CURRENT_ONLY_BALANCE_PROVIDERS = new Set(["wise", "monobank", "yoomoney", "binance"]);
 const FALLBACK_USD_RATES = {
   USD: 1,
   EUR: 1.16,
@@ -115,9 +117,10 @@ export async function runAutoBalanceSnapshots(options = {}) {
   const env = options.env || process.env;
   const fetchImpl = options.fetchImpl || fetch;
   const date = normalizeIsoDate(query.date) || todayUtcDate();
+  const currentDate = normalizeIsoDate(query.currentDate || options.currentDate) || todayUtcDate();
   const dryRun = isTruthy(query.dryRun);
   const warnings = [];
-  const providerResults = await collectProviderBalanceRows({ date, env, fetchImpl });
+  const providerResults = await collectProviderBalanceRows({ date, currentDate, env, fetchImpl });
   const rows = providerResults.flatMap((result) => result.rows || []);
   const skippedRows = providerResults.flatMap((result) => result.skipped_rows || []);
 
@@ -184,22 +187,25 @@ function buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, w
   };
 }
 
-export async function collectProviderBalanceRows({ date, env = process.env, fetchImpl = fetch } = {}) {
+export async function collectProviderBalanceRows({ date, currentDate = todayUtcDate(), env = process.env, fetchImpl = fetch } = {}) {
   return [
-    await collectWiseBalanceRows({ date, env, fetchImpl }),
-    await collectMonobankBalanceRows({ date, env, fetchImpl }),
+    await collectWiseBalanceRows({ date, currentDate, env, fetchImpl }),
+    await collectMonobankBalanceRows({ date, currentDate, env, fetchImpl }),
     await collectPayPalBalanceRows({ date, env, fetchImpl }),
     buildUnavailableProviderResult("privatbank", "not_implemented", "PrivatBank current-balance endpoint is not wired yet.", date),
-    await collectYooMoneyBalanceRows({ date, env, fetchImpl }),
-    await collectBinanceBalanceRows({ date, env, fetchImpl }),
+    await collectYooMoneyBalanceRows({ date, currentDate, env, fetchImpl }),
+    await collectBinanceBalanceRows({ date, currentDate, env, fetchImpl }),
     buildUnavailableProviderResult("tdbank", "not_implemented", "TD Bank current-balance snapshot endpoint is not wired yet.", date),
     buildUnavailableProviderResult("payoneer", "not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet.", date),
     buildUnavailableProviderResult("revolut", "not_implemented", "Revolut current-balance snapshot endpoint is not wired yet.", date),
   ];
 }
 
-async function collectWiseBalanceRows({ date, env, fetchImpl }) {
+async function collectWiseBalanceRows({ date, currentDate, env, fetchImpl }) {
   const provider = "wise";
+  if (isCurrentOnlyHistoricalRequest(provider, date, currentDate)) {
+    return buildCurrentOnlyNotHistoricalProviderResult(provider, date, currentDate);
+  }
   try {
     if (!String(env.WISE_API_TOKEN || "").trim()) {
       return buildUnavailableProviderResult(provider, "needs_permission", "WISE_API_TOKEN is not configured.", date);
@@ -241,8 +247,11 @@ async function collectWiseBalanceRows({ date, env, fetchImpl }) {
   }
 }
 
-async function collectMonobankBalanceRows({ date, env, fetchImpl }) {
+async function collectMonobankBalanceRows({ date, currentDate, env, fetchImpl }) {
   const provider = "monobank";
+  if (isCurrentOnlyHistoricalRequest(provider, date, currentDate)) {
+    return buildCurrentOnlyNotHistoricalProviderResult(provider, date, currentDate);
+  }
   try {
     if (!String(env.MONOBANK_API_TOKEN || "").trim()) {
       return buildUnavailableProviderResult(provider, "needs_permission", "MONOBANK_API_TOKEN is not configured.", date);
@@ -481,8 +490,11 @@ function buildPayPalDerivedStatusRow({ date, channel, currency, status, comment 
   });
 }
 
-async function collectYooMoneyBalanceRows({ date, env, fetchImpl }) {
+async function collectYooMoneyBalanceRows({ date, currentDate, env, fetchImpl }) {
   const provider = "yoomoney";
+  if (isCurrentOnlyHistoricalRequest(provider, date, currentDate)) {
+    return buildCurrentOnlyNotHistoricalProviderResult(provider, date, currentDate);
+  }
   try {
     if (!String(env.YOOMONEY_ACCESS_TOKEN || "").trim()) {
       return buildUnavailableProviderResult(provider, "needs_permission", "YOOMONEY_ACCESS_TOKEN is not configured.", date);
@@ -517,8 +529,11 @@ async function collectYooMoneyBalanceRows({ date, env, fetchImpl }) {
   }
 }
 
-async function collectBinanceBalanceRows({ date, env, fetchImpl }) {
+async function collectBinanceBalanceRows({ date, currentDate, env, fetchImpl }) {
   const provider = "binance";
+  if (isCurrentOnlyHistoricalRequest(provider, date, currentDate)) {
+    return buildCurrentOnlyNotHistoricalProviderResult(provider, date, currentDate);
+  }
   try {
     const config = getBinanceProviderConfigFromEnv(env);
     if (!config) {
@@ -634,6 +649,32 @@ function buildUnavailableProviderResult(provider, status, warning, date = "") {
     skipped_rows: [],
     warning,
   };
+}
+
+function buildCurrentOnlyNotHistoricalProviderResult(provider, date = "", currentDate = "") {
+  const requestedDate = normalizeIsoDate(date);
+  const asOfDate = normalizeIsoDate(currentDate);
+  const warning = `${provider} current-balance API returns only current/as-of balances; requested ${requestedDate || "unknown"} but current as-of date is ${asOfDate || "unknown"}.`;
+  return {
+    provider,
+    provider_current_balance_status: CURRENT_ONLY_NOT_HISTORICAL_STATUS,
+    rows: buildExpectedProviderRows({
+      provider,
+      date,
+      status: CURRENT_ONLY_NOT_HISTORICAL_STATUS,
+      comment: warning,
+    }),
+    skipped_rows: [],
+    warning,
+  };
+}
+
+function isCurrentOnlyHistoricalRequest(provider, date = "", currentDate = "") {
+  const normalizedProvider = normalizeProvider(provider);
+  const requestedDate = normalizeIsoDate(date);
+  const asOfDate = normalizeIsoDate(currentDate);
+  return CURRENT_ONLY_BALANCE_PROVIDERS.has(normalizedProvider) &&
+    Boolean(requestedDate && asOfDate && requestedDate !== asOfDate);
 }
 
 function mapUnavailableStatus(status) {
