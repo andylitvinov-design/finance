@@ -18,12 +18,16 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function getPersonalOrdersAfterDiscount(summary = {}) {
+    return parseMetricNumber(
+      summary.personalOrdersAfterDiscount ?? summary.ordersSummary?.personalOrdersAfterDiscount
+    );
+  }
+
   function calculateTopMetricPayable(summary = {}) {
     const totalOrders = parseMetricNumber(summary.totalOrders);
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
-    const personalOrdersAfterDiscount = parseMetricNumber(
-      summary.personalOrdersAfterDiscount ?? summary.ordersSummary?.personalOrdersAfterDiscount
-    );
+    const personalOrdersAfterDiscount = getPersonalOrdersAfterDiscount(summary);
     return totalOrders * PAYABLE_SHARE_RATE - totalPaid + personalOrdersAfterDiscount;
   }
 
@@ -34,9 +38,11 @@
     const originalBuildTopMetricsSummary = buildTopMetricsSummary;
     const patchedBuildTopMetricsSummary = function patchedBuildTopMetricsSummary(...args) {
       const summary = originalBuildTopMetricsSummary.apply(this, args) || {};
+      const personalOrdersAfterDiscount = getPersonalOrdersAfterDiscount(summary);
       const payable = calculateTopMetricPayable(summary);
       return {
         ...summary,
+        personalOrdersAfterDiscount,
         total: payable,
         payable,
         payableShare: payable,
@@ -61,6 +67,7 @@
     window.EzohataTopMetricPayableShareFix = {
       PAYABLE_SHARE_RATE,
       calculateTopMetricPayable,
+      getPersonalOrdersAfterDiscount,
       patchBuildTopMetricsSummary
     };
   }
