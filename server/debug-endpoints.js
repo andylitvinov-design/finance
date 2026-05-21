@@ -182,7 +182,7 @@ function buildUiAggregateContract() {
       "production /api/debug-ui-state",
       "screenshot/user report",
     ],
-    top_payable_formula: "total_orders_usd * 0.3 - total_paid_usd",
+    top_payable_formula: "total_orders_usd * 0.7 - abs(total_paid_usd) + personal_orders_after_discount_usd",
     row_level_mode: "safe rows require includeRows=1 and configured debug token",
     invariants: [
       "Balance uses amount_net.",
@@ -198,8 +198,9 @@ function buildTopMetricsScaffold() {
     source: "unavailable",
     total_orders_usd: null,
     total_paid_usd: null,
+    personal_orders_after_discount_usd: null,
     payable_usd: null,
-    formula: "total_orders_usd * 0.3 - total_paid_usd",
+    formula: "total_orders_usd * 0.7 - abs(total_paid_usd) + personal_orders_after_discount_usd",
     status: "needs_verification",
   };
 }
@@ -207,15 +208,17 @@ function buildTopMetricsScaffold() {
 function buildTopMetrics(inputs) {
   const totalOrdersUsd = inputs.totalOrdersUsd;
   const totalPaidUsd = inputs.totalPaidUsd;
+  const personalOrdersAfterDiscountUsd = inputs.personalOrdersAfterDiscountUsd ?? 0;
   const payableUsd = totalOrdersUsd !== null && totalPaidUsd !== null
-    ? round(totalOrdersUsd * 0.3 - totalPaidUsd)
+    ? round(totalOrdersUsd * 0.7 - Math.abs(totalPaidUsd) + personalOrdersAfterDiscountUsd)
     : null;
   return {
     source: inputs.source,
     total_orders_usd: totalOrdersUsd,
     total_paid_usd: totalPaidUsd,
+    personal_orders_after_discount_usd: personalOrdersAfterDiscountUsd,
     payable_usd: payableUsd,
-    formula: "total_orders_usd * 0.3 - total_paid_usd",
+    formula: "total_orders_usd * 0.7 - abs(total_paid_usd) + personal_orders_after_discount_usd",
     status: payableUsd === null ? "needs_verification" : "server_derived",
     notes: inputs.notes,
   };
@@ -236,10 +239,17 @@ function buildTopMetricInputs(movementRows, operations) {
       "ОПЛАЧЕНО КЛИЕНТОМ USD",
       "ПОЛУЧЕНО В ДОЛЛАРАХ",
     ]);
+    const personalOrdersAfterDiscountUsd = sumByAliases(movementRows, [
+      "personalOrdersAfterDiscount",
+      "personal_orders_after_discount_usd",
+      "ИТОГО",
+      "TOTAL AFTER DISCOUNT",
+    ]);
     return {
       source: "movement_or_order_rows_best_effort",
       totalOrdersUsd,
       totalPaidUsd,
+      personalOrdersAfterDiscountUsd,
       notes: ["Best-effort from movement/order rows; verify against UI if headers changed."],
     };
   }
@@ -250,6 +260,7 @@ function buildTopMetricInputs(movementRows, operations) {
     source: "ledger_income_fallback",
     totalOrdersUsd: null,
     totalPaidUsd: round(incomeUsd),
+    personalOrdersAfterDiscountUsd: null,
     notes: ["Movement/order rows unavailable; total_orders_usd cannot be reconstructed safely."],
   };
 }
