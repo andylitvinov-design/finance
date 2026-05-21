@@ -141,6 +141,6 @@ const ANALYTICS_PAYMENT_RULES = {
 };
 const MANUAL_FINANCE_MONEY_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
-  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","Payoneer - eur","Payoneer - dol",
+  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","REVOLUT евро","REVOLUT фунт","REVOLUT франк","Payoneer - eur","Payoneer - dol",
   "Бинанс spot","Binance funding","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];

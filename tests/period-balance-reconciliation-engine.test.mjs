@@ -668,3 +668,26 @@ test("opening and closing reconciliation use native amount, not amount_usd", () 
   assert.equal(row.factual_closing_balance, 11000);
   assert.equal(row.status, "ok");
 });
+
+test("Revolut 2026-05-21 reconciliation includes USD EUR GBP and CHF manual balances", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-21", to: "2026-05-21" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-21", channel: "REVOLUT фунт", currency: "GBP", amount: "0", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT франк", currency: "CHF", amount: "15", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT дол", currency: "USD", amount: "18.38", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+    ],
+  });
+
+  assert.deepEqual(
+    result.by_channel_currency.map((row) => `${row.channel}|${row.currency}|${row.factual_closing_balance}|${row.factStatus}`).sort(),
+    [
+      "REVOLUT дол|USD|18.38|confirmed",
+      "REVOLUT евро|EUR|110.74|confirmed",
+      "REVOLUT франк|CHF|15|confirmed",
+      "REVOLUT фунт|GBP|0|confirmed",
+    ]
+  );
+});

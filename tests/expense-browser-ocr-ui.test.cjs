@@ -36,11 +36,11 @@ function buildContext() {
       endDate: { value: "2026-05-31" }
     },
     getManualFinanceChannels() {
-      return ["пейпал дол", "приват 24-грн", "монобанк грн", "Payoneer - eur", "Payoneer - dol"];
+      return ["пейпал дол", "приват 24-грн", "монобанк грн", "REVOLUT евро", "Payoneer - eur", "Payoneer - dol"];
     },
     inferManualFinanceChannelCurrency(channel) {
-      if (/eur|евр/i.test(channel)) return "EUR";
       if (/грн|uah/i.test(channel)) return "UAH";
+      if (/евр|eur/i.test(channel)) return "EUR";
       return "USD";
     },
     normalizeIncomingSheetDateValue(value) {
@@ -193,4 +193,36 @@ test("screenshot image validation accepts jpg extension when browser MIME is bla
   assert.equal(context.isSupportedExpenseScreenshotImageFile({ name: "1000600099.jpg", type: "" }), true);
   assert.equal(context.isSupportedExpenseScreenshotImageFile({ name: "1000600099.jpg", type: "application/octet-stream" }), true);
   assert.equal(context.isSupportedExpenseScreenshotImageFile({ name: "1000600099.txt", type: "application/octet-stream" }), false);
+});
+
+test("browser OCR parses Payoneer card SumUp expense as one EUR row", () => {
+  const context = buildContext();
+  const result = context.parseExpenseOcrText(
+    [
+      "Payoneer card",
+      "2026-05-21",
+      "SumUp *Raiz mediterra",
+      "-30 EUR",
+      "Card payment",
+    ].join("\n"),
+    0,
+    "2026-05-21"
+  );
+
+  assert.equal(result.entries.length, 1);
+  assert.deepEqual({
+    date: result.entries[0].date,
+    localAmount: result.entries[0].localAmount,
+    currency: result.entries[0].currency,
+    counterparty: result.entries[0].counterparty,
+    direction: result.entries[0].direction,
+    channel: result.entries[0].channel,
+  }, {
+    date: "2026-05-21",
+    localAmount: 30,
+    currency: "EUR",
+    counterparty: "SumUp *Raiz mediterra",
+    direction: "expense",
+    channel: "Payoneer - eur",
+  });
 });

@@ -4224,6 +4224,10 @@ function inferExpenseOcrChannel(line, fullText = "") {
     const privatChannel = getManualFinanceChannels().find((channel) => /приват|privat/.test(normalizeLookupText(channel)) && inferManualFinanceChannelCurrency(channel) === "UAH");
     if (privatChannel) return privatChannel;
   }
+  if (/payoneer|card payment|card transaction|карта|картка/.test(normalizeLookupText(`${line}\n${fullText}`))) {
+    const payoneerChannel = getManualFinanceChannels().find((channel) => /payoneer/i.test(String(channel || "")) && inferManualFinanceChannelCurrency(channel) === currency);
+    if (payoneerChannel) return payoneerChannel;
+  }
   return getManualFinanceChannels().find((channel) => inferManualFinanceChannelCurrency(channel) === currency) || getManualFinanceChannels()[0];
 }
 

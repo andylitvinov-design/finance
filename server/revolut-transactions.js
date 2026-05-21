@@ -6,6 +6,7 @@ const REVOLUT_CHANNEL_BY_CURRENCY = {
   USD: "REVOLUT дол",
   EUR: "REVOLUT евро",
   GBP: "REVOLUT фунт",
+  CHF: "REVOLUT франк",
 };
 
 const HEADER_ALIASES = {

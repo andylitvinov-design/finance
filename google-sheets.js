@@ -1587,6 +1587,7 @@ function normalizeManualBalanceCurrencyForSave(rawCurrency, channel) {
   if (/^(uah|грн|гривна|гривны|гривня)$/.test(normalized) || raw === "₴") return "UAH";
   if (/^(rub|руб|рубль|рубли|рубля)$/.test(normalized) || raw === "₽") return "RUB";
   if (/^(cad|кад)$/.test(normalized)) return "CAD";
+  if (/^(chf|франк|франки|franc|francs)$/.test(normalized)) return "CHF";
   if (normalized === "usdt") return "USDT";
   if (/^(local|местная валюта|местная валюты)$/.test(normalized)) return "LOCAL";
   return raw.toUpperCase();
@@ -1655,14 +1656,17 @@ function normalizeAutoBalanceProvider(provider, source = "", comment = "") {
   if (/mono|monobank|монобанк/.test(text)) return "monobank";
   if (/privat|приват/.test(text)) return "privatbank";
   if (/yoomoney|юmoney|юмани|яндекс/.test(text)) return "yoomoney";
+  if (/tdbank|td bank|банк канада/.test(text)) return "tdbank";
+  if (/payoneer/.test(text)) return "payoneer";
+  if (/revolut|револют/.test(text)) return "revolut";
   return String(provider || "").trim().toLowerCase() || "provider";
 }
 
 function normalizeAutoBalanceSource(source, provider) {
   const raw = String(source || "").trim().toLowerCase();
-  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeAutoBalanceProvider(provider);
-  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
   return "provider_auto";
 }
 

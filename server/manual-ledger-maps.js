@@ -97,6 +97,7 @@ const DEFAULT_CHANNEL_MAP = {
   "REVOLUT дол": ["revolut", "revolut usd", "revolut_usd", "revolut dol", "револют", "револют дол"],
   "REVOLUT евро": ["revolut eur", "revolut euro", "revolut_eur", "revolut евро", "револют евро", "револют евр"],
   "REVOLUT фунт": ["revolut gbp", "revolut pound", "revolut_gbp", "revolut фунт", "револют фунт"],
+  "REVOLUT франк": ["revolut chf", "revolut franc", "revolut_frank", "revolut франк", "револют франк"],
   "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur", "payoneer euro account"],
   "Payoneer - dol": ["payoneer", "payoneer usd", "payoneer dol", "payoneer - dol", "payoneer dollar", "payoneer dollar account"],
   "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],
