@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
 import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
+import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
@@ -26,6 +28,7 @@ export default async function handler(request, response) {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: request.query || {},
     repositoryLoader: loadManualRepositoryFromGoogleSheets,
+    autoBalanceLoader: loadAutoBalanceRowsFromGoogleSheets,
   });
   return response.status(200).json(snapshot);
 }
@@ -37,10 +40,16 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
   const warnings = [];
   const auditChecks = [];
   const repository = await loadRepository(options.repositoryLoader);
+  const autoBalances = Array.isArray(repository?.autoBalances)
+    ? { ok: true, balances: repository.autoBalances, warnings: [] }
+    : (options.autoBalanceLoader
+      ? await loadAutoBalances(options.autoBalanceLoader)
+      : { ok: true, balances: [], warnings: [] });
 
   if (!repository.ok) {
     warnings.push("needs verification: manual Google Sheets read access is unavailable.");
     if (repository.warning) warnings.push(toSafeWarning(repository.warning));
+    warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
     auditChecks.push({
       name: "manual_google_sheets_access",
       status: "needs verification",
@@ -49,7 +58,15 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
     return emptySnapshot({ generatedAt, period: periodFilter.period, warnings, auditChecks });
   }
 
-  const balanceSnapshots = buildBalanceSnapshotsSummary(repository.balances || [], periodFilter, repository);
+  const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
+  const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+  const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
+  const balanceSnapshots = buildBalanceSnapshotsSummary(manualBalances, periodFilter, {
+    ...repository,
+    autoBalances: autoBalanceRows,
+    mergedBalances: balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [],
+    balanceSnapshotMerge,
+  });
   auditChecks.push(
     {
       name: "manual_google_sheets_access",
@@ -79,7 +96,11 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
     period: resolvePeriod(periodFilter, balanceSnapshots.dates),
     balance_snapshots: balanceSnapshots,
     provider_current_balance_status: getProviderCurrentBalanceCapabilities(),
-    warnings: unique([...(repository.warnings || []).map(toSafeWarning), ...warnings]),
+    warnings: unique([
+      ...(repository.warnings || []).map(toSafeWarning),
+      ...(autoBalances.warnings || []).map(toSafeWarning),
+      ...warnings,
+    ]),
     audit_checks: auditChecks,
   };
 }
@@ -91,6 +112,18 @@ async function loadRepository(repositoryLoader = loadManualRepositoryFromGoogleS
     return {
       ok: false,
       warning: `Manual Google Sheets overlay failed: ${String(error?.message || error)}`,
+    };
+  }
+}
+
+async function loadAutoBalances(autoBalanceLoader = loadAutoBalanceRowsFromGoogleSheets) {
+  try {
+    return await autoBalanceLoader();
+  } catch (error) {
+    return {
+      ok: false,
+      balances: [],
+      warnings: [`Auto balance sheet failed: ${String(error?.message || error)}`],
     };
   }
 }
@@ -109,10 +142,21 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
 
 export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}, repository = {}) {
   const normalizedRows = (balanceRows || []).map(normalizeBalanceSnapshotRow);
+  const normalizedAutoRows = (repository.autoBalances || []).map(normalizeBalanceSnapshotRow);
+  const mergedSourceRows = Array.isArray(repository.mergedBalances)
+    ? repository.mergedBalances
+    : mergeManualAndAutoBalances(balanceRows || [], repository.autoBalances || []).rows;
+  const normalizedMergedRows = (mergedSourceRows || []).map(normalizeBalanceSnapshotRow);
   const filteredRows = normalizedRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
+  const filteredAutoRows = normalizedAutoRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
+  const filteredMergedRows = normalizedMergedRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
   const validRows = filteredRows.filter((row) => row.valid);
+  const validAutoRows = filteredAutoRows.filter((row) => row.valid);
+  const validMergedRows = filteredMergedRows.filter((row) => row.valid);
   const invalidRows = filteredRows.filter((row) => !row.valid);
   const dates = unique(validRows.map((row) => row.date)).sort();
+  const autoDates = unique(validAutoRows.map((row) => row.date)).sort();
+  const mergedDates = unique(validMergedRows.map((row) => row.date)).sort();
   const targetDate = resolveInputTargetDate(periodFilter, validRows);
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
@@ -124,6 +168,13 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
       fact_balance_rows_detected: factBalanceRows.length,
       fact_balance_rows_saved_to_ostatki: factBalanceRows.filter((row) => row.status === "matched_ostatki").length,
       balance_snapshot_rows_loaded: validRows.length,
+      manual_balance_snapshot_rows_loaded: validRows.length,
+      auto_balance_snapshot_rows_loaded: validAutoRows.length,
+      merged_balance_snapshot_rows_loaded: validMergedRows.length,
+      manual_balance_dates: dates,
+      auto_balance_dates: autoDates,
+      merged_balance_dates: mergedDates,
+      missing_daily_coverage_dates: buildMissingDailyCoverageDates(periodFilter, mergedDates),
       skipped_non_balance_fact_rows: countSkippedNonBalanceFactRows(repository, periodFilter),
       inserted: 0,
       updated: 0,
@@ -131,14 +182,19 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     },
     dates,
     rows: buildDetailedRows(validRows),
+    manual_rows: buildDetailedRows(validRows),
+    auto_rows: buildDetailedRows(validAutoRows),
+    merged_rows: buildDetailedRows(validMergedRows),
     fact_balance_rows: factBalanceRows,
     input_rows: buildInputRows({
       targetDate,
       balanceRows: normalizedRows.filter((row) => row.valid),
       operations: repository.operations || [],
     }),
-    by_date: buildByDate(validRows),
+    by_date: buildByDate(validRows, { autoRows: validAutoRows, mergedRows: validMergedRows }),
     by_channel_currency: buildByChannelCurrency(validRows),
+    auto_dates: autoDates,
+    merged_dates: mergedDates,
     missing_date_rows: invalidRows.filter((row) => row.missing.date).length,
     missing_channel_rows: invalidRows.filter((row) => row.missing.channel).length,
     missing_currency_rows: invalidRows.filter((row) => row.missing.currency).length,
@@ -172,6 +228,13 @@ function emptyBalanceSnapshotsSummary() {
       fact_balance_rows_detected: 0,
       fact_balance_rows_saved_to_ostatki: 0,
       balance_snapshot_rows_loaded: 0,
+      manual_balance_snapshot_rows_loaded: 0,
+      auto_balance_snapshot_rows_loaded: 0,
+      merged_balance_snapshot_rows_loaded: 0,
+      manual_balance_dates: [],
+      auto_balance_dates: [],
+      merged_balance_dates: [],
+      missing_daily_coverage_dates: [],
       skipped_non_balance_fact_rows: 0,
       inserted: 0,
       updated: 0,
@@ -347,6 +410,22 @@ function normalizeBalanceSnapshotRow(row) {
   };
 }
 
+function buildMissingDailyCoverageDates(periodFilter = {}, dates = []) {
+  const from = normalizeDate(periodFilter.from);
+  const to = normalizeDate(periodFilter.to);
+  if (!from || !to || from > to) return [];
+  const existing = new Set(dates || []);
+  const missing = [];
+  const cursor = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
+    const date = cursor.toISOString().slice(0, 10);
+    if (!existing.has(date)) missing.push(date);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return missing;
+}
+
 function buildDetailedRows(rows) {
   return (rows || [])
     .map((row) => ({
@@ -362,7 +441,7 @@ function buildDetailedRows(rows) {
     });
 }
 
-function buildByDate(rows) {
+function buildByDate(rows, { autoRows = [], mergedRows = [] } = {}) {
   const grouped = new Map();
   for (const row of rows || []) {
     const entry = grouped.get(row.date) || {
@@ -374,13 +453,34 @@ function buildByDate(rows) {
     entry.channel_currency_pairs.add(makeKey(row.channel, row.currency));
     grouped.set(row.date, entry);
   }
+  for (const row of autoRows || []) {
+    const entry = grouped.get(row.date) || {
+      date: row.date,
+      rows: 0,
+      channel_currency_pairs: new Set(),
+    };
+    grouped.set(row.date, entry);
+  }
+  const autoCounts = countRowsByDate(autoRows);
+  const mergedCounts = countRowsByDate(mergedRows);
   return Array.from(grouped.values())
     .sort((left, right) => left.date.localeCompare(right.date))
     .map((row) => ({
       date: row.date,
       rows: row.rows,
+      manual_rows: row.rows,
+      auto_rows: autoCounts.get(row.date) || 0,
+      merged_rows: mergedCounts.get(row.date) || row.rows,
       channel_currency_pairs: row.channel_currency_pairs.size,
     }));
+}
+
+function countRowsByDate(rows = []) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    counts.set(row.date, (counts.get(row.date) || 0) + 1);
+  }
+  return counts;
 }
 
 function buildByChannelCurrency(rows) {

@@ -53,6 +53,61 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 
+test("period reconciliation exposes complete daily balance coverage diagnostics and optional rows", async () => {
+  const repositoryLoader = async () => ({
+    ok: true,
+    schema: "ledger-v2-compatible",
+    operations: [
+      {
+        date: "2026-05-02",
+        fromChannel: "wise usd",
+        currency: "USD",
+        amountNet: "20",
+        balanceAmount: -20,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "expense",
+          from_channel: "wise usd",
+          currency: "USD",
+          amount_net: "20",
+          balance_amount: -20,
+        },
+      },
+    ],
+    balances: [
+      { date: "2026-04-30", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+    ],
+    plannedRows: [],
+    plannedSourceStatus: "available",
+    warnings: [],
+  });
+  const defaultSnapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-03" },
+    repositoryLoader,
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    yooMoneyProviderEvidenceLoader: async () => ({ source: "not_connected", rows: [], warning: null }),
+  });
+  const fullSnapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-03", includeDailyBalances: "1" },
+    repositoryLoader,
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    yooMoneyProviderEvidenceLoader: async () => ({ source: "not_connected", rows: [], warning: null }),
+  });
+
+  const coverage = defaultSnapshot.period_balance_reconciliation.daily_balance_coverage;
+  assert.equal(coverage.period_days, 3);
+  assert.equal(coverage.expected_rows, coverage.period_days * coverage.active_pairs);
+  assert.equal(coverage.actual_rows, coverage.expected_rows);
+  assert.equal(coverage.complete, true);
+  assert.ok(coverage.status_counts);
+  assert.equal(defaultSnapshot.period_balance_reconciliation.daily_balance_rows, undefined);
+  assert.ok(defaultSnapshot.period_balance_reconciliation.daily_balance_rows_preview.length > 0);
+  assert.equal(
+    fullSnapshot.period_balance_reconciliation.daily_balance_rows.length,
+    fullSnapshot.period_balance_reconciliation.daily_balance_coverage.expected_rows
+  );
+});
+
 test("period balance reconciliation uses manual fact before auto fallback", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
