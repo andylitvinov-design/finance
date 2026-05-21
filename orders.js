@@ -42,6 +42,7 @@ function openLocalManualOrders(statusMessage, isError = true) {
 
 async function saveManualOrdersSheet() {
   if (!state.manualOrders.data) return;
+  state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
   if (!hasConfiguredManualOrdersEndpoint()) {
     persistLocalOrdersDraft(state.manualOrders.data);
     state.manualOrders.dirty = false;
@@ -99,9 +100,11 @@ function normalizeManualOrdersHeaders(headers) {
 
 function normalizeManualOrdersRows(rows) {
   const normalized = (Array.isArray(rows) ? rows : [])
-    .map((row) => padRowToWidth((Array.isArray(row) ? row : []).map((cell) => String(cell || "")), MANUAL_ORDERS_HEADERS.length).slice(0, MANUAL_ORDERS_HEADERS.length))
-    .filter((row) => row.some((cell) => String(cell || "").trim()));
-  return normalized.length ? normalized : buildDefaultManualOrdersRows();
+    .map((row) => recalculateManualOrderRow(row))
+    .filter((row) => row.some((cell) => String(cell || "").trim()))
+    .filter((row) => !isManualOrdersTotalRow(row));
+  if (!normalized.length) return buildDefaultManualOrdersRows();
+  return appendManualOrdersTotalRow(normalized);
 }
 
 function buildManualOrdersValuesFromState(headers, rows) {
@@ -125,12 +128,15 @@ function updateManualOrderValue(rowIndex, cellIndex, rawValue) {
   const row = state.manualOrders.data?.rows?.[rowIndex];
   if (!row) return;
   row[cellIndex] = rawValue;
+  state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
   state.manualOrders.dirty = true;
 }
 
 function addManualOrderRow() {
   if (!state.manualOrders.data) return;
-  state.manualOrders.data.rows.push(Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => ""));
+  const rows = (state.manualOrders.data.rows || []).filter((row) => !isManualOrdersTotalRow(row));
+  rows.push(Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => ""));
+  state.manualOrders.data.rows = rows;
   state.manualOrders.dirty = true;
   renderTabs();
 }
@@ -138,6 +144,7 @@ function addManualOrderRow() {
 function removeManualOrderRow(rowIndex) {
   if (!state.manualOrders.data) return;
   state.manualOrders.data.rows.splice(rowIndex, 1);
+  state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
   if (!state.manualOrders.data.rows.length) {
     state.manualOrders.data.rows = buildDefaultManualOrdersRows();
   }
@@ -165,10 +172,10 @@ function appendManualOrdersFromText() {
     renderTabs();
     return;
   }
-  state.manualOrders.data.rows = rows.map((row) => row.slice());
+  state.manualOrders.data.rows = normalizeManualOrdersRows(rows.map((row) => row.slice()));
   state.manualOrders.textDraft = "";
   state.manualOrders.dirty = true;
-  setManualOrdersStatus(`Текст разобран в ${rows.length} строк(и). Таблица заказов пересобрана из текущего текста.`, false);
+  setManualOrdersStatus(`Текст разобран в ${state.manualOrders.data.rows.filter((row) => !isManualOrdersTotalRow(row)).length} строк(и). Таблица заказов пересобрана из текущего текста.`, false);
   applyManualOrdersToDashboard(elements.startDate.value, elements.endDate.value);
   renderTabs();
 }
@@ -249,9 +256,11 @@ function getVisibleManualOrdersRows(startDate = elements.startDate.value, endDat
   const data = state.manualOrders.data;
   if (!data) {
     const fallbackValues = state.data?.tabs?.orders?.values || [];
+    const fallbackHeaders = (fallbackValues[0] || []).slice();
+    const fallbackRows = normalizeManualOrdersRows(fallbackValues.slice(1).map((row) => row.slice()));
     return {
-      headers: (fallbackValues[0] || []).slice(),
-      rows: fallbackValues.slice(1).map((row) => row.slice())
+      headers: fallbackHeaders,
+      rows: fallbackRows
     };
   }
   const dateIndex = findDateColumnIndex(data.headers);
@@ -260,14 +269,46 @@ function getVisibleManualOrdersRows(startDate = elements.startDate.value, endDat
   const periodYear = start.getFullYear();
   const rows = data.rows.filter((row) => {
     if (!hasAnyValue(row)) return false;
+    if (isManualOrdersTotalRow(row)) return false;
     const cellDate = dateIndex === -1 ? null : parseDisplayDate(row[dateIndex], periodYear);
     if (!cellDate) return false;
     return cellDate >= start && cellDate <= end;
-  });
+  }).map((row) => recalculateManualOrderRow(row));
   return {
     headers: data.headers.slice(),
-    rows: rows.map((row) => padRowToWidth(row.slice(), data.headers.length))
+    rows: rows.length ? appendManualOrdersTotalRow(rows) : []
   };
+}
+
+function recalculateManualOrderRow(row) {
+  const output = padRowToWidth((Array.isArray(row) ? row : []).map((cell) => String(cell || "")), MANUAL_ORDERS_HEADERS.length).slice(0, MANUAL_ORDERS_HEADERS.length);
+  if (isManualOrdersTotalRow(output)) return buildManualOrdersTotalRow([]);
+  const cost = parseLooseNumber(output[3]);
+  if (Number.isFinite(cost)) {
+    output[3] = formatSheetNumber(cost);
+    output[4] = output[4] || "50%";
+    const discount = parseLooseNumber(output[4]);
+    output[5] = Number.isFinite(discount) ? formatSheetNumber(cost * discount / 100) : "";
+  }
+  return output;
+}
+
+function appendManualOrdersTotalRow(rows) {
+  const dataRows = (rows || []).filter((row) => !isManualOrdersTotalRow(row));
+  if (!dataRows.length) return [];
+  return [...dataRows, buildManualOrdersTotalRow(dataRows)];
+}
+
+function buildManualOrdersTotalRow(rows) {
+  const total = (rows || []).reduce((sum, row) => sum + (parseLooseNumber(row?.[5]) || 0), 0);
+  const output = Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => "");
+  output[2] = MANUAL_FINANCE_TOTAL_LABEL || "Итого";
+  output[5] = formatSheetNumber(total);
+  return output;
+}
+
+function isManualOrdersTotalRow(row) {
+  return (row || []).some((cell) => String(cell || "").trim().toLowerCase().replace(/ё/g, "е") === "итого");
 }
 
 
@@ -280,6 +321,7 @@ function buildOrdersSummaryFromClient(values) {
     return { orderRows: 0, totalAccruedPlus3Pct: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
   }
   const header = values[0] || [];
+  const totalIndex = findHeaderIndexByAliases(header, ["ИТОГО", "TOTAL", "TOTAL AFTER DISCOUNT"]);
   const accruedIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "СТОИМОСТЬ", "COST", "PRICE BASE"]);
   const receivedIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
   const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
@@ -289,9 +331,10 @@ function buildOrdersSummaryFromClient(values) {
   let orderRows = 0;
   values.slice(1).forEach((row) => {
     if (!hasAnyValue(row)) return;
-    if (isTableTotalRow(row)) return;
+    if (isTableTotalRow(row) || isManualOrdersTotalRow(row)) return;
     orderRows += 1;
-    if (accruedIndex !== -1 && accruedIndex < row.length) totalAccrued += parseLooseNumber(row[accruedIndex]);
+    const plannedIndex = totalIndex !== -1 ? totalIndex : accruedIndex;
+    if (plannedIndex !== -1 && plannedIndex < row.length) totalAccrued += parseLooseNumber(row[plannedIndex]);
     if (receivedIndex !== -1 && receivedIndex < row.length) totalReceived += parseLooseNumber(row[receivedIndex]);
     if (balanceIndex !== -1 && balanceIndex < row.length) totalBalance += parseLooseNumber(row[balanceIndex]);
   });
