@@ -472,8 +472,13 @@ async function runPayPalDerivedBalanceSnapshot() {
   state.expenseAccounting.paypalDerivedBalanceLoading = true;
   setExpenseAccountingStatus("Рассчитываю PayPal остатки по Ledger движениям...", false);
   renderTabs();
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller && typeof setTimeout === "function"
+    ? setTimeout(() => controller.abort(), 30000)
+    : null;
   try {
-    const response = await fetch(`./api/auto-balance-snapshots?date=${encodeURIComponent(date)}`);
+    const fetchOptions = controller ? { signal: controller.signal } : undefined;
+    const response = await fetch(`./api/auto-balance-snapshots?date=${encodeURIComponent(date)}`, fetchOptions);
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.ok) {
       throw new Error(result?.error || `PayPal auto balance failed (${response.status}).`);
@@ -491,10 +496,15 @@ async function runPayPalDerivedBalanceSnapshot() {
       renderTabs();
     }
   } catch (error) {
-    setExpenseAccountingStatus(error.message || "Не удалось рассчитать PayPal остатки автоматически.", true);
+    const message = error?.name === "AbortError"
+      ? "Не удалось рассчитать PayPal остатки автоматически: API не ответил за 30 секунд."
+      : (error.message || "Не удалось рассчитать PayPal остатки автоматически.");
+    setExpenseAccountingStatus(message, true);
     renderTabs();
   } finally {
+    if (timeoutId && typeof clearTimeout === "function") clearTimeout(timeoutId);
     state.expenseAccounting.paypalDerivedBalanceLoading = false;
+    renderTabs();
   }
 }
 

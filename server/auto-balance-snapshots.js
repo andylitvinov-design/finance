@@ -104,12 +104,16 @@ export default async function handler(request, response) {
     return response.status(405).json(buildStructuredError("method_not_allowed", `Unsupported method: ${request.method}`));
   }
 
-  const result = await runAutoBalanceSnapshots({
-    query: request.query || {},
-    env: process.env,
-    fetchImpl: fetch,
-  });
-  return response.status(result.ok ? 200 : 500).json(result);
+  try {
+    const result = await runAutoBalanceSnapshots({
+      query: request.query || {},
+      env: process.env,
+      fetchImpl: fetch,
+    });
+    return response.status(result.ok ? 200 : 500).json(result);
+  } catch (error) {
+    return response.status(500).json(buildStructuredError("auto_balance_snapshot_failed", toPublicErrorMessage(error)));
+  }
 }
 
 export async function runAutoBalanceSnapshots(options = {}) {
@@ -140,7 +144,7 @@ export async function runAutoBalanceSnapshots(options = {}) {
       return {
         ...buildBaseResponse({ date, dryRun, providerResults, rows, skippedRows, warnings }),
         ok: false,
-        error: String(error?.message || error),
+        error: toPublicErrorMessage(error),
         saved_rows: 0,
       };
     }
@@ -1162,4 +1166,13 @@ function isNotSupportedAccountError(error) {
 
 function buildStructuredError(code, message) {
   return { ok: false, error: message, code };
+}
+
+function toPublicErrorMessage(error) {
+  const message = String(error?.message || error || "Auto balance snapshot failed.").trim();
+  if (!message) return "Auto balance snapshot failed.";
+  if (/syntaxerror|unexpected token|unexpected end of json|<html|<!doctype|<body|<pre/i.test(message)) {
+    return "Auto balance snapshot failed with a non-JSON upstream response.";
+  }
+  return message.slice(0, 240);
 }
