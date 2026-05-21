@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
+const mainJs = fs.readFileSync(path.join(root, "main.js"), "utf8");
 const financeJs = fs.readFileSync(path.join(root, "finance.js"), "utf8");
 const ordersJs = fs.readFileSync(path.join(root, "orders.js"), "utf8");
 
@@ -71,8 +72,8 @@ test("top metrics balance uses explicit balance columns for movement and orders"
           },
           orders: {
             values: [
-              ["NUMBER", "ACCRUED +3%", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
-              ["1", "100", "111", "82"],
+              ["NUMBER", "ACCRUED +3%", "ИТОГО", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE"],
+              ["1", "100", "50", "111", "82"],
             ],
           },
         },
@@ -90,7 +91,62 @@ test("top metrics balance uses explicit balance columns for movement and orders"
     context
   );
 
-  assert.equal(context.buildTopMetricsSummary().balance, 175);
+  const metrics = context.buildTopMetricsSummary();
+  assert.equal(metrics.balance, 175);
+  assert.equal(metrics.personalOrdersAfterDiscount, 50);
+});
+
+test("period-filtered manual orders expose only selected personal discounted total", () => {
+  const context = {
+    MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+    MANUAL_ORDERS_HEADERS: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
+    parseLooseNumber,
+    normalizeCell,
+    findHeaderIndexByAliases,
+    hasAnyValue,
+    isTableTotalRow,
+    roundTo2,
+    formatSheetNumber: (value) => Number(value).toFixed(4).replace(".", ","),
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-05-21" },
+    },
+    state: {
+      manualOrders: {
+        data: {
+          headers: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
+          rows: [
+            ["30.04.2026", "Outside", "old personal order", "100", "50%", "50"],
+            ["21.05.2026", "Inside", "current personal order", "100", "50%", "50"],
+          ],
+        },
+      },
+      data: { tabs: { orders: { values: [] } } },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(mainJs, "parseIsoDate")}\n` +
+    `${extractFunction(mainJs, "parseDisplayDate")}\n` +
+    `${extractFunction(mainJs, "findDateColumnIndex")}\n` +
+    `${extractFunction(mainJs, "padRowToWidth")}\n` +
+    `${extractFunction(financeJs, "formatSheetNumber")}\n` +
+    `${extractFunction(ordersJs, "recalculateManualOrderRow")}\n` +
+    `${extractFunction(ordersJs, "appendManualOrdersTotalRow")}\n` +
+    `${extractFunction(ordersJs, "buildManualOrdersTotalRow")}\n` +
+    `${extractFunction(ordersJs, "isManualOrdersTotalRow")}\n` +
+    `${extractFunction(ordersJs, "getVisibleManualOrdersRows")}\n` +
+    `${extractFunction(ordersJs, "buildOrdersSummaryFromClient")}\n` +
+    "this.getVisibleManualOrdersRows = getVisibleManualOrdersRows;\n" +
+    "this.buildOrdersSummaryFromClient = buildOrdersSummaryFromClient;",
+    context
+  );
+
+  const visible = context.getVisibleManualOrdersRows("2026-05-01", "2026-05-21");
+  const summary = context.buildOrdersSummaryFromClient([visible.headers, ...visible.rows]);
+
+  assert.equal(summary.orderRows, 1);
+  assert.equal(summary.personalOrdersAfterDiscount, 50);
 });
 
 test("getMovementTotalsFromTable prefers net received over client-paid gross", () => {

@@ -3,7 +3,7 @@
 // ============================================================
 
 (function patchTopMetricPayableShare() {
-  const PAYABLE_SHARE_RATE = 0.3;
+  const PAYABLE_SHARE_RATE = 0.7;
 
   function parseMetricNumber(value) {
     if (typeof parseLooseNumber === "function") {
@@ -21,7 +21,10 @@
   function calculateTopMetricPayable(summary = {}) {
     const totalOrders = parseMetricNumber(summary.totalOrders);
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
-    return totalOrders * PAYABLE_SHARE_RATE - totalPaid;
+    const personalOrdersAfterDiscount = parseMetricNumber(
+      summary.personalOrdersAfterDiscount ?? summary.ordersSummary?.personalOrdersAfterDiscount
+    );
+    return totalOrders * PAYABLE_SHARE_RATE - totalPaid + personalOrdersAfterDiscount;
   }
 
   function patchBuildTopMetricsSummary() {
@@ -38,7 +41,7 @@
         payable,
         payableShare: payable,
         payableShareRate: PAYABLE_SHARE_RATE,
-        payableFormula: "totalOrders * 0.3 - abs(totalPaid)"
+        payableFormula: "totalOrders * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount"
       };
     };
 

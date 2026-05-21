@@ -85,6 +85,15 @@ test("parseManualOrdersTextBlocks supports dash-listed orders without numeric or
   ]);
 });
 
+test("discounted total subtracts discount percent from order cost", () => {
+  const mapped = mapLegacyOrdersValues([
+    ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
+    ["21.05.2026", "Андрей", "личный заказ", "100", "25%", ""],
+  ]);
+
+  assert.deepEqual(mapped.rows[0], ["21.05.2026", "Андрей", "личный заказ", "100", "25%", "75"]);
+});
+
 test("mapLegacyOrdersValues collapses old wide sheet into discounted simple columns", () => {
   const mapped = mapLegacyOrdersValues([
     [

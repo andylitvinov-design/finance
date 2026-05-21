@@ -288,7 +288,7 @@ function recalculateManualOrderRow(row) {
     output[3] = formatSheetNumber(cost);
     output[4] = output[4] || "50%";
     const discount = parseLooseNumber(output[4]);
-    output[5] = Number.isFinite(discount) ? formatSheetNumber(cost * discount / 100) : "";
+    output[5] = Number.isFinite(discount) ? formatSheetNumber(cost * (100 - discount) / 100) : "";
   }
   return output;
 }
@@ -318,7 +318,7 @@ function isManualOrdersTotalRow(row) {
 
 function buildOrdersSummaryFromClient(values) {
   if (!values.length) {
-    return { orderRows: 0, totalAccruedPlus3Pct: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
+    return { orderRows: 0, totalAccruedPlus3Pct: 0, personalOrdersAfterDiscount: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
   }
   const header = values[0] || [];
   const totalIndex = findHeaderIndexByAliases(header, ["ИТОГО", "TOTAL", "TOTAL AFTER DISCOUNT"]);
@@ -342,6 +342,7 @@ function buildOrdersSummaryFromClient(values) {
   return {
     orderRows,
     totalAccruedPlus3Pct: roundTo2(totalAccrued),
+    personalOrdersAfterDiscount: roundTo2(totalAccrued),
     totalReceivedUsd: roundTo2(totalReceived),
     totalBalanceUsd: roundTo2(totalBalance)
   };
