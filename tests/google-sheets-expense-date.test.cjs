@@ -20,6 +20,8 @@ function extractFunction(source, name) {
 }
 
 const context = {
+  MANUAL_FINANCE_TOTAL_LABEL: "Итого",
+  MANUAL_ORDERS_HEADERS: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
   getManualFinanceChannels() {
     return ["Яндекс руб", "Бинанс spot", "приват 24-грн"];
   },
@@ -73,8 +75,13 @@ vm.runInContext(
     extractFunction(mainJs, "parseLooseNumber"),
     extractFunction(mainJs, "roundTo2"),
     extractFunction(financeJs, "findHeaderIndexByAliases"),
+    extractFunction(financeJs, "formatSheetNumber"),
+    extractFunction(ordersJs, "recalculateManualOrderRow"),
+    extractFunction(ordersJs, "appendManualOrdersTotalRow"),
+    extractFunction(ordersJs, "buildManualOrdersTotalRow"),
     extractFunction(ordersJs, "getVisibleManualOrdersRows"),
     extractFunction(ordersJs, "buildOrdersSummaryFromClient"),
+    extractFunction(ordersJs, "isManualOrdersTotalRow"),
     extractFunction(sheetsJs, "normalizeIncomingSheetDateValue"),
     extractFunction(sheetsJs, "parseIncomingExpenseSheetValues"),
     "this.parseDisplayDate = parseDisplayDate;",
@@ -111,22 +118,24 @@ test("parseDisplayDate supports slash dates and yearless period dates without ch
 });
 
 test("getVisibleManualOrdersRows includes William short-date order in April plan orders", () => {
-  const headers = ["DATE", "CLIENT", "PAYMENT METHOD", "ACCRUED", "ACCRUED +3%"];
-  const williamRow = ["30/04", "William", "трансервайз дол", "200", "206"];
+  const williamRow = ["30/04", "William", "трансервайз дол", "206", "50%", "103"];
   context.state.manualOrders.data = {
-    headers,
+    headers: context.MANUAL_ORDERS_HEADERS,
     rows: [
       williamRow,
-      ["01/05", "May client", "трансервайз дол", "100", "103"],
+      ["01/05", "May client", "трансервайз дол", "103", "50%", "51.5"],
     ],
   };
 
   const visible = plain(context.getVisibleManualOrdersRows("2026-04-01", "2026-04-30"));
-  assert.deepEqual(visible.rows, [williamRow]);
+  assert.deepEqual(visible.rows, [
+    ["30/04", "William", "трансервайз дол", "206,0000", "50%", "103,0000"],
+    ["", "", "Итого", "", "", "103,0000"],
+  ]);
 
   const summary = plain(context.buildOrdersSummaryFromClient([visible.headers, ...visible.rows]));
   assert.equal(summary.orderRows, 1);
-  assert.equal(summary.totalAccruedPlus3Pct, 206);
+  assert.equal(summary.totalAccruedPlus3Pct, 103);
 });
 
 test("parseIncomingExpenseSheetValues keeps timestamped exchange rows for legacy expense grids", () => {
