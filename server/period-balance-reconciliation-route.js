@@ -1,5 +1,6 @@
 import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
+import { buildDailyBalanceCoverage } from "./daily-balance-engine.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 import { buildProviderLedgerReconciliation } from "./provider-ledger-reconciliation-engine.js";
@@ -31,6 +32,7 @@ export default async function periodBalanceReconciliationHandler(request, respon
 export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const query = options.query || {};
   const period = parsePeriod(query);
+  const includeDailyBalances = parseBoolean(query.includeDailyBalances);
   const warnings = [];
   const repository = await loadRepository(options.repositoryLoader);
   const autoBalances = Array.isArray(repository?.autoBalances)
@@ -53,6 +55,12 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     });
     annotateReconciliationSources(reconciliation, balanceRows);
     annotateBalanceSourceDiagnostics(reconciliation, period);
+    annotateDailyBalanceCoverage(reconciliation, {
+      operations: [],
+      balanceRows,
+      period,
+      includeDailyBalances,
+    });
     return {
       ok: true,
       generated_at: new Date().toISOString(),
@@ -79,6 +87,12 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   });
   annotateReconciliationSources(reconciliation, balanceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
+  annotateDailyBalanceCoverage(reconciliation, {
+    operations: repository.operations || [],
+    balanceRows,
+    period,
+    includeDailyBalances,
+  });
   annotateBinanceWalletDiagnostics(reconciliation, repository.operations || [], period);
   const yooMoneyProviderEvidence = await loadYooMoneyProviderEvidence(period, options);
   annotateProviderLedgerReconciliation(reconciliation, repository.operations || [], period, yooMoneyProviderEvidence);
@@ -109,6 +123,49 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function annotateDailyBalanceCoverage(reconciliation, {
+  operations = [],
+  balanceRows = [],
+  period = {},
+  includeDailyBalances = false,
+} = {}) {
+  const coverage = buildDailyBalanceCoverage({
+    operations,
+    balanceRows,
+    period,
+    activePairs: (reconciliation.by_channel_currency || []).map((row) => ({
+      channel: row.channel,
+      currency: row.currency,
+    })),
+  });
+  const summary = coverage.summary || {};
+  reconciliation.daily_balance_coverage = {
+    period_from: summary.period_from,
+    period_to: summary.period_to,
+    period_days: summary.period_days,
+    active_pairs: summary.active_pairs,
+    expected_rows: summary.expected_rows,
+    actual_rows: summary.actual_rows,
+    complete: summary.complete,
+    status_counts: summary.status_counts || {},
+    missing_opening_balance_rows: summary.missing_opening_balance_rows || 0,
+    computed_from_previous_day_rows: summary.computed_from_previous_day_rows || 0,
+    provider_auto_rows: summary.provider_auto_rows || 0,
+    manual_fact_rows: summary.manual_fact_rows || 0,
+    provider_status_rows: summary.provider_status_rows || 0,
+    mismatch_rows: summary.mismatch_rows || 0,
+    missing_amount_net_rows: summary.missing_amount_net_rows || summary.excluded_missing_amount_net_rows || 0,
+    missing_dates_preview: summary.missing_dates_preview || [],
+    actionable_rows_preview: coverage.actionable_rows || [],
+  };
+  if (includeDailyBalances) {
+    reconciliation.daily_balance_rows = coverage.rows;
+  } else {
+    delete reconciliation.daily_balance_rows;
+    reconciliation.daily_balance_rows_preview = coverage.rows.slice(0, 30);
+  }
 }
 
 function annotateBinanceWalletDiagnostics(reconciliation, operations = [], period = {}) {
@@ -651,6 +708,10 @@ function parsePeriod(query = {}) {
     from: normalizeDate(query.from || query.startDate || query.dateFrom),
     to: normalizeDate(query.to || query.endDate || query.dateTo),
   };
+}
+
+function parseBoolean(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 function normalizeDate(value) {

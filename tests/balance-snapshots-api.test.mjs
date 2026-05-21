@@ -23,8 +23,8 @@ test("balance snapshots summary returns dates, detailed rows, and account-curren
     { date: "2026-05-06", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 2380 },
   ]);
   assert.deepEqual(summary.by_date, [
-    { date: "2026-04-30", rows: 1, channel_currency_pairs: 1 },
-    { date: "2026-05-06", rows: 2, channel_currency_pairs: 2 },
+    { date: "2026-04-30", rows: 1, manual_rows: 1, auto_rows: 0, merged_rows: 1, channel_currency_pairs: 1 },
+    { date: "2026-05-06", rows: 2, manual_rows: 2, auto_rows: 0, merged_rows: 2, channel_currency_pairs: 2 },
   ]);
   assert.deepEqual(summary.by_channel_currency, [
     {
@@ -190,6 +190,13 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
     fact_balance_rows_detected: 2,
     fact_balance_rows_saved_to_ostatki: 1,
     balance_snapshot_rows_loaded: 1,
+    manual_balance_snapshot_rows_loaded: 1,
+    auto_balance_snapshot_rows_loaded: 0,
+    merged_balance_snapshot_rows_loaded: 1,
+    manual_balance_dates: ["2026-05-17"],
+    auto_balance_dates: [],
+    merged_balance_dates: ["2026-05-17"],
+    missing_daily_coverage_dates: [],
     skipped_non_balance_fact_rows: 0,
     inserted: 0,
     updated: 0,
@@ -208,6 +215,46 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
     && row.currency === "USD"
     && row.status === "matched_ostatki"
   ));
+});
+
+test("balance snapshots reports manual, auto, and merged daily inventories", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-03" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-03", channel: "wise usd", currency: "USD", amount: "80", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "90", source: "provider_auto", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-03", channel: "wise usd", currency: "USD", amount: "79", source: "provider_auto", sourceSheet: "Авто Остатки" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.manual_balance_dates, ["2026-05-01", "2026-05-03"]);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.auto_balance_dates, ["2026-05-02", "2026-05-03"]);
+  assert.equal(snapshot.balance_snapshots.diagnostics.manual_balance_snapshot_rows_loaded, 2);
+  assert.equal(snapshot.balance_snapshots.diagnostics.auto_balance_snapshot_rows_loaded, 2);
+  assert.equal(snapshot.balance_snapshots.diagnostics.merged_balance_snapshot_rows_loaded, 3);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, []);
+  assert.deepEqual(snapshot.balance_snapshots.by_date.map((row) => ({
+    date: row.date,
+    manual_rows: row.manual_rows,
+    auto_rows: row.auto_rows,
+    merged_rows: row.merged_rows,
+  })), [
+    { date: "2026-05-01", manual_rows: 1, auto_rows: 0, merged_rows: 1 },
+    { date: "2026-05-02", manual_rows: 0, auto_rows: 1, merged_rows: 1 },
+    { date: "2026-05-03", manual_rows: 1, auto_rows: 1, merged_rows: 1 },
+  ]);
+  assert.equal(snapshot.balance_snapshots.merged_rows.find((row) => row.date === "2026-05-03")?.amount, 80);
 });
 
 test("balance snapshots input rows use selected to date as target date", () => {
