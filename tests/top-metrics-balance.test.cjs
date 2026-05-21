@@ -117,7 +117,7 @@ test("period-filtered manual orders expose only selected personal discounted tot
           headers: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
           rows: [
             ["30.04.2026", "Outside", "old personal order", "100", "50%", "50"],
-            ["21.05.2026", "Inside", "current personal order", "100", "50%", "50"],
+            ["21.05.2026", "Inside", "current personal order", "100", "25%", ""],
           ],
         },
       },
@@ -146,7 +146,8 @@ test("period-filtered manual orders expose only selected personal discounted tot
   const summary = context.buildOrdersSummaryFromClient([visible.headers, ...visible.rows]);
 
   assert.equal(summary.orderRows, 1);
-  assert.equal(summary.personalOrdersAfterDiscount, 50);
+  assert.equal(visible.rows[0][5], "25,0000");
+  assert.equal(summary.personalOrdersAfterDiscount, 25);
 });
 
 test("getMovementTotalsFromTable prefers net received over client-paid gross", () => {

@@ -74,7 +74,7 @@
     const numericCost = parseLooseNumber(cost);
     const numericDiscount = parseLooseNumber(discountPercent);
     if (!Number.isFinite(numericCost) || !Number.isFinite(numericDiscount)) return "";
-    return formatNumber(numericCost * (100 - numericDiscount) / 100);
+    return formatNumber(numericCost * numericDiscount / 100);
   }
 
   function extractTrailingCost(text) {
