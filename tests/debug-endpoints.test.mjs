@@ -249,8 +249,10 @@ test("debug UI state returns aggregate-only payload without row token", async ()
     assert.match(payload.warnings.join("\n"), /no debug token env is configured/i);
     assert.equal(payload.finance_analysis.actual_income_rows, undefined);
     assert.deepEqual(payload.row_samples, {});
-    assert.equal(payload.top_metrics.formula, "total_orders_usd * 0.3 - total_paid_usd");
-    assert.equal(payload.top_metrics.payable_usd, -213.86);
+    assert.equal(payload.ui_aggregate_contract.top_payable_formula, "total_orders_usd * 0.7 - abs(total_paid_usd) + personal_orders_after_discount_usd");
+    assert.equal(payload.top_metrics.formula, "total_orders_usd * 0.7 - abs(total_paid_usd) + personal_orders_after_discount_usd");
+    assert.equal(payload.top_metrics.personal_orders_after_discount_usd, 0);
+    assert.equal(payload.top_metrics.payable_usd, -84.26);
     assert.equal(payload.finance_analysis.actual_income[0].channel, "пейпал дол");
     assert.equal(payload.finance_analysis.actual_income[0].amount_usd_signed_sum, 311.06);
     assert.equal(payload.finance_analysis.actual_income[0].deduped_income_events_count, 1);
