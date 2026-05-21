@@ -74,6 +74,7 @@ function inferManualFinanceChannelCurrency(channel) {
   if (/руб/i.test(normalized)) return "RUB";
   if (/грн/i.test(normalized)) return "UAH";
   if (/(евр|eur|euro)/i.test(normalized)) return "EUR";
+  if (/(фунт|gbp|pound)/i.test(normalized)) return "GBP";
   if (/(cad|сad|канада)/i.test(normalized)) return "CAD";
   if (/(дол|usd|binance|payoneer - dol|revolut)/i.test(normalized)) return "USD";
   return "LOCAL";

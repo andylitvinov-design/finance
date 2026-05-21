@@ -4,6 +4,8 @@ import { normalizeManualLedgerCategory } from "./manual-ledger-maps.js";
 const REVOLUT_SOURCE = "revolut";
 const REVOLUT_CHANNEL_BY_CURRENCY = {
   USD: "REVOLUT дол",
+  EUR: "REVOLUT евро",
+  GBP: "REVOLUT фунт",
 };
 
 const HEADER_ALIASES = {

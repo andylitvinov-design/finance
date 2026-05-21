@@ -400,6 +400,7 @@ function inferManualLedgerSourceFromRawSourceId(rawSourceId = "") {
   if (/^(wise|transferwise)[:_-]/i.test(raw)) return "wise";
   if (/^(mono|monobank)[:_-]/i.test(raw)) return "monobank";
   if (/^(privat|privat24|pb)[:_-]/i.test(raw)) return "privatbank";
+  if (/^revolut[:_-]/i.test(raw)) return "revolut";
   if (/^(tdbank|td_bank|td)[:_-]/i.test(raw)) return "td_bank";
   if (/^(yoomoney|yoo_money|yamoney|yandex)[:_-]/i.test(raw)) return "yoomoney";
   for (const source of ["file_import", "csv_import", "xlsx_import", "pdf_import"]) {
@@ -420,6 +421,7 @@ function inferManualLedgerSourceFromChannels(...values) {
   if (/(wise|transferwise|трансервайз)/.test(normalized)) return "wise";
   if (/(monobank|mono|монобанк)/.test(normalized)) return "monobank";
   if (/(privat|приват)/.test(normalized)) return "privatbank";
+  if (/(revolut|револют)/.test(normalized)) return "revolut";
   if (/(td bank|tdbank)/.test(normalized)) return "td_bank";
   return "";
 }
@@ -427,7 +429,7 @@ function inferManualLedgerSourceFromChannels(...values) {
 function normalizeManualLedgerSource(value, fallback = "") {
   const token = normalizeManualLedgerSourceToken(value);
   if (!token) return fallback;
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "revolut", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) return token;
   if (["paypal_personal", "manual_provider_confirmed"].includes(token)) return "paypal_personal_manual";
   if (["manual_fact", "manual_finance"].includes(token)) return "manual";
   if (["paypal_mcp"].includes(token)) return "paypal";
@@ -444,7 +446,7 @@ function normalizeManualLedgerSource(value, fallback = "") {
 function resolveManualLedgerSource(value, rawSourceId = "", fallback = "", context = {}) {
   const token = normalizeManualLedgerSourceToken(value);
   let normalized = "";
-  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
+  if (["manual", "fact", "paypal", "paypal_personal_manual", "payoneer", "revolut", "wise", "monobank", "privatbank", "td_bank", "yoomoney", "migration", "google_sheets", "ocr", "browser_ocr", "screenshot", "image", "photo", "file_import", "csv_import", "xlsx_import", "pdf_import", "other"].includes(token)) normalized = token;
   else if (["paypal_personal", "manual_provider_confirmed"].includes(token)) normalized = "paypal_personal_manual";
   else if (["manual_fact", "manual_finance"].includes(token)) normalized = "manual";
   else if (["paypal_mcp"].includes(token)) normalized = "paypal";
@@ -1303,8 +1305,9 @@ function buildLedgerRowsFromAccountingEntries(entries) {
     const amount = Math.abs(parseLooseNumber(entry.accountAmount ?? entry.balanceAmount ?? entry.localAmount));
     if (!date || !channel || !amount) return;
     const category = normalizeManualLedgerCategoryForStorage(entry.category, "extra");
-    const explicitSourceId = String(entry.sourceTransactionId || entry.rawSourceId || entry.raw_source_id || entry.externalId || entry.external_id || "").trim();
-    const rawSourceId = explicitSourceId || (
+    const explicitRawSourceId = String(entry.rawSourceId || entry.raw_source_id || "").trim();
+    const explicitSourceId = String(entry.sourceTransactionId || entry.externalId || entry.external_id || explicitRawSourceId || "").trim();
+    const rawSourceId = explicitRawSourceId || explicitSourceId || (
       isScreenshotAccountingEntry(entry)
         ? buildStableScreenshotIncomeSourceId({ ...entry, date, channel, localAmount: amount }, entry.source || "ocr")
         : String(entry.id || `expense-accounting:${date}:${channel}:${index}`).trim()

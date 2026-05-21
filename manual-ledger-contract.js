@@ -319,6 +319,8 @@
       "трансервайз евр"
     ],
     "REVOLUT дол": ["revolut", "revolut usd", "revolut_usd", "revolut dol", "револют", "револют дол"],
+    "REVOLUT евро": ["revolut eur", "revolut euro", "revolut_eur", "revolut евро", "револют евро", "револют евр"],
+    "REVOLUT фунт": ["revolut gbp", "revolut pound", "revolut_gbp", "revolut фунт", "револют фунт"],
     "Payoneer - eur": ["payoneer eur", "payoneer euro", "payoneer - eur"],
     "Payoneer - dol": ["payoneer usd", "payoneer dol", "payoneer - dol"],
     "Бинанс spot": ["binance spot", "бинанс spot", "бинанс", "binance"],

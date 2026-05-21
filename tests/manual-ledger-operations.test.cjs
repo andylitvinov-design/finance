@@ -71,7 +71,7 @@ function buildLedgerTestContext() {
       "created_at",
       "updated_at"
     ],
-    MANUAL_FINANCE_CHANNELS: ["Яндекс руб", "пейпал дол", "Бинанс spot", "binance save", "монобанк грн", "приват 24-грн", "трансервайз дол", "трансервайз евро"],
+    MANUAL_FINANCE_CHANNELS: ["Яндекс руб", "пейпал дол", "Бинанс spot", "binance save", "монобанк грн", "приват 24-грн", "трансервайз дол", "трансервайз евро", "REVOLUT дол", "REVOLUT евро", "REVOLUT фунт"],
     MANUAL_FINANCE_FALLBACK_USD_RATES: { UAH: 1 / 43.86, RUB: 1 / 84.5563, LOCAL: 1 / 18 },
     MANUAL_NOW_CATEGORY: "now",
     canonicalManualFinanceChannel(value) {
@@ -82,6 +82,9 @@ function buildLedgerTestContext() {
       if (normalized === "яндекс руб") return "Яндекс руб";
       if (normalized === "приват 24-грн") return "приват 24-грн";
       if (normalized === "монобанк грн") return "монобанк грн";
+      if (normalized === "revolut usd" || normalized === "revolut dol" || normalized === "revolut дол" || normalized === "револют дол") return "REVOLUT дол";
+      if (normalized === "revolut eur" || normalized === "revolut евро" || normalized === "револют евро") return "REVOLUT евро";
+      if (normalized === "revolut gbp" || normalized === "revolut фунт" || normalized === "револют фунт") return "REVOLUT фунт";
       return String(value || "").trim();
     },
     getManualFinanceChannels() {
@@ -118,6 +121,9 @@ function buildLedgerTestContext() {
         "приват 24-грн": "UAH",
         "трансервайз дол": "USD",
         "трансервайз евро": "EUR",
+        "REVOLUT дол": "USD",
+        "REVOLUT евро": "EUR",
+        "REVOLUT фунт": "GBP",
       };
       return map[channel] || "USD";
     },
@@ -706,6 +712,85 @@ test("duplicate generic file income is skipped and import sources are preserved"
   assert.equal(saved.added_count, 1);
   assert.equal(saved.duplicate_count, 1);
   assert.equal(saved.skipped_count, 0);
+});
+
+test("repeated Revolut statement import keeps source and dedupes by revolut raw_source_id", () => {
+  const context = buildLedgerTestContext();
+  const entries = [
+    {
+      date: "2026-05-01",
+      channel: "REVOLUT дол",
+      localAmount: 100,
+      currency: "USD",
+      category: "serviceIncome",
+      direction: "income",
+      source: "revolut",
+      sourceTransactionId: "rev-in-1",
+      externalId: "rev-in-1",
+      rawSourceId: "revolut:rev-in-1",
+      raw_source_id: "revolut:rev-in-1",
+      amountNet: 100,
+      description: "Client"
+    },
+    {
+      date: "2026-05-01",
+      channel: "REVOLUT дол",
+      localAmount: 100,
+      currency: "USD",
+      category: "serviceIncome",
+      direction: "income",
+      source: "revolut",
+      sourceTransactionId: "rev-in-1",
+      externalId: "rev-in-1",
+      rawSourceId: "revolut:rev-in-1",
+      raw_source_id: "revolut:rev-in-1",
+      amountNet: 100,
+      description: "Client"
+    }
+  ];
+  const ledgerRows = plain(context.buildLedgerRowsFromAccountingEntries(entries));
+  assert.equal(ledgerRows[0].source, "revolut");
+  assert.equal(ledgerRows[0].externalId, "rev-in-1");
+  assert.equal(ledgerRows[0].rawSourceId, "revolut:rev-in-1");
+
+  const saved = plain(context.normalizeManualLedgerRowsForSave(ledgerRows, []));
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.rows[0].source, "revolut");
+  assert.equal(saved.rows[0].rawSourceId, "revolut:rev-in-1");
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 1);
+});
+
+test("Revolut EUR and GBP ledger rows use canonical channels without changing provider semantics", () => {
+  const context = buildLedgerTestContext();
+  const rows = plain(context.buildLedgerRowsFromAccountingEntries([
+    {
+      date: "2026-05-02",
+      channel: "REVOLUT евро",
+      localAmount: 10,
+      currency: "EUR",
+      category: "serviceIncome",
+      direction: "income",
+      source: "revolut",
+      rawSourceId: "revolut:rev-eur",
+      amountNet: 10
+    },
+    {
+      date: "2026-05-03",
+      channel: "REVOLUT фунт",
+      localAmount: 7,
+      currency: "GBP",
+      category: "business",
+      direction: "expense",
+      source: "revolut",
+      rawSourceId: "revolut:rev-gbp",
+      amountNet: -7
+    }
+  ]));
+
+  assert.deepEqual(rows.map((row) => row.source), ["revolut", "revolut"]);
+  assert.deepEqual(rows.map((row) => row.toChannel || row.fromChannel), ["REVOLUT евро", "REVOLUT фунт"]);
+  assert.deepEqual(rows.map((row) => row.currency), ["EUR", "GBP"]);
 });
 
 test("normalizeManualLedgerRowsForSave reports added duplicate and skipped counts", () => {
