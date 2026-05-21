@@ -444,6 +444,7 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
       merged_balance_rows: mergedBalanceRows.length,
       auto_balance_rows_used_as_fallback: Number(balanceSnapshotMerge.auto_balance_rows_used_as_fallback || balanceSnapshotMerge.autoUsed || 0),
       auto_balance_rows_ignored_due_to_manual: Number(balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual || balanceSnapshotMerge.autoIgnored || 0),
+      auto_balance_rows_ignored_as_stale_current: Number(balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current || balanceSnapshotMerge.autoIgnoredStaleCurrent || 0),
     },
     transfers: periodTransfers,
     commissionRows: periodCommissionRows,

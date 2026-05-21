@@ -158,6 +158,7 @@ export async function buildAuditSnapshot(options = {}) {
       merged_balance_rows: balanceRows.length,
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
+      auto_balance_rows_ignored_as_stale_current: balanceSnapshotMerge.autoIgnoredStaleCurrent ?? balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current ?? null,
     },
     daily_balances: {
       uses_amount_net: true,
@@ -221,6 +222,7 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       merged_balance_rows: 0,
       auto_balance_rows_used_as_fallback: null,
       auto_balance_rows_ignored_due_to_manual: null,
+      auto_balance_rows_ignored_as_stale_current: null,
     },
     daily_balances: {
       uses_amount_net: true,
