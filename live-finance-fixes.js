@@ -266,6 +266,12 @@
       const rows = Array.isArray(values) ? values : [];
       const header = Array.isArray(rows[0]) ? rows[0].map((cell) => String(cell || "").trim()) : [];
       if (!header.length || header.length <= 4 || !mapped?.rows?.length) return mapped;
+      const isSimpleDiscountedOrdersSheet =
+        header.length <= 6
+        && findHeaderIndex(header, ["стоимость", "cost"]) !== -1
+        && findHeaderIndex(header, ["скидка", "discount"]) !== -1
+        && findHeaderIndex(header, ["итого", "total", "total after discount"]) !== -1;
+      if (isSimpleDiscountedOrdersSheet) return mapped;
 
       const discountIndexes = findHeaderIndexes(header, [
         "action", "actions", "коэффициент", "коэф", "factor", "multiplier",

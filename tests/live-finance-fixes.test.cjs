@@ -75,6 +75,23 @@ test("live finance fixes use action multiplier and propagate within same date/cl
   assert.deepEqual(mapped.rows.map((row) => row[3]), ["51.5", "51.5", "103"]);
 });
 
+test("live finance fixes do not re-discount simple orders sheets on reload", () => {
+  const helper = {
+    mapLegacyOrdersValues: (values) => ({
+      headers: ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
+      rows: values.slice(1).map((row) => row.slice()),
+    }),
+  };
+  runFixesWithHelper(helper);
+
+  const mapped = helper.mapLegacyOrdersValues([
+    ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"],
+    ["20.05.2026", "Литвинов Андрей", "заказ", "25", "50%", "12.5"],
+  ]);
+
+  assert.deepEqual(mapped.rows[0], ["20.05.2026", "Литвинов Андрей", "заказ", "25", "50%", "12.5"]);
+});
+
 test("paid total display fix changes only negative metric text to absolute display", () => {
   let metricText = "-847,7385";
   const metric = {
