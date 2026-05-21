@@ -52,3 +52,37 @@ test("legacy auto hints in Остатки still remain provider auto", () => {
   assert.equal(result.rows[0].source, "provider_auto");
   assert.equal(result.rows[0].fact_source, "provider_auto");
 });
+
+test("blank Revolut auto snapshot does not overwrite manual confirmed balance", () => {
+  const result = mergeManualAndAutoBalances(
+    [
+      {
+        date: "2026-05-21",
+        channel: "REVOLUT евро",
+        currency: "EUR",
+        amount: "110.74",
+        source: "manual_confirmed_balance",
+        sourceSheet: "Остатки",
+      },
+    ],
+    [
+      {
+        date: "2026-05-21",
+        provider: "revolut",
+        channel: "REVOLUT евро",
+        currency: "EUR",
+        amount: "",
+        source: "revolut_auto",
+        sourceSheet: "Авто Остатки",
+        status: "needs_provider_permission",
+      },
+    ]
+  );
+
+  assert.equal(result.autoIgnored, 1);
+  assert.equal(result.autoUsed, 0);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].amount, "110.74");
+  assert.equal(result.rows[0].source, "manual_fact");
+  assert.equal(result.rows[0].sourceSheet, "Остатки");
+});

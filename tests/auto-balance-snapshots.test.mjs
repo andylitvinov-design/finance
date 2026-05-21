@@ -285,6 +285,14 @@ test("provider unavailable creates dated status rows instead of fake zero rows",
     "пейпал сad|CAD|needs_provider_permission|",
   ]);
   assert.equal(paypalRows.every((row) => row.date === "2026-05-17"), true);
+
+  const revolutRows = result.rows_preview.filter((row) => row.provider === "revolut");
+  assert.deepEqual(revolutRows.map((row) => `${row.channel}|${row.currency}|${row.status}|${row.amount}`).sort(), [
+    "REVOLUT дол|USD|provider_not_implemented|",
+    "REVOLUT евро|EUR|provider_not_implemented|",
+    "REVOLUT франк|CHF|provider_not_implemented|",
+    "REVOLUT фунт|GBP|provider_not_implemented|",
+  ]);
 });
 
 test("same date provider channel currency replaces existing auto row without deleting another currency", () => {

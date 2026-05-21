@@ -114,6 +114,7 @@ function normalizeBalanceCurrency(value, channel) {
   if (/^(uah|грн|гривна|гривны|гривня)$/.test(normalized) || raw === "₴") return "UAH";
   if (/^(rub|руб|рубль|рубли|рубля)$/.test(normalized) || raw === "₽") return "RUB";
   if (/^(cad|кад)$/.test(normalized)) return "CAD";
+  if (/^(chf|франк|франки|franc|francs)$/.test(normalized)) return "CHF";
   if (normalized === "usdt") return "USDT";
   if (/^(local|местная валюта|местная валюты)$/.test(normalized)) return "LOCAL";
   return raw.toUpperCase();
@@ -127,6 +128,7 @@ function inferChannelCurrency(channel) {
   if (/грн/i.test(normalized)) return "UAH";
   if (/(евр|eur|euro)/i.test(normalized)) return "EUR";
   if (/(фунт|gbp|pound)/i.test(normalized)) return "GBP";
+  if (/(франк|chf|franc)/i.test(normalized)) return "CHF";
   if (/(cad|кад|канада)/i.test(normalized)) return "CAD";
   if (/(дол|usd|binance|payoneer - dol|revolut|wise|transferwise|трансервайз)/i.test(normalized)) return "USD";
   if (/местная/i.test(normalized)) return "LOCAL";
@@ -141,7 +143,7 @@ function canonicalManualExpenseChannel(value) {
 
 const MANUAL_FINANCE_CHANNELS = [
   "Яндекс руб","пейпал дол","пейпал евр","пейпал сad","приват 24-дол","приват 24-евро","приват 24-грн","приват-фоп",
-  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","REVOLUT евро","REVOLUT фунт","Payoneer - eur","Payoneer - dol",
+  "монобанк грн","трансервайз дол","трансервайз евро","REVOLUT дол","REVOLUT евро","REVOLUT фунт","REVOLUT франк","Payoneer - eur","Payoneer - dol",
   "Бинанс spot","Binance funding","binance save","Налично -я-евр","местная валюты","БАНК КАНАДА cad","нал-мам-евро","нал-мам-дол"
 ];
 
@@ -1074,15 +1076,18 @@ function normalizeAutoBalanceProvider(provider, source = "", comment = "") {
   if (/mono|monobank|монобанк/.test(text)) return "monobank";
   if (/privat|приват/.test(text)) return "privatbank";
   if (/yoomoney|юmoney|юмани|яндекс/.test(text)) return "yoomoney";
+  if (/tdbank|td bank|банк канада/.test(text)) return "tdbank";
+  if (/payoneer/.test(text)) return "payoneer";
+  if (/revolut|револют/.test(text)) return "revolut";
   return String(provider || "").trim().toLowerCase() || "provider";
 }
 
 function normalizeAutoBalanceSource(source, provider) {
   const raw = String(source || "").trim().toLowerCase();
   if (["paypal_manual_balance", "paypal_manual_confirmed_balance", "paypal_derived_balance"].includes(raw)) return raw;
-  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "provider_auto"].includes(raw)) return raw;
+  if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeAutoBalanceProvider(provider);
-  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
+  if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
   return "provider_auto";
 }
 

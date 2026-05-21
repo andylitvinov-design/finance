@@ -445,6 +445,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           "REVOLUT дол": "",
           "REVOLUT евро": "",
           "REVOLUT фунт": "",
+          "REVOLUT франк": "",
           "Payoneer - eur": "",
           "Payoneer - dol": "",
           "Бинанс spot": "874",
@@ -475,6 +476,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           "REVOLUT дол": "",
           "REVOLUT евро": "",
           "REVOLUT фунт": "",
+          "REVOLUT франк": "",
           "Payoneer - eur": "",
           "Payoneer - dol": "",
           "Бинанс spot": "",
@@ -505,6 +507,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           "REVOLUT дол": "",
           "REVOLUT евро": "",
           "REVOLUT фунт": "",
+          "REVOLUT франк": "",
           "Payoneer - eur": "",
           "Payoneer - dol": "",
           "Бинанс spot": "",
@@ -535,6 +538,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
           "REVOLUT дол": "",
           "REVOLUT евро": "",
           "REVOLUT фунт": "",
+          "REVOLUT франк": "",
           "Payoneer - eur": "",
           "Payoneer - dol": "",
           "Бинанс spot": "",
@@ -565,6 +569,7 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
 	          "REVOLUT дол": "",
 	          "REVOLUT евро": "",
 	          "REVOLUT фунт": "",
+	          "REVOLUT франк": "",
 	          "Payoneer - eur": "",
 	          "Payoneer - dol": "",
 	          "Бинанс spot": "",
@@ -624,11 +629,14 @@ test("loadManualRepositoryFromGoogleSheets preserves Авто Остатки sta
                 range: "'Авто Остатки'!A:L",
                 values: [
                   ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
-                  ["2026-05-20", "binance", "binance save", "5410,644", "USDT", "1", "5410,644", "binance_auto", "2026-05-20T09:00:00.000Z", "binance:save:USDT:2026-05-20", "ok", "auto daily provider snapshot"],
-                  ["2026-05-20", "payoneer", "Payoneer - dol", "", "USD", "1", "", "payoneer_auto", "2026-05-20T09:00:00.000Z", "payoneer:Payoneer - dol:USD:2026-05-20", "provider_not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet."],
-                  ["2026-05-20", "monobank", "монобанк грн", "", "UAH", "1", "", "monobank_auto", "2026-05-20T09:00:00.000Z", "monobank:монобанк грн:UAH:2026-05-20", "needs_permission", "MONOBANK_API_TOKEN is not configured."],
-                ],
-              },
+	                  ["2026-05-20", "binance", "binance save", "5410,644", "USDT", "1", "5410,644", "binance_auto", "2026-05-20T09:00:00.000Z", "binance:save:USDT:2026-05-20", "ok", "auto daily provider snapshot"],
+	                  ["2026-05-20", "payoneer", "Payoneer - dol", "", "USD", "1", "", "payoneer_auto", "2026-05-20T09:00:00.000Z", "payoneer:Payoneer - dol:USD:2026-05-20", "provider_not_implemented", "Payoneer current-balance snapshot endpoint is not wired yet."],
+	                  ["2026-05-20", "monobank", "монобанк грн", "", "UAH", "1", "", "monobank_auto", "2026-05-20T09:00:00.000Z", "monobank:монобанк грн:UAH:2026-05-20", "needs_permission", "MONOBANK_API_TOKEN is not configured."],
+	                  ["2026-05-21", "revolut", "REVOLUT евро", "110.74", "EUR", "1", "110.74", "revolut_auto", "2026-05-21T09:00:00.000Z", "revolut:REVOLUT евро:EUR", "ok", "auto daily provider snapshot"],
+	                  ["2026-05-21", "revolut", "REVOLUT фунт", "0", "GBP", "1", "0", "revolut_auto", "2026-05-21T09:00:00.000Z", "revolut:REVOLUT фунт:GBP", "ok", "auto daily provider snapshot"],
+	                  ["2026-05-21", "revolut", "REVOLUT франк", "15", "CHF", "1", "15", "revolut_auto", "2026-05-21T09:00:00.000Z", "revolut:REVOLUT франк:CHF", "ok", "auto daily provider snapshot"],
+	                ],
+	              },
             ],
           });
         }
@@ -637,7 +645,7 @@ test("loadManualRepositoryFromGoogleSheets preserves Авто Остатки sta
     });
 
     assert.equal(repository.ok, true);
-    assert.equal(repository.autoBalances.length, 3);
+	    assert.equal(repository.autoBalances.length, 6);
     assert.equal(repository.autoBalances[0].amount, "5410,644");
     assert.equal(repository.autoBalances[0].status, "ok");
 
@@ -649,10 +657,22 @@ test("loadManualRepositoryFromGoogleSheets preserves Авто Остатки sta
     assert.equal(payoneer.isStatusOnly, true);
     assert.equal(payoneer.balanceSource, "provider_auto");
 
-    const monobank = repository.autoBalances.find((row) => row.provider === "monobank");
-    assert.equal(monobank.status, "needs_provider_permission");
-    assert.equal(monobank.isStatusOnly, true);
-  } finally {
+	    const monobank = repository.autoBalances.find((row) => row.provider === "monobank");
+	    assert.equal(monobank.status, "needs_provider_permission");
+	    assert.equal(monobank.isStatusOnly, true);
+
+	    assert.deepEqual(
+	      repository.autoBalances
+	        .filter((row) => row.provider === "revolut")
+	        .map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.source}`)
+	        .sort(),
+	      [
+	        "REVOLUT евро|EUR|110.74|revolut_auto",
+	        "REVOLUT франк|CHF|15|revolut_auto",
+	        "REVOLUT фунт|GBP|0|revolut_auto",
+	      ]
+	    );
+	  } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
     if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -691,11 +711,15 @@ test("loadManualRepositoryFromGoogleSheets canonicalizes balance channels and cu
                   ["2026-05-17", "монобанк", "14033", "грн", "", "", ""],
                   ["2026-05-17", "TransferWise", "1070.48", "usd", "", "", ""],
                   ["2026-05-17", "Wise", "0", "евро", "", "", ""],
-                  ["2026-05-17", "БАНК КАНАДА cad", "2380", "кад", "", "", ""],
-                  ["2026-05-17", "Бинанс spot", "103", "usdt", "", "", ""],
-                  ["2026-05-17", "пейпал дол", "100", "USD", "", "", ""],
-                ],
-              },
+	                  ["2026-05-17", "БАНК КАНАДА cad", "2380", "кад", "", "", ""],
+	                  ["2026-05-17", "Бинанс spot", "103", "usdt", "", "", ""],
+	                  ["2026-05-17", "пейпал дол", "100", "USD", "", "", ""],
+	                  ["2026-05-21", "REVOLUT фунт", "0", "GBP", "", "", "manual_confirmed_balance"],
+	                  ["2026-05-21", "REVOLUT евро", "110.74", "EUR", "", "", "manual_confirmed_balance"],
+	                  ["2026-05-21", "REVOLUT франк", "15", "CHF", "", "", "manual_confirmed_balance"],
+	                  ["2026-05-21", "REVOLUT дол", "18.38", "USD", "", "", "manual_confirmed_balance"],
+	                ],
+	              },
               { range: "'План'!A1:E1", values: [["месяц", "канал", "валюта", "сумма", "операция"]] },
               { range: "'Переводы'!A1:D1", values: [["дата перевода", "кто", "сумма", "канал куда"]] },
               { range: "'Комиссии'!A1:D1", values: [["дата", "канал", "сумма в долларах"]] },
@@ -713,11 +737,15 @@ test("loadManualRepositoryFromGoogleSheets canonicalizes balance channels and cu
         { channel: "монобанк грн", currency: "UAH" },
         { channel: "трансервайз дол", currency: "USD" },
         { channel: "трансервайз евро", currency: "EUR" },
-        { channel: "БАНК КАНАДА cad", currency: "CAD" },
-        { channel: "Бинанс spot", currency: "USDT" },
-        { channel: "пейпал дол", currency: "USD" },
-      ]
-    );
+	        { channel: "БАНК КАНАДА cad", currency: "CAD" },
+	        { channel: "Бинанс spot", currency: "USDT" },
+	        { channel: "пейпал дол", currency: "USD" },
+	        { channel: "REVOLUT фунт", currency: "GBP" },
+	        { channel: "REVOLUT евро", currency: "EUR" },
+	        { channel: "REVOLUT франк", currency: "CHF" },
+	        { channel: "REVOLUT дол", currency: "USD" },
+	      ]
+	    );
 
     const reconciliation = buildPeriodBalanceReconciliation({
       period: { from: "2026-05-17", to: "2026-05-17" },
@@ -727,10 +755,28 @@ test("loadManualRepositoryFromGoogleSheets canonicalizes balance channels and cu
         ...repository.balances,
       ],
     });
-    const yandex = reconciliation.by_channel_currency.find((row) => row.channel === "Яндекс руб" && row.currency === "RUB");
-    assert.equal(yandex?.status, "ok");
-    assert.equal(yandex?.factual_closing_balance, 68000);
-  } finally {
+	    const yandex = reconciliation.by_channel_currency.find((row) => row.channel === "Яндекс руб" && row.currency === "RUB");
+	    assert.equal(yandex?.status, "ok");
+	    assert.equal(yandex?.factual_closing_balance, 68000);
+
+	    const revolut = buildPeriodBalanceReconciliation({
+	      period: { from: "2026-05-21", to: "2026-05-21" },
+	      operations: repository.operations,
+	      balanceRows: repository.balances,
+	    });
+	    assert.deepEqual(
+	      revolut.by_channel_currency
+	        .filter((row) => /^REVOLUT /.test(row.channel))
+	        .map((row) => `${row.channel}|${row.currency}|${row.factual_closing_balance}`)
+	        .sort(),
+	      [
+	        "REVOLUT дол|USD|18.38",
+	        "REVOLUT евро|EUR|110.74",
+	        "REVOLUT франк|CHF|15",
+	        "REVOLUT фунт|GBP|0",
+	      ]
+	    );
+	  } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
     if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;

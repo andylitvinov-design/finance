@@ -59,6 +59,9 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "payoneer", channel: "Payoneer - eur", currency: "EUR", source: "payoneer_auto" },
   { provider: "payoneer", channel: "Payoneer - dol", currency: "USD", source: "payoneer_auto" },
   { provider: "revolut", channel: "REVOLUT дол", currency: "USD", source: "revolut_auto" },
+  { provider: "revolut", channel: "REVOLUT евро", currency: "EUR", source: "revolut_auto" },
+  { provider: "revolut", channel: "REVOLUT фунт", currency: "GBP", source: "revolut_auto" },
+  { provider: "revolut", channel: "REVOLUT франк", currency: "CHF", source: "revolut_auto" },
 ];
 
 export function getProviderCurrentBalanceCapabilities(env = process.env) {

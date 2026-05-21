@@ -85,6 +85,7 @@ function buildLedgerTestContext() {
       if (normalized === "revolut usd" || normalized === "revolut dol" || normalized === "revolut дол" || normalized === "револют дол") return "REVOLUT дол";
       if (normalized === "revolut eur" || normalized === "revolut евро" || normalized === "револют евро") return "REVOLUT евро";
       if (normalized === "revolut gbp" || normalized === "revolut фунт" || normalized === "револют фунт") return "REVOLUT фунт";
+      if (normalized === "payoneer eur" || normalized === "payoneer - eur") return "Payoneer - eur";
       return String(value || "").trim();
     },
     getManualFinanceChannels() {
@@ -124,6 +125,7 @@ function buildLedgerTestContext() {
         "REVOLUT дол": "USD",
         "REVOLUT евро": "EUR",
         "REVOLUT фунт": "GBP",
+        "Payoneer - eur": "EUR",
       };
       return map[channel] || "USD";
     },
@@ -757,6 +759,37 @@ test("repeated Revolut statement import keeps source and dedupes by revolut raw_
   assert.equal(saved.rows.length, 1);
   assert.equal(saved.rows[0].source, "revolut");
   assert.equal(saved.rows[0].rawSourceId, "revolut:rev-in-1");
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 1);
+});
+
+test("repeated Payoneer SumUp screenshot save skips duplicate raw_source_id", () => {
+  const context = buildLedgerTestContext();
+  const entry = {
+    date: "2026-05-21",
+    channel: "Payoneer - eur",
+    localAmount: 30,
+    currency: "EUR",
+    usdAmount: null,
+    category: "business",
+    direction: "expense",
+    source: "browser_ocr",
+    sourceTransactionId: "browser_ocr:2026-05-21:payoneer-eur:30:eur:sumup-raiz-mediterra",
+    rawSourceId: "browser_ocr:2026-05-21:payoneer-eur:30:eur:sumup-raiz-mediterra",
+    raw_source_id: "browser_ocr:2026-05-21:payoneer-eur:30:eur:sumup-raiz-mediterra",
+    counterparty: "SumUp *Raiz mediterra",
+    description: "SumUp *Raiz mediterra"
+  };
+  const ledgerRows = plain(context.buildLedgerRowsFromAccountingEntries([entry, { ...entry }]));
+
+  const saved = plain(context.normalizeManualLedgerRowsForSave(ledgerRows, []));
+
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.rows[0].source, "browser_ocr");
+  assert.equal(saved.rows[0].rawSourceId, entry.rawSourceId);
+  assert.equal(saved.rows[0].fromChannel, "Payoneer - eur");
+  assert.equal(saved.rows[0].amount, "30,0000");
+  assert.equal(saved.rows[0].currency, "EUR");
   assert.equal(saved.added_count, 1);
   assert.equal(saved.duplicate_count, 1);
 });
