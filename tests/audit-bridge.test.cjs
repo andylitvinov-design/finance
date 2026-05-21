@@ -8,6 +8,7 @@ const {
   getAuditSnapshotUrl,
   getDebuggerUrl,
   getLiveUrl,
+  shouldUseMobileSafeMode,
 } = require("../audit-bridge.js");
 
 const EZOHATA_AUDITOR_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
@@ -38,6 +39,23 @@ test("debugger and live URLs fall back to safe defaults", () => {
   assert.equal(getDebuggerUrl({ debuggerUrl: "https://chatgpt.com/g/ezo-debugger/" }), "https://chatgpt.com/g/ezo-debugger/");
 });
 
+test("mobile safe mode only applies to mobile ChatGPT debugger URLs", () => {
+  const android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36";
+
+  assert.equal(shouldUseMobileSafeMode({
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: android,
+  }), true);
+  assert.equal(shouldUseMobileSafeMode({
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+  }), false);
+  assert.equal(shouldUseMobileSafeMode({
+    debuggerUrl: "https://auditor.example.test/",
+    userAgent: android,
+  }), false);
+});
+
 test("audit snapshot URL is fixed and never includes includeRows", async () => {
   const calls = [];
   const snapshot = { ok: true, summary: { ledger_rows: 1 } };
@@ -59,7 +77,7 @@ test("audit snapshot URL is fixed and never includes includeRows", async () => {
   assert.equal(String(calls[0].url).includes("includeRows"), false);
 });
 
-test("runAudit copies prompt and opens configured debugger URL", async () => {
+test("desktop runAudit copies prompt and opens configured debugger URL", async () => {
   const writes = [];
   const opened = [];
   const bridge = createAuditBridge({
@@ -82,6 +100,7 @@ test("runAudit copies prompt and opens configured debugger URL", async () => {
       throw new Error("fallback should not be shown");
     },
     debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
   });
 
   const result = await bridge.runAudit();
@@ -92,6 +111,48 @@ test("runAudit copies prompt and opens configured debugger URL", async () => {
   assert.equal(writes.length, 1);
   assert.match(writes[0], /^EzoHata Debugger task\./);
   assert.match(writes[0], /Snapshot:\n/);
+});
+
+test("Android runAudit copies prompt but does not open ChatGPT debugger URL", async () => {
+  const writes = [];
+  const statuses = [];
+  const opened = [];
+  const bridge = createAuditBridge({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { ok: true, warnings: [] };
+      },
+    }),
+    clipboard: {
+      async writeText(value) {
+        writes.push(value);
+      },
+    },
+    openWindow(url) {
+      opened.push(url);
+    },
+    setStatus(message, isError = false) {
+      statuses.push({ message, isError });
+    },
+    showFallback() {
+      throw new Error("fallback should not be shown");
+    },
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36",
+  });
+
+  const result = await bridge.runAudit();
+
+  assert.equal(result.copied, true);
+  assert.equal(result.mobileSafeMode, true);
+  assert.equal(result.debuggerUrl, "https://chatgpt.com/g/ezo-debugger/");
+  assert.deepEqual(opened, []);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(statuses.at(-1), {
+    message: "Prompt copied. Mobile safe mode: открой EzoHata Auditor вручную и вставь prompt.",
+    isError: false,
+  });
 });
 
 test("runAudit opens EzoHata Auditor by default", async () => {
@@ -147,6 +208,7 @@ test("clipboard failure exposes fallback prompt without opening debugger", async
     showFallback(prompt) {
       fallbackPrompts.push(prompt);
     },
+    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36",
   });
 
   const result = await bridge.runAudit();
@@ -158,5 +220,44 @@ test("clipboard failure exposes fallback prompt without opening debugger", async
   assert.deepEqual(statuses.at(-1), {
     message: "Clipboard unavailable. Скопируй prompt вручную.",
     isError: true,
+  });
+});
+
+test("copyCurrentPrompt only copies and never opens debugger", async () => {
+  const opened = [];
+  const writes = [];
+  const statuses = [];
+  const bridge = createAuditBridge({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { ok: true, warnings: [] };
+      },
+    }),
+    clipboard: {
+      async writeText(value) {
+        writes.push(value);
+      },
+    },
+    openWindow(url) {
+      opened.push(url);
+    },
+    setStatus(message, isError = false) {
+      statuses.push({ message, isError });
+    },
+    showFallback() {
+      throw new Error("fallback should not be shown");
+    },
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+  });
+
+  const result = await bridge.copyCurrentPrompt();
+
+  assert.equal(result.copied, true);
+  assert.deepEqual(opened, []);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(statuses.at(-1), {
+    message: "Prompt copied.",
+    isError: false,
   });
 });

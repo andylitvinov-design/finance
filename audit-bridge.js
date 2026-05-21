@@ -5,6 +5,8 @@
   const DEFAULT_DEBUGGER_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
   const DEFAULT_LIVE_URL = "https://ezohata-incoming-ledger.vercel.app/";
   const SUCCESS_MESSAGE = "Prompt copied. Открыл EzoHata Auditor.";
+  const COPY_SUCCESS_MESSAGE = "Prompt copied.";
+  const MOBILE_SAFE_MESSAGE = "Prompt copied. Mobile safe mode: открой EzoHata Auditor вручную и вставь prompt.";
 
   function normalizeUrl(value, fallback) {
     const raw = String(value || "").trim();
@@ -28,6 +30,22 @@
       ? `${root.location.origin}/`
       : "";
     return normalizeUrl(options.liveUrl || currentOrigin || DEFAULT_LIVE_URL, DEFAULT_LIVE_URL);
+  }
+
+  function isMobileUserAgent(userAgent) {
+    return /\b(Android|iPhone|iPad|iPod|Mobile|Windows Phone)\b/i.test(String(userAgent || ""));
+  }
+
+  function isChatGptDebuggerUrl(debuggerUrl) {
+    try {
+      return new URL(debuggerUrl).hostname.toLowerCase() === "chatgpt.com";
+    } catch {
+      return false;
+    }
+  }
+
+  function shouldUseMobileSafeMode(options = {}) {
+    return isMobileUserAgent(options.userAgent) && isChatGptDebuggerUrl(getDebuggerUrl(options));
   }
 
   function buildAuditPrompt(snapshot, options = {}) {
@@ -90,10 +108,12 @@
     setStatus,
     showFallback,
     debuggerUrl,
+    userAgent = root.navigator?.userAgent,
     promptOptions = {},
   }) {
     let prompt = "";
     const resolvedDebuggerUrl = getDebuggerUrl({ debuggerUrl });
+    const useMobileSafeMode = shouldUseMobileSafeMode({ debuggerUrl: resolvedDebuggerUrl, userAgent });
 
     async function loadPrompt() {
       const snapshot = await fetchAuditSnapshot(fetchImpl);
@@ -125,6 +145,10 @@
         setStatus("Clipboard unavailable. Скопируй prompt вручную.", true);
         return result;
       }
+      if (useMobileSafeMode) {
+        setStatus(MOBILE_SAFE_MESSAGE);
+        return { ...result, debuggerUrl: resolvedDebuggerUrl, mobileSafeMode: true };
+      }
       openWindow(resolvedDebuggerUrl);
       setStatus(SUCCESS_MESSAGE);
       return { ...result, debuggerUrl: resolvedDebuggerUrl };
@@ -134,7 +158,7 @@
       setStatus("Copying prompt...");
       const result = await copyPrompt();
       if (result.copied) {
-        setStatus(SUCCESS_MESSAGE);
+        setStatus(COPY_SUCCESS_MESSAGE);
       } else {
         setStatus("Clipboard unavailable. Скопируй prompt вручную.", true);
       }
@@ -188,6 +212,7 @@
       setStatus,
       showFallback,
       debuggerUrl: root.EZOHATA_AUDIT_DEBUGGER_URL,
+      userAgent: root.navigator?.userAgent,
     });
 
     async function handleAction(action) {
@@ -218,7 +243,10 @@
     getAuditSnapshotUrl,
     getDebuggerUrl,
     getLiveUrl,
+    isChatGptDebuggerUrl,
+    isMobileUserAgent,
     initAuditBridge,
+    shouldUseMobileSafeMode,
   };
 
   if (typeof module !== "undefined" && module.exports) {

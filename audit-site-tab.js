@@ -91,6 +91,7 @@
       setStatus,
       showFallback,
       debuggerUrl: root.EZOHATA_AUDIT_DEBUGGER_URL,
+      userAgent: root.navigator?.userAgent,
     });
 
     async function handleAction(action) {
