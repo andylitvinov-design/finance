@@ -71,30 +71,49 @@ test("summary metrics render directly in the top card flow", () => {
   context.renderMetrics();
 
   assert.equal(elements.metricOrders.textContent, "-5,7118");
-  assert.equal(elements.metricTransfers.textContent, "-246,6382");
+  assert.equal(elements.metricTransfers.textContent, "-102,4382");
   assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
 });
 
-test("payable helper calculates 30 percent of orders minus paid", () => {
-  const summary = runPayablePatch(() => ({ totalOrders: 1148.45, totalPaid: 847.7385, total: 43.8235 }));
+test("payable helper calculates 70 percent of orders minus paid plus discounted personal orders", () => {
+  const summary = runPayablePatch(() => ({
+    totalOrders: 1499.55,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 204.7059,
+    total: -515.8389
+  }));
 
-  assert.equal(Number(summary.payable.toFixed(4)), -503.2035);
+  assert.equal(Number(summary.payable.toFixed(4)), 288.6870);
   assert.equal(summary.total, summary.payable);
-  assert.equal(summary.payableFormula, "totalOrders * 0.3 - abs(totalPaid)");
+  assert.equal(summary.payableFormula, "totalOrders * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount");
+  assert.doesNotMatch(summary.payableFormula, /0\.3/);
 });
 
 test("payable helper uses the displayed paid amount when internal paid total is negative", () => {
-  const summary = runPayablePatch(() => ({ totalOrders: 1148.45, totalPaid: -847.7385, total: 43.8235 }));
+  const summary = runPayablePatch(() => ({ totalOrders: 1499.55, totalPaid: -965.7039, personalOrdersAfterDiscount: 204.7059, total: -515.8389 }));
 
-  assert.equal(Number(summary.payable.toFixed(4)), -503.2035);
+  assert.equal(Number(summary.payable.toFixed(4)), 288.6870);
   assert.equal(summary.total, summary.payable);
 });
 
-test("payable helper leaves a positive amount when paid is below 30 percent", () => {
+test("payable helper uses 70 percent of orders when there are no personal orders", () => {
   const summary = runPayablePatch(() => ({ totalOrders: 1000, totalPaid: 100, total: -999 }));
 
-  assert.equal(summary.payable, 200);
-  assert.equal(summary.total, 200);
-  assert.equal(summary.payableShareRate, 0.3);
+  assert.equal(summary.payable, 600);
+  assert.equal(summary.total, summary.payable);
+  assert.equal(summary.payableShareRate, 0.7);
+});
+
+test("payable helper adds discounted personal order total, not gross order cost", () => {
+  const summary = runPayablePatch(() => ({
+    totalOrders: 100,
+    totalPaid: 0,
+    personalOrdersAfterDiscount: 50,
+    grossPersonalOrders: 100,
+    total: -999
+  }));
+
+  assert.equal(summary.payable, 120);
+  assert.equal(summary.total, summary.payable);
 });

@@ -4690,6 +4690,7 @@ function buildTopMetricsSummary() {
 
   const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
   const manualOrdersTotal = parseLooseNumber(ordersSummary.totalAccruedPlus3Pct);
+  const personalOrdersAfterDiscount = parseLooseNumber(ordersSummary.personalOrdersAfterDiscount ?? manualOrdersTotal);
   const ordersReceivedUsdTotal = parseLooseNumber(ordersSummary.totalReceivedUsd);
   const ordersBalanceTotal = parseLooseNumber(ordersSummary.totalBalanceUsd);
   const totalPaid = calculateCurrentOverallPayoutUsdTotal();
@@ -4714,6 +4715,7 @@ function buildTopMetricsSummary() {
     balance,
     totalPaid,
     total: upgradeTotals.total,
+    personalOrdersAfterDiscount,
     ownerOrderShare30Pct: upgradeTotals.ownerOrderShare30Pct,
     realIncomeTotal: upgradeTotals.realIncomeTotal,
     myServices: factTotals.myServices,
