@@ -422,36 +422,46 @@
     monthlyPlan.data.rows = rows;
 
     const wrap = document.createElement("div");
-    wrap.className = "table-wrap analysis-table-wrap";
-    const table = document.createElement("table");
-    const tbody = document.createElement("tbody");
-    const headerRow = document.createElement("tr");
-    ["месяц", "доход от заказов", "доход от услуг", "расходы на бизнес", "квартира %", "еда %", "развлечения %", "путешествия %", "учеба %", "прочее %", "комментарий"].forEach((label) => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      headerRow.appendChild(th);
-    });
-    tbody.appendChild(headerRow);
-    const fields = ["month", "ordersIncomePlanUsd", "servicesIncomePlanUsd", "businessExpensePlanUsd", "flatPct", "foodPct", "funPct", "travelPct", "studyPct", "extraPct", "comment"];
+    wrap.className = "monthly-plan-grid";
+    const fields = [
+      ["month", "Месяц", "YYYY-MM"],
+      ["ordersIncomePlanUsd", "Доход от заказов", ""],
+      ["servicesIncomePlanUsd", "Доход от услуг", ""],
+      ["businessExpensePlanUsd", "Расходы на бизнес", ""],
+      ["flatPct", "Квартира %", ""],
+      ["foodPct", "Еда %", ""],
+      ["funPct", "Развлечения %", ""],
+      ["travelPct", "Путешествия %", ""],
+      ["studyPct", "Учеба %", ""],
+      ["extraPct", "Прочее %", ""],
+      ["comment", "Комментарий", ""]
+    ];
     rows.forEach((row) => {
-      const tr = document.createElement("tr");
-      fields.forEach((field) => {
-        const td = document.createElement("td");
+      const card = document.createElement("section");
+      card.className = "monthly-plan-card";
+      const title = document.createElement("h3");
+      title.textContent = row.month || "Новый месяц";
+      card.appendChild(title);
+      fields.forEach(([field, label, placeholder]) => {
+        const fieldWrap = document.createElement("label");
+        fieldWrap.className = "monthly-plan-field";
+        const fieldLabel = document.createElement("span");
+        fieldLabel.textContent = label;
         const input = document.createElement("input");
         input.className = "finance-input";
+        input.dataset.field = field;
         input.value = row[field] || "";
-        input.placeholder = field === "month" ? "YYYY-MM" : "";
+        input.placeholder = placeholder;
         input.addEventListener("input", (event) => {
           row[field] = String(event.target.value || "").trim();
+          if (field === "month") title.textContent = row[field] || "Новый месяц";
           monthlyPlan.dirty = true;
         });
-        td.appendChild(input);
-        tr.appendChild(td);
+        fieldWrap.append(fieldLabel, input);
+        card.appendChild(fieldWrap);
       });
-      tbody.appendChild(tr);
+      wrap.appendChild(card);
     });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
     block.appendChild(wrap);
 
     const hint = document.createElement("div");

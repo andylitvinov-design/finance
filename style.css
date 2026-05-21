@@ -150,6 +150,36 @@ tr:nth-child(even) td { background: #fffcf7; }
 }
 .finance-status.error { background: rgba(157, 61, 49, 0.1); color: var(--danger); }
 .finance-actions, .tab-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.monthly-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+}
+.monthly-plan-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.monthly-plan-card h3 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+.monthly-plan-field {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.72fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.monthly-plan-field span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
 .movement-export-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-start; margin: 10px 0 14px; }
 .manual-order-textarea {
   display: block;
