@@ -36,9 +36,10 @@ function buildContext() {
       endDate: { value: "2026-05-31" }
     },
     getManualFinanceChannels() {
-      return ["пейпал дол", "приват 24-грн", "монобанк грн"];
+      return ["пейпал дол", "приват 24-грн", "монобанк грн", "Payoneer - eur", "Payoneer - dol"];
     },
     inferManualFinanceChannelCurrency(channel) {
+      if (/eur|евр/i.test(channel)) return "EUR";
       if (/грн|uah/i.test(channel)) return "UAH";
       return "USD";
     },
@@ -75,6 +76,12 @@ function buildContext() {
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(uiJs, "parseExpenseOcrText")}\n` +
+    `${extractFunction(uiJs, "parseCardReceiptExpenseOcrEntries")}\n` +
+    `${extractFunction(uiJs, "isCardReceiptExpenseOcrContext")}\n` +
+    `${extractFunction(uiJs, "extractUnsignedCardReceiptAmount")}\n` +
+    `${extractFunction(uiJs, "findCardReceiptMerchant")}\n` +
+    `${extractFunction(uiJs, "isCardReceiptMerchantLine")}\n` +
+    `${extractFunction(uiJs, "inferCardReceiptOcrChannel")}\n` +
     `${extractFunction(uiJs, "isPrivat24ExpenseOcrContext")}\n` +
     `${extractFunction(uiJs, "hasYooMoneyExpenseOcrMarker")}\n` +
     `${extractFunction(uiJs, "parsePrivat24ExpenseOcrEntries")}\n` +
@@ -115,6 +122,51 @@ test("browser OCR parses Ukrainian Privat24 date section and income card", () =>
   assert.equal(result.entries[0].dateSource, "screenshot");
   assert.equal(result.entries[0].localAmount, 8700);
   assert.equal(result.entries[0].currency, "UAH");
+});
+
+test("browser OCR parses Google Wallet Payoneer unsigned card purchase", () => {
+  const context = buildContext();
+  const result = context.parseExpenseOcrText(
+    [
+      "Payoneer Card [PEL] ••9007",
+      "SumUp *Raiz mediterra",
+      "€30.00",
+      "Completed • Thursday, May 21 at 2:06 p.m.",
+      "Purchase made on phone",
+    ].join("\n"),
+    0,
+    "2026-05-21"
+  );
+
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].date, "2026-05-21");
+  assert.equal(result.entries[0].dateSource, "screenshot");
+  assert.equal(result.entries[0].direction, "expense");
+  assert.equal(result.entries[0].localAmount, 30);
+  assert.equal(result.entries[0].currency, "EUR");
+  assert.equal(result.entries[0].channel, "Payoneer - eur");
+  assert.equal(result.entries[0].counterparty, "SumUp *Raiz mediterra");
+});
+
+test("browser OCR ignores card suffixes while parsing unsigned receipt amount", () => {
+  const context = buildContext();
+  const result = context.parseExpenseOcrText(
+    [
+      "Google Wallet",
+      "Payoneer Card [PEL] ••9007",
+      "Virtual account 9293",
+      "SumUp *Raiz mediterra",
+      "30.00 EUR",
+      "Completed • Thursday, May 21 at 2:06 p.m.",
+    ].join("\n"),
+    0,
+    "2026-05-21"
+  );
+
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].localAmount, 30);
+  assert.equal(result.entries[0].currency, "EUR");
+  assert.equal(result.entries[0].counterparty, "SumUp *Raiz mediterra");
 });
 
 test("browser OCR normalizes Privat24 income to serviceIncome channel and counterparty", () => {
