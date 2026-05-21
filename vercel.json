@@ -65,6 +65,6 @@
       "destination": "/api/index?action=manualWorkbook&route=manual-savings"
     }
   ],
-  "cleanUrls": true,
+  "cleanUrls": false,
   "trailingSlash": false
 }
