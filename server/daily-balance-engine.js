@@ -71,6 +71,12 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         provider_reported_balance: providerReported === null ? null : round(providerReported),
         difference,
         status,
+        ...buildMissingProviderContext({
+          status,
+          movement,
+          closing,
+          balanceIndex,
+        }),
       });
 
       const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
@@ -316,6 +322,8 @@ function buildBalanceIndex(balanceRows) {
       amount,
       source: String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim(),
       sourceSheet: String(row?.sourceSheet || row?.source_sheet || "").trim(),
+      sourceRow: row?.sourceRow || row?.source_row || null,
+      provider: String(row?.provider || "").trim(),
       comment: String(row?.comment || "").trim(),
     };
     byDateKey.set(`${date}|${key}`, normalized);
@@ -328,6 +336,33 @@ function buildBalanceIndex(balanceRows) {
   }
 
   return { byKey, byDateKey, incompleteDateKeys };
+}
+
+function buildMissingProviderContext({ status, movement, closing, balanceIndex }) {
+  if (status !== STATUS.MISSING_PROVIDER) return {};
+  const laterSnapshot = findNearestLaterSnapshot(movement, balanceIndex);
+  if (!laterSnapshot) {
+    return {
+      missing_provider_balance_context: "no_later_fact",
+      missing_provider_balance_reason: `No provider/manual fact exists for ${movement.date} ${movement.channel} ${movement.currency}.`,
+    };
+  }
+  const amount = round(laterSnapshot.amount);
+  return {
+    missing_provider_balance_context: "later_fact_exists",
+    missing_provider_balance_reason: `Provider/manual fact exists for ${laterSnapshot.date}, but exact same-day fact is missing for ${movement.date}.`,
+    nearest_later_provider_fact_date: laterSnapshot.date,
+    nearest_later_provider_fact_amount: amount,
+    nearest_later_provider_fact_source: laterSnapshot.source || "",
+    nearest_later_provider_fact_source_sheet: laterSnapshot.sourceSheet || "",
+    nearest_later_provider_fact_source_row: laterSnapshot.sourceRow || null,
+    later_provider_fact_difference: closing === null ? null : round(amount - closing),
+  };
+}
+
+function findNearestLaterSnapshot(movement, balanceIndex) {
+  const snapshots = balanceIndex.byKey.get(movement.key) || [];
+  return snapshots.find((row) => row.date > movement.date && row.amount !== null) || null;
 }
 
 function buildCoverageBalanceIndex(balanceRows) {

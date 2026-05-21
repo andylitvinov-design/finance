@@ -385,6 +385,40 @@ test("Ostatki same-day date is treated as end-of-day provider reported balance",
   assert.equal(result.rows[0].status, "ok");
 });
 
+test("missing same-day provider balance reports later owner-confirmed fact context", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-11",
+        toChannel: "монобанк грн",
+        currency: "UAH",
+        amountNet: "9105",
+        balanceAmount: 9105,
+        ledgerV2: {
+          date: "2026-05-11",
+          operation: "income",
+          to_channel: "монобанк грн",
+          currency: "UAH",
+          amount_net: "9105",
+          balance_amount: 9105,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-06", channel: "монобанк грн", amount: "3928", currency: "UAH", source: "manual_fact", sourceSheet: "Остатки" },
+      { date: "2026-05-20", channel: "монобанк грн", amount: "13033.14", currency: "UAH", source: "manual_owner_confirmed", sourceSheet: "Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].status, "missing_provider_balance");
+  assert.equal(result.rows[0].difference, null);
+  assert.equal(result.rows[0].provider_reported_balance, null);
+  assert.equal(result.rows[0].missing_provider_balance_context, "later_fact_exists");
+  assert.equal(result.rows[0].nearest_later_provider_fact_date, "2026-05-20");
+  assert.equal(result.rows[0].nearest_later_provider_fact_amount, 13033.14);
+  assert.equal(result.rows[0].later_provider_fact_difference, 0.14);
+});
+
 test("previous snapshot plus intervening movement produces next opening balance", () => {
   const result = buildDailyCurrencyBalances(
     [

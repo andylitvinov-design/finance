@@ -794,3 +794,51 @@ test("audit snapshot returns copyable missing Остатки rows from balance c
     "date\tchannel\tcurrency\tcurrent_ostatki_amount\tcomputed_amount_hint\trequired_provider_evidence\tdo_not_apply_automatically\n2026-04-30\tмонобанк грн\tUAH\t\t17363\tProvider closing balance for this exact date/channel/currency\ttrue"
   );
 });
+
+test("audit snapshot reports later Monobank fact context without hiding tiny difference", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-21" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-11",
+          toChannel: "монобанк грн",
+          amount: "9105",
+          amountNet: "9105",
+          currency: "UAH",
+          source: "monobank",
+          ledgerV2: {
+            date: "2026-05-11",
+            operation: "income",
+            to_channel: "монобанк грн",
+            amount: "9105",
+            amount_net: "9105",
+            currency: "UAH",
+            balance_amount: 9105,
+            source: "monobank",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-06", channel: "монобанк грн", currency: "UAH", amount: "3928", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-20", channel: "монобанк грн", currency: "UAH", amount: "13033.14", source: "manual_owner_confirmed", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.daily_balances.rows.find((entry) => entry.channel === "монобанк грн");
+  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.closing_balance, 13033);
+  assert.equal(row.difference, null);
+  assert.equal(row.missing_provider_balance_context, "later_fact_exists");
+  assert.equal(row.nearest_later_provider_fact_date, "2026-05-20");
+  assert.equal(row.nearest_later_provider_fact_amount, 13033.14);
+  assert.equal(row.later_provider_fact_difference, 0.14);
+});
