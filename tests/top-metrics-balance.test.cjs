@@ -82,6 +82,7 @@ test("top metrics balance uses explicit balance columns for movement and orders"
   vm.createContext(context);
   vm.runInContext(
     `${extractFunction(ordersJs, "buildOrdersSummaryFromClient")}\n` +
+    `${extractFunction(ordersJs, "isManualOrdersTotalRow")}\n` +
     `${extractFunction(financeJs, "getMovementTotalsFromTable")}\n` +
     `${extractFunction(financeJs, "getMovementSummaryMetric")}\n` +
     `${extractFunction(financeJs, "buildTopMetricsSummary")}\n` +

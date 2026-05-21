@@ -5,7 +5,8 @@
   }
   root.EzohataOrdersHelper = factory();
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const SIMPLE_HEADERS = ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ"];
+  const DEFAULT_DISCOUNT_PERCENT = 50;
+  const SIMPLE_HEADERS = ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"];
   const SIMPLE_WIDTH = SIMPLE_HEADERS.length;
 
   function normalizeCell(value) {
@@ -61,6 +62,19 @@
     const numeric = typeof value === "number" ? value : parseLooseNumber(value);
     if (!Number.isFinite(numeric)) return "";
     return String(Math.round(numeric * 10000) / 10000).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+  }
+
+  function formatDiscount(value = DEFAULT_DISCOUNT_PERCENT) {
+    const numeric = parseLooseNumber(value);
+    if (!Number.isFinite(numeric)) return "";
+    return `${formatNumber(numeric)}%`;
+  }
+
+  function calculateDiscountedTotal(cost, discountPercent = DEFAULT_DISCOUNT_PERCENT) {
+    const numericCost = parseLooseNumber(cost);
+    const numericDiscount = parseLooseNumber(discountPercent);
+    if (!Number.isFinite(numericCost) || !Number.isFinite(numericDiscount)) return "";
+    return formatNumber(numericCost * numericDiscount / 100);
   }
 
   function extractTrailingCost(text) {
@@ -145,8 +159,20 @@
     return String(value || "").replace(/^\d+\)\s*/, "").trim();
   }
 
+  function stripLeadingListMarker(value) {
+    return stripLeadingNumbering(String(value || "").replace(/^[-–—]\s+/, "").trim());
+  }
+
   function isNumberedLine(value) {
     return /^\d+\)\s*/.test(String(value || "").trim());
+  }
+
+  function isDashedItemLine(value) {
+    return /^[-–—]\s+\S/.test(String(value || "").trim());
+  }
+
+  function isListItemLine(value) {
+    return isNumberedLine(value) || isDashedItemLine(value);
   }
 
   function isDecorativeLine(value) {
@@ -160,28 +186,50 @@
     (lines || []).forEach((line) => {
       const raw = String(line || "").trim();
       if (!raw) return;
-      if (/^\d+\)\s*/.test(raw) && current.length) {
+      if (isListItemLine(raw) && current.length) {
         items.push(current.join(" ").trim());
         current = [];
       }
-      current.push(stripLeadingNumbering(raw));
+      current.push(stripLeadingListMarker(raw));
     });
     if (current.length) items.push(current.join(" ").trim());
     return items.filter(Boolean);
   }
 
-  function buildRow(date, name, orderText, cost) {
-    return [date || "", name || "", orderText || "", cost || ""];
+  function buildRow(date, name, orderText, cost, discount = "", total = "") {
+    const normalizedCost = formatNumber(cost);
+    const normalizedDiscount = normalizedCost ? (discount || formatDiscount(DEFAULT_DISCOUNT_PERCENT)) : (discount || "");
+    const normalizedTotal = total || (normalizedCost ? calculateDiscountedTotal(normalizedCost, normalizedDiscount || DEFAULT_DISCOUNT_PERCENT) : "");
+    return [date || "", name || "", orderText || "", normalizedCost, normalizedDiscount, normalizedTotal];
+  }
+
+  function buildTotalRow(rows) {
+    const total = (rows || []).reduce((sum, row) => {
+      if (isTotalRow(row)) return sum;
+      return sum + (parseLooseNumber(row?.[5]) || 0);
+    }, 0);
+    return ["", "", "ИТОГО", "", "", formatNumber(total)];
+  }
+
+  function appendTotalRow(rows) {
+    const cleanRows = (rows || []).filter((row) => !isTotalRow(row));
+    if (!cleanRows.length) return [];
+    return [...cleanRows, buildTotalRow(cleanRows)];
+  }
+
+  function isTotalRow(row) {
+    return (row || []).some((cell) => normalizeCell(cell) === "итого");
   }
 
   function parseManualOrdersTextBlocks(text, defaultDate) {
     const fallbackYearSource = defaultDate;
-    return String(text || "")
+    const rows = String(text || "")
       .split(/\n\s*\n+/)
       .map((block) => block.trim())
       .filter(Boolean)
       .flatMap((block) => parseBlock(block, fallbackYearSource))
       .filter((row) => row.some((cell) => String(cell || "").trim()));
+    return appendTotalRow(rows);
   }
 
   function parseBlock(block, fallbackYearSource) {
@@ -202,9 +250,9 @@
       });
     }
 
-    const hasNumberedItems = lines.some(isNumberedLine);
+    const hasListItems = lines.some(isListItemLine);
     return splitNumberedItems(lines).map((item) => {
-      if (hasNumberedItems) {
+      if (hasListItems) {
         const parsed = extractTrailingCost(item);
         return buildRow("", "", parsed.text, parsed.cost);
       }
@@ -224,7 +272,7 @@
     if (header.length <= SIMPLE_WIDTH) {
       return {
         headers: SIMPLE_HEADERS.slice(),
-        rows: rows.slice(1).map((row) => padRow(row, SIMPLE_WIDTH)),
+        rows: rows.slice(1).map((row) => normalizeSimpleRow(row)),
       };
     }
 
@@ -240,11 +288,15 @@
         readCell(row, headerIndex.costTertiary),
         readCell(row, headerIndex.costFallback),
       ]);
+      const discount = readCell(row, headerIndex.discount) || formatDiscount(DEFAULT_DISCOUNT_PERCENT);
+      const total = readCell(row, headerIndex.total) || calculateDiscountedTotal(cost, discount);
       return buildRow(
         date,
         name,
         [service, comment].filter(Boolean).join(" | "),
-        formatNumber(cost)
+        cost,
+        discount,
+        total
       );
     });
 
@@ -252,6 +304,11 @@
       headers: SIMPLE_HEADERS.slice(),
       rows: mappedRows,
     };
+  }
+
+  function normalizeSimpleRow(row) {
+    const padded = padRow(row, SIMPLE_WIDTH);
+    return buildRow(padded[0], padded[1], padded[2], padded[3], padded[4], padded[5]);
   }
 
   function buildHeaderIndex(header) {
@@ -264,6 +321,8 @@
       costSecondary: findHeaderIndex(header, ["accrued"]),
       costTertiary: findHeaderIndex(header, ["price base", "price"]),
       costFallback: findHeaderIndex(header, ["получено в долларах итого (сводный)", "received total usd"]),
+      discount: findHeaderIndex(header, ["скидка", "discount"]),
+      total: findHeaderIndex(header, ["итого", "total", "total after discount"]),
     };
   }
 
