@@ -80,11 +80,36 @@ async function callDashboardApi(startDate, endDate) {
   url.searchParams.set("startDate", startDate);
   url.searchParams.set("endDate", endDate);
   const response = await fetch(url.toString(), { cache: "no-store" });
-  const payload = await response.json().catch(() => null);
+  const payload = await readDashboardJsonResponse(response, "Dashboard endpoint");
   if (!response.ok || !payload?.ok || !payload?.data?.tabs) {
     throw new Error(payload?.error || `Dashboard endpoint failed (${response.status}).`);
   }
   return payload;
+}
+
+async function readDashboardJsonResponse(response, label = "Dashboard endpoint") {
+  const contentType = String(response.headers?.get?.("content-type") || "");
+  const text = await response.text();
+  const bodyExcerpt = text.slice(0, 300);
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw buildDashboardResponseError(label, response, contentType, bodyExcerpt, "returned non-JSON response");
+  }
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    throw buildDashboardResponseError(label, response, contentType, bodyExcerpt, "returned invalid JSON");
+  }
+}
+
+function buildDashboardResponseError(label, response, contentType, bodyExcerpt, reason) {
+  const status = Number(response?.status) || 0;
+  const safeContentType = contentType || "unknown content-type";
+  const excerpt = bodyExcerpt ? ` Body: ${bodyExcerpt}` : "";
+  const error = new Error(`${label} ${reason} (${status}, ${safeContentType}).${excerpt}`);
+  error.status = status;
+  error.contentType = safeContentType;
+  error.bodyExcerpt = bodyExcerpt;
+  return error;
 }
 
 function getConfiguredAppVersion() {
@@ -223,7 +248,7 @@ async function loadDashboardDataViaEndpoint(startDate, endDate) {
   url.searchParams.set("startDate", startDate);
   url.searchParams.set("endDate", endDate);
   const response = await fetch(url.toString(), { cache: "no-store" });
-  const payload = await response.json();
+  const payload = await readDashboardJsonResponse(response, "Dashboard endpoint");
   if (!response.ok || !payload?.ok || !payload?.data?.tabs) {
     throw new Error(payload?.error || `Dashboard endpoint failed (${response.status}).`);
   }
