@@ -105,7 +105,8 @@ const state = {
     dirty: false,
     status: "",
     error: false,
-    textDraft: ""
+    textDraft: "",
+    draftRowKeys: []
   },
   analyticsFact: {
     periodStart: "",

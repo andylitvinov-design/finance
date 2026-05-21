@@ -5582,45 +5582,43 @@ function renderManualOrdersBlock() {
     return shell;
   }
 
-  const tableWrap = document.createElement("div");
-  tableWrap.className = "table-wrap manual-orders-table-wrap";
-  const table = document.createElement("table");
-  table.className = "manual-orders-table";
-  const tbody = document.createElement("tbody");
-  const headerRow = document.createElement("tr");
   const headers = state.manualOrders.data.headers;
-  headers.forEach((cell) => {
-    const th = document.createElement("th");
-    th.textContent = cell || "";
-    headerRow.appendChild(th);
-  });
-  const actionHeader = document.createElement("th");
-  actionHeader.textContent = "";
-  headerRow.appendChild(actionHeader);
-  tbody.appendChild(headerRow);
+  const groups = getManualOrdersRowsBySaveStatus(state.manualOrders.data.rows);
 
-  state.manualOrders.data.rows.forEach((row, rowIndex) => {
-    const tr = document.createElement("tr");
-    row.forEach((cell, cellIndex) => {
-      const td = document.createElement("td");
-      td.appendChild(renderManualOrderField(rowIndex, cellIndex, cell, headers[cellIndex]));
-      tr.appendChild(td);
-    });
-    const actionTd = document.createElement("td");
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.className = "ghost";
-    removeButton.textContent = "Удалить";
-    removeButton.addEventListener("click", () => removeManualOrderRow(rowIndex));
-    actionTd.appendChild(removeButton);
-    tr.appendChild(actionTd);
-    tbody.appendChild(tr);
-  });
+  if (groups.draft.length) {
+    const draftSection = document.createElement("section");
+    draftSection.className = "manual-order-draft-section";
+    const title = document.createElement("div");
+    title.className = "tab-note";
+    title.textContent = "Новые после разбора";
+    draftSection.appendChild(title);
+    draftSection.appendChild(renderManualOrdersMobileCards(headers, groups.draft));
+    shell.appendChild(draftSection);
+  }
 
-  table.appendChild(tbody);
-  tableWrap.appendChild(table);
-  shell.appendChild(tableWrap);
-  shell.appendChild(renderManualOrdersMobileCards(headers, state.manualOrders.data.rows));
+  if (groups.saved.length) {
+    const savedSection = document.createElement("section");
+    savedSection.className = "manual-orders-saved-section";
+    const title = document.createElement("div");
+    title.className = "tab-note";
+    title.textContent = "В источнике данных";
+    savedSection.appendChild(title);
+    const savedWrap = document.createElement("div");
+    savedWrap.className = "table-wrap manual-orders-saved-table-wrap";
+    savedWrap.appendChild(renderPlainTable([
+      [...headers, "СТАТУС"],
+      ...groups.saved.map(({ row }) => [...row.slice(0, headers.length), "в источнике"]),
+    ]));
+    savedSection.appendChild(savedWrap);
+    shell.appendChild(savedSection);
+  }
+
+  if (!groups.draft.length && !groups.saved.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Нет заказов для отображения.";
+    shell.appendChild(empty);
+  }
 
   const footerActions = document.createElement("div");
   footerActions.className = "finance-actions";
@@ -5647,8 +5645,10 @@ function renderManualOrderField(rowIndex, cellIndex, cell, header) {
 
 function renderManualOrdersMobileCards(headers, rows) {
   const container = document.createElement("div");
-  container.className = "manual-orders-mobile-cards";
-  (rows || []).forEach((row, rowIndex) => {
+  container.className = "manual-order-draft-cards manual-orders-mobile-cards";
+  (rows || []).forEach((entry, fallbackIndex) => {
+    const row = Array.isArray(entry) ? entry : entry?.row;
+    const rowIndex = Array.isArray(entry) ? fallbackIndex : entry?.rowIndex;
     const card = document.createElement("article");
     card.className = "manual-order-mobile-card";
     (headers || []).forEach((header, cellIndex) => {

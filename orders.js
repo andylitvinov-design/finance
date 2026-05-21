@@ -11,6 +11,7 @@ async function loadManualOrdersSheet(interactive = false) {
     }
     const payload = await getManualOrdersSheetDirect();
     state.manualOrders.data = buildManualOrdersStateFromPayload(payload);
+    clearManualOrdersDraftMarkers();
     state.manualOrders.dirty = false;
     setManualOrdersStatus("Orders открыты из manual workbook.", false);
     applyManualOrdersToDashboard(elements.startDate.value, elements.endDate.value);
@@ -36,6 +37,7 @@ function openLocalManualOrders(statusMessage, isError = true) {
     rows: saved?.rows || buildDefaultManualOrdersRows(),
     spreadsheetUrl: config.spreadsheetUrl
   });
+  clearManualOrdersDraftMarkers();
   state.manualOrders.dirty = false;
   setManualOrdersStatus(statusMessage, isError);
 }
@@ -45,6 +47,7 @@ async function saveManualOrdersSheet() {
   state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
   if (!hasConfiguredManualOrdersEndpoint()) {
     persistLocalOrdersDraft(state.manualOrders.data);
+    clearManualOrdersDraftMarkers();
     state.manualOrders.dirty = false;
     setManualOrdersStatus("Локальный orders draft сохранён в браузере.", false);
     renderTabs();
@@ -58,6 +61,7 @@ async function saveManualOrdersSheet() {
       headers: state.manualOrders.data.headers,
       rows: state.manualOrders.data.rows
     });
+    clearManualOrdersDraftMarkers();
     await loadManualOrdersSheet(false);
     setManualOrdersStatus(`Orders сохранены в manual workbook. ${response?.savedAt || ""}`.trim(), false);
     await loadDashboardData();
@@ -107,6 +111,52 @@ function normalizeManualOrdersRows(rows) {
   return appendManualOrdersTotalRow(normalized);
 }
 
+function normalizeManualOrderKeyCell(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase().replace(/ё/g, "е");
+}
+
+function getManualOrderRowKey(row) {
+  const normalized = recalculateManualOrderRow(row);
+  if (!hasAnyValue(normalized) || isManualOrdersTotalRow(normalized)) return "";
+  return normalized.slice(0, MANUAL_ORDERS_HEADERS.length).map(normalizeManualOrderKeyCell).join("|");
+}
+
+function getManualOrdersDraftKeySet() {
+  if (!Array.isArray(state.manualOrders.draftRowKeys)) state.manualOrders.draftRowKeys = [];
+  return new Set(state.manualOrders.draftRowKeys);
+}
+
+function markManualOrderRowAsDraft(row) {
+  const key = getManualOrderRowKey(row) || "__manual_order_blank_draft__";
+  const keys = getManualOrdersDraftKeySet();
+  keys.add(key);
+  state.manualOrders.draftRowKeys = Array.from(keys);
+}
+
+function clearManualOrdersDraftMarkers() {
+  state.manualOrders.draftRowKeys = [];
+}
+
+function isManualOrderDraftRow(row) {
+  const key = getManualOrderRowKey(row) || "__manual_order_blank_draft__";
+  return getManualOrdersDraftKeySet().has(key);
+}
+
+function getManualOrdersDataRows(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => hasAnyValue(row) && !isManualOrdersTotalRow(row));
+}
+
+function getManualOrdersRowsBySaveStatus(rows) {
+  const groups = { draft: [], saved: [] };
+  (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+    if (isManualOrdersTotalRow(row)) return;
+    const entry = { row, rowIndex };
+    if (isManualOrderDraftRow(row)) groups.draft.push(entry);
+    else if (hasAnyValue(row)) groups.saved.push(entry);
+  });
+  return groups;
+}
+
 function buildManualOrdersValuesFromState(headers, rows) {
   return [normalizeManualOrdersHeaders(headers), ...normalizeManualOrdersRows(rows)];
 }
@@ -127,23 +177,37 @@ function parseManualOrdersValues(values) {
 function updateManualOrderValue(rowIndex, cellIndex, rawValue) {
   const row = state.manualOrders.data?.rows?.[rowIndex];
   if (!row) return;
+  const wasDraft = isManualOrderDraftRow(row);
+  const previousDraftKey = getManualOrderRowKey(row) || "__manual_order_blank_draft__";
   row[cellIndex] = rawValue;
   state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
+  if (wasDraft) {
+    state.manualOrders.draftRowKeys = Array.from(getManualOrdersDraftKeySet()).filter((key) => key !== previousDraftKey);
+    const updated = getManualOrdersDataRows(state.manualOrders.data.rows)[rowIndex];
+    if (updated) markManualOrderRowAsDraft(updated);
+  }
   state.manualOrders.dirty = true;
 }
 
 function addManualOrderRow() {
   if (!state.manualOrders.data) return;
   const rows = (state.manualOrders.data.rows || []).filter((row) => !isManualOrdersTotalRow(row));
-  rows.push(Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => ""));
+  const row = Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => "");
+  rows.push(row);
   state.manualOrders.data.rows = rows;
+  markManualOrderRowAsDraft(row);
   state.manualOrders.dirty = true;
   renderTabs();
 }
 
 function removeManualOrderRow(rowIndex) {
   if (!state.manualOrders.data) return;
+  const removed = state.manualOrders.data.rows[rowIndex];
+  const removedKey = removed ? (getManualOrderRowKey(removed) || "__manual_order_blank_draft__") : "";
   state.manualOrders.data.rows.splice(rowIndex, 1);
+  if (removedKey) {
+    state.manualOrders.draftRowKeys = Array.from(getManualOrdersDraftKeySet()).filter((key) => key !== removedKey);
+  }
   state.manualOrders.data.rows = normalizeManualOrdersRows(state.manualOrders.data.rows);
   if (!state.manualOrders.data.rows.length) {
     state.manualOrders.data.rows = buildDefaultManualOrdersRows();
@@ -166,16 +230,39 @@ function appendManualOrdersFromText() {
   }
   const parser = ORDERS_HELPER.parseManualOrdersTextBlocks;
   const defaultDate = elements.endDate.value || elements.startDate.value || "";
-  const rows = typeof parser === "function" ? parser(rawText, defaultDate) : [];
-  if (!rows.length) {
+  const parsedRows = typeof parser === "function" ? getManualOrdersDataRows(parser(rawText, defaultDate)) : [];
+  if (!parsedRows.length) {
     setManualOrdersStatus("Не удалось разобрать текст заказа.", true);
     renderTabs();
     return;
   }
-  state.manualOrders.data.rows = normalizeManualOrdersRows(rows.map((row) => row.slice()));
+  const savedRows = getManualOrdersRowsBySaveStatus(state.manualOrders.data.rows).saved.map(({ row }) => recalculateManualOrderRow(row));
+  const savedKeys = new Set(savedRows.map(getManualOrderRowKey).filter(Boolean));
+  const newRows = [];
+  const newKeys = new Set();
+  let alreadySavedCount = 0;
+  let duplicateCount = 0;
+  parsedRows.forEach((row) => {
+    const normalized = recalculateManualOrderRow(row);
+    const key = getManualOrderRowKey(normalized);
+    if (!key) return;
+    if (savedKeys.has(key)) {
+      alreadySavedCount += 1;
+      return;
+    }
+    if (newKeys.has(key)) {
+      duplicateCount += 1;
+      return;
+    }
+    newKeys.add(key);
+    newRows.push(normalized);
+  });
+  state.manualOrders.data.rows = normalizeManualOrdersRows([...savedRows, ...newRows]);
+  clearManualOrdersDraftMarkers();
+  newRows.forEach((row) => markManualOrderRowAsDraft(row));
   state.manualOrders.textDraft = "";
-  state.manualOrders.dirty = true;
-  setManualOrdersStatus(`Текст разобран в ${state.manualOrders.data.rows.filter((row) => !isManualOrdersTotalRow(row)).length} строк(и). Таблица заказов пересобрана из текущего текста.`, false);
+  state.manualOrders.dirty = newRows.length > 0;
+  setManualOrdersStatus(`Текст разобран: новых ${newRows.length}, уже в источнике ${alreadySavedCount}, пропущено дублей ${duplicateCount}. Новые показаны карточками, сохранённые — краткой таблицей.`, false);
   applyManualOrdersToDashboard(elements.startDate.value, elements.endDate.value);
   renderTabs();
 }
@@ -219,6 +306,7 @@ async function syncManualOrdersForCurrentRange(startDate, endDate) {
     if (hasConfiguredManualOrdersEndpoint()) {
       const payload = await getManualOrdersSheetDirect();
       state.manualOrders.data = buildManualOrdersStateFromPayload(payload);
+      clearManualOrdersDraftMarkers();
     } else if (getLocalOrdersDraft()) {
       openLocalManualOrders("Открыт локальный orders draft.", false);
     }

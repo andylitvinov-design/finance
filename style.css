@@ -192,6 +192,18 @@ tr:nth-child(even) td { background: #fffcf7; }
   line-height: 1.35;
 }
 .manual-orders-mobile-cards { display: none; }
+.manual-order-draft-section,
+.manual-orders-saved-section {
+  display: grid;
+  gap: 10px;
+}
+.manual-order-draft-cards {
+  display: grid;
+  gap: 10px;
+}
+.manual-orders-saved-table-wrap table {
+  min-width: 720px;
+}
 .manual-order-mobile-card {
   display: grid;
   gap: 10px;
