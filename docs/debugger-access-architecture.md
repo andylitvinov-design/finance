@@ -14,6 +14,55 @@ Use this order for production debugging:
 
 If these disagree, treat it as a deploy/source-of-truth or observability mismatch before changing finance formulas.
 
+## Agent Debug Bundle
+
+Use `scripts/agent-debug-bundle.mjs` as the standard pre-patch evidence collector for production finance bugs.
+
+Examples:
+
+```bash
+node scripts/agent-debug-bundle.mjs --period=2026-05
+node scripts/agent-debug-bundle.mjs --from=2026-05-01 --to=2026-05-20
+node scripts/agent-debug-bundle.mjs --period=2026-05 --expected-sha=<sha>
+npm run debug:bundle -- --period=2026-05
+```
+
+The bundle fetches, in order:
+
+1. `GET /api/status`
+2. `GET /api/audit-snapshot`
+3. `GET /api/debug-full`
+4. `GET /api/debug-ui-state`
+
+For every endpoint it records:
+
+- method;
+- URL;
+- HTTP status;
+- content-type;
+- first 300 body characters when the response is not JSON or cannot be parsed;
+- parsed JSON summary when JSON is available.
+
+The compact report includes:
+
+- production source: `commitSha`, `commitRef`, `gitRepoSlug`, deploy URL, production URL, expected SHA if supplied;
+- audit snapshot period, summary, `amount_net` balance flags, daily-balance summary, balance coverage summary, warnings;
+- debug UI state top metrics, finance analysis summary, expense analysis summary, transfer analysis summary, source counts, warnings;
+- final classification: `source ok`, `deploy/source mismatch`, `API unavailable`, `audit unavailable`, `debug-ui unavailable`, or `needs verification`.
+
+When `--expected-sha=<sha>` is supplied, the script exits non-zero if production `/api/status.commitSha` does not match that expected SHA.
+
+Security rules:
+
+- never print debug tokens;
+- never print env values;
+- redact bearer/basic auth;
+- redact emails;
+- redact long account/card-like numbers;
+- redact token/secret/private-key/client-secret-looking values.
+
+Codex must include the Agent Debug Bundle output or a precise blocker in every production bug final report.
+
 ## Endpoints
 
 ### `/api/status`
@@ -146,10 +195,11 @@ For runtime/API/provider/UI bugs, record:
 
 For every screenshot discrepancy:
 
-1. Check `/api/status` first.
-2. If deploy/source is stale, do not patch business logic yet.
-3. Check `/api/audit-snapshot` for ledger/provider/balance evidence.
-4. Check `/api/debug-ui-state` for UI aggregate evidence.
-5. Only then inspect code and patch the proven failing layer.
+1. Run `npm run debug:bundle -- --period=<YYYY-MM>` or the exact `--from/--to` range.
+2. Check `/api/status` first.
+3. If deploy/source is stale, do not patch business logic yet.
+4. Check `/api/audit-snapshot` for ledger/provider/balance evidence.
+5. Check `/api/debug-ui-state` for UI aggregate evidence.
+6. Only then inspect code and patch the proven failing layer.
 
 Always report `needs verification` instead of claiming exact root cause when row-level evidence is unavailable.
