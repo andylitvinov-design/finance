@@ -7,7 +7,14 @@ const {
   parseManualOrdersTextBlocks,
 } = require("../orders-helper.js");
 
-test("parseManualOrdersTextBlocks splits numbered items inside one date-name block", () => {
+const HEADERS = ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"];
+const TOTAL_ROW_50 = ["", "", "ИТОГО", "", "", "50"];
+
+test("simple orders contract has discount and total columns", () => {
+  assert.deepEqual(SIMPLE_HEADERS, HEADERS);
+});
+
+test("parseManualOrdersTextBlocks splits numbered items and appends discounted total", () => {
   const rows = parseManualOrdersTextBlocks(
     [
       "14/04 Литвинов Андрей",
@@ -25,34 +32,60 @@ test("parseManualOrdersTextBlocks splits numbered items inside one date-name blo
     "2026-05-21"
   );
 
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 5);
   assert.deepEqual(rows[0], [
     "14.04.2026",
     "Литвинов Андрей",
     "есть напряжение 6 ед в зоне между - небо - брови - центр головы. как столкновение полей давление по ментальным тела Вищудха 3 вылив темного ментала - которы натыкается на мои тела",
     "50",
+    "50%",
+    "25",
   ]);
   assert.deepEqual(rows[1], [
     "21.05.2026",
     "Литвинов Андрей",
     "сжатие - на уровне живота - разовый стресс 6 ед - неудобство перед мужчиной который больше меня, сильнее меня /сжатие / неудобно себя чувствую / нияковость",
     "25",
+    "50%",
+    "12.5",
   ]);
   assert.deepEqual(rows[2], [
     "21.05.2026",
     "Литвинов Андрей",
     "на уровне горла - испуг внезапный - с мужчиной которы йбольше меня, сильнее меня 8 ед",
     "25",
+    "50%",
+    "12.5",
   ]);
   assert.deepEqual(rows[3], [
     "",
     "литвинова наталья",
     "разовый стресс приближение собтсвенной смерти 20 ед",
     "",
+    "",
+    "",
+  ]);
+  assert.deepEqual(rows[4], TOTAL_ROW_50);
+});
+
+test("parseManualOrdersTextBlocks supports dash-listed orders without numeric order ids", () => {
+  const rows = parseManualOrdersTextBlocks(
+    [
+      "20.05.2026 Литвинов Андрей",
+      "- ментальный сжимающий комплекс который срабатывает на энергии страха 1,5 ед 25",
+      "- второй заказ без номера 40",
+    ].join("\n"),
+    "2026-05-20"
+  );
+
+  assert.deepEqual(rows, [
+    ["20.05.2026", "Литвинов Андрей", "ментальный сжимающий комплекс который срабатывает на энергии страха 1,5 ед", "25", "50%", "12.5"],
+    ["20.05.2026", "Литвинов Андрей", "второй заказ без номера", "40", "50%", "20"],
+    ["", "", "ИТОГО", "", "", "32.5"],
   ]);
 });
 
-test("mapLegacyOrdersValues collapses old wide sheet into 4 simple columns", () => {
+test("mapLegacyOrdersValues collapses old wide sheet into discounted simple columns", () => {
   const mapped = mapLegacyOrdersValues([
     [
       "NUMBER",
@@ -75,7 +108,7 @@ test("mapLegacyOrdersValues collapses old wide sheet into 4 simple columns", () 
   ]);
 
   assert.deepEqual(mapped.headers, SIMPLE_HEADERS);
-  assert.deepEqual(mapped.rows[0], ["21.04.2026", "Андрей", "Расчистка | оплата 2 частями", "206"]);
+  assert.deepEqual(mapped.rows[0], ["21.04.2026", "Андрей", "Расчистка | оплата 2 частями", "206", "50%", "103"]);
 });
 
 test("parseManualOrdersTextBlocks applies one header date and name to all numbered items", () => {
@@ -92,18 +125,19 @@ test("parseManualOrdersTextBlocks applies one header date and name to all number
   );
 
   assert.deepEqual(rows, [
-    ["04.03.2026", "литвинов анд", "реакция на ипостась - человек который несет некую власть надо мной / в ее присутствии - негатив 3,5 ед я ежусь", "25"],
-    ["04.03.2026", "литвинов анд", "реакция на повышенный эмоциональный фон когда человек со мной говорит, толчки 2 ед", ""],
-    ["04.03.2026", "литвинов анд", "эмоциональный разговор с женщинами на повышенных тонах, женская истерика, толчки 3 ед", ""],
-    ["04.03.2026", "литвинов анд", "комплекс - реакция когда меня проверяют, факт - букет испуг пренебрежение 2.5", "25"],
-    ["04.03.2026", "литвинов анд", "меня контролирует (на ресепшине, с кем я прихожу) - срабатывает психический блок 1.5", "50"],
+    ["04.03.2026", "литвинов анд", "реакция на ипостась - человек который несет некую власть надо мной / в ее присутствии - негатив 3,5 ед я ежусь", "25", "50%", "12.5"],
+    ["04.03.2026", "литвинов анд", "реакция на повышенный эмоциональный фон когда человек со мной говорит, толчки 2 ед", "", "", ""],
+    ["04.03.2026", "литвинов анд", "эмоциональный разговор с женщинами на повышенных тонах, женская истерика, толчки 3 ед", "", "", ""],
+    ["04.03.2026", "литвинов анд", "комплекс - реакция когда меня проверяют, факт - букет испуг пренебрежение 2.5", "25", "50%", "12.5"],
+    ["04.03.2026", "литвинов анд", "меня контролирует (на ресепшине, с кем я прихожу) - срабатывает психический блок 1.5", "50", "50%", "25"],
+    TOTAL_ROW_50,
   ]);
 });
 
 test("parseManualOrdersTextBlocks keeps numbered order words out of name without a header", () => {
   const rows = parseManualOrdersTextBlocks("1) реакция на повышенный эмоциональный фон 25", "2026-05-05");
 
-  assert.deepEqual(rows, [["", "", "реакция на повышенный эмоциональный фон", "25"]]);
+  assert.deepEqual(rows, [["", "", "реакция на повышенный эмоциональный фон", "25", "50%", "12.5"], ["", "", "ИТОГО", "", "", "12.5"]]);
 });
 
 test("parseManualOrdersTextBlocks ignores decorative emoji divider lines", () => {
@@ -116,7 +150,7 @@ test("parseManualOrdersTextBlocks ignores decorative emoji divider lines", () =>
     "2026-05-05"
   );
 
-  assert.deepEqual(rows, [["04.03.2026", "литвинов анд", "заказ после декора", "25"]]);
+  assert.deepEqual(rows, [["04.03.2026", "литвинов анд", "заказ после декора", "25", "50%", "12.5"], ["", "", "ИТОГО", "", "", "12.5"]]);
 });
 
 test("parseManualOrdersTextBlocks parses russian month headers with fallback year", () => {
@@ -128,7 +162,7 @@ test("parseManualOrdersTextBlocks parses russian month headers with fallback yea
     "2026-05-05"
   );
 
-  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "25"]]);
+  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "25", "50%", "12.5"], ["", "", "ИТОГО", "", "", "12.5"]]);
 });
 
 test("parseManualOrdersTextBlocks parses russian month headers with explicit year", () => {
@@ -140,5 +174,5 @@ test("parseManualOrdersTextBlocks parses russian month headers with explicit yea
     "2026-01-01"
   );
 
-  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "50"]]);
+  assert.deepEqual(rows, [["04.05.2026", "Литвин", "заказ с русским месяцем", "50", "50%", "25"], ["", "", "ИТОГО", "", "", "25"]]);
 });
