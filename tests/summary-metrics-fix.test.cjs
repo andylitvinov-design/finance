@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const uiJs = fs.readFileSync(path.join(root, "ui.js"), "utf8");
 const topMetricPayableShareFixJs = fs.readFileSync(path.join(root, "top-metric-payable-share-fix.js"), "utf8");
+const personalOrdersPayableBadgeJs = fs.readFileSync(path.join(root, "personal-orders-payable-badge.js"), "utf8");
 const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
 function extractFunction(source, name) {
@@ -32,11 +33,7 @@ function runPayablePatch(buildTopMetricsSummary) {
   return context.buildTopMetricsSummary();
 }
 
-test("summary metrics render directly in the top card flow", () => {
-  assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
-  assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/summary-metrics-fix\.js["'][^>]*>/);
-  assert.match(indexHtml, /<script[^>]+src=["']\.\/top-metric-payable-share-fix\.js["'][^>]*>/);
-
+function renderMetricsWithSummary(summary) {
   const elements = {
     metricPeriod: makeNode(),
     metricOrders: makeNode(),
@@ -45,18 +42,15 @@ test("summary metrics render directly in the top card flow", () => {
     metricMyServices: makeNode(),
     metricProfit: makeNode(),
     metricMyCosts: makeNode(),
+    metricPersonalOrdersAfterDiscount: makeNode(),
   };
   const context = {
     elements,
-    buildTopMetricsSummary: () => ({
-      totalOrders: 360.5,
-      balance: 5.7118,
-      totalPaid: 354.7882,
-      total: -200.8499,
-      myServices: 200,
-      myCosts: 150,
-      profit: 50,
-    }),
+    buildTopMetricsSummary: () => ({ ...summary }),
+    parseLooseNumber: (value) => {
+      const parsed = Number(String(value ?? "").trim().replace(/\s+/g, "").replace(",", "."));
+      return Number.isFinite(parsed) ? parsed : 0;
+    },
     formatSheetNumber: (value, precision = 4) => Number(value).toFixed(precision).replace(".", ","),
   };
   context.globalThis = context;
@@ -67,13 +61,80 @@ test("summary metrics render directly in the top card flow", () => {
     `${extractFunction(uiJs, "renderMetrics")}\nthis.renderMetrics = renderMetrics;`,
     context
   );
-
+  vm.runInContext(personalOrdersPayableBadgeJs, context);
   context.renderMetrics();
+  return { context, elements };
+}
+
+test("summary metrics render directly in the top card flow", () => {
+  assert.match(indexHtml, /<div class="metric-label">Оплатить<\/div>/);
+  assert.match(indexHtml, /id="metricPersonalOrdersAfterDiscount"/);
+  assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/summary-metrics-fix\.js["'][^>]*>/);
+  assert.match(indexHtml, /<script[^>]+src=["']\.\/top-metric-payable-share-fix\.js["'][^>]*>/);
+  assert.match(indexHtml, /<script[^>]+src=["']\.\/personal-orders-payable-badge\.js["'][^>]*>/);
+
+  const { elements } = renderMetricsWithSummary({
+    totalOrders: 360.5,
+    balance: 5.7118,
+    totalPaid: 354.7882,
+    total: -200.8499,
+    myServices: 200,
+    myCosts: 150,
+    profit: 50,
+  });
 
   assert.equal(elements.metricOrders.textContent, "-5,7118");
   assert.equal(elements.metricTransfers.textContent, "-102,4382");
   assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
+  assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
+});
+
+test("top metrics personal orders badge uses exact payable formula component", () => {
+  const { elements } = renderMetricsWithSummary({
+    totalOrders: 1407.05,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 32.5,
+    balance: 0,
+    total: 0,
+    myServices: 0,
+    myCosts: 0,
+    profit: 0,
+  });
+
+  assert.equal(elements.metricTransfers.textContent, "51,7311");
+  assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 32,5000");
+});
+
+test("top metrics personal orders badge falls back to ordersSummary value", () => {
+  const { elements } = renderMetricsWithSummary({
+    totalOrders: 100,
+    totalPaid: 20,
+    ordersSummary: { personalOrdersAfterDiscount: 12.3456 },
+    balance: 0,
+    total: 0,
+    myServices: 0,
+    myCosts: 0,
+    profit: 0,
+  });
+
+  assert.equal(elements.metricTransfers.textContent, "62,3456");
+  assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 12,3456");
+});
+
+test("top metrics personal orders badge shows zero when field is missing", () => {
+  const { elements } = renderMetricsWithSummary({
+    totalOrders: 100,
+    totalPaid: 20,
+    balance: 0,
+    total: 0,
+    myServices: 0,
+    myCosts: 0,
+    profit: 0,
+  });
+
+  assert.equal(elements.metricTransfers.textContent, "50,0000");
+  assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
 });
 
 test("payable helper calculates 70 percent of orders minus paid plus discounted personal orders", () => {
