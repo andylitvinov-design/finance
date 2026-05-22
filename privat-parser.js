@@ -30,14 +30,26 @@ function extractInputRows(input) {
 }
 
 function normalizePrivatLedgerRows(row, index = 0) {
-  const date = normalizeDate(firstNonEmpty(row.date, row.operationDate, row.operation_date, row.trandate, row.dat_od, row.time, row.дата, row["Дата операции"], row["Дата"]));
-  const description = firstNonEmpty(row.description, row.purpose, row.nazn, row.paymentPurpose, row.details, row.info, row["Описание"], row["Назначение платежа"], row["Детали операции"]);
+  const date = normalizeDate(firstNonEmpty(row.date, row.operationDate, row.operation_date, row.trandate, row.dat_od, row.time, row.дата, row["Дата операції"], row["Дата операции"], row["Дата"]));
+  const description = firstNonEmpty(row.description, row.purpose, row.nazn, row.paymentPurpose, row.details, row.info, row["Опис операції"], row["Описание операции"], row["Описание"], row["Назначение платежа"], row["Детали операции"]);
   const counterparty = firstNonEmpty(row.counterparty, row.counterpartyName, row.name, row.contragentName, row.AUT_MY_NAM, row.merchant, row.merchantName, row["Контрагент"], row["Получатель"], row["Отправитель"]);
-  const externalId = firstNonEmpty(row.external_id, row.externalId, row.id, row.transactionId, row.ref, row.reference, row.trn_id, row.docNumber, `privat-${date || "unknown"}-${index}`);
+  const amount = parseSignedAmount(row);
+  const externalId = firstNonEmpty(
+    row.external_id,
+    row.externalId,
+    row.id,
+    row.transactionId,
+    row.ref,
+    row.reference,
+    row.trn_id,
+    row.docNumber,
+    row.operation_number,
+    row.card && date && amount ? `privat-${date}-${String(row.card).replace(/\s+/g, "")}-${formatNumber(amount)}-${index}` : "",
+    `privat-${date || "unknown"}-${index}`
+  );
   if (looksLikeExchange(row, description)) return buildExchangeRows(row, { date, description, counterparty, externalId });
 
-  const amount = parseSignedAmount(row);
-  const currency = normalizeCurrency(firstNonEmpty(row.currency, row.ccy, row.currencyCode, row.cardCurrency, row.accountCurrency, row["Валюта"], row["Валюта карты"]));
+  const currency = normalizeCurrency(firstNonEmpty(row.currency, row.ccy, row.currencyCode, row.cardCurrency, row.card_currency, row.accountCurrency, row["Валюта"], row["Валюта картки"], row["Валюта карты"]));
   const direction = inferDirection(row, amount);
   const channel = getPrivatChannel(currency);
   const transfer = looksLikeOwnTransfer(row, description);
@@ -46,6 +58,11 @@ function normalizePrivatLedgerRows(row, index = 0) {
   const operation = transfer ? "partner_transfer" : (needsReview ? "correction" : (direction === "income" ? "income" : (category === "business" ? "business_expense" : "personal_expense")));
   const reviewPrefix = needsReview ? "needs_review: " : "";
   const feeAmount = Math.abs(parseBankNumber(firstNonEmpty(row.fee, row.commission, row["Комиссия"], row["Комісія"])));
+  const statementBalanceAfter = parseOptionalBankNumber(firstNonEmpty(row.balance_after, row.balanceAfter, row.closing_balance, row["Залишок на кінець періоду"]));
+  const comment = [
+    `${reviewPrefix}${description}`.trim(),
+    statementBalanceAfter !== null ? `statement balance after: ${formatNumber(statementBalanceAfter)} ${currency}` : ""
+  ].filter(Boolean).join(" | ");
   return [{
     date,
     operation,
@@ -57,7 +74,7 @@ function normalizePrivatLedgerRows(row, index = 0) {
     category,
     subcategory: "",
     direction: direction === "income" ? "in" : (needsReview ? "neutral" : "out"),
-    comment: `${reviewPrefix}${description}`.trim(),
+    comment,
     counterparty,
     description,
     source: "privat24",
@@ -131,13 +148,20 @@ function parseJson(text) {
 function parseCsvText(text) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) return [];
-  const delimiter = detectDelimiter(lines[0]);
-  const header = splitCsvLine(lines[0], delimiter).map(normalizeHeader);
-  if (!header.includes("date") && !header.includes("amount") && !header.includes("description")) return [];
-  return lines.slice(1).map((line) => {
+  const headerIndex = lines.findIndex((line) => looksLikeHeaderLine(line));
+  if (headerIndex < 0 || headerIndex >= lines.length - 1) return [];
+  const delimiter = detectDelimiter(lines[headerIndex]);
+  const header = splitCsvLine(lines[headerIndex], delimiter).map(normalizeHeader);
+  return lines.slice(headerIndex + 1).map((line) => {
     const cells = splitCsvLine(line, delimiter);
     return Object.fromEntries(header.map((name, index) => [name, cells[index] || ""]));
   });
+}
+
+function looksLikeHeaderLine(line) {
+  const delimiter = detectDelimiter(line);
+  const header = splitCsvLine(line, delimiter).map(normalizeHeader);
+  return header.includes("date") && (header.includes("amount") || header.includes("description") || header.includes("balance_after"));
 }
 
 function parseFallbackText(text) {
@@ -185,6 +209,7 @@ function normalizeHeader(value) {
   const aliases = {
     operation_date: "date",
     дата_операции: "date",
+    дата_операції: "date",
     дата: "date",
     trandate: "date",
     dat_od: "date",
@@ -193,7 +218,14 @@ function normalizeHeader(value) {
     сумма_операции: "amount",
     сума_операції: "amount",
     сумма_в_валюте_карты: "amount",
+    сума_в_валюті_картки: "amount",
     сума_у_валюті_картки: "amount",
+    сумма_в_валюте_картки: "amount",
+    сума_в_валюте_карты: "amount",
+    amount_in_card_currency: "amount",
+    сумма_в_валюте_транзакции: "transaction_amount",
+    сума_в_валюті_транзакції: "transaction_amount",
+    amount_in_transaction_currency: "transaction_amount",
     suma: "amount",
     sum: "amount",
     расход: "debit",
@@ -205,18 +237,35 @@ function normalizeHeader(value) {
     ccy: "currency",
     валюта: "currency",
     валюта_карты: "currency",
+    валюта_картки: "currency",
+    валюта_транзакції: "transaction_currency",
+    валюта_транзакции: "transaction_currency",
     назначение_платежа: "description",
     описание: "description",
+    опис: "description",
+    опис_операції: "description",
+    описание_операции: "description",
     детали_операции: "description",
     purpose: "description",
     nazn: "description",
+    категорія: "statement_category",
+    категория: "statement_category",
+    картка: "card",
+    карта: "card",
     контрагент: "counterparty",
     получатель: "counterparty",
     отправитель: "counterparty",
     contragent_name: "counterparty",
+    залишок_на_кінець_періоду: "balance_after",
+    остаток_на_конец_периода: "balance_after",
+    balance_after_operation: "balance_after",
+    валюта_залишку: "balance_currency",
+    валюта_остатка: "balance_currency",
     ref: "external_id",
     номер_операции: "external_id",
     id_операции: "external_id",
+    номер_операції: "external_id",
+    id_операції: "external_id",
     комиссия: "fee",
     комісія: "fee"
   };
@@ -224,18 +273,18 @@ function normalizeHeader(value) {
 }
 
 function looksLikeExchange(row, description = "") {
-  const text = normalizeText([description, row.type, row.operationType, row.trantype, row.category].join(" "));
+  const text = normalizeText([description, row.type, row.operationType, row.trantype, row.category, row.statement_category].join(" "));
   if (/обмiн|обмін|обмен|exchange|конвертац|купiвля валюти|купівля валюти|продаж валюти/.test(text)) return true;
   return Boolean(firstNonEmpty(row.toAmount, row.buyAmount, row.inAmount, row.receivedAmount) && firstNonEmpty(row.fromAmount, row.sellAmount, row.outAmount, row.amount));
 }
 
 function looksLikeOwnTransfer(row, description = "") {
-  const text = normalizeText([description, row.type, row.operationType, row.category].join(" "));
+  const text = normalizeText([description, row.type, row.operationType, row.category, row.statement_category].join(" "));
   return /между своими|між своїми|власн|own account|between own|transfer between/.test(text);
 }
 
 function looksAmbiguous(row, description = "") {
-  const text = normalizeText([description, row.type, row.operationType, row.category].join(" "));
+  const text = normalizeText([description, row.type, row.operationType, row.category, row.statement_category].join(" "));
   if (/невідом|неизвест|unknown|manual review|needs review/.test(text)) return true;
   return !text && !firstNonEmpty(row.counterparty, row.counterpartyName, row.name, row.merchantName);
 }
@@ -248,7 +297,7 @@ function inferDirection(row, amount) {
 }
 
 function parseSignedAmount(row) {
-  const explicit = firstNonEmpty(row.amount, row.sum, row.value, row.amt, row["Сумма операции"]);
+  const explicit = firstNonEmpty(row.amount, row.card_amount, row.sum, row.value, row.amt, row["Сумма операции"], row["Сума операції"]);
   if (explicit) return parseBankNumber(explicit);
   const debit = parseBankNumber(firstNonEmpty(row.debit, row["Дебет"], row["Расход"]));
   if (debit) return -Math.abs(debit);
@@ -257,9 +306,8 @@ function parseSignedAmount(row) {
   return 0;
 }
 
-
 function inferCategory(row) {
-  const text = normalizeText([row.description, row.purpose, row.mcc].filter(Boolean).join(" "));
+  const text = normalizeText([row.description, row.purpose, row.mcc, row.statement_category].filter(Boolean).join(" "));
   if (/курс|обуч|навч|учеб|school|study/.test(text)) return "travel";
   if (/еда|food|продукт|кафе|coffee|restaurant|маркет/.test(text)) return "food";
   if (/кварт|аренд|rent|flat|house|дом/.test(text)) return "house";
@@ -293,10 +341,17 @@ function parseBankNumber(value) {
   return Number.parseFloat(normalized.replace(/[^\d.+-]/g, "")) || 0;
 }
 
+function parseOptionalBankNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = parseBankNumber(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-  const match = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  const match = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?/);
   if (match) return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
   return "";
 }
