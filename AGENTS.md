@@ -134,6 +134,39 @@ If the root cause is not proven, write `likely bug in [layer], needs verificatio
 - Determine PayPal direction from the original sign before `Math.abs`.
 - Provider non-JSON/plain-text/HTML errors must become structured JSON errors, not raw SyntaxError or HTML in UI.
 
+## Ledger Import Dedupe Guard
+
+All Ledger writes from screenshots, OCR, manual imports, CSV/statement imports, browser imports, and provider imports must run a duplicate check before appending rows. This applies to every channel, not only Privat24: PayPal, Wise, Binance, Monobank, Privat24, TD, Bank Canada, YooMoney/Yandex, cash/manual, and any future provider.
+
+Dedupe must be done before `ledger save`, not later in balance or analytics. Balance must not compensate for duplicate Ledger rows.
+
+Required duplicate identity priority:
+
+1. Exact provider/native identity: same `raw_source_id` or same provider transaction id.
+2. Transfer identity: same `transfer_group_id` or paired transfer/exchange group.
+3. Fallback fingerprint when provider id is missing: normalized date, operation/direction, from_channel, to_channel, currency, `amount_net`/amount, counterparty/comment fingerprint, and source.
+4. OCR/browser screenshot fallback: visible transaction date/time, channel, direction, amount, currency, counterparty text, and screenshot/import batch fingerprint.
+
+For OCR/screenshots, never treat all visible history rows as new transactions. Screenshots often include old history plus one new user-reported transaction. Existing Ledger rows with the same amount/channel/counterparty nearby must block a new append and return a structured warning such as `possible_duplicate` or `duplicate_skipped`.
+
+Known regression pattern:
+
+- Privat24 screenshot on `2026-05-22` showed a real new expense `НЕМІШ БОГДАН -20003 UAH` and an older income `Урсул Г. +8700 UAH` from `2026-05-16`.
+- Correct behavior: save/update the Неміш expense if not already present, skip the Урсул income because it was already saved as a Ledger row.
+- Wrong behavior: append both visible rows and duplicate the older Урсул income.
+
+When dedupe confidence is high, skip append and report the matched existing Ledger row. When dedupe confidence is medium, do not append automatically; return `needs_review` with candidate matches. When confidence is low, append only if the row has enough transaction evidence and a stable fingerprint.
+
+Regression tests for every new import path must include:
+
+- exact `raw_source_id` duplicate is skipped;
+- same amount/channel/date/counterparty without provider id is skipped or marked `needs_review`;
+- screenshot/history rows already present in Ledger are not appended again;
+- a genuinely new same-amount transaction with different counterparty/time can still be saved;
+- dedupe does not change gross/net/fee/source semantics.
+
+Data repair after a dedupe bug must be guarded: dry-run first, exact-match only, no broad deletes, no balance/gross/net/fee/source semantic rewrites, and no changes to confirmed fact balances unless the fact row itself is proven wrong.
+
 ## Finance Reverse-Math Guard
 
 For any screenshot/report where a displayed money value disagrees with a raw source amount, start with one-row arithmetic before broad code inspection.
