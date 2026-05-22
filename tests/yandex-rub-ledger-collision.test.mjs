@@ -45,6 +45,46 @@ function fixtureRepository() {
   return {
     ok: true,
     operations: [
+      operation({
+        date: "2026-04-02",
+        operation: "income",
+        fromChannel: "",
+        toChannel: "Яндекс руб",
+        amount: "10000",
+        amountNet: "10000",
+        balanceAmount: 10000,
+        rawSourceId: "provider:opening-date:10000",
+        ledgerV2: {
+          date: "2026-04-02",
+          operation: "income",
+          from_channel: "",
+          to_channel: "Яндекс руб",
+          amount: "10000",
+          amount_net: "10000",
+          balance_amount: 10000,
+          raw_source_id: "provider:opening-date:10000",
+        },
+      }),
+      operation({
+        date: "2026-04-02",
+        operation: "income",
+        fromChannel: "",
+        toChannel: "Яндекс руб",
+        amount: "4593.1",
+        amountNet: "4593.1",
+        balanceAmount: 4593.1,
+        rawSourceId: "provider:opening-date:4593.1",
+        ledgerV2: {
+          date: "2026-04-02",
+          operation: "income",
+          from_channel: "",
+          to_channel: "Яндекс руб",
+          amount: "4593.1",
+          amount_net: "4593.1",
+          balance_amount: 4593.1,
+          raw_source_id: "provider:opening-date:4593.1",
+        },
+      }),
       operation(),
       operation({
         date: "2026-04-24",
@@ -111,6 +151,16 @@ test("Yandex RUB collision audit detects the two stale migration rows", () => {
   assert.equal(report.remaining_diff, 334.08);
   assert.equal(report.candidate_rows[0].action, "archive_or_delete_after_owner_confirmation");
   assert.equal(report.recommendation.includes("owner confirmation"), true);
+});
+
+test("Yandex RUB collision audit excludes opening-date movements from the segment", () => {
+  const report = buildYandexRubLedgerCollisionReport(fixtureRepository());
+  const movementTotal = Math.round((report.computed_with_candidates - report.opening_balance) * 100) / 100;
+
+  assert.equal(movementTotal, -90504.08);
+  assert.equal(report.computed_with_candidates, 53495.92);
+  assert.equal(report.current_diff, 86290.08);
+  assert.equal(report.computed_without_candidates, 139451.92);
 });
 
 test("audit loader path is read-only in dry-run", async () => {

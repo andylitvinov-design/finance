@@ -159,7 +159,7 @@ function buildManualRepairInstructions() {
 
 function isAccountMovementInPeriod(row) {
   const date = normalizeDate(row?.date ?? row?.ledgerV2?.date);
-  if (date < PERIOD.from || date > PERIOD.to) return false;
+  if (date <= PERIOD.from || date > PERIOD.to) return false;
   const currency = String(row?.currency || row?.ledgerV2?.currency || "").trim().toUpperCase();
   return currency === ACCOUNT.currency && getMovementChannel(row) === ACCOUNT.channel;
 }
