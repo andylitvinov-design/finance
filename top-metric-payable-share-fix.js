@@ -3,8 +3,8 @@
 // ============================================================
 
 (function patchTopMetricPayableShare() {
-  const PAYABLE_SHARE_RATE = 0.7;
   const BADGE_ID = "metricPersonalOrdersAfterDiscount";
+  const DEFAULT_PERCENT_RATE = 3;
 
   function parseMetricNumber(value) {
     if (typeof parseLooseNumber === "function") {
@@ -25,11 +25,37 @@
     );
   }
 
-  function calculateTopMetricPayable(summary = {}) {
-    const totalOrders = parseMetricNumber(summary.totalOrders);
+  function hasOwn(object, key) {
+    return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  function buildOrdersPaymentSummary(summary = {}) {
+    const ordersAccruedWithPercent = parseMetricNumber(
+      summary.ordersAccruedWithPercent ??
+      summary.totalOrders ??
+      summary.totalOrdersPlusPercent
+    );
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
-    const personalOrdersAfterDiscount = getPersonalOrdersAfterDiscount(summary);
-    return totalOrders * PAYABLE_SHARE_RATE - totalPaid + personalOrdersAfterDiscount;
+    const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
+    const totalAccrued = hasOwn(summary, "totalAccrued")
+      ? parseMetricNumber(summary.totalAccrued)
+      : ordersAccruedWithPercent + myOrdersDiscounted;
+    const remainingToPay = totalAccrued - totalPaid;
+    const percentRate = parseMetricNumber(summary.percentRate || DEFAULT_PERCENT_RATE);
+    return {
+      ordersAccruedWithPercent,
+      percentRate,
+      myOrdersDiscounted,
+      totalAccrued,
+      totalPaid,
+      remainingToPay,
+      payable: remainingToPay,
+      payableFormula: "totalAccrued - abs(totalPaid)"
+    };
+  }
+
+  function calculateTopMetricPayable(summary = {}) {
+    return buildOrdersPaymentSummary(summary).remainingToPay;
   }
 
   function formatMetricNumber(value) {
@@ -64,16 +90,17 @@
     const originalBuildTopMetricsSummary = buildTopMetricsSummary;
     const patchedBuildTopMetricsSummary = function patchedBuildTopMetricsSummary(...args) {
       const summary = originalBuildTopMetricsSummary.apply(this, args) || {};
-      const personalOrdersAfterDiscount = getPersonalOrdersAfterDiscount(summary);
-      const payable = calculateTopMetricPayable(summary);
+      const canonical = buildOrdersPaymentSummary(summary);
       const nextSummary = {
         ...summary,
-        personalOrdersAfterDiscount,
-        total: payable,
-        payable,
-        payableShare: payable,
-        payableShareRate: PAYABLE_SHARE_RATE,
-        payableFormula: "totalOrders * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount"
+        ordersPaymentSummary: canonical,
+        ordersAccruedWithPercent: canonical.ordersAccruedWithPercent,
+        percentRate: canonical.percentRate,
+        personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
+        total: canonical.remainingToPay,
+        payable: canonical.remainingToPay,
+        payableShare: canonical.remainingToPay,
+        payableFormula: canonical.payableFormula
       };
       updatePersonalOrdersBadge(nextSummary);
       return nextSummary;
@@ -93,7 +120,8 @@
 
   if (typeof window !== "undefined") {
     window.EzohataTopMetricPayableShareFix = {
-      PAYABLE_SHARE_RATE,
+      DEFAULT_PERCENT_RATE,
+      buildOrdersPaymentSummary,
       calculateTopMetricPayable,
       getPersonalOrdersAfterDiscount,
       updatePersonalOrdersBadge,

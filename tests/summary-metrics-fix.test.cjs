@@ -84,7 +84,7 @@ test("summary metrics render directly in the top card flow", () => {
   });
 
   assert.equal(elements.metricOrders.textContent, "-5,7118");
-  assert.equal(elements.metricTransfers.textContent, "-102,4382");
+  assert.equal(elements.metricTransfers.textContent, "5,7118");
   assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
@@ -93,6 +93,7 @@ test("summary metrics render directly in the top card flow", () => {
 test("top metrics personal orders badge uses exact payable formula component", () => {
   const { elements } = renderMetricsWithSummary({
     totalOrders: 1407.05,
+    totalAccrued: 1407.05,
     totalPaid: 965.7039,
     personalOrdersAfterDiscount: 32.5,
     balance: 0,
@@ -102,13 +103,60 @@ test("top metrics personal orders badge uses exact payable formula component", (
     profit: 0,
   });
 
-  assert.equal(elements.metricTransfers.textContent, "51,7311");
+  assert.equal(elements.metricTransfers.textContent, "441,3461");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 32,5000");
+});
+
+test("top metric card uses the same canonical orders payment total as balance popup", () => {
+  const summary = runPayablePatch(() => ({
+    totalOrders: 2047.8,
+    ordersAccruedWithPercent: 1400.3,
+    totalAccrued: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    total: 0,
+  }));
+
+  assert.equal(Number(summary.ordersPaymentSummary.ordersAccruedWithPercent.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.ordersPaymentSummary.myOrdersDiscounted.toFixed(4)), 647.5);
+  assert.equal(Number(summary.ordersPaymentSummary.totalAccrued.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.payable.toFixed(4)), 1082.0961);
+  assert.equal(summary.total, summary.payable);
+});
+
+test("top metric percent rate stays a rate instead of percent amount", () => {
+  const summary = runPayablePatch(() => ({
+    totalOrders: 2047.8,
+    ordersAccruedWithPercent: 1400.3,
+    totalAccrued: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    percentRate: 3,
+    percentAmount: 63.2632,
+    total: 0,
+  }));
+
+  assert.equal(summary.ordersPaymentSummary.percentRate, 3);
+  assert.notEqual(summary.ordersPaymentSummary.percentRate, 63.2632);
+});
+
+test("discounted personal orders are not halved again in payable", () => {
+  const summary = runPayablePatch(() => ({
+    ordersAccruedWithPercent: 1400.3,
+    totalAccrued: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    total: 0,
+  }));
+
+  assert.equal(Number(summary.ordersPaymentSummary.myOrdersDiscounted.toFixed(4)), 647.5);
+  assert.equal(Number(summary.payable.toFixed(4)), 1082.0961);
 });
 
 test("top metrics personal orders badge falls back to ordersSummary value", () => {
   const { elements } = renderMetricsWithSummary({
     totalOrders: 100,
+    totalAccrued: 100,
     totalPaid: 20,
     ordersSummary: { personalOrdersAfterDiscount: 12.3456 },
     balance: 0,
@@ -118,7 +166,7 @@ test("top metrics personal orders badge falls back to ordersSummary value", () =
     profit: 0,
   });
 
-  assert.equal(elements.metricTransfers.textContent, "62,3456");
+  assert.equal(elements.metricTransfers.textContent, "80,0000");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 12,3456");
 });
 
@@ -133,37 +181,37 @@ test("top metrics personal orders badge shows zero when field is missing", () =>
     profit: 0,
   });
 
-  assert.equal(elements.metricTransfers.textContent, "50,0000");
+  assert.equal(elements.metricTransfers.textContent, "80,0000");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
 });
 
-test("payable helper calculates 70 percent of orders minus paid plus discounted personal orders", () => {
+test("payable helper calculates accrued total minus paid", () => {
   const summary = runPayablePatch(() => ({
     totalOrders: 1499.55,
+    totalAccrued: 1704.2559,
     totalPaid: 965.7039,
     personalOrdersAfterDiscount: 204.7059,
     total: -515.8389
   }));
 
-  assert.equal(Number(summary.payable.toFixed(4)), 288.6870);
+  assert.equal(Number(summary.payable.toFixed(4)), 738.5520);
   assert.equal(summary.total, summary.payable);
-  assert.equal(summary.payableFormula, "totalOrders * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount");
+  assert.equal(summary.payableFormula, "totalAccrued - abs(totalPaid)");
   assert.doesNotMatch(summary.payableFormula, /0\.3/);
 });
 
 test("payable helper uses the displayed paid amount when internal paid total is negative", () => {
-  const summary = runPayablePatch(() => ({ totalOrders: 1499.55, totalPaid: -965.7039, personalOrdersAfterDiscount: 204.7059, total: -515.8389 }));
+  const summary = runPayablePatch(() => ({ totalOrders: 1499.55, totalAccrued: 1704.2559, totalPaid: -965.7039, personalOrdersAfterDiscount: 204.7059, total: -515.8389 }));
 
-  assert.equal(Number(summary.payable.toFixed(4)), 288.6870);
+  assert.equal(Number(summary.payable.toFixed(4)), 738.5520);
   assert.equal(summary.total, summary.payable);
 });
 
-test("payable helper uses 70 percent of orders when there are no personal orders", () => {
+test("payable helper uses full accrued total when there are no personal orders", () => {
   const summary = runPayablePatch(() => ({ totalOrders: 1000, totalPaid: 100, total: -999 }));
 
-  assert.equal(summary.payable, 600);
+  assert.equal(summary.payable, 900);
   assert.equal(summary.total, summary.payable);
-  assert.equal(summary.payableShareRate, 0.7);
 });
 
 test("payable helper adds discounted personal order total, not gross order cost", () => {
@@ -175,6 +223,6 @@ test("payable helper adds discounted personal order total, not gross order cost"
     total: -999
   }));
 
-  assert.equal(summary.payable, 120);
+  assert.equal(summary.payable, 150);
   assert.equal(summary.total, summary.payable);
 });

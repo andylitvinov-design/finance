@@ -4714,6 +4714,8 @@ function buildTopMetricsSummary() {
 
   return {
     totalOrders,
+    ordersAccruedWithPercent: movementAccruedTotal,
+    totalAccrued: totalOrders,
     balance,
     totalPaid,
     total: upgradeTotals.total,
