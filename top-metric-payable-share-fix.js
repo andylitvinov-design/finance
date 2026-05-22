@@ -32,8 +32,8 @@
   function buildOrdersPaymentSummary(summary = {}) {
     const ordersAccruedWithPercent = parseMetricNumber(
       summary.ordersAccruedWithPercent ??
-      summary.totalOrders ??
-      summary.totalOrdersPlusPercent
+      summary.totalOrdersPlusPercent ??
+      summary.totalOrders
     );
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
@@ -95,6 +95,9 @@
         ...summary,
         ordersPaymentSummary: canonical,
         ordersAccruedWithPercent: canonical.ordersAccruedWithPercent,
+        // The top "Итоговая сумма заказов" card must show only order accrued + 3%,
+        // not the total accrued including personal orders.
+        totalOrders: canonical.ordersAccruedWithPercent,
         percentRate: canonical.percentRate,
         personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
         total: canonical.remainingToPay,
