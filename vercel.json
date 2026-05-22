@@ -4,7 +4,7 @@
   "crons": [
     {
       "path": "/api/auto-balance-snapshots",
-      "schedule": "0 0 * * *"
+      "schedule": "1 23 * * *"
     }
   ],
   "rewrites": [
