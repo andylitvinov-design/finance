@@ -1,4 +1,4 @@
-import { parsePrivatStatement } from "../privat-parser.js";
+import { parsePrivatStatement, parsePrivatStatementWithDiagnostics } from "../privat-parser.js";
 
 const UAH_USD_FALLBACK_RATE = 1 / 43.86;
 
@@ -23,6 +23,9 @@ export default async function handler(request, response) {
     const payload = typeof request.body === "string" ? JSON.parse(request.body || "{}") : request.body || {};
     if (payload.action === "parseStatement" || payload.statementText || payload.statementRows) {
       const result = parsePrivat24PersonalStatementPayload(payload);
+      if (result.diagnostics?.coverage?.hard_fail) {
+        return response.status(422).json({ ok: false, error: "Privat24 import parsed zero ledger rows from non-empty input.", ...result });
+      }
       return response.status(200).json({ ok: true, ...result });
     }
     const result = await fetchPrivatBankStatementEntries({
@@ -41,7 +44,12 @@ export default async function handler(request, response) {
 
 export function parsePrivat24PersonalStatementPayload(payload = {}) {
   const input = payload.statementRows || payload.rows || payload.statementText || payload.text || "";
-  const ledgerRows = parsePrivatStatement(input);
+  const parsed = parsePrivatStatementWithDiagnostics(input, {
+    previousBalance: firstNonEmpty(payload.previousBalance, payload.openingBalance, payload.opening_balance),
+    periodFrom: firstNonEmpty(payload.periodFrom, payload.period_from, payload.startDate),
+    periodTo: firstNonEmpty(payload.periodTo, payload.period_to, payload.endDate)
+  });
+  const ledgerRows = parsed.ledgerRows;
   const entries = buildPrivatEntriesFromLedgerRows(ledgerRows);
   return {
     entries,
@@ -50,7 +58,8 @@ export function parsePrivat24PersonalStatementPayload(payload = {}) {
     transactionCount: ledgerRows.length,
     source: "privat24",
     mode: "personal-statement-import",
-    warnings: ledgerRows.filter((row) => row.review_status === "needs_review").map((row) => `${row.external_id || row.raw_source_id}: needs_review`)
+    diagnostics: parsed.diagnostics,
+    warnings: parsed.warnings
   };
 }
 
