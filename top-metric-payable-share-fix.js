@@ -25,6 +25,17 @@
     );
   }
 
+  function getPersonalOrdersGross(summary = {}) {
+    return parseMetricNumber(
+      summary.personalOrdersGross ??
+      summary.ordersSummary?.personalOrdersGross ??
+      summary.personalOrdersBeforeDiscount ??
+      summary.ordersSummary?.personalOrdersBeforeDiscount ??
+      summary.grossPersonalOrders ??
+      getPersonalOrdersAfterDiscount(summary)
+    );
+  }
+
   function hasOwn(object, key) {
     return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
   }
@@ -37,6 +48,7 @@
     );
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
+    const myOrdersGross = getPersonalOrdersGross(summary);
     const totalAccrued = hasOwn(summary, "totalAccrued")
       ? parseMetricNumber(summary.totalAccrued)
       : ordersAccruedWithPercent + myOrdersDiscounted;
@@ -45,6 +57,7 @@
     return {
       ordersAccruedWithPercent,
       percentRate,
+      myOrdersGross,
       myOrdersDiscounted,
       totalAccrued,
       totalPaid,
@@ -99,6 +112,7 @@
         // not the total accrued including personal orders.
         totalOrders: canonical.ordersAccruedWithPercent,
         percentRate: canonical.percentRate,
+        personalOrdersGross: canonical.myOrdersGross,
         personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
         total: canonical.remainingToPay,
         payable: canonical.remainingToPay,
@@ -127,6 +141,7 @@
       buildOrdersPaymentSummary,
       calculateTopMetricPayable,
       getPersonalOrdersAfterDiscount,
+      getPersonalOrdersGross,
       updatePersonalOrdersBadge,
       patchBuildTopMetricsSummary
     };
