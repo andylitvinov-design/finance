@@ -545,7 +545,176 @@ function renderPrivat24ImportHelper() {
     <div class="config-note">Для личного Приват24 используйте импорт выписки CSV/XLSX. Business API доступен только для бизнес-счетов.</div>
     <div class="config-note">Экспорт: Privat24 → карта/счёт → Выписка/История → выбрать период → Экспорт CSV или Excel/XLSX → загрузить файл здесь.</div>
   `;
+  const preview = renderPrivat24ImportPreview();
+  if (preview) helper.appendChild(preview);
   return helper;
+}
+
+function renderPrivat24ImportPreview() {
+  const preview = state.expenseAccounting.privat24Preview;
+  if (!preview) return null;
+  const diagnostics = preview.diagnostics || {};
+  const coverage = diagnostics.coverage || {};
+  const balanceChain = diagnostics.balance_chain || {};
+  const feeDoubleCount = diagnostics.fee_double_count || {};
+  const ledgerRows = Array.isArray(preview.ledgerRows) ? preview.ledgerRows : [];
+  const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
+  const requiresConfirmation = Boolean(preview.requiresConfirmation);
+
+  const shell = document.createElement("div");
+  shell.className = "finance-status";
+  shell.style.marginTop = "12px";
+  if (coverage.hard_fail || requiresConfirmation) shell.classList.add("error");
+
+  const title = document.createElement("div");
+  title.className = "expense-helper-title";
+  title.textContent = "Privat24 import preview";
+  shell.appendChild(title);
+
+  const summary = document.createElement("div");
+  summary.textContent = [
+    `input_rows_count=${coverage.input_rows_count ?? 0}`,
+    `parsed_rows_count=${coverage.parsed_rows_count ?? 0}`,
+    `ledger_rows_count=${coverage.ledger_rows_count ?? ledgerRows.length}`,
+    `skipped_rows_count=${coverage.skipped_rows_count ?? 0}`,
+    `duplicate_rows_count=${coverage.duplicate_rows_count ?? 0}`,
+    `needs_review_rows_count=${coverage.needs_review_rows_count ?? 0}`,
+    `balance_chain_ok=${balanceChain.balance_chain_ok !== false}`,
+    `balance_chain_gap=${Boolean(balanceChain.balance_chain_gap)}`,
+    `hard_fail=${Boolean(coverage.hard_fail)}`
+  ].join(" | ");
+  shell.appendChild(summary);
+
+  if (warnings.length || feeDoubleCount.likely_fee_double_count) {
+    const warningList = document.createElement("div");
+    warningList.style.marginTop = "8px";
+    [
+      ...warnings,
+      ...(feeDoubleCount.likely_fee_double_count ? ["possible fee double-count warning"] : [])
+    ].forEach((warning) => {
+      const line = document.createElement("div");
+      line.textContent = String(warning || "");
+      warningList.appendChild(line);
+    });
+    shell.appendChild(warningList);
+  }
+
+  if (ledgerRows.length) {
+    shell.appendChild(renderPrivat24LedgerRowsPreview(ledgerRows));
+  }
+
+  if (requiresConfirmation && !preview.confirmed && !coverage.hard_fail) {
+    const actions = document.createElement("div");
+    actions.className = "finance-actions";
+    actions.style.marginTop = "12px";
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.className = "primary";
+    confirmButton.textContent = "Подтвердить Privat24 preview";
+    confirmButton.addEventListener("click", confirmPrivat24ImportPreview);
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "secondary";
+    cancelButton.textContent = "Сбросить preview";
+    cancelButton.addEventListener("click", clearPrivat24ImportPreview);
+    actions.append(confirmButton, cancelButton);
+    shell.appendChild(actions);
+  }
+
+  return shell;
+}
+
+function renderPrivat24LedgerRowsPreview(rows = []) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  wrap.style.marginTop = "10px";
+  const table = document.createElement("table");
+  const tbody = document.createElement("tbody");
+  const header = document.createElement("tr");
+  ["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "source", "raw_source_id", "review_status"].forEach((cell) => {
+    const th = document.createElement("th");
+    th.textContent = cell;
+    header.appendChild(th);
+  });
+  tbody.appendChild(header);
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    [
+      row.date,
+      row.operation,
+      row.from_channel,
+      row.to_channel,
+      row.amount,
+      row.currency,
+      row.amount_usd,
+      row.source,
+      row.raw_source_id,
+      row.review_status
+    ].forEach((cell) => {
+      const td = document.createElement("td");
+      td.textContent = String(cell || "");
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function requiresPrivat24ImportConfirmation(payload = {}) {
+  const diagnostics = payload.diagnostics || {};
+  const coverage = diagnostics.coverage || {};
+  const balanceChain = diagnostics.balance_chain || {};
+  const feeDoubleCount = diagnostics.fee_double_count || {};
+  return Boolean(
+    coverage.hard_fail
+      || balanceChain.balance_chain_ok === false
+      || Number(coverage.duplicate_rows_count || 0) > 0
+      || feeDoubleCount.likely_fee_double_count
+  );
+}
+
+function buildPrivat24ImportPreviewState(payload = {}, entries = [], fileName = "") {
+  const requiresConfirmation = requiresPrivat24ImportConfirmation(payload);
+  return {
+    fileName: String(fileName || "").trim(),
+    entries,
+    ledgerRows: Array.isArray(payload.ledgerRows) ? payload.ledgerRows : [],
+    diagnostics: payload.diagnostics || {},
+    warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+    summary: payload.summary || null,
+    requiresConfirmation,
+    confirmed: !requiresConfirmation
+  };
+}
+
+function applyPrivat24ImportPreview(preview = {}) {
+  const entries = Array.isArray(preview.entries) ? preview.entries : [];
+  state.expenseAccounting.entries = [
+    ...state.expenseAccounting.entries.filter((entry) => entry.source !== "privat24" && entry.source !== "privatbank"),
+    ...entries
+  ];
+  state.expenseAccounting.privatBankSummary = hasProviderSummaryData(preview.summary)
+    ? preview.summary
+    : buildProviderExpenseSummary(entries);
+  state.expenseAccounting.warnings = preview.warnings || [];
+  state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+}
+
+function confirmPrivat24ImportPreview() {
+  const preview = state.expenseAccounting.privat24Preview;
+  if (!preview || preview.diagnostics?.coverage?.hard_fail) return;
+  preview.confirmed = true;
+  applyPrivat24ImportPreview(preview);
+  setExpenseAccountingStatus(`Privat24 preview подтвержден: ${(preview.entries || []).length} строк ожидают внесения в Ledger.`, false);
+  renderTabs();
+}
+
+function clearPrivat24ImportPreview() {
+  state.expenseAccounting.privat24Preview = null;
+  setExpenseAccountingStatus("Privat24 preview сброшен.", false);
+  renderTabs();
 }
 
 function renderExpenseAccountingSaveButton() {
@@ -2672,20 +2841,22 @@ async function importPrivat24StatementFile(file) {
       throw new Error(payload?.error || `Privat24 import failed (${response.status}).`);
     }
     const entries = (payload.entries || []).map((entry, index) => normalizeExpenseAccountingEntry(entry, index));
-    state.expenseAccounting.entries = [
-      ...state.expenseAccounting.entries.filter((entry) => entry.source !== "privat24" && entry.source !== "privatbank"),
-      ...entries
-    ];
-    state.expenseAccounting.privatBankSummary = hasProviderSummaryData(payload.summary)
-      ? payload.summary
-      : buildProviderExpenseSummary(entries);
-    state.expenseAccounting.warnings = payload.warnings || [];
-    state.expenseAccounting.resultTab = getExpenseAccountingDirectionCounts().spent ? "spent" : "received";
+    const preview = buildPrivat24ImportPreviewState(payload, entries, file.name || "");
+    if (preview.diagnostics?.coverage?.hard_fail) {
+      state.expenseAccounting.privat24Preview = preview;
+      throw new Error("Privat24 import hard_fail=true: Ledger rows were not produced from non-empty input.");
+    }
+    state.expenseAccounting.privat24Preview = preview;
+    if (!preview.requiresConfirmation) {
+      applyPrivat24ImportPreview(preview);
+    }
     setExpenseAccountingStatus(
       entries.length
-        ? `Privat24 CSV/XLSX импортирован: ${entries.length} строк. Проверьте needs_review перед внесением.`
+        ? (preview.requiresConfirmation
+          ? `Privat24 preview готов: ${entries.length} строк. Подтвердите preview перед внесением в Ledger.`
+          : `Privat24 CSV/XLSX preview OK: ${entries.length} строк ожидают внесения в Ledger.`)
         : "Privat24 файл прочитан, но операций не найдено.",
-      false
+      preview.requiresConfirmation
     );
   } catch (error) {
     setExpenseAccountingStatus(error.message || "Не удалось импортировать Privat24 CSV/XLSX.", true);
@@ -4465,6 +4636,18 @@ function normalizeExpenseAccountingEntry(entry, index = 0) {
 
 async function saveExpenseAccountingEntries() {
   const pendingEntries = state.expenseAccounting.entries.filter((entry) => entry.date && entry.localAmount > 0);
+  const privat24Preview = state.expenseAccounting.privat24Preview;
+  const hasPrivat24Entries = pendingEntries.some((entry) => entry.source === "privat24" || entry.source === "privatbank");
+  if (hasPrivat24Entries && privat24Preview?.requiresConfirmation && !privat24Preview.confirmed) {
+    setExpenseAccountingStatus("Privat24 preview требует явного подтверждения перед внесением в Ledger.", true);
+    renderTabs();
+    return;
+  }
+  if (hasPrivat24Entries && privat24Preview?.diagnostics?.coverage?.hard_fail) {
+    setExpenseAccountingStatus("Privat24 hard_fail=true: внесение в Ledger заблокировано.", true);
+    renderTabs();
+    return;
+  }
   const reviewEntries = pendingEntries.filter((entry) => !String(entry.channel || "").trim());
   if (reviewEntries.length) {
     setExpenseAccountingStatus(`Есть строки без канала: ${reviewEntries.length}. Проверьте needs_review и выберите канал перед внесением.`, true);
@@ -4500,6 +4683,7 @@ async function saveExpenseAccountingEntries() {
     state.expenseAccounting.yoomoneySummary = null;
     state.expenseAccounting.monobankSummary = null;
     state.expenseAccounting.privatBankSummary = null;
+    state.expenseAccounting.privat24Preview = null;
     state.expenseAccounting.tdBankSummary = null;
     setExpenseAccountingStatus(`Значения внесены: ${response.rowCount} агрегированных строк.${duplicateNote} ${response.savedAt || ""}`.trim(), false);
   } catch (error) {

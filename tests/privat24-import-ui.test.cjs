@@ -86,9 +86,64 @@ test("UI exposes personal Privat24 CSV/XLSX import as the primary path", () => {
   assert.match(uiJs, /Импорт Privat24 CSV\/XLSX/);
   assert.match(uiJs, /Privat API \(business\)/);
   assert.match(uiJs, /function renderPrivat24ImportHelper/);
+  assert.match(uiJs, /function renderPrivat24ImportPreview/);
+  assert.match(uiJs, /function renderPrivat24LedgerRowsPreview/);
+  assert.match(uiJs, /function requiresPrivat24ImportConfirmation/);
   assert.match(uiJs, /async function importPrivat24StatementFile/);
   assert.match(uiJs, /function readPrivat24XlsxFile/);
   assert.match(uiJs, /action: "parseStatement"/);
+});
+
+test("Privat24 import UI previews diagnostics and exact ledger rows before save", () => {
+  assert.match(uiJs, /input_rows_count=/);
+  assert.match(uiJs, /parsed_rows_count=/);
+  assert.match(uiJs, /ledger_rows_count=/);
+  assert.match(uiJs, /skipped_rows_count=/);
+  assert.match(uiJs, /duplicate_rows_count=/);
+  assert.match(uiJs, /needs_review_rows_count=/);
+  assert.match(uiJs, /balance_chain_ok=/);
+  assert.match(uiJs, /balance_chain_gap=/);
+  assert.match(uiJs, /possible fee double-count warning/);
+  assert.match(uiJs, /\["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "source", "raw_source_id", "review_status"\]/);
+  assert.match(uiJs, /Privat24 preview требует явного подтверждения перед внесением в Ledger/);
+});
+
+test("Privat24 import confirmation is required for balance gaps, duplicates, and fee double-count warnings", () => {
+  const context = {};
+  require("node:vm").createContext(context);
+  require("node:vm").runInContext([
+    extractFunction(uiJs, "requiresPrivat24ImportConfirmation"),
+    "this.requiresPrivat24ImportConfirmation = requiresPrivat24ImportConfirmation;",
+  ].join("\n"), context);
+
+  assert.equal(context.requiresPrivat24ImportConfirmation({
+    diagnostics: {
+      coverage: { hard_fail: false, duplicate_rows_count: 0 },
+      balance_chain: { balance_chain_ok: true },
+      fee_double_count: { likely_fee_double_count: false }
+    }
+  }), false);
+  assert.equal(context.requiresPrivat24ImportConfirmation({
+    diagnostics: {
+      coverage: { hard_fail: false, duplicate_rows_count: 0 },
+      balance_chain: { balance_chain_ok: false },
+      fee_double_count: { likely_fee_double_count: false }
+    }
+  }), true);
+  assert.equal(context.requiresPrivat24ImportConfirmation({
+    diagnostics: {
+      coverage: { hard_fail: false, duplicate_rows_count: 1 },
+      balance_chain: { balance_chain_ok: true },
+      fee_double_count: { likely_fee_double_count: false }
+    }
+  }), true);
+  assert.equal(context.requiresPrivat24ImportConfirmation({
+    diagnostics: {
+      coverage: { hard_fail: false, duplicate_rows_count: 0 },
+      balance_chain: { balance_chain_ok: true },
+      fee_double_count: { likely_fee_double_count: true }
+    }
+  }), true);
 });
 
 test("Privat24 OCR extracts signed UAH income with Ukrainian month date", () => {
