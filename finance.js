@@ -4686,8 +4686,8 @@ function buildTopMetricsSummary() {
   const summaryAccruedTotal = getMovementSummaryMetric(movementSummaryRows, ["начислено прайс"]);
   const summarySeventyTotal = getMovementSummaryMetric(movementSummaryRows, ["70% от прайс"]);
   const summaryReceivedUsdTotal = getMovementSummaryMetric(movementSummaryRows, ["получено в долларах"]);
-  const movementAccruedTotal = summaryAccruedTotal || movementTotals.accruedTotal;
-  const movementSeventyTotal = summarySeventyTotal || movementTotals.seventyTotal;
+  const movementAccruedTotal = movementTotals.accruedTotal || summaryAccruedTotal;
+  const movementSeventyTotal = movementTotals.seventyTotal || summarySeventyTotal;
   const movementReceivedUsdTotal = summaryReceivedUsdTotal || movementTotals.receivedUsdTotal;
 
   const ordersSummary = state.data?.ordersSummary || buildOrdersSummaryFromClient(state.data?.tabs?.orders?.values || []);
