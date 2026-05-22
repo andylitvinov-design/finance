@@ -25,6 +25,17 @@
     );
   }
 
+  function getPersonalOrdersGross(summary = {}) {
+    return parseMetricNumber(
+      summary.personalOrdersGross ??
+      summary.ordersSummary?.personalOrdersGross ??
+      summary.personalOrdersBeforeDiscount ??
+      summary.ordersSummary?.personalOrdersBeforeDiscount ??
+      summary.grossPersonalOrders ??
+      getPersonalOrdersAfterDiscount(summary)
+    );
+  }
+
   function hasOwn(object, key) {
     return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
   }
@@ -32,11 +43,12 @@
   function buildOrdersPaymentSummary(summary = {}) {
     const ordersAccruedWithPercent = parseMetricNumber(
       summary.ordersAccruedWithPercent ??
-      summary.totalOrders ??
-      summary.totalOrdersPlusPercent
+      summary.totalOrdersPlusPercent ??
+      summary.totalOrders
     );
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
+    const myOrdersGross = getPersonalOrdersGross(summary);
     const totalAccrued = hasOwn(summary, "totalAccrued")
       ? parseMetricNumber(summary.totalAccrued)
       : ordersAccruedWithPercent + myOrdersDiscounted;
@@ -45,6 +57,7 @@
     return {
       ordersAccruedWithPercent,
       percentRate,
+      myOrdersGross,
       myOrdersDiscounted,
       totalAccrued,
       totalPaid,
@@ -95,7 +108,11 @@
         ...summary,
         ordersPaymentSummary: canonical,
         ordersAccruedWithPercent: canonical.ordersAccruedWithPercent,
+        // The top "Итоговая сумма заказов" card must show only order accrued + 3%,
+        // not the total accrued including personal orders.
+        totalOrders: canonical.ordersAccruedWithPercent,
         percentRate: canonical.percentRate,
+        personalOrdersGross: canonical.myOrdersGross,
         personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
         total: canonical.remainingToPay,
         payable: canonical.remainingToPay,
@@ -124,6 +141,7 @@
       buildOrdersPaymentSummary,
       calculateTopMetricPayable,
       getPersonalOrdersAfterDiscount,
+      getPersonalOrdersGross,
       updatePersonalOrdersBadge,
       patchBuildTopMetricsSummary
     };

@@ -300,10 +300,12 @@ function appendManualOrdersTotalRow(rows) {
 }
 
 function buildManualOrdersTotalRow(rows) {
-  const total = (rows || []).reduce((sum, row) => sum + (parseLooseNumber(row?.[5]) || 0), 0);
+  const grossTotal = (rows || []).reduce((sum, row) => sum + (parseLooseNumber(row?.[3]) || 0), 0);
+  const payableTotal = (rows || []).reduce((sum, row) => sum + (parseLooseNumber(row?.[5]) || 0), 0);
   const output = Array.from({ length: MANUAL_ORDERS_HEADERS.length }, () => "");
   output[2] = MANUAL_FINANCE_TOTAL_LABEL || "Итого";
-  output[5] = formatSheetNumber(total);
+  output[3] = formatSheetNumber(grossTotal);
+  output[5] = formatSheetNumber(payableTotal);
   return output;
 }
 
@@ -318,14 +320,16 @@ function isManualOrdersTotalRow(row) {
 
 function buildOrdersSummaryFromClient(values) {
   if (!values.length) {
-    return { orderRows: 0, totalAccruedPlus3Pct: 0, personalOrdersAfterDiscount: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
+    return { orderRows: 0, totalAccruedPlus3Pct: 0, personalOrdersGross: 0, personalOrdersAfterDiscount: 0, totalReceivedUsd: 0, totalBalanceUsd: 0 };
   }
   const header = values[0] || [];
-  const totalIndex = findHeaderIndexByAliases(header, ["ИТОГО", "TOTAL", "TOTAL AFTER DISCOUNT"]);
-  const accruedIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "СТОИМОСТЬ", "COST", "PRICE BASE"]);
+  const payableIndex = findHeaderIndexByAliases(header, ["ИТОГО", "TOTAL", "TOTAL AFTER DISCOUNT"]);
+  const grossIndex = findHeaderIndexByAliases(header, ["СТОИМОСТЬ", "COST", "PRICE BASE", "ACCRUED", "ACCRUED BASE"]);
+  const fallbackPlannedIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "ACCRUED+3%"]);
   const receivedIndex = findHeaderIndexByAliases(header, ["ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "RECEIVED TOTAL USD"]);
   const balanceIndex = findHeaderIndexByAliases(header, ["BALANCE", "БАЛАНС"]);
-  let totalAccrued = 0;
+  let personalOrdersGross = 0;
+  let personalOrdersAfterDiscount = 0;
   let totalReceived = 0;
   let totalBalance = 0;
   let orderRows = 0;
@@ -333,16 +337,21 @@ function buildOrdersSummaryFromClient(values) {
     if (!hasAnyValue(row)) return;
     if (isTableTotalRow(row) || isManualOrdersTotalRow(row)) return;
     orderRows += 1;
-    const plannedIndex = totalIndex !== -1 ? totalIndex : accruedIndex;
-    if (plannedIndex !== -1 && plannedIndex < row.length) totalAccrued += parseLooseNumber(row[plannedIndex]);
+    const grossValue = grossIndex !== -1 && grossIndex < row.length ? parseLooseNumber(row[grossIndex]) : 0;
+    const payableValue = payableIndex !== -1 && payableIndex < row.length
+      ? parseLooseNumber(row[payableIndex])
+      : (fallbackPlannedIndex !== -1 && fallbackPlannedIndex < row.length ? parseLooseNumber(row[fallbackPlannedIndex]) : grossValue);
+    personalOrdersGross += grossValue || payableValue;
+    personalOrdersAfterDiscount += payableValue;
     if (receivedIndex !== -1 && receivedIndex < row.length) totalReceived += parseLooseNumber(row[receivedIndex]);
     if (balanceIndex !== -1 && balanceIndex < row.length) totalBalance += parseLooseNumber(row[balanceIndex]);
   });
-  if (balanceIndex === -1) totalBalance = totalAccrued - totalReceived;
+  if (balanceIndex === -1) totalBalance = personalOrdersAfterDiscount - totalReceived;
   return {
     orderRows,
-    totalAccruedPlus3Pct: roundTo2(totalAccrued),
-    personalOrdersAfterDiscount: roundTo2(totalAccrued),
+    totalAccruedPlus3Pct: roundTo2(personalOrdersAfterDiscount),
+    personalOrdersGross: roundTo2(personalOrdersGross),
+    personalOrdersAfterDiscount: roundTo2(personalOrdersAfterDiscount),
     totalReceivedUsd: roundTo2(totalReceived),
     totalBalanceUsd: roundTo2(totalBalance)
   };
