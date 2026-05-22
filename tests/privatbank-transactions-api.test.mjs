@@ -127,3 +127,43 @@ test("parsePrivat24PersonalStatementPayload imports personal CSV without busines
   assert.equal(result.entries[0].reviewStatus, "needs_review");
   assert.deepEqual(result.warnings, ["PB-PERSONAL-1: needs_review"]);
 });
+
+test("parsePrivat24PersonalStatementPayload accepts Privat24 exported headers after title row", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    statementText: [
+      "Історія операцій за період 22.02.2026 - 22.05.2026",
+      "Дата;Категорія;Картка;Опис операції;Сума в валюті картки;Валюта картки;Сума в валюті транзакції;Валюта транзакції;Залишок на кінець періоду;Валюта залишку",
+      "22.05.2026 15:01:35;Платежі за реквізитами;4149 **** **** 8858;НЕМІШ БОГДАН ЮРІЙОВИЧ ФОП. Коментар: Splata za informatsiini posluhy;-20003;UAH;20003;UAH;93.27;UAH",
+      "16.05.2026 00:03:34;Зарахування переказу;4149 **** **** 8858;Урсул Г.;8700;UAH;8700;UAH;20096.27;UAH",
+      "12.05.2026 04:06:51;Цифрові товари;4149 **** **** 8858;GOOGLE *Meetup Social, g.co/helppay#;-4842.92;UAH;4799.99;UAH;11396.27;UAH",
+      "04.05.2026 15:28:41;Зарахування переказу;4149 **** **** 8858;Литвиненко В.;5000;UAH;5000;UAH;16239.19;UAH"
+    ].join("\n")
+  });
+
+  assert.equal(result.transactionCount, 4);
+  assert.equal(result.ledgerRows.length, 4);
+  assert.deepEqual(
+    result.ledgerRows.map((row) => [row.date, row.operation, row.from_channel, row.to_channel, row.amount, row.currency, row.direction]),
+    [
+      ["2026-05-22", "business_expense", "приват 24-грн", "", "20003", "UAH", "out"],
+      ["2026-05-16", "income", "", "приват 24-грн", "8700", "UAH", "in"],
+      ["2026-05-12", "business_expense", "приват 24-грн", "", "4842.92", "UAH", "out"],
+      ["2026-05-04", "income", "", "приват 24-грн", "5000", "UAH", "in"]
+    ]
+  );
+  assert.match(result.ledgerRows[0].comment, /statement balance after: 93.27 UAH/);
+  assert.match(result.ledgerRows[1].comment, /statement balance after: 20096.27 UAH/);
+});
+
+test("parsePrivat24PersonalStatementPayload skips title-only lines instead of dropping statement rows", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    statementText: "Some exported statement title\nДата;Опис операції;Сума в валюті картки;Валюта картки\n04.05.2026 15:28:41;Литвиненко В.;5000;UAH"
+  });
+
+  assert.equal(result.transactionCount, 1);
+  assert.equal(result.ledgerRows[0].date, "2026-05-04");
+  assert.equal(result.ledgerRows[0].amount, "5000");
+  assert.equal(result.ledgerRows[0].operation, "income");
+});
