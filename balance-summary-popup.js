@@ -104,11 +104,11 @@
     });
   }
 
-  function sumTableTotals(values, period) {
+  function sumTableTotals(values, period, sourceName = "table") {
     const rows = Array.isArray(values) ? values : [];
-    if (!rows.length) return { orders: null, totalOrdersPlusPercent: null, percentToOrders: null, sourceFound: false };
+    if (!rows.length) return { orders: null, totalOrdersPlusPercent: null, percentToOrders: null, sourceFound: false, sourceName };
     const headerRowIndex = findHeaderRowIndex(rows);
-    if (headerRowIndex === -1) return { orders: null, totalOrdersPlusPercent: null, percentToOrders: null, sourceFound: false };
+    if (headerRowIndex === -1) return { orders: null, totalOrdersPlusPercent: null, percentToOrders: null, sourceFound: false, sourceName };
 
     const header = rows[headerRowIndex] || [];
     const dateIndex = findHeaderIndexByAliases(header, ["DATE", "ДАТА"]);
@@ -123,7 +123,13 @@
     const orders = baseIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[baseIndex]), 0);
     const totalOrdersPlusPercent = plusIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[plusIndex]), 0);
     const percentToOrders = orders === null || totalOrdersPlusPercent === null ? null : totalOrdersPlusPercent - orders;
-    return { orders, totalOrdersPlusPercent, percentToOrders, sourceFound: orders !== null || totalOrdersPlusPercent !== null };
+    return { orders, totalOrdersPlusPercent, percentToOrders, sourceFound: orders !== null || totalOrdersPlusPercent !== null, sourceName };
+  }
+
+  function chooseOrdersTotals(movementTotals, ordersTotals) {
+    if (movementTotals?.sourceFound) return movementTotals;
+    if (ordersTotals?.sourceFound) return ordersTotals;
+    return { orders: null, totalOrdersPlusPercent: null, percentToOrders: null, sourceFound: false, sourceName: "none" };
   }
 
   function getMetrics(input, options) {
@@ -137,17 +143,10 @@
     return options?.state || input?.state || (input?.data ? input : null) || getRootState();
   }
 
-  function firstFinite(...values) {
-    for (const value of values) {
-      if (value === null || value === undefined || value === "") continue;
-      if (Number.isFinite(Number(value))) return Number(value);
-    }
-    return 0;
-  }
-
-  function sumNullableTotals(left, right) {
-    if (left === null && right === null) return null;
-    return firstFinite(left) + firstFinite(right);
+  function getPercentRate(orders, percentAmount) {
+    const base = parseNumber(orders);
+    if (!base) return 0;
+    return parseNumber(percentAmount) / base * 100;
   }
 
   function buildBalanceTextSummary(metricsOrState = {}, options = {}) {
@@ -155,22 +154,21 @@
     const metrics = getMetrics(metricsOrState, options);
     const appState = getState(metricsOrState, options);
     const period = getSelectedPeriod(options);
-    const movementTotals = sumTableTotals(appState?.data?.tabs?.movement?.values || [], period);
-    const ordersTotals = sumTableTotals(appState?.data?.tabs?.orders?.values || [], period);
+    const movementTotals = sumTableTotals(appState?.data?.tabs?.movement?.values || [], period, "movement");
+    const ordersTotals = sumTableTotals(appState?.data?.tabs?.orders?.values || [], period, "orders");
+    const tableTotals = chooseOrdersTotals(movementTotals, ordersTotals);
     const explicitOrders = hasOwn(metricsOrState, "orders") ? parseNumber(metricsOrState.orders) : null;
-    const explicitPercent = hasOwn(metricsOrState, "percentToOrders") ? parseNumber(metricsOrState.percentToOrders) : null;
+    const explicitPercentAmount = hasOwn(metricsOrState, "percentToOrders") ? parseNumber(metricsOrState.percentToOrders) : null;
+    const explicitPercentRate = hasOwn(metricsOrState, "percentRate") ? parseNumber(metricsOrState.percentRate) : null;
 
     let orders = explicitOrders;
-    let percentToOrders = explicitPercent;
+    let percentToOrders = explicitPercentAmount;
+    let percentRate = explicitPercentRate;
     let totalOrdersPlusPercent = hasOwn(metricsOrState, "totalOrdersPlusPercent") ? parseNumber(metricsOrState.totalOrdersPlusPercent) : null;
 
-    const tableOrders = sumNullableTotals(movementTotals.orders, ordersTotals.orders);
-    const tableTotalOrdersPlusPercent = sumNullableTotals(movementTotals.totalOrdersPlusPercent, ordersTotals.totalOrdersPlusPercent);
-    const tablePercentToOrders = sumNullableTotals(movementTotals.percentToOrders, ordersTotals.percentToOrders);
-
-    if (orders === null && tableOrders !== null) orders = tableOrders;
-    if (totalOrdersPlusPercent === null && tableTotalOrdersPlusPercent !== null) totalOrdersPlusPercent = tableTotalOrdersPlusPercent;
-    if (percentToOrders === null && tablePercentToOrders !== null) percentToOrders = tablePercentToOrders;
+    if (orders === null && tableTotals.orders !== null) orders = tableTotals.orders;
+    if (totalOrdersPlusPercent === null && tableTotals.totalOrdersPlusPercent !== null) totalOrdersPlusPercent = tableTotals.totalOrdersPlusPercent;
+    if (percentToOrders === null && tableTotals.percentToOrders !== null) percentToOrders = tableTotals.percentToOrders;
 
     if ((orders === null || totalOrdersPlusPercent === null || percentToOrders === null) && hasOwn(metrics, "totalOrders")) {
       const fallbackOrders = parseNumber(metrics.totalOrders);
@@ -186,6 +184,7 @@
     }
     if (percentToOrders === null) percentToOrders = 0;
     if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
+    if (percentRate === null) percentRate = getPercentRate(orders, percentToOrders);
 
     const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
     const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
@@ -204,6 +203,7 @@
       period,
       orders,
       percentToOrders,
+      percentRate,
       totalOrdersPlusPercent,
       seventyPercent,
       myOrders,
@@ -214,8 +214,9 @@
       remainingToPay,
       diagnostics,
       sources: {
-        orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED/ACCRUED or top metrics fallback",
-        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders OCCURRED+3% minus OCCURRED",
+        orders: explicitOrders !== null ? "input.orders" : `${tableTotals.sourceName || "movement"} table OCCURRED/ACCRUED or top metrics fallback`,
+        percentToOrders: explicitPercentAmount !== null ? "input.percentToOrders" : `${tableTotals.sourceName || "movement"} table OCCURRED+3% minus OCCURRED`,
+        percentRate: explicitPercentRate !== null ? "input.percentRate" : "percentToOrders / orders * 100",
         totalPaid: "buildTopMetricsSummary.totalPaid",
         myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount already includes personal-order payable discount",
       },
@@ -228,26 +229,31 @@
     return Number(value).toFixed(4).replace(".", ",");
   }
 
+  function formatPercent(value) {
+    if (!Number.isFinite(Number(value))) return "needs verification";
+    return `${formatMoney(value)}%`;
+  }
+
   function renderBalanceSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = BALANCE_BLOCK_ID;
     block.className = "balance-summary-block";
     block.setAttribute("aria-live", "polite");
     const lines = [
-      ["Сумма заказов за период", summary.orders],
-      ["Процент к заказам", summary.percentToOrders],
-      ["Итого: Заказы + %", summary.totalOrdersPlusPercent],
-      ["70% от Итого", summary.seventyPercent],
-      ["Мои заказы", summary.myOrders],
-      ["Мои заказы к начислению (уже с учетом скидки)", summary.myOrdersPayable ?? summary.myOrdersHalf],
-      ["ВСЕГО НАЧИСЛЕНО (70% от итого + мои заказы)", summary.totalAccrued],
-      ["ВСЕГО оплачено", summary.totalPaid],
-      ["ОСТАТОК оплатить", summary.remainingToPay],
+      ["Сумма заказов за период", summary.orders, "money"],
+      ["Процент к заказам", summary.percentRate, "percent"],
+      ["Итого: Заказы + %", summary.totalOrdersPlusPercent, "money"],
+      ["70% от Итого", summary.seventyPercent, "money"],
+      ["Мои заказы", summary.myOrders, "money"],
+      ["Мои заказы к начислению (уже с учетом скидки)", summary.myOrdersPayable ?? summary.myOrdersHalf, "money"],
+      ["ВСЕГО НАЧИСЛЕНО (70% от итого + мои заказы)", summary.totalAccrued, "money"],
+      ["ВСЕГО оплачено", summary.totalPaid, "money"],
+      ["ОСТАТОК оплатить", summary.remainingToPay, "money"],
     ];
     const list = doc.createElement("ol");
-    lines.forEach(([label, value]) => {
+    lines.forEach(([label, value, kind]) => {
       const item = doc.createElement("li");
-      item.textContent = `${label}: ${formatMoney(value)}`;
+      item.textContent = `${label}: ${kind === "percent" ? formatPercent(value) : formatMoney(value)}`;
       list.appendChild(item);
     });
     block.appendChild(list);
