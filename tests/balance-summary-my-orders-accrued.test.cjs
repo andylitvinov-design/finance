@@ -51,15 +51,15 @@ test("balance popup uses ACCRUED as base and ACCRUED plus percent as total", () 
   assert.equal(summary.remainingToPay, 470);
 });
 
-test("top metric fallback derives non-zero percent from ACCRUED plus percent total", () => {
+test("top metric fallback treats totalOrders as ACCRUED base and derives non-zero percent", () => {
   const api = loadApi();
   const summary = api.buildBalanceTextSummary({
     totalOrders: 2047.8,
     totalPaid: 965.7039,
     personalOrdersAfterDiscount: 647.5,
   });
-  assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2047.8);
-  assert.equal(Number(summary.orders.toFixed(4)), 1988.1553);
-  assert.equal(Number(summary.percentToOrders.toFixed(4)), 59.6447);
-  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1115.2561);
+  assert.equal(Number(summary.orders.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.percentToOrders.toFixed(4)), 61.434);
+  assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2109.234);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1158.2599);
 });
