@@ -231,12 +231,14 @@ function jsonResponse(payload, status = 200) {
   };
 }
 
-test("vercel cron points daily UTC schedule to auto balance snapshots endpoint", () => {
+test("vercel cron closes the Europe/Madrid business day before UTC rollover", () => {
   const config = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8"));
   assert.deepEqual(config.crons, [
     {
       path: "/api/auto-balance-snapshots",
-      schedule: "0 0 * * *",
+      // 23:01 UTC is after midnight in Europe/Madrid but before UTC date rollover,
+      // so todayUtcDate() still equals the business day being closed.
+      schedule: "1 23 * * *",
     },
   ]);
   assert.ok(config.rewrites.some((rewrite) =>
