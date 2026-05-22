@@ -179,6 +179,45 @@ test("top metric fallback treats totalOrders as accrued plus percent", () => {
   resetBalanceModule();
 });
 
+test("canonical top metrics override row-summed movement table in popup", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    totalOrders: 2047.8,
+    ordersAccruedWithPercent: 1400.3,
+    totalAccrued: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    percentRate: 3,
+    ordersPaymentSummary: {
+      ordersAccruedWithPercent: 1400.3,
+      percentRate: 3,
+      myOrdersDiscounted: 647.5,
+      totalAccrued: 2047.8,
+      totalPaid: 965.7039,
+      remainingToPay: 1082.0961,
+    },
+    state: {
+      data: {
+        tabs: {
+          movement: {
+            values: [
+              ["NUMBER", "DATE", "PRICE BASE", "ACCRUED", "ACCRUED +3%"],
+              ["1", "2026-05-04", "1460", "1460", "1503.2632"],
+              ["Итого", "", "1460", "1360", "1400.3"],
+            ],
+          },
+          orders: { values: [] },
+        },
+      },
+    },
+  }, { startDate: "2026-05-01", endDate: "2026-05-21" });
+
+  assert.equal(Number(summary.orders.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.totalAccrued.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1082.0961);
+  resetBalanceModule();
+});
+
 test("percent rate renders as percent label, not monetary percent amount", () => {
   const api = loadApi();
   const items = [];

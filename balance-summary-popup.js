@@ -183,6 +183,18 @@
     let orders = explicitOrders;
     let percentToOrders = null;
     let totalOrdersPlusPercent = hasOwn(metricsOrState, "totalOrdersPlusPercent") ? parseNumber(metricsOrState.totalOrdersPlusPercent) : null;
+    const metricOrdersAccruedWithPercent = hasOwn(metrics, "ordersAccruedWithPercent")
+      ? parseNumber(metrics.ordersAccruedWithPercent)
+      : null;
+    const metricPercentRate = hasOwn(metrics, "percentRate") ? parseNumber(metrics.percentRate) : null;
+    const metricOrdersPaymentSummary = metrics?.ordersPaymentSummary || null;
+
+    if (totalOrdersPlusPercent === null && metricOrdersPaymentSummary) {
+      totalOrdersPlusPercent = parseNumber(metricOrdersPaymentSummary.ordersAccruedWithPercent);
+    }
+    if (totalOrdersPlusPercent === null && metricOrdersAccruedWithPercent !== null) {
+      totalOrdersPlusPercent = metricOrdersAccruedWithPercent;
+    }
 
     const tableOrders = movementTotals.sourceFound ? movementTotals.orders : ordersTotals.orders;
     const tableTotalOrdersPlusPercent = movementTotals.sourceFound ? movementTotals.totalOrdersPlusPercent : ordersTotals.totalOrdersPlusPercent;
@@ -206,7 +218,7 @@
     }
     if (percentToOrders === null) percentToOrders = 0;
     if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
-    const percentRate = explicitPercentRate ?? FALLBACK_PERCENT_RATE_DISPLAY;
+    const percentRate = explicitPercentRate ?? metricPercentRate ?? FALLBACK_PERCENT_RATE_DISPLAY;
 
     const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
     const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
@@ -216,9 +228,9 @@
     const totalPaid = Math.abs(parseNumber(metricsOrState.paid ?? metricsOrState.totalPaid ?? metrics.totalPaid ?? 0));
     if (!paidSourceFound) diagnostics.push("needs verification: source not found for totalPaid.");
 
-    const totalAccruedInput = hasOwn(metricsOrState, "totalOrders")
-      ? totalOrdersPlusPercent
-      : (hasOwn(metrics, "totalAccrued") ? metrics.totalAccrued : totalOrdersPlusPercent + myOrders);
+    const totalAccruedInput = hasOwn(metrics, "totalAccrued")
+      ? metrics.totalAccrued
+      : (hasOwn(metricsOrState, "totalOrders") ? totalOrdersPlusPercent : totalOrdersPlusPercent + myOrders);
     const canonical = getSharedOrdersPaymentSummary({
       ordersAccruedWithPercent: totalOrdersPlusPercent,
       totalOrders: totalOrdersPlusPercent,
