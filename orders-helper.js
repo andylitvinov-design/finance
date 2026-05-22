@@ -5,9 +5,9 @@
   }
   root.EzohataOrdersHelper = factory();
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  const DEFAULT_DISCOUNT_PERCENT = 50;
   const SIMPLE_HEADERS = ["ДАТА", "ИМЯ", "ЗАКАЗ", "СТОИМОСТЬ", "СКИДКА", "ИТОГО"];
   const SIMPLE_WIDTH = SIMPLE_HEADERS.length;
+  const DEFAULT_DISCOUNT = "50%";
 
   function normalizeCell(value) {
     return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
@@ -64,19 +64,6 @@
     return String(Math.round(numeric * 10000) / 10000).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
   }
 
-  function formatDiscount(value = DEFAULT_DISCOUNT_PERCENT) {
-    const numeric = parseLooseNumber(value);
-    if (!Number.isFinite(numeric)) return "";
-    return `${formatNumber(numeric)}%`;
-  }
-
-  function calculateDiscountedTotal(cost, discountPercent = DEFAULT_DISCOUNT_PERCENT) {
-    const numericCost = parseLooseNumber(cost);
-    const numericDiscount = parseLooseNumber(discountPercent);
-    if (!Number.isFinite(numericCost) || !Number.isFinite(numericDiscount)) return "";
-    return formatNumber(numericCost * numericDiscount / 100);
-  }
-
   function extractTrailingCost(text) {
     const raw = String(text || "").trim();
     if (!raw) return { text: "", cost: "" };
@@ -87,24 +74,30 @@
     return { text: cleaned || raw, cost };
   }
 
-  function splitHeaderLine(line, fallbackYearSource) {
+  function splitDatePrefix(line, fallbackYearSource) {
     const raw = String(line || "").trim();
-    const numericMatch = raw.match(/^(\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)\s+(.+)$/);
+    const numericMatch = raw.match(/^(\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)(?:\s+(.+))?$/);
     if (numericMatch) {
       return {
         date: normalizeDate(numericMatch[1], fallbackYearSource),
-        name: numericMatch[2].trim(),
+        rest: String(numericMatch[2] || "").trim(),
       };
     }
-    const monthMatch = raw.match(/^(\d{1,2})\s+(января|январь|февраля|февраль|марта|март|апреля|апрель|мая|май|июня|июнь|июля|июль|августа|август|сентября|сентябрь|октября|октябрь|ноября|ноябрь|декабря|декабрь)\s+(?:(\d{4})\s+)?(.+)$/i);
+    const monthMatch = raw.match(/^(\d{1,2})\s+(января|январь|февраля|февраль|марта|март|апреля|апрель|мая|май|июня|июнь|июля|июль|августа|август|сентября|сентябрь|октября|октябрь|ноября|ноябрь|декабря|декабрь)(?:\s+(\d{4}))?(?:\s+(.+))?$/i);
     if (!monthMatch) return null;
     const month = getRussianMonthNumber(monthMatch[2]);
     if (!month) return null;
     const year = monthMatch[3] || inferYear(fallbackYearSource);
     return {
       date: `${String(monthMatch[1]).padStart(2, "0")}.${month}.${year}`,
-      name: monthMatch[4].trim(),
+      rest: String(monthMatch[4] || "").trim(),
     };
+  }
+
+  function splitHeaderLine(line, fallbackYearSource) {
+    const parsed = splitDatePrefix(line, fallbackYearSource);
+    if (!parsed || !parsed.rest) return null;
+    return { date: parsed.date, name: parsed.rest };
   }
 
   function getRussianMonthNumber(value) {
@@ -151,28 +144,55 @@
     return { name: "", description: raw };
   }
 
+  function toTitleCaseName(value) {
+    return String(value || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.slice(0, 1).toLocaleUpperCase("ru-RU") + part.slice(1).toLocaleLowerCase("ru-RU"))
+      .join(" ");
+  }
+
+  function detectNamePrefix(line) {
+    const raw = String(line || "").trim();
+    if (!raw) return { name: "", rest: "" };
+    const match = raw.match(/^([A-Za-zА-Яа-яЁёІіЇїЄєҐґ-]+)\s+([A-Za-zА-Яа-яЁёІіЇїЄєҐґ-]+)(?:\s+(.+))?$/);
+    if (!match) return { name: "", rest: raw };
+    const first = match[1];
+    const second = match[2];
+    if (!isLikelyPersonName(first, second)) return { name: "", rest: raw };
+    return {
+      name: toTitleCaseName(`${first} ${second}`),
+      rest: String(match[3] || "").trim(),
+    };
+  }
+
+  function isLikelyPersonName(first, second) {
+    const full = normalizeCell(`${first} ${second}`);
+    if (/^литвинов[а]?\s+/.test(full)) return true;
+    const firstLooksName = /^[A-ZА-ЯЁІЇЄҐ][a-zа-яёіїєґ-]+$/.test(String(first || ""));
+    const secondLooksName = /^[A-ZА-ЯЁІЇЄҐ][a-zа-яёіїєґ-]+$/.test(String(second || ""));
+    return firstLooksName && secondLooksName;
+  }
+
   function isNameWord(word) {
     return /^[a-zа-яіїєґ-]+$/i.test(String(word || "").trim());
   }
 
   function stripLeadingNumbering(value) {
-    return String(value || "").replace(/^\d+\)\s*/, "").trim();
-  }
-
-  function stripLeadingListMarker(value) {
-    return stripLeadingNumbering(String(value || "").replace(/^[-–—]\s+/, "").trim());
+    return String(value || "").replace(/^\d+[\).]\s*/, "").trim();
   }
 
   function isNumberedLine(value) {
-    return /^\d+\)\s*/.test(String(value || "").trim());
+    return /^\d+[\).]\s*/.test(String(value || "").trim());
   }
 
-  function isDashedItemLine(value) {
-    return /^[-–—]\s+\S/.test(String(value || "").trim());
+  function isBulletLine(value) {
+    return /^[-•]\s+/.test(String(value || "").trim());
   }
 
-  function isListItemLine(value) {
-    return isNumberedLine(value) || isDashedItemLine(value);
+  function stripLeadingBullet(value) {
+    return String(value || "").replace(/^[-•]\s+/, "").trim();
   }
 
   function isDecorativeLine(value) {
@@ -186,50 +206,200 @@
     (lines || []).forEach((line) => {
       const raw = String(line || "").trim();
       if (!raw) return;
-      if (isListItemLine(raw) && current.length) {
+      if (/^\d+\)\s*/.test(raw) && current.length) {
         items.push(current.join(" ").trim());
         current = [];
       }
-      current.push(stripLeadingListMarker(raw));
+      current.push(stripLeadingNumbering(raw));
     });
     if (current.length) items.push(current.join(" ").trim());
     return items.filter(Boolean);
   }
 
-  function buildRow(date, name, orderText, cost, discount = "", total = "") {
-    const normalizedCost = formatNumber(cost);
-    const normalizedDiscount = normalizedCost ? (discount || formatDiscount(DEFAULT_DISCOUNT_PERCENT)) : (discount || "");
-    const normalizedTotal = total || (normalizedCost ? calculateDiscountedTotal(normalizedCost, normalizedDiscount || DEFAULT_DISCOUNT_PERCENT) : "");
-    return [date || "", name || "", orderText || "", normalizedCost, normalizedDiscount, normalizedTotal];
+  function buildRow(date, name, orderText, cost, discount = DEFAULT_DISCOUNT) {
+    const formattedCost = formatNumber(cost);
+    const discountText = String(discount || DEFAULT_DISCOUNT).trim();
+    const discountRate = parseDiscountRate(discountText);
+    const total = formattedCost ? formatNumber(parseLooseNumber(formattedCost) * discountRate) : "";
+    return [date || "", name || "", orderText || "", formattedCost, discountText, total];
   }
 
-  function buildTotalRow(rows) {
-    const total = (rows || []).reduce((sum, row) => {
-      if (isTotalRow(row)) return sum;
-      return sum + (parseLooseNumber(row?.[5]) || 0);
-    }, 0);
-    return ["", "", "ИТОГО", "", "", formatNumber(total)];
-  }
-
-  function appendTotalRow(rows) {
-    const cleanRows = (rows || []).filter((row) => !isTotalRow(row));
-    if (!cleanRows.length) return [];
-    return [...cleanRows, buildTotalRow(cleanRows)];
-  }
-
-  function isTotalRow(row) {
-    return (row || []).some((cell) => normalizeCell(cell) === "итого");
+  function parseDiscountRate(value) {
+    const raw = String(value || "").trim();
+    const percent = raw.match(/^(\d+(?:[.,]\d+)?)\s*%$/);
+    if (percent) {
+      const parsed = parseLooseNumber(percent[1]);
+      return Number.isFinite(parsed) ? parsed / 100 : 0.5;
+    }
+    const parsed = parseLooseNumber(raw);
+    if (!Number.isFinite(parsed)) return 0.5;
+    return parsed > 1 ? parsed / 100 : parsed;
   }
 
   function parseManualOrdersTextBlocks(text, defaultDate) {
     const fallbackYearSource = defaultDate;
-    const rows = String(text || "")
-      .split(/\n\s*\n+/)
-      .map((block) => block.trim())
-      .filter(Boolean)
-      .flatMap((block) => parseBlock(block, fallbackYearSource))
-      .filter((row) => row.some((cell) => String(cell || "").trim()));
-    return appendTotalRow(rows);
+    const parsed = parseTolerantOrdersText(text, fallbackYearSource);
+    const rows = parsed.rows.filter((row) => row.some((cell) => String(cell || "").trim()));
+    rows.warnings = parsed.warnings;
+    rows.grandTotal = formatNumber(rows.reduce((sum, row) => sum + parseLooseNumber(row[5]), 0));
+    return rows;
+  }
+
+  function parseManualOrdersTextDetailed(text, defaultDate) {
+    const rows = parseManualOrdersTextBlocks(text, defaultDate);
+    return {
+      headers: SIMPLE_HEADERS.slice(),
+      rows: rows.map((row) => row.slice()),
+      warnings: (rows.warnings || []).map((warning) => ({ ...warning })),
+      grandTotal: rows.grandTotal || "",
+    };
+  }
+
+  function parseTolerantOrdersText(text, fallbackYearSource) {
+    const rows = [];
+    const warnings = [];
+    const state = { date: "", name: "", pendingPrefix: "", current: null, itemizedMode: false };
+    const sourceLines = String(text || "").split(/\r?\n/);
+
+    function finishCurrent(reason = "boundary") {
+      if (!state.current) return;
+      const item = state.current;
+      state.current = null;
+      const parsed = extractTrailingCost(item.text);
+      if (parsed.cost) {
+        rows.push(buildRow(item.date || state.date, item.name || state.name, parsed.text, parsed.cost));
+        return;
+      }
+      const missing = {
+        status: "missing_price",
+        reason,
+        date: item.date || state.date,
+        name: item.name || state.name,
+        order: item.text.trim(),
+      };
+      warnings.push(missing);
+    }
+
+    function startItem(rawText, options = {}) {
+      finishCurrent("new_item");
+      const textParts = [];
+      if (state.pendingPrefix) textParts.push(state.pendingPrefix);
+      if (rawText) textParts.push(rawText);
+      state.pendingPrefix = "";
+      state.current = {
+        date: options.date || state.date,
+        name: options.name || state.name,
+        text: textParts.join(" ").replace(/\s+/g, " ").trim(),
+      };
+    }
+
+    sourceLines.forEach((sourceLine) => {
+      const rawLine = String(sourceLine || "").trim();
+      if (!rawLine || isDecorativeLine(rawLine)) {
+        finishCurrent("blank_line");
+        return;
+      }
+      const dateLine = stripLeadingBullet(rawLine);
+      const datePrefix = splitDatePrefix(dateLine, fallbackYearSource);
+      if (datePrefix) {
+        finishCurrent("date");
+        state.date = datePrefix.date;
+        state.itemizedMode = false;
+        const rest = datePrefix.rest;
+        if (!rest) return;
+        const inline = splitInlineOrder(rest);
+        const nameSplit = detectNamePrefix(inline.namePart || rest);
+        if (nameSplit.name) state.name = nameSplit.name;
+        if (!inline.orderPart && !nameSplit.name && !looksLikePricedOrder(rest)) {
+          state.name = toTitleCaseName(rest);
+          return;
+        }
+        const orderText = inline.orderPart || nameSplit.rest;
+        if (orderText) startItem(orderText, { date: state.date, name: state.name });
+        return;
+      }
+
+      const line = stripLeadingBullet(stripLeadingNumbering(rawLine));
+      if (isNumberedLine(rawLine)) {
+        state.itemizedMode = true;
+        const numberedBody = stripLeadingNumbering(rawLine);
+        const inline = splitInlineNameOrder(numberedBody);
+        const nameSplit = detectNamePrefix(inline.namePart || numberedBody);
+        if (nameSplit.name && !inline.orderPart && !nameSplit.rest) {
+          finishCurrent("name");
+          state.name = nameSplit.name;
+          return;
+        }
+        if (nameSplit.name) state.name = nameSplit.name;
+        startItem(inline.orderPart || nameSplit.rest || numberedBody);
+        return;
+      }
+
+      if (isBulletLine(rawLine)) {
+        state.itemizedMode = true;
+        startItem(stripLeadingBullet(rawLine));
+        return;
+      }
+
+      const inline = splitInlineNameOrder(line);
+      if (inline.orderPart) {
+        const nameSplit = detectNamePrefix(inline.namePart);
+        if (nameSplit.name) state.name = nameSplit.name;
+        startItem(inline.orderPart);
+        return;
+      }
+
+      const nameSplit = detectNamePrefix(line);
+      if (nameSplit.name && !nameSplit.rest) {
+        finishCurrent("name");
+        state.name = nameSplit.name;
+        return;
+      }
+      if (nameSplit.name && nameSplit.rest) {
+        state.name = nameSplit.name;
+        startItem(nameSplit.rest);
+        return;
+      }
+
+      if (state.current) {
+        const currentHasCost = Boolean(extractTrailingCost(state.current.text).cost);
+        if (currentHasCost && looksLikePricedOrder(line) && state.itemizedMode) {
+          startItem(line);
+        } else if (currentHasCost && state.itemizedMode) {
+          finishCurrent("context_after_priced_item");
+          state.pendingPrefix = [state.pendingPrefix, line].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+        } else {
+          state.current.text = `${state.current.text} ${line}`.replace(/\s+/g, " ").trim();
+        }
+        return;
+      }
+
+      if (looksLikePricedOrder(line)) {
+        startItem(line);
+        return;
+      }
+
+      state.pendingPrefix = [state.pendingPrefix, line].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    });
+    finishCurrent("end");
+    return { rows, warnings };
+  }
+
+  function splitInlineOrder(value) {
+    const raw = String(value || "").trim();
+    const match = raw.match(/^(.+?)\s+-\s+(.+)$/);
+    if (!match) return { namePart: raw, orderPart: "" };
+    return { namePart: match[1].trim(), orderPart: match[2].trim() };
+  }
+
+  function splitInlineNameOrder(value) {
+    const split = splitInlineOrder(value);
+    if (!split.orderPart) return split;
+    return detectNamePrefix(split.namePart).name ? split : { namePart: value, orderPart: "" };
+  }
+
+  function looksLikePricedOrder(value) {
+    return Boolean(extractTrailingCost(value).cost);
   }
 
   function parseBlock(block, fallbackYearSource) {
@@ -250,9 +420,9 @@
       });
     }
 
-    const hasListItems = lines.some(isListItemLine);
+    const hasNumberedItems = lines.some(isNumberedLine);
     return splitNumberedItems(lines).map((item) => {
-      if (hasListItems) {
+      if (hasNumberedItems) {
         const parsed = extractTrailingCost(item);
         return buildRow("", "", parsed.text, parsed.cost);
       }
@@ -272,7 +442,7 @@
     if (header.length <= SIMPLE_WIDTH) {
       return {
         headers: SIMPLE_HEADERS.slice(),
-        rows: rows.slice(1).map((row) => normalizeSimpleRow(row)),
+        rows: rows.slice(1).map((row) => padRow(row, SIMPLE_WIDTH)),
       };
     }
 
@@ -288,15 +458,11 @@
         readCell(row, headerIndex.costTertiary),
         readCell(row, headerIndex.costFallback),
       ]);
-      const discount = readCell(row, headerIndex.discount) || formatDiscount(DEFAULT_DISCOUNT_PERCENT);
-      const total = readCell(row, headerIndex.total) || calculateDiscountedTotal(cost, discount);
       return buildRow(
         date,
         name,
         [service, comment].filter(Boolean).join(" | "),
-        cost,
-        discount,
-        total
+        formatNumber(cost)
       );
     });
 
@@ -304,11 +470,6 @@
       headers: SIMPLE_HEADERS.slice(),
       rows: mappedRows,
     };
-  }
-
-  function normalizeSimpleRow(row) {
-    const padded = padRow(row, SIMPLE_WIDTH);
-    return buildRow(padded[0], padded[1], padded[2], padded[3], padded[4], padded[5]);
   }
 
   function buildHeaderIndex(header) {
@@ -321,8 +482,6 @@
       costSecondary: findHeaderIndex(header, ["accrued"]),
       costTertiary: findHeaderIndex(header, ["price base", "price"]),
       costFallback: findHeaderIndex(header, ["получено в долларах итого (сводный)", "received total usd"]),
-      discount: findHeaderIndex(header, ["скидка", "discount"]),
-      total: findHeaderIndex(header, ["итого", "total", "total after discount"]),
     };
   }
 
@@ -345,6 +504,7 @@
   return {
     SIMPLE_HEADERS,
     parseManualOrdersTextBlocks,
+    parseManualOrdersTextDetailed,
     mapLegacyOrdersValues,
   };
 });
