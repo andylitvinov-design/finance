@@ -382,8 +382,10 @@ test("period reconciliation uses fetchYooMoneyStatementEntries when YooMoney tok
   });
 
   const yoomoney = snapshot.period_balance_reconciliation.provider_ledger_reconciliation.yoomoney;
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   assert.equal(requests[0].url, "https://yoomoney.example/api/operation-history");
+  assert.equal(new URLSearchParams(requests[0].options.body).get("type"), "deposition payment");
+  assert.equal(new URLSearchParams(requests[1].options.body).get("type"), null);
   assert.match(String(requests[0].options.body), /from=2026-04-01T00%3A00%3A00Z/);
   assert.equal(yoomoney.provider_evidence_source, "live_yoomoney");
   assert.equal(yoomoney.row_level.provider_status_counts.matched_exact, 2);
