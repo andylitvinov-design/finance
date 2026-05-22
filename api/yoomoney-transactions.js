@@ -2,6 +2,7 @@ const YOOMONEY_BASE_URL = "https://yoomoney.ru";
 const YOOMONEY_MAX_RANGE_DAYS = 366;
 const YOOMONEY_PAGE_SIZE = 100;
 const YOOMONEY_DEFAULT_CURRENCY = "RUB";
+const YOOMONEY_OPERATION_HISTORY_TYPES = ["deposition payment", ""];
 const YOOMONEY_CHANNEL_BY_CURRENCY = {
   RUB: "Яндекс руб",
   USD: "пейпал дол",
@@ -60,22 +61,14 @@ export async function fetchYooMoneyStatementEntries(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const baseUrl = String(options.baseUrl || YOOMONEY_BASE_URL).replace(/\/+$/, "");
   const currency = String(options.currency || YOOMONEY_DEFAULT_CURRENCY).trim().toUpperCase() || YOOMONEY_DEFAULT_CURRENCY;
-  const operations = [];
-  let nextRecord = "";
-  let guard = 0;
-  do {
-    const payload = await fetchYooMoneyOperationHistory({
-      fetchImpl,
-      baseUrl,
-      accessToken,
-      startDate,
-      endDate,
-      startRecord: nextRecord
-    });
-    operations.push(...(Array.isArray(payload?.operations) ? payload.operations : []));
-    nextRecord = String(payload?.next_record || "").trim();
-    guard += 1;
-  } while (nextRecord && guard < 100);
+  const coverage = await fetchYooMoneyOperationHistoryCoverage({
+    fetchImpl,
+    baseUrl,
+    accessToken,
+    startDate,
+    endDate
+  });
+  const operations = dedupeYooMoneyOperations(coverage.operations);
 
   const entries = operations
     .map((operation, index) => normalizeYooMoneyOperation(operation, { currency }, index))
@@ -86,7 +79,8 @@ export async function fetchYooMoneyStatementEntries(options = {}) {
     transactionCount: operations.length,
     periodStart: startDate,
     periodEnd: endDate,
-    source: "yoomoney"
+    source: "yoomoney",
+    diagnostics: coverage.diagnostics
   };
 }
 
@@ -121,13 +115,77 @@ export async function fetchYooMoneyCurrentBalance(options = {}) {
   };
 }
 
+async function fetchYooMoneyOperationHistoryCoverage(options = {}) {
+  const diagnostics = {
+    requests: [],
+    history_types: [],
+    operation_counts: {},
+    errors: []
+  };
+  const operations = [];
+
+  for (const type of YOOMONEY_OPERATION_HISTORY_TYPES) {
+    const historyType = type || "unfiltered";
+    diagnostics.history_types.push(historyType);
+    try {
+      const result = await fetchYooMoneyOperationHistoryPages({ ...options, type });
+      operations.push(...result.operations);
+      diagnostics.requests.push(...result.requests);
+      diagnostics.operation_counts[historyType] = result.operations.length;
+    } catch (error) {
+      diagnostics.errors.push({
+        history_type: historyType,
+        error: String(error && error.message ? error.message : error)
+      });
+      diagnostics.operation_counts[historyType] = 0;
+    }
+  }
+
+  if (!operations.length && diagnostics.errors.length === YOOMONEY_OPERATION_HISTORY_TYPES.length) {
+    throw new Error(diagnostics.errors[0]?.error || "YooMoney operation-history request failed.");
+  }
+
+  diagnostics.raw_operation_count = operations.length;
+  diagnostics.deduped_operation_count = dedupeYooMoneyOperations(operations).length;
+  diagnostics.duplicate_operation_count = diagnostics.raw_operation_count - diagnostics.deduped_operation_count;
+
+  return { operations, diagnostics };
+}
+
+async function fetchYooMoneyOperationHistoryPages(options = {}) {
+  const operations = [];
+  const requests = [];
+  let nextRecord = "";
+  let guard = 0;
+  do {
+    const payload = await fetchYooMoneyOperationHistory({
+      ...options,
+      startRecord: nextRecord
+    });
+    const pageOperations = Array.isArray(payload?.operations) ? payload.operations : [];
+    operations.push(...pageOperations);
+    requests.push({
+      history_type: options.type || "unfiltered",
+      page: guard + 1,
+      start_record: nextRecord || null,
+      next_record: String(payload?.next_record || "").trim() || null,
+      operation_count: pageOperations.length
+    });
+    nextRecord = String(payload?.next_record || "").trim();
+    guard += 1;
+  } while (nextRecord && guard < 100);
+
+  return { operations, requests };
+}
+
 async function fetchYooMoneyOperationHistory(options = {}) {
   const body = new URLSearchParams({
-    type: "deposition payment",
     records: String(YOOMONEY_PAGE_SIZE),
     from: toYooMoneyDateTime(options.startDate, false),
     till: toYooMoneyDateTime(options.endDate, true)
   });
+  const type = String(options.type ?? "deposition payment").trim();
+  if (type) body.set("type", type);
   if (options.startRecord) body.set("start_record", String(options.startRecord));
 
   const upstream = await options.fetchImpl(`${options.baseUrl}/api/operation-history`, {
@@ -144,6 +202,25 @@ async function fetchYooMoneyOperationHistory(options = {}) {
     throw new Error(payload?.error_description || payload?.error || `YooMoney operation-history request failed (${upstream.status}).`);
   }
   return payload || {};
+}
+
+function dedupeYooMoneyOperations(operations = []) {
+  const seen = new Set();
+  const deduped = [];
+  operations.forEach((operation, index) => {
+    const operationId = String(operation?.operation_id || operation?.operationId || "").trim();
+    const key = operationId || [
+      operation?.datetime || operation?.date || "",
+      operation?.direction || "",
+      operation?.amount || operation?.amount_due || "",
+      operation?.title || operation?.comment || "",
+      index
+    ].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(operation);
+  });
+  return deduped;
 }
 
 export async function exchangeYooMoneyAuthorizationCode(options = {}) {
