@@ -130,11 +130,12 @@ test("getVisibleManualOrdersRows includes William short-date order in April plan
   const visible = plain(context.getVisibleManualOrdersRows("2026-04-01", "2026-04-30"));
   assert.deepEqual(visible.rows, [
     ["30/04", "William", "трансервайз дол", "206,0000", "50%", "103,0000"],
-    ["", "", "Итого", "", "", "103,0000"],
+    ["", "", "Итого", "206,0000", "", "103,0000"],
   ]);
 
   const summary = plain(context.buildOrdersSummaryFromClient([visible.headers, ...visible.rows]));
   assert.equal(summary.orderRows, 1);
+  assert.equal(summary.personalOrdersGross, 206);
   assert.equal(summary.totalAccruedPlus3Pct, 103);
 });
 
