@@ -135,6 +135,66 @@ test("missing exact target-date provider balance with movements is blocked, not 
   assert.match(row.diagnosis, /Нет фактического остатка на дату/);
 });
 
+test("calculated balance fallback fills period-end fact when exact manual/provider fact is missing", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-04-22", to: "2026-05-21" },
+    operations: [
+      {
+        date: "2026-05-21",
+        fromChannel: "монобанк грн",
+        currency: "UAH",
+        amountNet: "1330",
+        balanceAmount: -1330,
+        ledgerV2: {
+          date: "2026-05-21",
+          operation: "expense",
+          from_channel: "монобанк грн",
+          currency: "UAH",
+          amount_net: "1330",
+          balance_amount: -1330,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-20", channel: "монобанк грн", currency: "UAH", amount: "13033.14", balanceSource: "manual_fact" },
+    ],
+    calculatedBalanceRows: [
+      { date: "2026-05-21", channel: "монобанк грн", currency: "UAH", amount: "11703.14", balanceSource: "calculated_balance", source: "calculated", sourceSheet: "Расчетные Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "calculated_from_previous");
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.factual_closing_balance, 11703.14);
+  assert.equal(row.fact_source, "calculated");
+  assert.equal(row.fact_status, "calculated_from_previous");
+  assert.equal(row.balanceSource, "calculated_balance");
+  assert.equal(row.needsManualConfirmation, false);
+  assert.equal(row.missing_amount_net_rows, 0);
+});
+
+test("manual period-end fact wins over calculated balance fallback", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [income()],
+    balanceRows: [
+      { date: "2026-05-10", channel: "wise usd", currency: "USD", amount: "1000", balanceSource: "manual_fact" },
+      { date: "2026-05-15", channel: "wise usd", currency: "USD", amount: "1300", balanceSource: "manual_fact" },
+    ],
+    calculatedBalanceRows: [
+      { date: "2026-05-15", channel: "wise usd", currency: "USD", amount: "9999", balanceSource: "calculated_balance", source: "calculated" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.manual_provider_closing_balance, 1300);
+  assert.equal(row.factual_closing_balance, 1300);
+  assert.equal(row.fact_source, "manual");
+  assert.equal(row.balanceSource, "manual_fact");
+});
+
 test("no opening, no movement, no fact, and no plan is ignored as no data", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

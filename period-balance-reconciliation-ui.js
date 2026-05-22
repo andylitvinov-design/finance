@@ -388,7 +388,7 @@
   function formatFactBalance(row) {
     const factStatus = String(row?.factStatus || row?.fact_status || "").trim();
     const value = row?.manual_provider_closing_balance ?? (
-      factStatus === "confirmed" || factStatus === "auto_pending"
+      factStatus === "confirmed" || factStatus === "auto_pending" || factStatus === "calculated_from_previous"
         ? row?.factual_closing_balance
         : null
     );
@@ -637,6 +637,7 @@
     if (normalized === "missing_closing_balance") return "Нет конечного остатка";
     if (normalized === "carried_forward_conditional") return "Условно перенесено";
     if (normalized === "missing_amount_net") return "Нет amount_net";
+    if (normalized === "calculated_from_previous") return "calculated from previous";
     if (normalized === "no_data") return "Нет данных";
     return "Проверить";
   }
@@ -646,10 +647,12 @@
     const normalizedBalanceSource = String(row?.balanceSource || row?.balance_source || "").trim();
     if (normalizedBalanceSource === "manual_fact") return "manual fact";
     if (normalizedBalanceSource === "provider_auto") return "auto, needs manual confirmation";
+    if (normalizedBalanceSource === "calculated_balance") return "calculated from previous";
     if (normalizedBalanceSource === "missing") return "add manual fact balance";
     const normalized = String(row ? row.fact_source : rowOrSource || "").trim();
     if (normalized === "manual") return "manual fact";
     if (normalized === "provider") return "auto, needs manual confirmation";
+    if (normalized === "calculated") return "calculated from previous";
     if (normalized === "carried_forward") return "перенесён";
     if (normalized === "missing") return "add manual fact balance";
     return normalized || "—";

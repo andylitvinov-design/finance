@@ -152,7 +152,7 @@ test("display date input is normalized with padded month and day", async () => {
   });
 });
 
-test("carried-forward opening row is not labeled as closing manual fact", async () => {
+test("opening-only row is labeled as calculated fallback, not closing manual fact", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-17" },
     repositoryLoader: async () => ({
@@ -169,16 +169,17 @@ test("carried-forward opening row is not labeled as closing manual fact", async 
   });
 
   const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "трансервайз дол");
-  assert.equal(row.status, "missing_provider_balance");
-  assert.equal(row.closing_balance_source, "missing");
-  assert.equal(row.balanceSource, "missing");
-  assert.equal(row.needsManualConfirmation, true);
-  assert.equal(row.sourceSheet, "");
-  assert.equal(row.factStatus, "missing");
-  assert.match(row.repairHint, /add fact balance/);
+  assert.equal(row.status, "calculated_from_previous");
+  assert.equal(row.closing_balance_source, "calculated");
+  assert.equal(row.balanceSource, "calculated_balance");
+  assert.equal(row.needsManualConfirmation, false);
+  assert.equal(row.sourceSheet, "Расчетные Остатки");
+  assert.equal(row.factStatus, "calculated_from_previous");
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.factual_closing_balance, 100);
 });
 
-test("blank auto status row does not become factual balance and reports provider limitation", async () => {
+test("blank auto status row stays diagnostic while calculated fallback covers EOD", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-17" },
     repositoryLoader: async () => ({
@@ -213,14 +214,15 @@ test("blank auto status row does not become factual balance and reports provider
   });
 
   const row = snapshot.period_balance_reconciliation.by_channel_currency.find((item) => item.channel === "Payoneer - dol");
-  assert.equal(row.status, "provider_not_implemented");
-  assert.equal(row.factual_closing_balance, null);
+  assert.equal(row.status, "calculated_from_previous");
+  assert.equal(row.factual_closing_balance, 120);
   assert.equal(row.manual_provider_closing_balance, null);
-  assert.equal(row.balanceSource, "missing");
-  assert.equal(row.factStatus, "provider_not_implemented");
-  assert.equal(row.sourceSheet, "Авто Остатки");
-  assert.equal(row.sourceRow, 11);
-  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.provider_not_implemented, 1);
+  assert.equal(row.balanceSource, "calculated_balance");
+  assert.equal(row.factStatus, "calculated_from_previous");
+  assert.equal(row.providerStatus, null);
+  assert.equal(row.sourceSheet, "Расчетные Остатки");
+  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.provider_not_implemented, 0);
+  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.calculated_from_previous, 1);
   assert.equal(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_rows_loaded, 1);
   assert.deepEqual(snapshot.period_balance_reconciliation.diagnostics.auto_balance_status_counts, {
     provider_not_implemented: 1,
