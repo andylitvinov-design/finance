@@ -150,7 +150,7 @@
     if (typeof shared?.buildOrdersPaymentSummary === "function") {
       return shared.buildOrdersPaymentSummary(input);
     }
-    const ordersAccruedWithPercent = parseNumber(input.ordersAccruedWithPercent ?? input.totalOrders ?? input.totalOrdersPlusPercent);
+    const ordersAccruedWithPercent = parseNumber(input.ordersAccruedWithPercent ?? input.totalOrdersPlusPercent ?? input.totalOrders);
     const totalPaid = Math.abs(parseNumber(input.totalPaid));
     const myOrdersDiscounted = parseNumber(input.personalOrdersAfterDiscount);
     const totalAccrued = hasOwn(input, "totalAccrued") ? parseNumber(input.totalAccrued) : ordersAccruedWithPercent + myOrdersDiscounted;
@@ -158,6 +158,7 @@
       ordersAccruedWithPercent,
       percentRate: parseNumber(input.percentRate || FALLBACK_PERCENT_RATE_DISPLAY),
       myOrdersDiscounted,
+      myOrdersGross: parseNumber(input.personalOrdersGross ?? myOrdersDiscounted),
       totalAccrued,
       totalPaid,
       remainingToPay: totalAccrued - totalPaid,
@@ -220,8 +221,16 @@
     if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
     const percentRate = explicitPercentRate ?? metricPercentRate ?? FALLBACK_PERCENT_RATE_DISPLAY;
 
-    const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
-    const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
+    const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metricsOrState, "personalOrdersAfterDiscount") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
+    const myOrdersPayableSource = metricsOrState.personalOrdersAfterDiscount ?? metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? metricsOrState.myOrders ?? 0;
+    const myOrdersPayableInput = parseNumber(myOrdersPayableSource);
+    const myOrdersGrossInput = parseNumber(
+      metricsOrState.personalOrdersGross ??
+      metrics.personalOrdersGross ??
+      metrics.ordersSummary?.personalOrdersGross ??
+      metricOrdersPaymentSummary?.myOrdersGross ??
+      (ordersTotals.sourceFound ? ordersTotals.orders : myOrdersPayableInput)
+    );
     if (!personalSourceFound) diagnostics.push("needs verification: source not found for myOrders.");
 
     const paidSourceFound = hasOwn(metricsOrState, "paid") || hasOwn(metricsOrState, "totalPaid") || hasOwn(metrics, "totalPaid");
@@ -230,16 +239,18 @@
 
     const totalAccruedInput = hasOwn(metrics, "totalAccrued")
       ? metrics.totalAccrued
-      : (hasOwn(metricsOrState, "totalOrders") ? totalOrdersPlusPercent : totalOrdersPlusPercent + myOrders);
+      : (hasOwn(metricsOrState, "totalOrders") ? totalOrdersPlusPercent : totalOrdersPlusPercent + myOrdersPayableInput);
     const canonical = getSharedOrdersPaymentSummary({
       ordersAccruedWithPercent: totalOrdersPlusPercent,
       totalOrders: totalOrdersPlusPercent,
       percentRate,
-      personalOrdersAfterDiscount: myOrders,
+      personalOrdersAfterDiscount: myOrdersPayableInput,
+      personalOrdersGross: myOrdersGrossInput,
       totalAccrued: totalAccruedInput,
       totalPaid,
     });
     const myOrdersPayable = canonical.myOrdersDiscounted;
+    const myOrdersGross = canonical.myOrdersGross ?? myOrdersGrossInput;
     const totalAccrued = canonical.totalAccrued;
     const remainingToPay = canonical.remainingToPay;
 
@@ -250,7 +261,8 @@
       percentToOrders,
       percentRate: canonical.percentRate,
       totalOrdersPlusPercent,
-      myOrders,
+      myOrders: myOrdersGross,
+      myOrdersGross,
       myOrdersHalf: myOrdersPayable,
       myOrdersPayable,
       totalAccrued,
@@ -262,7 +274,7 @@
         orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED/ACCRUED or top metrics fallback",
         percentRate: explicitPercentRate !== null ? "input.percentRate" : "default 3 percent display rate",
         totalPaid: "buildTopMetricsSummary.totalPaid",
-        myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount already includes personal-order payable discount",
+        myOrders: "orders table gross personal order sum; payable uses personalOrdersAfterDiscount",
       },
     };
   }
@@ -286,9 +298,9 @@
     block.className = "balance-summary-block";
     block.setAttribute("aria-live", "polite");
     const lines = [
-      ["Сумма заказов за период", summary.orders],
+      ["Сумма заказов за период (ACCRUED)", summary.ordersBase],
       ["Процент к заказам", summary.percentRate, "percent"],
-      ["Итого: Заказы + %", summary.totalOrdersPlusPercent],
+      ["Итого: Заказы + % (ACCRUED +3%)", summary.totalOrdersPlusPercent],
       ["Мои заказы", summary.myOrders],
       ["Мои заказы к начислению (уже с учетом скидки)", summary.myOrdersPayable ?? summary.myOrdersHalf],
       ["ВСЕГО НАЧИСЛЕНО", summary.totalAccrued],
