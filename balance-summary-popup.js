@@ -4,7 +4,7 @@
   const BALANCE_BUTTON_ID = "balanceLauncherButton";
   const BALANCE_BLOCK_ID = "balanceSummaryBlock";
   const PAYABLE_RATE = 0.7;
-  const PERSONAL_ORDERS_RATE = 0.5;
+  const FALLBACK_PERCENT_RATE = 0.03;
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -25,10 +25,23 @@
     return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
   }
 
+  function normalizeHeaderKey(value) {
+    return normalizeCell(value)
+      .replace(/\s+/g, "")
+      .replace(/[^0-9a-zа-яіїєґ%+]/g, "");
+  }
+
   function findHeaderIndexByAliases(header, aliases) {
-    if (typeof root.findHeaderIndexByAliases === "function") return root.findHeaderIndexByAliases(header, aliases);
+    if (typeof root.findHeaderIndexByAliases === "function") {
+      const index = root.findHeaderIndexByAliases(header, aliases);
+      if (index !== -1) return index;
+    }
     const normalized = new Set((aliases || []).map((alias) => normalizeCell(alias)));
-    return (header || []).findIndex((cell) => normalized.has(normalizeCell(cell)));
+    const exactIndex = (header || []).findIndex((cell) => normalized.has(normalizeCell(cell)));
+    if (exactIndex !== -1) return exactIndex;
+
+    const looseAliases = new Set((aliases || []).map((alias) => normalizeHeaderKey(alias)));
+    return (header || []).findIndex((cell) => looseAliases.has(normalizeHeaderKey(cell)));
   }
 
   function normalizeDateKey(value) {
@@ -67,8 +80,12 @@
 
   function findHeaderRowIndex(values) {
     return (values || []).findIndex((row) => {
-      const normalized = (row || []).map((cell) => normalizeCell(cell));
-      return normalized.includes("accrued") || normalized.includes("accrued +3%") || normalized.includes("стоимость");
+      const normalized = (row || []).map((cell) => normalizeHeaderKey(cell));
+      return normalized.includes("accrued") ||
+        normalized.includes("accrued+3%") ||
+        normalized.includes("accrued+3") ||
+        normalized.includes("стоимость") ||
+        normalized.includes("итого");
     });
   }
 
@@ -80,8 +97,24 @@
 
     const header = rows[headerRowIndex] || [];
     const dateIndex = findHeaderIndexByAliases(header, ["DATE", "ДАТА"]);
-    const baseIndex = findHeaderIndexByAliases(header, ["ACCRUED", "PRICE BASE", "СТОИМОСТЬ", "COST"]);
-    const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "ИТОГО"]);
+    const baseIndex = findHeaderIndexByAliases(header, [
+      "ACCRUED",
+      "ACCRUED BASE",
+      "PRICE BASE",
+      "СТОИМОСТЬ",
+      "COST",
+      "СУММА ЗАКАЗА",
+      "ЗАКАЗЫ"
+    ]);
+    const accruedPlusIndex = findHeaderIndexByAliases(header, [
+      "ACCRUED +3%",
+      "ACCRUED+3%",
+      "ACCRUED + 3%",
+      "ACCRUED PLUS 3%",
+      "ИТОГО",
+      "TOTAL AFTER DISCOUNT",
+      "TOTAL"
+    ]);
     const dataRows = rows.slice(headerRowIndex + 1).filter((row) => {
       if (!hasAnyValue(row) || isTotalRow(row)) return false;
       if (dateIndex !== -1) return isDateInPeriod(normalizeDateKey(row[dateIndex]), period);
@@ -107,9 +140,15 @@
 
   function firstFinite(...values) {
     for (const value of values) {
+      if (value === null || value === undefined || value === "") continue;
       if (Number.isFinite(Number(value))) return Number(value);
     }
     return 0;
+  }
+
+  function sumNullableTotals(left, right) {
+    if (left === null && right === null) return null;
+    return firstFinite(left) + firstFinite(right);
   }
 
   function buildBalanceTextSummary(metricsOrState = {}, options = {}) {
@@ -126,36 +165,28 @@
     let percentToOrders = explicitPercent;
     let totalOrdersPlusPercent = hasOwn(metricsOrState, "totalOrdersPlusPercent") ? parseNumber(metricsOrState.totalOrdersPlusPercent) : null;
 
+    const tableOrders = sumNullableTotals(movementTotals.orders, ordersTotals.orders);
+    const tableTotalOrdersPlusPercent = sumNullableTotals(movementTotals.totalOrdersPlusPercent, ordersTotals.totalOrdersPlusPercent);
+    const tablePercentToOrders = sumNullableTotals(movementTotals.percentToOrders, ordersTotals.percentToOrders);
+
+    if (orders === null && tableOrders !== null) orders = tableOrders;
+    if (totalOrdersPlusPercent === null && tableTotalOrdersPlusPercent !== null) totalOrdersPlusPercent = tableTotalOrdersPlusPercent;
+    if (percentToOrders === null && tablePercentToOrders !== null) percentToOrders = tablePercentToOrders;
+
+    if ((orders === null || totalOrdersPlusPercent === null) && hasOwn(metrics, "totalOrders")) {
+      const fallbackTotal = parseNumber(metrics.totalOrders);
+      if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = fallbackTotal;
+      if (orders === null) orders = fallbackTotal / (1 + FALLBACK_PERCENT_RATE);
+      if (percentToOrders === null) percentToOrders = totalOrdersPlusPercent - orders;
+      diagnostics.push("needs verification: exact ACCRUED/ACCRUED+3% columns not found; using top metrics totalOrders as ACCRUED+3% fallback.");
+    }
+
     if (orders === null) {
-      if (movementTotals.orders !== null || ordersTotals.orders !== null) {
-        orders = firstFinite(movementTotals.orders, 0) + firstFinite(ordersTotals.orders, 0);
-      } else if (hasOwn(metrics, "totalOrders")) {
-        orders = parseNumber(metrics.totalOrders);
-        diagnostics.push("needs verification: source not found for exact orders base; using top metrics totalOrders.");
-      } else {
-        orders = 0;
-        diagnostics.push("needs verification: source not found for orders.");
-      }
+      orders = 0;
+      diagnostics.push("needs verification: source not found for orders.");
     }
-
-    if (percentToOrders === null) {
-      if (movementTotals.percentToOrders !== null || ordersTotals.percentToOrders !== null) {
-        percentToOrders = firstFinite(movementTotals.percentToOrders, 0) + firstFinite(ordersTotals.percentToOrders, 0);
-      } else {
-        percentToOrders = 0;
-        diagnostics.push("needs verification: source not found for percentToOrders.");
-      }
-    }
-
-    if (totalOrdersPlusPercent === null) {
-      if (movementTotals.totalOrdersPlusPercent !== null || ordersTotals.totalOrdersPlusPercent !== null) {
-        totalOrdersPlusPercent = firstFinite(movementTotals.totalOrdersPlusPercent, 0) + firstFinite(ordersTotals.totalOrdersPlusPercent, 0);
-      } else if (hasOwn(metrics, "totalOrders")) {
-        totalOrdersPlusPercent = parseNumber(metrics.totalOrders);
-      } else {
-        totalOrdersPlusPercent = orders + percentToOrders;
-      }
-    }
+    if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + firstFinite(percentToOrders);
+    if (percentToOrders === null) percentToOrders = totalOrdersPlusPercent - orders;
 
     const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
     const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
@@ -166,8 +197,8 @@
     if (!paidSourceFound) diagnostics.push("needs verification: source not found for totalPaid.");
 
     const seventyPercent = totalOrdersPlusPercent * PAYABLE_RATE;
-    const myOrdersHalf = myOrders * PERSONAL_ORDERS_RATE;
-    const totalAccrued = seventyPercent + myOrdersHalf;
+    const myOrdersPayable = myOrders;
+    const totalAccrued = seventyPercent + myOrdersPayable;
     const remainingToPay = totalAccrued - totalPaid;
 
     return {
@@ -177,16 +208,17 @@
       totalOrdersPlusPercent,
       seventyPercent,
       myOrders,
-      myOrdersHalf,
+      myOrdersHalf: myOrdersPayable,
+      myOrdersPayable,
       totalAccrued,
       totalPaid,
       remainingToPay,
       diagnostics,
       sources: {
-        orders: explicitOrders !== null ? "input.orders" : "movement/orders table ACCRUED or top metrics fallback",
+        orders: explicitOrders !== null ? "input.orders" : "movement/orders table ACCRUED or top metrics ACCRUED+3% fallback",
         percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders ACCRUED +3% minus ACCRUED",
         totalPaid: "buildTopMetricsSummary.totalPaid",
-        myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount",
+        myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount already includes personal-order payable discount",
       },
     };
   }
@@ -208,8 +240,8 @@
       ["Итого: Заказы + %", summary.totalOrdersPlusPercent],
       ["70% от Итого", summary.seventyPercent],
       ["Мои заказы", summary.myOrders],
-      ["50% от моих заказов", summary.myOrdersHalf],
-      ["ВСЕГО НАЧИСЛЕНО (70% от итого + 50% моих)", summary.totalAccrued],
+      ["Мои заказы к начислению (уже с учетом скидки)", summary.myOrdersPayable ?? summary.myOrdersHalf],
+      ["ВСЕГО НАЧИСЛЕНО (70% от итого + мои заказы)", summary.totalAccrued],
       ["ВСЕГО оплачено", summary.totalPaid],
       ["ОСТАТОК оплатить", summary.remainingToPay],
     ];
