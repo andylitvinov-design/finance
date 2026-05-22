@@ -156,8 +156,14 @@ test("parsePrivat24PersonalStatementPayload accepts Privat24 exported headers af
   assert.match(result.ledgerRows[0].comment, /statement balance after: 93.27 UAH/);
   assert.match(result.ledgerRows[1].comment, /statement balance after: 20096.27 UAH/);
   assert.equal(result.diagnostics.coverage.input_rows_count, 4);
+  assert.equal(result.diagnostics.coverage.parsed_rows_count, 4);
   assert.equal(result.diagnostics.coverage.ledger_rows_count, 4);
+  assert.equal(result.diagnostics.coverage.skipped_rows_count, 0);
+  assert.equal(result.diagnostics.coverage.duplicate_rows_count, 0);
+  assert.equal(result.diagnostics.coverage.needs_review_rows_count, 0);
   assert.equal(result.diagnostics.coverage.hard_fail, false);
+  assert.equal(result.diagnostics.balance_chain.balance_chain_ok, true);
+  assert.deepEqual(result.warnings, []);
 });
 
 test("parsePrivat24PersonalStatementPayload skips title-only lines instead of dropping statement rows", () => {

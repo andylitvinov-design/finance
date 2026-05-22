@@ -82,6 +82,7 @@ const state = {
     monobankMode: "",
     privatBankLoading: false,
     privat24ImportLoading: false,
+    privat24Preview: null,
     privatBankSummary: null,
     tdBankLoading: false,
     tdImportStep: "ready",
