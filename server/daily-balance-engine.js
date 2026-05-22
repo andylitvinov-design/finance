@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { isIntradayBalanceComment } from "./manual-google-sheets.js";
 
 const STATUS = {
   OK: "ok",
@@ -22,7 +23,11 @@ const PROVIDER_STATUS_PRIORITY = [
   STATUS.PROVIDER_ERROR,
   STATUS.PROVIDER_NOT_IMPLEMENTED,
   STATUS.MISSING_PROVIDER,
+  STATUS.NEEDS_VERIFICATION,
 ];
+
+const INTRADAY_NOT_EOD = "intraday_not_eod";
+const INTRADAY_DIAGNOSTIC = "Intraday/not-EOD balance snapshot ignored for EOD reconciliation";
 
 export function buildDailyCurrencyBalances(operations = [], balanceRows = [], options = {}) {
   if (options?.period) {
@@ -49,7 +54,8 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         ? (openingSnapshot?.amount ?? null)
         : carriedOpening;
       const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
-      const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`);
+      const intradaySnapshot = balanceIndex.intradayByDateKey.get(`${movement.date}|${movement.key}`) || null;
+      const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`) || Boolean(intradaySnapshot);
       const closing = opening === null ? null : round(opening + movement.net_change);
       const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
       const status = resolveStatus({
@@ -71,6 +77,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         provider_reported_balance: providerReported === null ? null : round(providerReported),
         difference,
         status,
+        ...buildIntradayDiagnostic(intradaySnapshot),
         ...buildMissingProviderContext({
           status,
           movement,
@@ -170,6 +177,7 @@ export function buildDailyBalanceCoverage({
         manual_balance_snapshot: manualSnapshot ? buildSnapshotDiagnostic(manualSnapshot) : null,
         auto_provider_balance_snapshot: autoSnapshot ? buildSnapshotDiagnostic(autoSnapshot) : null,
         provider_status: providerStatus?.status || null,
+        provider_diagnostic: providerStatus?.provider_diagnostic || null,
         final_balance: resolved.final_balance,
         source: resolved.source,
         difference: resolved.difference,
@@ -296,6 +304,7 @@ function buildBalanceIndex(balanceRows) {
   const byKey = new Map();
   const byDateKey = new Map();
   const incompleteDateKeys = new Set();
+  const intradayByDateKey = new Map();
 
   // Balance snapshots are EOD 23:59. Same-day movements are included in the
   // snapshot and must not be counted again after that snapshot.
@@ -314,6 +323,18 @@ function buildBalanceIndex(balanceRows) {
     }
 
     const key = makeKey(channel, currency);
+    if (isIntradayBalanceRow(row)) {
+      intradayByDateKey.set(`${date}|${key}`, buildIntradayStatusRow({
+        date,
+        channel,
+        currency,
+        key,
+        amount,
+        row,
+      }));
+      continue;
+    }
+
     const normalized = {
       date,
       channel,
@@ -335,7 +356,16 @@ function buildBalanceIndex(balanceRows) {
     rows.sort((left, right) => left.date.localeCompare(right.date));
   }
 
-  return { byKey, byDateKey, incompleteDateKeys };
+  return { byKey, byDateKey, incompleteDateKeys, intradayByDateKey };
+}
+
+function buildIntradayDiagnostic(row) {
+  if (!row) return {};
+  return {
+    provider_status: INTRADAY_NOT_EOD,
+    provider_diagnostic: INTRADAY_DIAGNOSTIC,
+    ignored_intraday_balance_snapshot: buildSnapshotDiagnostic(row),
+  };
 }
 
 function buildMissingProviderContext({ status, movement, closing, balanceIndex }) {
@@ -395,6 +425,13 @@ function buildCoverageBalanceIndex(balanceRows) {
       sourceType: getCoverageSourceType(row),
     };
     const dateKey = `${date}|${key}`;
+
+    if (isIntradayBalanceRow(row)) {
+      const rows = statusByDateKey.get(dateKey) || [];
+      rows.push(buildIntradayStatusRow({ date, channel, currency, key, amount, row }));
+      statusByDateKey.set(dateKey, rows);
+      continue;
+    }
 
     if (amount !== null) {
       addBalanceSnapshot(allByKey, normalized);
@@ -472,6 +509,15 @@ function resolveCoverageFinal({
       difference: null,
       provider_reported_balance: snapshotAmount(manualSnapshot) ?? snapshotAmount(autoSnapshot),
       status: STATUS.MISSING_AMOUNT_NET,
+    };
+  }
+  if (providerStatus?.provider_status === INTRADAY_NOT_EOD) {
+    return {
+      final_balance: computedClosing,
+      source: INTRADAY_NOT_EOD,
+      difference: null,
+      provider_reported_balance: null,
+      status: STATUS.NEEDS_VERIFICATION,
     };
   }
   if (opening === null) {
@@ -716,6 +762,8 @@ function buildSnapshotDiagnostic(row) {
     sourceSheet: row.sourceSheet || "",
     sourceRow: row.sourceRow || null,
     comment: row.comment || "",
+    provider_status: row.provider_status || null,
+    provider_diagnostic: row.provider_diagnostic || null,
   };
 }
 
@@ -748,10 +796,38 @@ function sourcePriority(row = {}) {
 
 function normalizeProviderStatus(value) {
   const status = String(value || "").trim();
+  if (status === INTRADAY_NOT_EOD) return STATUS.NEEDS_VERIFICATION;
   if (status === "needs_permission") return STATUS.NEEDS_PROVIDER_PERMISSION;
   if (status === "not_implemented") return STATUS.PROVIDER_NOT_IMPLEMENTED;
   if (status === "error") return STATUS.PROVIDER_ERROR;
   return status;
+}
+
+function isIntradayBalanceRow(row = {}) {
+  return row?.isIntraday === true
+    || row?.is_intraday === true
+    || String(row?.status || "").trim() === INTRADAY_NOT_EOD
+    || String(row?.balanceStatus || row?.balance_status || "").trim() === INTRADAY_NOT_EOD
+    || isIntradayBalanceComment(row?.comment);
+}
+
+function buildIntradayStatusRow({ date, channel, currency, key, amount, row }) {
+  return {
+    date,
+    channel,
+    currency,
+    key,
+    amount,
+    status: STATUS.NEEDS_VERIFICATION,
+    provider_status: INTRADAY_NOT_EOD,
+    provider_diagnostic: INTRADAY_DIAGNOSTIC,
+    source: String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim(),
+    sourceSheet: String(row?.sourceSheet || row?.source_sheet || "").trim(),
+    provider: String(row?.provider || "").trim(),
+    sourceRow: row?.sourceRow || row?.source_row || null,
+    comment: String(row?.comment || "").trim(),
+    sourceType: getCoverageSourceType(row),
+  };
 }
 
 function isProviderStatus(status) {

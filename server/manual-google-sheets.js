@@ -63,6 +63,12 @@ function normalizeLookupText(value) {
     .trim();
 }
 
+export function isIntradayBalanceComment(comment = "") {
+  return /intraday|not[_ -]?eod|not\s+eod|не\s*eod|не\s*конец\s*дня|snapshot_before_movements|before\s+movements|до\s+операц/i.test(
+    String(comment || "")
+  );
+}
+
 function canonicalManualFinanceChannel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -981,6 +987,7 @@ function parseBalanceRows(values) {
       const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
       const amount = String(row[amountIndex] || "").trim();
       const comment = commentIndex === -1 ? "" : String(row[commentIndex] || "").trim();
+      const isIntraday = isIntradayBalanceComment(comment);
       const rawSource = sourceIndex === -1 ? "" : String(row[sourceIndex] || "").trim();
       const balanceSource = classifyBalanceSource({ source: rawSource, comment });
       return {
@@ -995,6 +1002,10 @@ function parseBalanceRows(values) {
         comment,
         source: balanceSource === "provider_auto" ? "provider_auto" : (rawSource || "manual-google-sheets"),
         balanceSource,
+        status: isIntraday ? "intraday_not_eod" : "",
+        balanceStatus: isIntraday ? "intraday_not_eod" : "",
+        isIntraday,
+        is_intraday: isIntraday,
         sourceSheet: BALANCE_SHEET_NAME,
         sourceRow: rowIndex + 2,
       };
