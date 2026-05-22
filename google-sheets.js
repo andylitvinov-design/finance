@@ -918,14 +918,156 @@ function buildManualLedgerSheetValues(rows, headers = MANUAL_LEDGER_HEADERS) {
   ];
 }
 
+function normalizeLedgerDedupeText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getLedgerDedupeDate(row) {
+  return normalizeIncomingSheetDateValue(row?.date);
+}
+
+function getLedgerDedupeDirection(row) {
+  const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
+  const direction = String(row?.direction || "").trim().toLowerCase();
+  if (direction === "in" || direction === "income") return "in";
+  if (direction === "out" || direction === "expense") return "out";
+  if (operation === "income" || operation === "exchange_in") return "in";
+  if (operation === "exchange_out") return "exchange_out";
+  if (operation === "transfer") return "transfer";
+  return "out";
+}
+
+function getLedgerDedupeChannel(row) {
+  const operation = normalizeManualLedgerOperation(row?.operation, row?.category);
+  const direction = getLedgerDedupeDirection(row);
+  const fromChannel = canonicalManualFinanceChannel(row?.fromChannel || row?.from_channel || "");
+  const toChannel = canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || "");
+  if (operation === "transfer" || operation === "exchange_out" || operation === "exchange_in" || direction === "transfer" || direction === "exchange_out") {
+    return `${fromChannel}->${toChannel}`;
+  }
+  return direction === "in" ? toChannel : fromChannel;
+}
+
+function getLedgerDedupeAmount(row) {
+  const rawAmount = firstNonEmpty(row?.amountNet, row?.amount_net, row?.netAmount, row?.amount);
+  const numeric = Math.abs(parseLooseNumber(rawAmount));
+  return Number.isFinite(numeric) && numeric > 0 ? numeric.toFixed(4) : "";
+}
+
+function getLedgerDedupeCurrency(row) {
+  const fromChannel = canonicalManualFinanceChannel(row?.fromChannel || row?.from_channel || "");
+  const toChannel = canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || "");
+  return String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel) || "").trim().toUpperCase();
+}
+
+function getLedgerDedupeCounterparty(row) {
+  return normalizeLedgerDedupeText(firstNonEmpty(row?.counterparty, row?.description, row?.comment));
+}
+
+function getLedgerDedupeTextCandidates(row) {
+  return [
+    row?.counterparty,
+    row?.description,
+    row?.comment
+  ].map(normalizeLedgerDedupeText).filter((value) => value.length >= 3);
+}
+
+function buildLedgerFallbackCoreFingerprint(row) {
+  const date = getLedgerDedupeDate(row);
+  const direction = getLedgerDedupeDirection(row);
+  const channel = normalizeLedgerDedupeText(getLedgerDedupeChannel(row));
+  const amount = getLedgerDedupeAmount(row);
+  const currency = getLedgerDedupeCurrency(row);
+  if (!date || !direction || !channel || !amount || !currency) return "";
+  return [date, direction, channel, amount, currency].join("|");
+}
+
+function buildLedgerFallbackFingerprint(row) {
+  const core = buildLedgerFallbackCoreFingerprint(row);
+  const date = getLedgerDedupeDate(row);
+  const direction = getLedgerDedupeDirection(row);
+  const channel = normalizeLedgerDedupeText(getLedgerDedupeChannel(row));
+  const amount = getLedgerDedupeAmount(row);
+  const currency = getLedgerDedupeCurrency(row);
+  const counterparty = getLedgerDedupeCounterparty(row);
+  if (!core || !date || !direction || !channel || !amount || !currency || counterparty.length < 3) return "";
+  return [date, direction, channel, amount, currency, counterparty].join("|");
+}
+
+function ledgerDedupeTextOverlaps(left = [], right = []) {
+  for (const leftText of left) {
+    for (const rightText of right) {
+      if (!leftText || !rightText) continue;
+      if (leftText.includes(rightText) || rightText.includes(leftText)) return true;
+      const leftTokens = new Set(leftText.split(" ").filter((token) => token.length >= 3));
+      const rightTokens = new Set(rightText.split(" ").filter((token) => token.length >= 3));
+      const shared = [...leftTokens].filter((token) => rightTokens.has(token));
+      if (shared.length >= 2 || (shared.length >= 1 && Math.min(leftTokens.size, rightTokens.size) <= 2)) return true;
+    }
+  }
+  return false;
+}
+
+function buildLedgerDedupeIndexes(rows = []) {
+  const ids = new Set();
+  const fallback = new Map();
+  (rows || []).forEach((row, index) => {
+    [
+      row?.externalId,
+      row?.external_id,
+      row?.rawSourceId,
+      row?.raw_source_id,
+      row?.sourceTransactionId,
+      row?.source_transaction_id
+    ].map((value) => String(value || "").trim()).filter(Boolean).forEach((id) => ids.add(id));
+    const coreFingerprint = buildLedgerFallbackCoreFingerprint(row);
+    const textCandidates = getLedgerDedupeTextCandidates(row);
+    if (coreFingerprint && textCandidates.length) {
+      const matches = fallback.get(coreFingerprint) || [];
+      matches.push({
+        row,
+        rowNumber: row?.sheetRowNumber || row?.rowNumber || row?.sheet_row_number || row?.row_number || index + 2,
+        fingerprint: buildLedgerFallbackFingerprint(row),
+        textCandidates
+      });
+      fallback.set(coreFingerprint, matches);
+    }
+  });
+  return { ids, fallback };
+}
+
+function findLedgerDuplicateMatch(row, existingIndexes) {
+  const ids = [
+    row?.externalId,
+    row?.external_id,
+    row?.rawSourceId,
+    row?.raw_source_id,
+    row?.sourceTransactionId,
+    row?.source_transaction_id
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const exactId = ids.find((id) => existingIndexes?.ids?.has(id));
+  if (exactId) return { type: "exact_id", id: exactId };
+  const coreFingerprint = buildLedgerFallbackCoreFingerprint(row);
+  const textCandidates = getLedgerDedupeTextCandidates(row);
+  const fallbackMatches = coreFingerprint ? existingIndexes?.fallback?.get(coreFingerprint) : null;
+  const fallbackMatch = (fallbackMatches || []).find((match) => ledgerDedupeTextOverlaps(textCandidates, match.textCandidates));
+  if (fallbackMatch) return { type: "fallback_fingerprint", ...fallbackMatch, fingerprint: coreFingerprint };
+  return null;
+}
+
 function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
   const warnings = [];
   let duplicateCount = 0;
   let skippedCount = 0;
-  const seen = new Set((existingRows || []).flatMap((row) => [
-    String(row.externalId || row.external_id || "").trim(),
-    String(row.rawSourceId || row.raw_source_id || "").trim()
-  ]).filter(Boolean));
+  const seen = buildLedgerDedupeIndexes(existingRows || []);
   const timestamp = new Date().toISOString();
   const output = [];
   (rows || []).forEach((row, index) => {
@@ -947,15 +1089,58 @@ function normalizeManualLedgerRowsForSave(rows, existingRows = []) {
     const toChannel = canonicalManualFinanceChannel(row?.toChannel || row?.to_channel || "");
     const externalId = String(row?.externalId || row?.external_id || row?.rawSourceId || row?.raw_source_id || "").trim();
     const rawSourceId = String(row?.rawSourceId || row?.raw_source_id || row?.externalId || row?.external_id || "").trim();
-    if ((externalId && seen.has(externalId)) || (rawSourceId && seen.has(rawSourceId))) {
-      warnings.push(`Ledger save row ${index + 1}: skipped duplicate external_id/raw_source_id ${externalId || rawSourceId}.`);
+    const operation = normalizeManualLedgerOperation(row?.operation, category);
+    const currency = String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase();
+    const duplicateMatch = findLedgerDuplicateMatch({
+      ...row,
+      date,
+      operation,
+      fromChannel,
+      toChannel,
+      amount,
+      currency,
+      externalId,
+      rawSourceId
+    }, seen);
+    if (duplicateMatch?.type === "exact_id") {
+      warnings.push(`Ledger save row ${index + 1}: duplicate_skipped exact external_id/raw_source_id ${duplicateMatch.id}.`);
       duplicateCount += 1;
       return;
     }
-    if (externalId) seen.add(externalId);
-    if (rawSourceId) seen.add(rawSourceId);
-    const operation = normalizeManualLedgerOperation(row?.operation, category);
-    const currency = String(row?.currency || inferManualFinanceChannelCurrency(fromChannel || toChannel)).trim().toUpperCase();
+    if (duplicateMatch?.type === "fallback_fingerprint") {
+      warnings.push(`Ledger save row ${index + 1}: duplicate_skipped fallback fingerprint matched existing Ledger row ${duplicateMatch.rowNumber}.`);
+      duplicateCount += 1;
+      return;
+    }
+    [externalId, rawSourceId].filter(Boolean).forEach((id) => seen.ids.add(id));
+    const coreFingerprint = buildLedgerFallbackCoreFingerprint({
+      ...row,
+      date,
+      operation,
+      fromChannel,
+      toChannel,
+      amount,
+      currency
+    });
+    const textCandidates = getLedgerDedupeTextCandidates(row);
+    if (coreFingerprint && textCandidates.length) {
+      const matches = seen.fallback.get(coreFingerprint) || [];
+      matches.push({
+        row,
+        rowNumber: `new row ${index + 1}`,
+        fingerprint: buildLedgerFallbackFingerprint({
+          ...row,
+          date,
+          operation,
+          fromChannel,
+          toChannel,
+          amount,
+          currency
+        }),
+        textCandidates
+      });
+      seen.fallback.set(coreFingerprint, matches);
+    }
     const amountUsd = normalizeLedgerAmountUsdForSave(row, {
       amount,
       amountNumber,

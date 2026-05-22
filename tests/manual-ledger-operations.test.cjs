@@ -177,6 +177,19 @@ function buildLedgerTestContext() {
     `${extractFunction(googleSheetsJs, "buildManualLedgerSheetValues")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeLedgerAmountUsdForSave")}\n` +
     `${extractFunction(googleSheetsJs, "firstNonEmpty")}\n` +
+    `${extractFunction(googleSheetsJs, "normalizeLedgerDedupeText")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeDate")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeDirection")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeChannel")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeAmount")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeCurrency")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeCounterparty")}\n` +
+    `${extractFunction(googleSheetsJs, "getLedgerDedupeTextCandidates")}\n` +
+    `${extractFunction(googleSheetsJs, "buildLedgerFallbackCoreFingerprint")}\n` +
+    `${extractFunction(googleSheetsJs, "buildLedgerFallbackFingerprint")}\n` +
+    `${extractFunction(googleSheetsJs, "ledgerDedupeTextOverlaps")}\n` +
+    `${extractFunction(googleSheetsJs, "buildLedgerDedupeIndexes")}\n` +
+    `${extractFunction(googleSheetsJs, "findLedgerDuplicateMatch")}\n` +
     `${extractFunction(googleSheetsJs, "getLedgerUsdPerLocalRate")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeLedgerExchangeUsdSign")}\n` +
     `${extractFunction(googleSheetsJs, "normalizeManualLedgerRowsForSave")}\n` +
@@ -865,6 +878,181 @@ test("normalizeManualLedgerRowsForSave reports added duplicate and skipped count
   assert.equal(saved.added_count, 1);
   assert.equal(saved.duplicate_count, 1);
   assert.equal(saved.skipped_count, 1);
+});
+
+test("normalizeManualLedgerRowsForSave skips existing exact raw_source_id duplicates", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "browser_ocr",
+      rawSourceId: "raw-X"
+    }
+  ], [
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "manual",
+      rawSourceId: "raw-X",
+      sheetRowNumber: 320
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 0);
+  assert.equal(saved.duplicate_count, 1);
+  assert.match(saved.warnings.join("\n"), /duplicate_skipped exact external_id\/raw_source_id raw-X/);
+});
+
+test("Privat24 OCR history row with new id is skipped by fallback fingerprint", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "browser_ocr",
+      counterparty: "Урсул Г.",
+      comment: "Урсул Г.",
+      rawSourceId: "browser_ocr:2026-05-22:приват 24-грн:8700-0000:UAH:и-урсул-г"
+    }
+  ], [
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      amountNet: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "manual",
+      comment: "Privat24 screenshot: Урсул Г. +8700 UAH",
+      rawSourceId: "manual_service_payment:2026-05-16:privat24uah:8700:ursul-g",
+      sheetRowNumber: 320
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 0);
+  assert.equal(saved.duplicate_count, 1);
+  assert.match(saved.warnings.join("\n"), /duplicate_skipped fallback fingerprint matched existing Ledger row 320/);
+});
+
+test("new Privat24 OCR expense is saved when fallback fingerprint does not match", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-22",
+      operation: "business_expense",
+      fromChannel: "приват 24-грн",
+      amount: "20003",
+      currency: "UAH",
+      category: "business",
+      source: "browser_ocr",
+      counterparty: "НЕМІШ БОГДАН",
+      comment: "НЕМІШ БОГДАН",
+      rawSourceId: "browser_ocr:2026-05-22:приват 24-грн:20003:UAH:неміш-богдан"
+    }
+  ], [
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "manual",
+      counterparty: "Урсул Г.",
+      rawSourceId: "manual_service_payment:2026-05-16:privat24uah:8700:ursul-g"
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 0);
+  assert.equal(saved.rows[0].fromChannel, "приват 24-грн");
+  assert.equal(saved.rows[0].amount, "20003");
+});
+
+test("same amount and channel with different counterparty is not silently skipped", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "browser_ocr",
+      counterparty: "Другой Клиент",
+      comment: "Другой Клиент",
+      rawSourceId: "browser_ocr:2026-05-16:privat24uah:8700:drugoy"
+    }
+  ], [
+    {
+      date: "2026-05-16",
+      operation: "income",
+      toChannel: "приват 24-грн",
+      amount: "8700",
+      currency: "UAH",
+      category: "servicein",
+      source: "manual",
+      counterparty: "Урсул Г.",
+      comment: "Урсул Г.",
+      rawSourceId: "manual_service_payment:2026-05-16:privat24uah:8700:ursul-g"
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 1);
+  assert.equal(saved.added_count, 1);
+  assert.equal(saved.duplicate_count, 0);
+});
+
+test("fallback fingerprint dedupe applies to generic non-Privat24 rows without provider ids", () => {
+  const context = buildLedgerTestContext();
+  const saved = plain(context.normalizeManualLedgerRowsForSave([
+    {
+      date: "2026-05-18",
+      operation: "income",
+      toChannel: "трансервайз дол",
+      amount: "125",
+      currency: "USD",
+      category: "servicein",
+      source: "csv_import",
+      counterparty: "Acme Client",
+      description: "Acme Client",
+      rawSourceId: "csv_import:second-pass:generated-id"
+    }
+  ], [
+    {
+      date: "2026-05-18",
+      operation: "income",
+      toChannel: "трансервайз дол",
+      amount: "125",
+      currency: "USD",
+      category: "servicein",
+      source: "wise",
+      counterparty: "Acme Client",
+      description: "Acme Client",
+      rawSourceId: "wise:first-pass:generated-id",
+      sheetRowNumber: 418
+    }
+  ]));
+
+  assert.equal(saved.rows.length, 0);
+  assert.equal(saved.duplicate_count, 1);
+  assert.match(saved.warnings.join("\n"), /fallback fingerprint matched existing Ledger row 418/);
 });
 
 test("normalizeManualLedgerRowsForSave fills UAH amount_usd and preserves detail fields", () => {
