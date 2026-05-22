@@ -1,4 +1,9 @@
 import { normalizeManualLedgerCategory } from "../server/manual-ledger-maps.js";
+import {
+  buildProviderImportCoverage,
+  detectPossibleFeeDoubleCount,
+  detectProviderDuplicateRows
+} from "../server/provider-import-diagnostics.js";
 
 const WISE_LIVE_BASE = "https://api.wise.com";
 const WISE_MAX_RANGE_DAYS = 469;
@@ -72,12 +77,22 @@ export async function fetchWiseStatementEntries(options = {}) {
         }
       })
   );
-  const entries = statementPayloads.flatMap(({ balance, transactions }) =>
+  const rawTransactions = statementPayloads.flatMap(({ transactions }) => transactions);
+  const normalizedEntries = statementPayloads.flatMap(({ balance, transactions }) =>
     transactions.map((transaction, index) => normalizeWiseTransaction(transaction, balance, profileId, index))
-  ).filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
+  );
+  const entries = normalizedEntries.filter((entry) => entry.date && entry.channel && entry.localAmount > 0);
   const warnings = statementPayloads
     .filter((payload) => payload.error)
     .map((payload) => `${payload.balance?.currency || payload.balance?.id}: ${payload.error}`);
+  const diagnostics = buildWiseImportDiagnostics({
+    rawTransactions,
+    normalizedEntries,
+    entries,
+    warnings,
+    periodStart: startDate,
+    periodEnd: endDate
+  });
   return {
     entries,
     balances: rawBalances,
@@ -86,7 +101,8 @@ export async function fetchWiseStatementEntries(options = {}) {
     periodStart: startDate,
     periodEnd: endDate,
     source: "wise",
-    warnings
+    diagnostics,
+    warnings: Array.from(new Set([...warnings, ...diagnostics.warnings]))
   };
 }
 
@@ -156,8 +172,10 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
   const accountCurrency = amount.currency || String(balance?.currency || "").toUpperCase();
   const accountAmount = Math.abs(amount.value);
   const accountUsdAmount = explicitUsdAmount ?? (accountCurrency === "USD" ? accountAmount : null);
+  const sourceTransactionId = buildWiseSourceTransactionId({ transaction, balance, dateInfo, index });
+  const organization = buildWiseDescription(transaction, balance, profileId);
   return {
-    id: `wise-${reference || balance?.balanceId || balance?.id || index}`,
+    id: `wise-${sourceTransactionId}`,
     date: dateInfo.operationDate || dateInfo.postedDate,
     operationDate: dateInfo.operationDate,
     postedDate: dateInfo.postedDate,
@@ -170,15 +188,94 @@ export function normalizeWiseTransaction(transaction, balance, profileId, index 
     usdAmount: accountUsdAmount,
     amountNet: accountAmount,
     netAmount: accountAmount,
+    amountGross: accountAmount,
+    amount_gross: accountAmount,
+    amountFee: Math.abs(fee.value) || null,
+    amount_fee: Math.abs(fee.value) || null,
+    amount_net: accountAmount,
     suggestedCategory: normalizeManualLedgerCategory(direction === "income" ? "serviceIncome" : "business", "business"),
-    organization: buildWiseDescription(transaction, balance, profileId),
+    organization,
     ...counterparty,
     confidence: 0.95,
     source: "wise",
-    sourceTransactionId: reference || `${balance?.id || "balance"}-${date}-${index}`,
+    provider: "wise",
+    sourceTransactionId,
+    rawSourceId: sourceTransactionId,
+    raw_source_id: sourceTransactionId,
+    externalId: sourceTransactionId,
+    external_id: sourceTransactionId,
     feeAmount: Math.abs(fee.value) || null,
-    feeCurrency: fee.currency || ""
+    feeCurrency: fee.currency || "",
+    comment: organization
   };
+}
+
+export function buildWiseImportDiagnostics(options = {}) {
+  const rawTransactions = Array.isArray(options.rawTransactions) ? options.rawTransactions : [];
+  const normalizedEntries = Array.isArray(options.normalizedEntries) ? options.normalizedEntries : [];
+  const entries = Array.isArray(options.entries) ? options.entries : [];
+  const skippedRows = normalizedEntries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => !entry?.date || !entry?.channel || !(Number(entry?.localAmount) > 0));
+  const diagnosticRows = entries.map((entry) => ({
+    provider: "wise",
+    source: "wise",
+    raw_source_id: entry.raw_source_id || entry.rawSourceId || entry.sourceTransactionId,
+    date: entry.date,
+    from_channel: entry.direction === "income" ? "" : entry.channel,
+    to_channel: entry.direction === "income" ? entry.channel : "",
+    channel: entry.channel,
+    direction: entry.direction === "income" ? "in" : "out",
+    amount: entry.accountAmount || entry.amountNet || entry.netAmount || entry.localAmount,
+    amount_net: entry.amountNet || entry.netAmount,
+    currency: entry.currency,
+    counterparty: entry.counterpartyName || entry.merchantName || entry.description,
+    description: entry.description
+  }));
+  const duplicateRows = detectProviderDuplicateRows(diagnosticRows);
+  const feeDoubleCount = detectPossibleFeeDoubleCount(diagnosticRows);
+  const needsReviewRows = diagnosticRows.filter((row) => {
+    const rawId = String(row.raw_source_id || "").trim();
+    const amountNet = Number(row.amount_net);
+    return !rawId || !Number.isFinite(amountNet) || amountNet <= 0 || !["in", "out"].includes(row.direction);
+  });
+  const parserWarnings = [
+    ...(Array.isArray(options.warnings) ? options.warnings : []),
+    ...skippedRows.map(({ index }) => `Wise warning: transaction ${index + 1} was skipped by normalization filter.`),
+    ...duplicateRows.map((row) => `Wise warning: duplicate raw_source_id ${row.key}.`),
+    ...(feeDoubleCount.likely_fee_double_count ? ["Wise warning: possible fee double-count candidate detected."] : []),
+    ...needsReviewRows.map((row) => `Wise warning: row ${row.raw_source_id || row.date || "unknown"} needs review before ledger save.`)
+  ];
+  const coverage = buildProviderImportCoverage({
+    provider: "wise",
+    source: "wise",
+    inputRows: rawTransactions,
+    parsedRows: normalizedEntries,
+    ledgerRows: entries,
+    skippedRows,
+    duplicateRows,
+    needsReviewRows,
+    parserWarnings,
+    periodFrom: options.periodStart,
+    periodTo: options.periodEnd
+  });
+  return {
+    coverage,
+    duplicate_rows: duplicateRows,
+    fee_double_count: feeDoubleCount,
+    needs_review_rows: needsReviewRows,
+    warnings: coverage.parser_warnings
+  };
+}
+
+function buildWiseSourceTransactionId({ transaction, balance, dateInfo, index }) {
+  const reference = String(transaction?.referenceNumber || transaction?.id || transaction?.transactionId || "").trim();
+  if (reference) return reference;
+  const balanceId = String(balance?.balanceId || balance?.id || balance?.currency || "balance").trim();
+  const date = dateInfo?.operationDate || dateInfo?.postedDate || normalizeWiseDate(transaction?.date) || "unknown-date";
+  const amount = normalizeWiseMoney(transaction?.amount);
+  const amountPart = `${amount.value || 0}-${amount.currency || ""}`;
+  return `${balanceId}-${date}-${amountPart}-${index}`;
 }
 
 function resolveWiseTransactionDirection(transaction = {}, amount = {}) {

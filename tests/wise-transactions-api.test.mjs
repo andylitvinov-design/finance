@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildWiseImportDiagnostics,
   fetchWiseBalances,
   fetchWiseStatementEntries,
   normalizeWiseTransaction,
@@ -33,6 +34,10 @@ test("normalizeWiseTransaction maps Wise statements to expense entries with desc
   assert.equal(entry.accountAmount, 12.34);
   assert.equal(entry.amountNet, 12.34);
   assert.equal(entry.netAmount, 12.34);
+  assert.equal(entry.amountFee, 0.44);
+  assert.equal(entry.amount_net, 12.34);
+  assert.equal(entry.raw_source_id, "WISE-1");
+  assert.equal(entry.external_id, "WISE-1");
   assert.equal(entry.feeAmount, 0.44);
   assert.equal(entry.feeCurrency, "USD");
   assert.equal(entry.organization, "Card payment to Vendor | CARD | reference WISE-1 | balance USD | profile profile-1");
@@ -96,6 +101,109 @@ test("normalizeWiseTransaction stores EUR card purchase as Wise USD balance move
   assert.equal(entry.usdAmount, 128.08);
   assert.equal(entry.localAmount, 108.36);
   assert.equal(entry.localCurrency, "EUR");
+  assert.match(entry.comment, /108\.36 EUR/);
+});
+
+test("normalizeWiseTransaction keeps card fee informational and does not subtract it from amount_net", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "DEBIT",
+      date: "2026-05-16T09:00:00.000Z",
+      referenceNumber: "CARD-FEE-1",
+      amount: { value: "-142.71", currency: "USD" },
+      totalFees: { value: "0.41", currency: "USD" },
+      details: {
+        description: "Card transaction of 121.00 EUR issued by Vendor",
+        type: "CARD"
+      }
+    },
+    { id: "balance-usd", currency: "USD" },
+    "profile-1"
+  );
+
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.accountAmount, 142.71);
+  assert.equal(entry.amountNet, 142.71);
+  assert.equal(entry.netAmount, 142.71);
+  assert.equal(entry.feeAmount, 0.41);
+  assert.equal(entry.amountFee, 0.41);
+  assert.equal(entry.localAmount, 121);
+  assert.equal(entry.localCurrency, "EUR");
+});
+
+test("normalizeWiseTransaction builds stable raw_source_id when Wise reference is missing", () => {
+  const entry = normalizeWiseTransaction(
+    {
+      type: "DEBIT",
+      date: "2026-05-17T09:00:00.000Z",
+      amount: { value: "-20", currency: "USD" },
+      details: {
+        description: "Card payment to Vendor",
+        type: "CARD"
+      }
+    },
+    { id: "balance-usd", currency: "USD" },
+    "profile-1",
+    3
+  );
+
+  assert.equal(entry.sourceTransactionId, "balance-usd-2026-05-17--20-USD-3");
+  assert.equal(entry.raw_source_id, entry.sourceTransactionId);
+  assert.equal(entry.external_id, entry.sourceTransactionId);
+});
+
+test("buildWiseImportDiagnostics reports coverage, duplicate raw_source_id, and no fee double debit for a single card row", () => {
+  const entries = [
+    normalizeWiseTransaction(
+      {
+        type: "DEBIT",
+        date: "2026-05-16T09:00:00.000Z",
+        referenceNumber: "CARD-DUPLICATE",
+        amount: { value: "-142.71", currency: "USD" },
+        totalFees: { value: "0.41", currency: "USD" },
+        details: {
+          description: "Card transaction of 121.00 EUR issued by Vendor",
+          type: "CARD"
+        }
+      },
+      { id: "balance-usd", currency: "USD" },
+      "profile-1",
+      0
+    ),
+    normalizeWiseTransaction(
+      {
+        type: "DEBIT",
+        date: "2026-05-16T09:00:00.000Z",
+        referenceNumber: "CARD-DUPLICATE",
+        amount: { value: "-142.71", currency: "USD" },
+        totalFees: { value: "0.41", currency: "USD" },
+        details: {
+          description: "Card transaction of 121.00 EUR issued by Vendor",
+          type: "CARD"
+        }
+      },
+      { id: "balance-usd", currency: "USD" },
+      "profile-1",
+      1
+    )
+  ];
+
+  const diagnostics = buildWiseImportDiagnostics({
+    rawTransactions: [{}, {}],
+    normalizedEntries: entries,
+    entries,
+    periodStart: "2026-05-01",
+    periodEnd: "2026-05-22"
+  });
+
+  assert.equal(diagnostics.coverage.input_rows_count, 2);
+  assert.equal(diagnostics.coverage.parsed_rows_count, 2);
+  assert.equal(diagnostics.coverage.ledger_rows_count, 2);
+  assert.equal(diagnostics.coverage.duplicate_rows_count, 1);
+  assert.equal(diagnostics.coverage.needs_review_rows_count, 0);
+  assert.equal(diagnostics.coverage.hard_fail, false);
+  assert.equal(diagnostics.fee_double_count.likely_fee_double_count, false);
+  assert.match(diagnostics.warnings.join("\n"), /duplicate raw_source_id wise:CARD-DUPLICATE/);
 });
 
 test("normalizeWiseTransaction treats CARD transactions as expense before amount normalization", () => {
@@ -249,6 +357,13 @@ test("fetchWiseStatementEntries loads profiles, balances, and compact statements
   assert.equal(result.entries[0].direction, "income");
   assert.equal(result.entries[0].suggestedCategory, "servicein");
   assert.equal(result.entries[0].feeAmount, null);
+  assert.equal(result.diagnostics.coverage.input_rows_count, 1);
+  assert.equal(result.diagnostics.coverage.parsed_rows_count, 1);
+  assert.equal(result.diagnostics.coverage.ledger_rows_count, 1);
+  assert.equal(result.diagnostics.coverage.skipped_rows_count, 0);
+  assert.equal(result.diagnostics.coverage.duplicate_rows_count, 0);
+  assert.equal(result.diagnostics.coverage.needs_review_rows_count, 0);
+  assert.deepEqual(result.warnings, []);
   assert.deepEqual(result.summary.totalsByCurrency.EUR, { income: 20, expense: 0, net: 20 });
 });
 
