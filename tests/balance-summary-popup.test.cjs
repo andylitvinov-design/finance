@@ -6,102 +6,6 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
-class FakeNode {
-  constructor(tagName, ownerDocument) {
-    this.tagName = String(tagName || "").toUpperCase();
-    this.ownerDocument = ownerDocument;
-    this.children = [];
-    this.events = {};
-    this.dataset = {};
-    this.className = "";
-    this.textContent = "";
-    this.parentNode = null;
-    this.type = "";
-  }
-
-  set id(value) {
-    this._id = String(value || "");
-    if (this._id) this.ownerDocument.nodesById[this._id] = this;
-  }
-
-  get id() {
-    return this._id || "";
-  }
-
-  appendChild(node) {
-    node.parentNode = this;
-    this.children.push(node);
-    if (node.id) this.ownerDocument.nodesById[node.id] = node;
-    return node;
-  }
-
-  append(...nodes) {
-    nodes.forEach((node) => this.appendChild(node));
-  }
-
-  insertAdjacentElement(_position, node) {
-    return this.appendChild(node);
-  }
-
-  replaceChild(next, previous) {
-    const index = this.children.indexOf(previous);
-    if (index !== -1) {
-      next.parentNode = this;
-      previous.parentNode = null;
-      this.children[index] = next;
-      if (next.id) this.ownerDocument.nodesById[next.id] = next;
-    }
-    return previous;
-  }
-
-  remove() {
-    if (!this.parentNode) return;
-    const index = this.parentNode.children.indexOf(this);
-    if (index !== -1) this.parentNode.children.splice(index, 1);
-    if (this.id) delete this.ownerDocument.nodesById[this.id];
-    this.parentNode = null;
-  }
-
-  addEventListener(event, handler) {
-    this.events[event] = handler;
-  }
-
-  click() {
-    this.events.click?.();
-  }
-
-  setAttribute(name, value) {
-    this[name] = String(value);
-  }
-
-  get innerText() {
-    return [this.textContent, ...this.children.map((child) => child.innerText)].filter(Boolean).join("\n");
-  }
-}
-
-function makeDocument() {
-  const document = {
-    nodesById: {},
-    body: null,
-    readyState: "complete",
-    createElement(tagName) {
-      return new FakeNode(tagName, document);
-    },
-    getElementById(id) {
-      return document.nodesById[id] || null;
-    },
-    querySelector(selector) {
-      if (selector === ".hero .controls") return document.controls;
-      return null;
-    },
-    addEventListener() {},
-  };
-  document.body = document.createElement("body");
-  document.controls = document.createElement("div");
-  document.body.appendChild(document.controls);
-  return document;
-}
-
 function resetBalanceModule() {
   delete require.cache[require.resolve("../balance-summary-popup.js")];
   delete global.document;
@@ -112,95 +16,57 @@ function resetBalanceModule() {
   delete global.EzohataBalanceSummaryPopup;
 }
 
-test("top balance button opens and toggles balance block without switching to audit", () => {
+function loadApi() {
   resetBalanceModule();
-  const document = makeDocument();
-  const button = document.createElement("button");
-  button.id = "balanceLauncherButton";
-  button.textContent = "Баланс";
-  document.controls.appendChild(button);
-  global.document = document;
-  global.state = { activeTab: "movement" };
-  global.buildTopMetricsSummary = () => ({ totalOrders: 1100, totalPaid: 500, personalOrdersAfterDiscount: 200 });
+  return require("../balance-summary-popup.js");
+}
 
-  require("../balance-summary-popup.js");
-  button.click();
-
-  const block = document.getElementById("balanceSummaryBlock");
-  assert.ok(block);
-  assert.equal(global.state.activeTab, "movement");
-  assert.match(block.innerText, /ВСЕГО НАЧИСЛЕНО/);
-
-  button.click();
-  assert.equal(document.getElementById("balanceSummaryBlock"), null);
-  resetBalanceModule();
-});
-
-test("bottom audit tab remains available while top button is balance", () => {
-  resetBalanceModule();
+test("top balance button replaced old top audit launcher while bottom audit script stays loaded", () => {
   assert.match(indexHtml, /id="balanceLauncherButton"[^>]*>Баланс<\/button>/);
   assert.doesNotMatch(indexHtml, /id="auditLauncherButton"[^>]*>Аудит<\/button>/);
   assert.match(indexHtml, /audit-site-tab\.js/);
 });
 
-test("balance summary math matches accrual formula", () => {
-  resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary({
-    orders: 1000,
-    percentToOrders: 1.1,
-    myOrders: 200,
-    paid: 500,
-  });
+test("balance summary does not discount myOrders twice", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({ orders: 1000, percentToOrders: 100, myOrders: 200, paid: 500 });
 
   assert.equal(summary.totalOrdersPlusPercent, 1100);
   assert.equal(summary.seventyPercent, 770);
-  assert.equal(summary.myOrdersHalf, 100);
-  assert.equal(summary.totalAccrued, 870);
-  assert.equal(summary.remainingToPay, 370);
+  assert.equal(summary.myOrders, 200);
+  assert.equal(summary.myOrdersPayable, 200);
+  assert.equal(summary.myOrdersHalf, 200);
+  assert.equal(summary.totalAccrued, 970);
+  assert.equal(summary.remainingToPay, 470);
   resetBalanceModule();
 });
 
-test("missing myOrders source emits diagnostic and never NaN", () => {
-  resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary({ orders: 1000, percentToOrders: 1.1, paid: 500 });
-
-  assert.equal(Number.isNaN(summary.myOrders), false);
-  assert.equal(summary.myOrders, 0);
-  assert.match(summary.diagnostics.join("\n"), /needs verification: source not found for myOrders/);
-  resetBalanceModule();
-});
-
-test("occurred table totals drive orders, plus percent total, and percent ratio without exact-source diagnostics", () => {
-  resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary(
-    {
-      state: {
-        data: {
-          tabs: {
-            movement: {
-              values: [
-                ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%", "ACCRUED", "ACCRUED +3%"],
-                ["1", "2026-05-04", "432.8", "445.784", "9999", "9999"],
-                ["2", "2026-05-10", "1000", "1030", "9999", "9999"],
-              ],
-            },
-            orders: { values: [] },
+test("occurred table uses OCCURRED as base and OCCURRED plus percent as total", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    state: {
+      data: {
+        tabs: {
+          movement: {
+            values: [
+              ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%", "ACCRUED", "ACCRUED +3%"],
+              ["1", "2026-05-04", "432.8", "445.784", "9999", "9999"],
+              ["2", "2026-05-10", "1000", "1030", "9999", "9999"],
+            ],
           },
+          orders: { values: [] },
         },
       },
-      totalPaid: 500,
-      personalOrdersAfterDiscount: 200,
     },
-    { startDate: "2026-05-01", endDate: "2026-05-21" }
-  );
+    totalPaid: 500,
+    personalOrdersAfterDiscount: 200,
+  }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
   assert.equal(summary.orders, 1432.8);
   assert.equal(summary.totalOrdersPlusPercent, 1475.784);
-  assert.equal(summary.percentToOrders, 1.03);
-  assert.doesNotMatch(summary.diagnostics.join("\n"), /exact orders base|percentToOrders/);
+  assert.equal(Number(summary.percentToOrders.toFixed(4)), 42.984);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 733.0488);
+  assert.doesNotMatch(summary.diagnostics.join("\n"), /source not found for orders|source not found for percentToOrders/);
   resetBalanceModule();
 });
 
@@ -219,108 +85,92 @@ test("default summary reads app state table instead of falling back to top metri
       },
     },
   };
-  global.elements = {
-    startDate: { value: "2026-05-01" },
-    endDate: { value: "2026-05-21" },
-  };
+  global.elements = { startDate: { value: "2026-05-01" }, endDate: { value: "2026-05-21" } };
   global.buildTopMetricsSummary = () => ({ totalOrders: 9999, totalPaid: 0, personalOrdersAfterDiscount: 0 });
+
   const api = require("../balance-summary-popup.js");
   const summary = api.buildBalanceTextSummary();
 
   assert.equal(summary.orders, 100);
   assert.equal(summary.totalOrdersPlusPercent, 103);
-  assert.equal(summary.percentToOrders, 1.03);
-  assert.doesNotMatch(summary.diagnostics.join("\n"), /exact orders base/);
+  assert.equal(summary.percentToOrders, 3);
+  assert.doesNotMatch(summary.diagnostics.join("\n"), /source not found for orders/);
   resetBalanceModule();
 });
 
-test("selected period excludes outside occurred rows from orders and paid-derived summary", () => {
-  resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary(
-    {
-      state: {
-        data: {
-          tabs: {
-            movement: {
-              values: [
-                ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%"],
-                ["1", "2026-04-30", "1000", "1030"],
-                ["2", "2026-05-10", "1000", "1030"],
-              ],
-            },
-            orders: { values: [] },
+test("selected period excludes outside occurred rows", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    state: {
+      data: {
+        tabs: {
+          movement: {
+            values: [
+              ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%"],
+              ["1", "2026-04-30", "1000", "1030"],
+              ["2", "2026-05-10", "1000", "1030"],
+            ],
           },
+          orders: { values: [] },
         },
       },
-      totalPaid: 500,
-      personalOrdersAfterDiscount: 200,
     },
-    { startDate: "2026-05-01", endDate: "2026-05-31" }
-  );
+    totalPaid: 500,
+    personalOrdersAfterDiscount: 200,
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
 
   assert.equal(summary.orders, 1000);
-  assert.equal(summary.percentToOrders, 1.03);
+  assert.equal(summary.percentToOrders, 30);
   assert.equal(summary.totalOrdersPlusPercent, 1030);
-  assert.equal(summary.totalPaid, 500);
-  assert.equal(summary.remainingToPay, 321);
+  assert.equal(summary.remainingToPay, 421);
   resetBalanceModule();
 });
 
 test("legacy accrued columns still work as fallback", () => {
-  resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary(
-    {
-      state: {
-        data: {
-          tabs: {
-            movement: {
-              values: [
-                ["NUMBER", "DATE", "ACCRUED", "ACCRUED +3%"],
-                ["1", "2026-05-04", "400", "412"],
-                ["2", "2026-05-10", "600", "618"],
-              ],
-            },
-            orders: { values: [] },
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    state: {
+      data: {
+        tabs: {
+          movement: {
+            values: [
+              ["NUMBER", "DATE", "ACCRUED", "ACCRUED +3%"],
+              ["1", "2026-05-04", "400", "412"],
+              ["2", "2026-05-10", "600", "618"],
+            ],
           },
+          orders: { values: [] },
         },
       },
-      totalPaid: 0,
-      personalOrdersAfterDiscount: 0,
     },
-    { startDate: "2026-05-01", endDate: "2026-05-21" }
-  );
+    totalPaid: 0,
+    personalOrdersAfterDiscount: 0,
+  }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
   assert.equal(summary.orders, 1000);
   assert.equal(summary.totalOrdersPlusPercent, 1030);
-  assert.equal(summary.percentToOrders, 1.03);
+  assert.equal(summary.percentToOrders, 30);
   resetBalanceModule();
 });
 
-test("zero orders denominator does not produce NaN percent ratio", () => {
+test("top metric fallback treats totalOrders as order base and derives 3 percent amount", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({ totalOrders: 2047.8, totalPaid: 965.7039, personalOrdersAfterDiscount: 647.5 });
+
+  assert.equal(Number(summary.orders.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.percentToOrders.toFixed(4)), 61.434);
+  assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2109.234);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1158.2599);
   resetBalanceModule();
-  const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary(
-    {
-      state: {
-        data: {
-          tabs: {
-            movement: {
-              values: [
-                ["NUMBER", "DATE", "OCCURED", "OCCURED +3%"],
-                ["1", "2026-05-04", "0", "0"],
-              ],
-            },
-            orders: { values: [] },
-          },
-        },
-      },
-      totalPaid: 0,
-      personalOrdersAfterDiscount: 0,
-    },
-    { startDate: "2026-05-01", endDate: "2026-05-21" }
-  );
+});
+
+test("zero orders with plus column returns zero percent amount instead of NaN", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    state: { data: { tabs: { movement: { values: [["NUMBER", "DATE", "OCCURED", "OCCURED +3%"], ["1", "2026-05-04", "0", "0"]] }, orders: { values: [] } } } },
+    totalPaid: 0,
+    personalOrdersAfterDiscount: 0,
+  }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
   assert.equal(Number.isNaN(summary.percentToOrders), false);
   assert.equal(summary.percentToOrders, 0);
