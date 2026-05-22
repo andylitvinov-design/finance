@@ -1,5 +1,9 @@
 import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
+import {
+  buildDailyCalculatedBalances,
+  toCalculatedBalanceSnapshotRows,
+} from "./daily-calculated-balances.js";
 import { buildDailyBalanceCoverage } from "./daily-balance-engine.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
@@ -49,6 +53,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     const reconciliation = buildPeriodBalanceReconciliation({
       operations: [],
       balanceRows,
+      calculatedBalanceRows: [],
       plannedRows: [],
       plannedSourceStatus: "needs_verification",
       period,
@@ -78,18 +83,26 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const autoStatusRows = autoBalanceRows.filter((row) => isAutoStatusOnlyRow(row));
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
+  const calculatedBalances = buildDailyCalculatedBalances({
+    operations: repository.operations || [],
+    balanceRows,
+    period,
+  });
+  const calculatedBalanceRows = toCalculatedBalanceSnapshotRows(calculatedBalances.rows);
+  const sourceRows = [...balanceRows, ...calculatedBalanceRows];
   const reconciliation = buildPeriodBalanceReconciliation({
     operations: repository.operations || [],
     balanceRows,
+    calculatedBalanceRows,
     plannedRows,
     plannedSourceStatus,
     period,
   });
-  annotateReconciliationSources(reconciliation, balanceRows);
+  annotateReconciliationSources(reconciliation, sourceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
   annotateDailyBalanceCoverage(reconciliation, {
     operations: repository.operations || [],
-    balanceRows,
+    balanceRows: sourceRows,
     period,
     includeDailyBalances,
   });
@@ -103,6 +116,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     auto_balance_status_rows_loaded: autoStatusRows.length,
     auto_balance_status_counts: countAutoBalanceStatuses(autoStatusRows),
     balance_snapshot_rows_loaded: balanceRows.length,
+    calculated_balance_rows_built: calculatedBalanceRows.length,
     analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
       .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
   };
@@ -513,11 +527,11 @@ function annotateReconciliationSources(reconciliation, balanceRows = []) {
       ...row,
       balanceSource,
       balance_source: balanceSource,
-      needsManualConfirmation: balanceSource !== "manual_fact",
-      needs_manual_confirmation: balanceSource !== "manual_fact",
+      needsManualConfirmation: !["manual_fact", "calculated_balance"].includes(balanceSource),
+      needs_manual_confirmation: !["manual_fact", "calculated_balance"].includes(balanceSource),
       provider: sourceRow?.provider || "",
-      sourceSheet: sourceRow?.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" || balanceSource === "derived_balance" ? AUTO_BALANCE_SHEET_NAME : "")),
-      source_sheet: sourceRow?.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" || balanceSource === "derived_balance" ? AUTO_BALANCE_SHEET_NAME : "")),
+      sourceSheet: sourceRow?.sourceSheet || getDefaultSourceSheet(balanceSource),
+      source_sheet: sourceRow?.sourceSheet || getDefaultSourceSheet(balanceSource),
       sourceRow: sourceRow?.sourceRow || null,
       source_row: sourceRow?.sourceRow || null,
       sourceComment: sourceRow?.comment || "",
@@ -533,10 +547,10 @@ function annotateReconciliationSources(reconciliation, balanceRows = []) {
       ...row,
       balanceSource,
       balance_source: balanceSource,
-      needsManualConfirmation: balanceSource !== "manual_fact",
-      needs_manual_confirmation: balanceSource !== "manual_fact",
-      sourceSheet: sourceRow?.sourceSheet || row.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" || balanceSource === "derived_balance" ? AUTO_BALANCE_SHEET_NAME : "")),
-      source_sheet: sourceRow?.sourceSheet || row.source_sheet || row.sourceSheet || (balanceSource === "manual_fact" ? MANUAL_BALANCE_SHEET_NAME : (balanceSource === "provider_auto" || balanceSource === "derived_balance" ? AUTO_BALANCE_SHEET_NAME : "")),
+      needsManualConfirmation: !["manual_fact", "calculated_balance"].includes(balanceSource),
+      needs_manual_confirmation: !["manual_fact", "calculated_balance"].includes(balanceSource),
+      sourceSheet: sourceRow?.sourceSheet || row.sourceSheet || getDefaultSourceSheet(balanceSource),
+      source_sheet: sourceRow?.sourceSheet || row.source_sheet || row.sourceSheet || getDefaultSourceSheet(balanceSource),
       sourceRow: sourceRow?.sourceRow || row.sourceRow || null,
       source_row: sourceRow?.sourceRow || row.source_row || row.sourceRow || null,
       sourceComment: sourceRow?.comment || row.sourceComment || "",
@@ -550,7 +564,7 @@ function annotateBalanceSourceDiagnostics(reconciliation, period = {}) {
   const counts = { manual_fact: 0, provider_auto: 0, missing: 0 };
   rows.forEach((row) => {
     const source = String(row.balanceSource || row.balance_source || "missing").trim();
-    if (source === "derived_balance" && !Object.prototype.hasOwnProperty.call(counts, source)) counts.derived_balance = 0;
+    if (["derived_balance", "calculated_balance"].includes(source) && !Object.prototype.hasOwnProperty.call(counts, source)) counts[source] = 0;
     if (Object.prototype.hasOwnProperty.call(counts, source)) counts[source] += 1;
     else counts.missing += 1;
   });
@@ -560,10 +574,12 @@ function annotateBalanceSourceDiagnostics(reconciliation, period = {}) {
     manual_fact_rows: counts.manual_fact,
     provider_auto_rows: counts.provider_auto,
     derived_balance_rows: counts.derived_balance || 0,
+    calculated_balance_rows: counts.calculated_balance || 0,
     missing_fact_rows: counts.missing,
   };
   reconciliation.required_manual_fact_rows = rows
     .filter((row) => row.needsManualConfirmation || row.needs_manual_confirmation || String(row.balanceSource || row.balance_source || "") !== "manual_fact")
+    .filter((row) => String(row.balanceSource || row.balance_source || "") !== "calculated_balance")
     .filter((row) => String(row.status || "") !== "no_data")
     .map((row) => buildRequiredManualFactRow(row, period));
 }
@@ -637,6 +653,7 @@ function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
     row.comment,
     row.sourceSheet,
   ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/calculated_balance|calculated|расчетные остатки/.test(text)) return "calculated_balance";
   if (/paypal_manual_balance|paypal_manual_confirmed_balance|manual paypal balance|manual confirmed|manual fact/.test(text)) return "manual_fact";
   if (/paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(text)) return "derived_balance";
   if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
@@ -653,7 +670,15 @@ function balanceSourcePriority(row = {}) {
   if (source === "manual_fact") return 0;
   if (source === "provider_auto") return 1;
   if (source === "derived_balance") return 2;
-  return 3;
+  if (source === "calculated_balance") return 3;
+  return 4;
+}
+
+function getDefaultSourceSheet(balanceSource) {
+  if (balanceSource === "manual_fact") return MANUAL_BALANCE_SHEET_NAME;
+  if (balanceSource === "provider_auto" || balanceSource === "derived_balance") return AUTO_BALANCE_SHEET_NAME;
+  if (balanceSource === "calculated_balance") return "Расчетные Остатки";
+  return "";
 }
 
 function resolvePlannedRows(repository) {

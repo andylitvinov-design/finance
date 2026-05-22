@@ -108,6 +108,52 @@ test("period reconciliation exposes complete daily balance coverage diagnostics 
   );
 });
 
+test("period reconciliation API uses calculated daily EOD fallback without requiring manual fact", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-04-22", to: "2026-05-21", includeDailyBalances: "1" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        {
+          date: "2026-05-21",
+          fromChannel: "приват 24-грн",
+          currency: "UAH",
+          amountNet: "100",
+          balanceAmount: -100,
+          ledgerV2: {
+            date: "2026-05-21",
+            operation: "expense",
+            from_channel: "приват 24-грн",
+            currency: "UAH",
+            amount_net: "100",
+            balance_amount: -100,
+          },
+        },
+      ],
+      balances: [
+        { date: "2026-05-20", channel: "приват 24-грн", currency: "UAH", amount: "20096", balanceSource: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    yooMoneyProviderEvidenceLoader: async () => ({ source: "not_connected", rows: [], warning: null }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency.find((entry) => entry.channel === "приват 24-грн" && entry.currency === "UAH");
+  assert.equal(row.status, "calculated_from_previous");
+  assert.equal(row.factual_closing_balance, 19996);
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.fact_source, "calculated");
+  assert.equal(row.balanceSource, "calculated_balance");
+  assert.equal(snapshot.period_balance_reconciliation.summary.calculated_balance_rows, 1);
+  assert.equal(snapshot.period_balance_reconciliation.summary.missing_fact_rows, 0);
+  assert.equal(snapshot.period_balance_reconciliation.required_manual_fact_rows.length, 0);
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.calculated_balance_rows_built, 1);
+});
+
 test("period balance reconciliation uses manual fact before auto fallback", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
@@ -492,7 +538,7 @@ test("period balance reconciliation falls back to auto and marks missing facts",
   );
 });
 
-test("period balance reconciliation API reports planned source gap and missing target-date fact", async () => {
+test("period balance reconciliation API reports planned source gap while calculated fallback covers target-date fact", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
     repositoryLoader: async () => ({
@@ -506,14 +552,14 @@ test("period balance reconciliation API reports planned source gap and missing t
     }),
   });
 
-  assert.equal(snapshot.period_balance_reconciliation.summary.status, "blocked");
+  assert.equal(snapshot.period_balance_reconciliation.summary.status, "ok");
   assert.equal(snapshot.period_balance_reconciliation.summary.planned_source_status, "needs_verification");
   assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.carried_forward_conditional, 0);
-  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.missing_provider_balance, 1);
-  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "missing_provider_balance");
-  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].factual_closing_balance, null);
-  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].carried_forward_balance, 1000);
-  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].closing_balance_source, "missing");
+  assert.equal(snapshot.period_balance_reconciliation.summary.status_counts.missing_provider_balance, 0);
+  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].status, "calculated_from_previous");
+  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].factual_closing_balance, 1000);
+  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].carried_forward_balance, null);
+  assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].closing_balance_source, "calculated");
   assert.match(snapshot.warnings.join("\n"), /planned income\/expense source/);
   assert.match(snapshot.warnings.join("\n"), /movementValues order-plan rows and manual finance planned expense rows server-side/);
 });

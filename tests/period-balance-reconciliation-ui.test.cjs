@@ -675,6 +675,27 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
         plan_vs_real_delta: 0,
         status: "carried_forward_conditional",
       },
+      {
+        channel: "mono uah",
+        currency: "UAH",
+        opening_fact_balance: null,
+        planned_delta: 0,
+        planned_closing_balance: null,
+        real_delta: -100,
+        calculated_closing_balance: null,
+        computed_real_closing_balance: null,
+        manual_provider_closing_balance: null,
+        carried_forward_balance: null,
+        displayed_fact_balance: 900,
+        factual_closing_balance: 900,
+        factual_closing_balance_date: "2026-05-21",
+        fact_source: "calculated",
+        fact_status: "calculated_from_previous",
+        balanceSource: "calculated_balance",
+        real_difference: null,
+        plan_vs_real_delta: null,
+        status: "calculated_from_previous",
+      },
     ],
     actionable_rows: [],
   }));
@@ -683,6 +704,7 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   const provider = rows.find((row) => row[0] === "provider usd");
   const wise = rows.find((row) => row[0] === "wise usd");
   const cash = rows.find((row) => row[0] === "cash usd");
+  const mono = rows.find((row) => row[0] === "mono uah");
 
   assert.deepEqual(rows[0], POSITION_TABLE_HEADER);
   assert.equal(provider[7], "11.5");
@@ -699,6 +721,10 @@ test("period balance UI separates manual, carried-forward, and missing fact valu
   assert.equal(cash[12], "0");
   assert.notEqual(cash[7], "999");
   assert.notEqual(cash[8], "999");
+  assert.equal(mono[7], "900");
+  assert.equal(mono[9], "calculated from previous");
+  assert.equal(mono[14], "calculated from previous");
+  assert.notEqual(mono[7], "missing fact");
 });
 
 test("period balance UI moves empty no-data rows out of the main table", () => {

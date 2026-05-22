@@ -6,6 +6,7 @@ const STATUS = {
   MISSING_CLOSING: "missing_closing_balance",
   CARRIED_FORWARD: "carried_forward_conditional",
   MISSING_AMOUNT_NET: "missing_amount_net",
+  CALCULATED_FROM_PREVIOUS: "calculated_from_previous",
   NEEDS_VERIFICATION: "needs_verification",
   PROVIDER_NOT_IMPLEMENTED: "provider_not_implemented",
   NEEDS_PROVIDER_PERMISSION: "needs_provider_permission",
@@ -18,6 +19,7 @@ export function buildPeriodBalanceReconciliation({
   operations = [],
   balanceRows = [],
   autoBalanceRows = [],
+  calculatedBalanceRows = [],
   plannedRows = [],
   plannedSourceStatus = "",
   period = {},
@@ -27,7 +29,7 @@ export function buildPeriodBalanceReconciliation({
   const warnings = [];
   const periodReal = buildRealMovementIndex(operations, { from, to });
   const planned = buildPlannedMovementIndex(plannedRows, { from, to });
-  const balanceIndex = buildBalanceIndex(balanceRows, autoBalanceRows);
+  const balanceIndex = buildBalanceIndex(balanceRows, autoBalanceRows, calculatedBalanceRows);
   const accountKeys = new Set([
     ...periodReal.byKey.keys(),
     ...planned.byKey.keys(),
@@ -104,21 +106,24 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     targetDate: to,
     balanceIndex,
   });
-  const manualProviderClosing = factBalance.amount;
-  let closingSource = factBalance.status === "missing" ? "missing" : "exact";
+  const isCalculatedFact = factBalance.status === STATUS.CALCULATED_FROM_PREVIOUS;
+  const manualProviderClosing = isCalculatedFact ? null : factBalance.amount;
+  let closingSource = factBalance.status === "missing" ? "missing" : (isCalculatedFact ? "calculated" : "exact");
   const canCarryForwardClosing = !closingSnapshot
     && !hasMovement
     && !missingAmountNetRows
     && calculatedClosing !== null
     && lastObservedClosingSnapshot;
   const carriedForwardClosing = canCarryForwardClosing ? lastObservedClosingSnapshot.amount : null;
-  const displayedFactClosing = manualProviderClosing;
+  const displayedFactClosing = isCalculatedFact ? factBalance.amount : manualProviderClosing;
   const factSource = factBalance.status === "confirmed"
     ? "manual"
     : factBalance.status === "derived_pending"
       ? "derived"
       : factBalance.status === "auto_pending"
       ? "provider"
+      : isCalculatedFact
+      ? "calculated"
       : "missing";
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
     ? round(displayedFactClosing - calculatedClosing)
@@ -127,6 +132,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   let status = STATUS.OK;
   if (missingAmountNetRows) {
     status = STATUS.MISSING_AMOUNT_NET;
+  } else if (isCalculatedFact) {
+    status = STATUS.CALCULATED_FROM_PREVIOUS;
   } else if (isProviderLimitationStatus(factBalance.status) && manualProviderClosing === null) {
     status = factBalance.status;
   } else if (opening === null && (hasMovement || hasPlan)) {
@@ -177,8 +184,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     computed_status: opening === null && (hasMovement || hasPlan) ? STATUS.MISSING_OPENING : "ok",
     balanceSource: factBalance.status === "confirmed"
       ? "manual_fact"
-      : (factBalance.status === "derived_pending" ? "derived_balance" : (factBalance.status === "auto_pending" ? "provider_auto" : "missing")),
-    needsManualConfirmation: factBalance.status !== "confirmed",
+      : (factBalance.status === "derived_pending" ? "derived_balance" : (factBalance.status === "auto_pending" ? "provider_auto" : (isCalculatedFact ? "calculated_balance" : "missing"))),
+    needsManualConfirmation: !["confirmed", STATUS.CALCULATED_FROM_PREVIOUS].includes(factBalance.status),
     providerStatus: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
     provider_status: isProviderLimitationStatus(factBalance.status) ? factBalance.status : null,
     provider: factBalance.provider || null,
@@ -283,21 +290,24 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
   const balanceSource = getResolvedBalanceSource(snapshot);
   const auto = balanceSource === "provider_auto";
   const derived = balanceSource === "derived_balance";
+  const calculated = balanceSource === "calculated_balance";
   return {
-    status: derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed"),
+    status: calculated ? STATUS.CALCULATED_FROM_PREVIOUS : (derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed")),
     amount: round(snapshot.amount),
     date: snapshot.date,
-    sourceSheet: snapshot.sourceSheet || (auto || derived ? "Авто Остатки" : "Остатки"),
+    sourceSheet: snapshot.sourceSheet || (calculated ? "Расчетные Остатки" : (auto || derived ? "Авто Остатки" : "Остатки")),
     sourceRow: snapshot.sourceRow || null,
-    sourceType: derived ? "derived" : (auto ? "auto" : "manual fact"),
+    sourceType: calculated ? "calculated" : (derived ? "derived" : (auto ? "auto" : "manual fact")),
     provider: snapshot.provider || null,
     comment: snapshot.comment || "",
-    warning: derived ? "derived from confirmed opening and Ledger amount_net" : (auto ? "needs manual confirmation" : null),
-    repairHint: derived
+    warning: calculated ? "calculated from previous known EOD and Ledger amount_net" : (derived ? "derived from confirmed opening and Ledger amount_net" : (auto ? "needs manual confirmation" : null)),
+    repairHint: calculated
+      ? null
+      : (derived
       ? `review derived PayPal balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date}`
       : (auto
       ? `confirm auto balance for ${String(channel || "").trim()}/${String(currency || "").trim().toUpperCase()}/${snapshot.date} in Остатки`
-      : null),
+      : null)),
   };
 }
 
@@ -460,10 +470,10 @@ function buildPlannedMovementIndex(plannedRows, period) {
   return { byKey, rows };
 }
 
-function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
+function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceRows = []) {
   const byKey = new Map();
   const statusByKey = new Map();
-  for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows)) {
+  for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows, calculatedBalanceRows)) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
@@ -513,7 +523,9 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = []) {
       // For same-day periods, use the previous EOD snapshot to avoid treating
       // the same EOD fact as both opening and closing.
       if (from && to && from === to) return latestPreferred(rows.filter((row) => row.date < from));
-      return latestPreferred(rows.filter((row) => row.date <= from));
+      return latestPreferred(rows.filter((row) =>
+        row.date < from || (row.date === from && getResolvedBalanceSource(row) !== "calculated_balance")
+      ));
     },
     findClosing(key, { from, to }) {
       const rows = byKey.get(key) || [];
@@ -573,7 +585,7 @@ function latestPreferred(rows = []) {
     .sort((left, right) => balanceSourcePriority(left) - balanceSourcePriority(right))[0] || null;
 }
 
-function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = []) {
+function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = [], calculatedBalanceRows = []) {
   return [
     ...(balanceRows || []).map((row) => ({
       ...row,
@@ -585,6 +597,15 @@ function normalizeBalanceRowsForPriority(balanceRows = [], autoBalanceRows = [])
       balanceSource: isManualBalanceSource(row) ? "manual_fact" : getResolvedBalanceSource(row),
       source: row?.source || "provider_auto",
       sourceSheet: row?.sourceSheet || "Авто Остатки",
+    })),
+    ...(calculatedBalanceRows || []).map((row) => ({
+      ...row,
+      amount: row?.amount ?? row?.balanceAmount ?? row?.calculated_eod,
+      balanceAmount: row?.balanceAmount ?? row?.amount ?? row?.calculated_eod,
+      balanceSource: "calculated_balance",
+      source: row?.source || "calculated",
+      fact_source: row?.fact_source || "calculated",
+      sourceSheet: row?.sourceSheet || "Расчетные Остатки",
     })),
   ];
 }
@@ -600,15 +621,17 @@ function balanceSourcePriority(row) {
   if (source === "manual_fact") return 0;
   if (source === "provider_auto") return 1;
   if (source === "derived_balance") return 2;
-  return 3;
+  if (source === "calculated_balance") return 3;
+  return 4;
 }
 
 function getResolvedBalanceSource(row = {}) {
   const source = normalizeText(`${row?.source || ""} ${row?.fact_source || ""} ${row?.provider || ""} ${row?.comment || ""}`);
+  const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
+  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "derived_balance" || explicit === "calculated_balance" || explicit === "missing") return explicit;
+  if (/calculated_balance|calculated|расчетные остатки/.test(source)) return "calculated_balance";
   if (/manual confirmed|manual balance|manual fact|paypal manual balance|paypal manual confirmed|paypal_manual_balance|paypal_manual_confirmed_balance/.test(source)) return "manual_fact";
   if (/paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(source)) return "derived_balance";
-  const explicit = String(row?.balanceSource || row?.balance_source || "").trim();
-  if (explicit === "manual_fact" || explicit === "provider_auto" || explicit === "derived_balance" || explicit === "missing") return explicit;
   if (isManualBalanceSource(row)) return "manual_fact";
   if (/wise auto snapshot|auto daily provider snapshot|provider snapshot|auto snapshot/.test(source)) return "provider_auto";
   if (/wise auto|paypal auto|binance auto|monobank auto|privatbank auto|yoomoney auto|provider auto/.test(source)) return "provider_auto";
@@ -707,6 +730,7 @@ function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceSt
       [STATUS.MISSING_CLOSING]: statusCounts[STATUS.MISSING_CLOSING] || 0,
       [STATUS.CARRIED_FORWARD]: statusCounts[STATUS.CARRIED_FORWARD] || 0,
       [STATUS.MISSING_AMOUNT_NET]: statusCounts[STATUS.MISSING_AMOUNT_NET] || 0,
+      [STATUS.CALCULATED_FROM_PREVIOUS]: statusCounts[STATUS.CALCULATED_FROM_PREVIOUS] || 0,
       [STATUS.NEEDS_VERIFICATION]: statusCounts[STATUS.NEEDS_VERIFICATION] || 0,
       [STATUS.PROVIDER_NOT_IMPLEMENTED]: statusCounts[STATUS.PROVIDER_NOT_IMPLEMENTED] || 0,
       [STATUS.NEEDS_PROVIDER_PERMISSION]: statusCounts[STATUS.NEEDS_PROVIDER_PERMISSION] || 0,
@@ -731,6 +755,7 @@ function buildActionableRows(rows) {
 
 function buildDiagnosis(row) {
   if (row.status === STATUS.OK) return "Сверено: фактический остаток совпадает с реальным расчетным остатком.";
+  if (row.status === STATUS.CALCULATED_FROM_PREVIOUS) return "Рассчитано: нет нового факта, использован предыдущий известный EOD плюс Ledger amount_net.";
   if (row.status === STATUS.CARRIED_FORWARD) return "Условно перенесено: за период нет движений и нет нового остатка, использован остаток прошлого периода.";
   if (row.status === STATUS.NO_DATA) return "Нет данных для сверки: нет начального остатка, движения, плана и факта.";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Есть Ledger строки без amount_net; реальное изменение баланса нельзя считать полным.";
@@ -792,6 +817,7 @@ function buildDiagnostics({
 
 function buildFixAction(row) {
   if (row.status === STATUS.OK) return "Действий не требуется.";
+  if (row.status === STATUS.CALCULATED_FROM_PREVIOUS) return "Действий не требуется для плановой сверки; при появлении факта добавить его в Остатки.";
   if (row.status === STATUS.CARRIED_FORWARD) return "Проверить позже: добавить новый Остатки, если появится актуальный баланс.";
   if (row.status === STATUS.NO_DATA) return "Игнорировать: нет данных для сверки по этому счету/валюте.";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "Заполнить amount_net у Ledger строк по этому счету/валюте.";
@@ -808,6 +834,7 @@ function buildFixAction(row) {
 
 function buildRepairAction(row) {
   if (row.status === STATUS.OK) return "none";
+  if (row.status === STATUS.CALCULATED_FROM_PREVIOUS) return "none_calculated_from_previous";
   if (row.status === STATUS.CARRIED_FORWARD) return "confirm_carried_forward_before_append";
   if (row.status === STATUS.NO_DATA) return "ignore_no_data";
   if (row.status === STATUS.MISSING_AMOUNT_NET) return "fix_amount_net";
@@ -899,6 +926,7 @@ function getFixPriority(status) {
     [STATUS.MISSING_CLOSING]: 4,
     [STATUS.NEEDS_VERIFICATION]: 4,
     [STATUS.CARRIED_FORWARD]: 8,
+    [STATUS.CALCULATED_FROM_PREVIOUS]: 8,
     [STATUS.OK]: 9,
     [STATUS.NO_DATA]: 10,
   };
@@ -908,6 +936,7 @@ function getFixPriority(status) {
 function resolveCurrencyStatus(statusCounts) {
   if (statusCounts[STATUS.MISSING_AMOUNT_NET] || statusCounts[STATUS.MISMATCH]) return "failed";
   if (statusCounts[STATUS.MISSING_OPENING] || statusCounts[STATUS.MISSING_PROVIDER] || statusCounts[STATUS.MISSING_CLOSING] || statusCounts[STATUS.NEEDS_VERIFICATION] || countProviderLimitationStatuses(statusCounts)) return "blocked";
+  if (statusCounts[STATUS.CALCULATED_FROM_PREVIOUS]) return STATUS.CALCULATED_FROM_PREVIOUS;
   if (statusCounts[STATUS.CARRIED_FORWARD]) return STATUS.CARRIED_FORWARD;
   if (statusCounts[STATUS.NO_DATA]) return STATUS.NO_DATA;
   return STATUS.OK;
