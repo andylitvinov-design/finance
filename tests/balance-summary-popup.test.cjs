@@ -29,15 +29,29 @@ test("top balance button replaced old top audit launcher while bottom audit scri
 
 test("balance summary does not discount myOrders twice", () => {
   const api = loadApi();
-  const summary = api.buildBalanceTextSummary({ orders: 1000, percentToOrders: 100, myOrders: 200, paid: 500 });
+  const summary = api.buildBalanceTextSummary({ totalOrdersPlusPercent: 1100, myOrders: 200, paid: 500 });
 
   assert.equal(summary.totalOrdersPlusPercent, 1100);
-  assert.equal(summary.seventyPercent, 770);
   assert.equal(summary.myOrders, 200);
   assert.equal(summary.myOrdersPayable, 200);
   assert.equal(summary.myOrdersHalf, 200);
-  assert.equal(summary.totalAccrued, 970);
-  assert.equal(summary.remainingToPay, 470);
+  assert.equal(summary.totalAccrued, 1300);
+  assert.equal(summary.remainingToPay, 800);
+  resetBalanceModule();
+});
+
+test("orders payment summary uses accrued with percent, discounted personal orders, and paid once", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    totalOrdersPlusPercent: 1400.3,
+    myOrders: 647.5,
+    paid: 965.7039,
+  });
+
+  assert.equal(Number(summary.orders.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.myOrdersPayable.toFixed(4)), 647.5);
+  assert.equal(Number(summary.totalAccrued.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1082.0961);
   resetBalanceModule();
 });
 
@@ -62,10 +76,10 @@ test("occurred table uses OCCURRED as base and OCCURRED plus percent as total", 
     personalOrdersAfterDiscount: 200,
   }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
-  assert.equal(summary.orders, 1432.8);
+  assert.equal(summary.orders, 1475.784);
   assert.equal(summary.totalOrdersPlusPercent, 1475.784);
   assert.equal(Number(summary.percentToOrders.toFixed(4)), 42.984);
-  assert.equal(Number(summary.remainingToPay.toFixed(4)), 733.0488);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1175.784);
   assert.doesNotMatch(summary.diagnostics.join("\n"), /source not found for orders|source not found for percentToOrders/);
   resetBalanceModule();
 });
@@ -91,7 +105,7 @@ test("default summary reads app state table instead of falling back to top metri
   const api = require("../balance-summary-popup.js");
   const summary = api.buildBalanceTextSummary();
 
-  assert.equal(summary.orders, 100);
+  assert.equal(summary.orders, 103);
   assert.equal(summary.totalOrdersPlusPercent, 103);
   assert.equal(summary.percentToOrders, 3);
   assert.doesNotMatch(summary.diagnostics.join("\n"), /source not found for orders/);
@@ -119,10 +133,10 @@ test("selected period excludes outside occurred rows", () => {
     personalOrdersAfterDiscount: 200,
   }, { startDate: "2026-05-01", endDate: "2026-05-31" });
 
-  assert.equal(summary.orders, 1000);
+  assert.equal(summary.orders, 1030);
   assert.equal(summary.percentToOrders, 30);
   assert.equal(summary.totalOrdersPlusPercent, 1030);
-  assert.equal(summary.remainingToPay, 421);
+  assert.equal(summary.remainingToPay, 730);
   resetBalanceModule();
 });
 
@@ -147,20 +161,56 @@ test("legacy accrued columns still work as fallback", () => {
     personalOrdersAfterDiscount: 0,
   }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
-  assert.equal(summary.orders, 1000);
+  assert.equal(summary.orders, 1030);
   assert.equal(summary.totalOrdersPlusPercent, 1030);
   assert.equal(summary.percentToOrders, 30);
   resetBalanceModule();
 });
 
-test("top metric fallback treats totalOrders as order base and derives 3 percent amount", () => {
+test("top metric fallback treats totalOrders as accrued plus percent", () => {
   const api = loadApi();
   const summary = api.buildBalanceTextSummary({ totalOrders: 2047.8, totalPaid: 965.7039, personalOrdersAfterDiscount: 647.5 });
 
   assert.equal(Number(summary.orders.toFixed(4)), 2047.8);
   assert.equal(Number(summary.percentToOrders.toFixed(4)), 61.434);
-  assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2109.234);
-  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1158.2599);
+  assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.totalAccrued.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 1082.0961);
+  resetBalanceModule();
+});
+
+test("percent rate renders as percent label, not monetary percent amount", () => {
+  const api = loadApi();
+  const items = [];
+  const doc = {
+    createElement(tag) {
+      const node = {
+        tag,
+        children: [],
+        textContent: "",
+        appendChild(child) {
+          this.children.push(child);
+          if (tag === "ol" && child.tag === "li") items.push(child.textContent);
+        },
+        setAttribute() {},
+      };
+      return node;
+    },
+  };
+  api.renderBalanceSummaryBlock({
+    orders: 1400.3,
+    percentRate: 3,
+    totalOrdersPlusPercent: 1400.3,
+    myOrders: 647.5,
+    myOrdersPayable: 647.5,
+    totalAccrued: 2047.8,
+    totalPaid: 965.7039,
+    remainingToPay: 1082.0961,
+    diagnostics: [],
+  }, doc);
+
+  assert.match(items.join("\n"), /Процент к заказам: 3%/);
+  assert.doesNotMatch(items.join("\n"), /63,2632/);
   resetBalanceModule();
 });
 

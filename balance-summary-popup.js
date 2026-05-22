@@ -3,8 +3,8 @@
 
   const BALANCE_BUTTON_ID = "balanceLauncherButton";
   const BALANCE_BLOCK_ID = "balanceSummaryBlock";
-  const PAYABLE_RATE = 0.7;
   const FALLBACK_PERCENT_RATE = 0.03;
+  const FALLBACK_PERCENT_RATE_DISPLAY = 3;
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -145,6 +145,26 @@
     return 0;
   }
 
+  function getSharedOrdersPaymentSummary(input) {
+    const shared = root.EzohataTopMetricPayableShareFix;
+    if (typeof shared?.buildOrdersPaymentSummary === "function") {
+      return shared.buildOrdersPaymentSummary(input);
+    }
+    const ordersAccruedWithPercent = parseNumber(input.ordersAccruedWithPercent ?? input.totalOrders ?? input.totalOrdersPlusPercent);
+    const totalPaid = Math.abs(parseNumber(input.totalPaid));
+    const myOrdersDiscounted = parseNumber(input.personalOrdersAfterDiscount);
+    const totalAccrued = hasOwn(input, "totalAccrued") ? parseNumber(input.totalAccrued) : ordersAccruedWithPercent + myOrdersDiscounted;
+    return {
+      ordersAccruedWithPercent,
+      percentRate: parseNumber(input.percentRate || FALLBACK_PERCENT_RATE_DISPLAY),
+      myOrdersDiscounted,
+      totalAccrued,
+      totalPaid,
+      remainingToPay: totalAccrued - totalPaid,
+      payableFormula: "totalAccrued - abs(totalPaid)",
+    };
+  }
+
   function sumNullableTotals(left, right) {
     if (left === null && right === null) return null;
     return firstFinite(left) + firstFinite(right);
@@ -158,15 +178,15 @@
     const movementTotals = sumTableTotals(appState?.data?.tabs?.movement?.values || [], period);
     const ordersTotals = sumTableTotals(appState?.data?.tabs?.orders?.values || [], period);
     const explicitOrders = hasOwn(metricsOrState, "orders") ? parseNumber(metricsOrState.orders) : null;
-    const explicitPercent = hasOwn(metricsOrState, "percentToOrders") ? parseNumber(metricsOrState.percentToOrders) : null;
+    const explicitPercentRate = hasOwn(metricsOrState, "percentRate") ? parseNumber(metricsOrState.percentRate) : null;
 
     let orders = explicitOrders;
-    let percentToOrders = explicitPercent;
+    let percentToOrders = null;
     let totalOrdersPlusPercent = hasOwn(metricsOrState, "totalOrdersPlusPercent") ? parseNumber(metricsOrState.totalOrdersPlusPercent) : null;
 
-    const tableOrders = sumNullableTotals(movementTotals.orders, ordersTotals.orders);
-    const tableTotalOrdersPlusPercent = sumNullableTotals(movementTotals.totalOrdersPlusPercent, ordersTotals.totalOrdersPlusPercent);
-    const tablePercentToOrders = sumNullableTotals(movementTotals.percentToOrders, ordersTotals.percentToOrders);
+    const tableOrders = movementTotals.sourceFound ? movementTotals.orders : ordersTotals.orders;
+    const tableTotalOrdersPlusPercent = movementTotals.sourceFound ? movementTotals.totalOrdersPlusPercent : ordersTotals.totalOrdersPlusPercent;
+    const tablePercentToOrders = movementTotals.sourceFound ? movementTotals.percentToOrders : ordersTotals.percentToOrders;
 
     if (orders === null && tableOrders !== null) orders = tableOrders;
     if (totalOrdersPlusPercent === null && tableTotalOrdersPlusPercent !== null) totalOrdersPlusPercent = tableTotalOrdersPlusPercent;
@@ -176,8 +196,8 @@
       const fallbackOrders = parseNumber(metrics.totalOrders);
       if (orders === null) orders = fallbackOrders;
       if (percentToOrders === null) percentToOrders = orders * FALLBACK_PERCENT_RATE;
-      if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
-      diagnostics.push("needs verification: exact OCCURRED/ACCRUED +3% columns not found; using top metrics totalOrders as order base and deriving 3%.");
+      if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = fallbackOrders;
+      diagnostics.push("needs verification: exact OCCURRED/ACCRUED +3% columns not found; using top metrics totalOrders as Accrued + 3%.");
     }
 
     if (orders === null) {
@@ -186,6 +206,7 @@
     }
     if (percentToOrders === null) percentToOrders = 0;
     if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
+    const percentRate = explicitPercentRate ?? FALLBACK_PERCENT_RATE_DISPLAY;
 
     const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
     const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
@@ -195,27 +216,39 @@
     const totalPaid = Math.abs(parseNumber(metricsOrState.paid ?? metricsOrState.totalPaid ?? metrics.totalPaid ?? 0));
     if (!paidSourceFound) diagnostics.push("needs verification: source not found for totalPaid.");
 
-    const seventyPercent = totalOrdersPlusPercent * PAYABLE_RATE;
-    const myOrdersPayable = myOrders;
-    const totalAccrued = seventyPercent + myOrdersPayable;
-    const remainingToPay = totalAccrued - totalPaid;
+    const totalAccruedInput = hasOwn(metricsOrState, "totalOrders")
+      ? totalOrdersPlusPercent
+      : (hasOwn(metrics, "totalAccrued") ? metrics.totalAccrued : totalOrdersPlusPercent + myOrders);
+    const canonical = getSharedOrdersPaymentSummary({
+      ordersAccruedWithPercent: totalOrdersPlusPercent,
+      totalOrders: totalOrdersPlusPercent,
+      percentRate,
+      personalOrdersAfterDiscount: myOrders,
+      totalAccrued: totalAccruedInput,
+      totalPaid,
+    });
+    const myOrdersPayable = canonical.myOrdersDiscounted;
+    const totalAccrued = canonical.totalAccrued;
+    const remainingToPay = canonical.remainingToPay;
 
     return {
       period,
-      orders,
+      orders: canonical.ordersAccruedWithPercent,
+      ordersBase: orders,
       percentToOrders,
+      percentRate: canonical.percentRate,
       totalOrdersPlusPercent,
-      seventyPercent,
       myOrders,
       myOrdersHalf: myOrdersPayable,
       myOrdersPayable,
       totalAccrued,
       totalPaid,
       remainingToPay,
+      payableFormula: canonical.payableFormula,
       diagnostics,
       sources: {
         orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED/ACCRUED or top metrics fallback",
-        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders OCCURRED+3% minus OCCURRED",
+        percentRate: explicitPercentRate !== null ? "input.percentRate" : "default 3 percent display rate",
         totalPaid: "buildTopMetricsSummary.totalPaid",
         myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount already includes personal-order payable discount",
       },
@@ -228,6 +261,13 @@
     return Number(value).toFixed(4).replace(".", ",");
   }
 
+  function formatPercentRate(value) {
+    const rate = Number(value);
+    if (!Number.isFinite(rate)) return "needs verification";
+    const rounded = Math.round(rate * 10000) / 10000;
+    return `${String(rounded).replace(".", ",")}%`;
+  }
+
   function renderBalanceSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = BALANCE_BLOCK_ID;
@@ -235,19 +275,18 @@
     block.setAttribute("aria-live", "polite");
     const lines = [
       ["Сумма заказов за период", summary.orders],
-      ["Процент к заказам", summary.percentToOrders],
+      ["Процент к заказам", summary.percentRate, "percent"],
       ["Итого: Заказы + %", summary.totalOrdersPlusPercent],
-      ["70% от Итого", summary.seventyPercent],
       ["Мои заказы", summary.myOrders],
       ["Мои заказы к начислению (уже с учетом скидки)", summary.myOrdersPayable ?? summary.myOrdersHalf],
-      ["ВСЕГО НАЧИСЛЕНО (70% от итого + мои заказы)", summary.totalAccrued],
+      ["ВСЕГО НАЧИСЛЕНО", summary.totalAccrued],
       ["ВСЕГО оплачено", summary.totalPaid],
       ["ОСТАТОК оплатить", summary.remainingToPay],
     ];
     const list = doc.createElement("ol");
-    lines.forEach(([label, value]) => {
+    lines.forEach(([label, value, type]) => {
       const item = doc.createElement("li");
-      item.textContent = `${label}: ${formatMoney(value)}`;
+      item.textContent = `${label}: ${type === "percent" ? formatPercentRate(value) : formatMoney(value)}`;
       list.appendChild(item);
     });
     block.appendChild(list);
