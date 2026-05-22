@@ -173,20 +173,20 @@
     if (totalOrdersPlusPercent === null && tableTotalOrdersPlusPercent !== null) totalOrdersPlusPercent = tableTotalOrdersPlusPercent;
     if (percentToOrders === null && tablePercentToOrders !== null) percentToOrders = tablePercentToOrders;
 
-    if ((orders === null || totalOrdersPlusPercent === null) && hasOwn(metrics, "totalOrders")) {
-      const fallbackTotal = parseNumber(metrics.totalOrders);
-      if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = fallbackTotal;
-      if (orders === null) orders = fallbackTotal / (1 + FALLBACK_PERCENT_RATE);
-      if (percentToOrders === null) percentToOrders = totalOrdersPlusPercent - orders;
-      diagnostics.push("needs verification: exact ACCRUED/ACCRUED+3% columns not found; using top metrics totalOrders as ACCRUED+3% fallback.");
+    if ((orders === null || totalOrdersPlusPercent === null || percentToOrders === null) && hasOwn(metrics, "totalOrders")) {
+      const fallbackOrders = parseNumber(metrics.totalOrders);
+      if (orders === null) orders = fallbackOrders;
+      if (percentToOrders === null) percentToOrders = orders * FALLBACK_PERCENT_RATE;
+      if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
+      diagnostics.push("needs verification: exact ACCRUED/ACCRUED+3% columns not found; using top metrics totalOrders as ACCRUED fallback and deriving 3%.");
     }
 
     if (orders === null) {
       orders = 0;
       diagnostics.push("needs verification: source not found for orders.");
     }
-    if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + firstFinite(percentToOrders);
-    if (percentToOrders === null) percentToOrders = totalOrdersPlusPercent - orders;
+    if (percentToOrders === null) percentToOrders = 0;
+    if (totalOrdersPlusPercent === null) totalOrdersPlusPercent = orders + percentToOrders;
 
     const personalSourceFound = hasOwn(metricsOrState, "myOrders") || hasOwn(metrics, "personalOrdersAfterDiscount") || hasOwn(metrics?.ordersSummary || {}, "personalOrdersAfterDiscount");
     const myOrders = hasOwn(metricsOrState, "myOrders") ? parseNumber(metricsOrState.myOrders) : parseNumber(metrics.personalOrdersAfterDiscount ?? metrics.ordersSummary?.personalOrdersAfterDiscount ?? 0);
@@ -215,8 +215,8 @@
       remainingToPay,
       diagnostics,
       sources: {
-        orders: explicitOrders !== null ? "input.orders" : "movement/orders table ACCRUED or top metrics ACCRUED+3% fallback",
-        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders ACCRUED +3% minus ACCRUED",
+        orders: explicitOrders !== null ? "input.orders" : "movement/orders table ACCRUED or top metrics ACCRUED fallback",
+        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders ACCRUED +3% minus ACCRUED or fallback 3%",
         totalPaid: "buildTopMetricsSummary.totalPaid",
         myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount already includes personal-order payable discount",
       },
