@@ -24,8 +24,8 @@ function makeNode(text = "") {
   return { textContent: text };
 }
 
-function runPayablePatch(buildTopMetricsSummary) {
-  const context = { buildTopMetricsSummary };
+function runPayablePatch(buildTopMetricsSummary, extras = {}) {
+  const context = { buildTopMetricsSummary, ...extras };
   context.globalThis = context;
   context.window = context;
   vm.createContext(context);
@@ -33,7 +33,7 @@ function runPayablePatch(buildTopMetricsSummary) {
   return context.buildTopMetricsSummary();
 }
 
-function renderMetricsWithSummary(summary) {
+function renderMetricsWithSummary(summary, extras = {}) {
   const elements = {
     metricPeriod: makeNode(),
     metricOrders: makeNode(),
@@ -52,6 +52,7 @@ function renderMetricsWithSummary(summary) {
       return Number.isFinite(parsed) ? parsed : 0;
     },
     formatSheetNumber: (value, precision = 4) => Number(value).toFixed(precision).replace(".", ","),
+    ...extras,
   };
   context.globalThis = context;
   context.window = context;
@@ -64,6 +65,23 @@ function renderMetricsWithSummary(summary) {
   vm.runInContext(personalOrdersPayableBadgeJs, context);
   context.renderMetrics();
   return { context, elements };
+}
+
+function makeMovementState(accruedPlusTotal) {
+  return {
+    data: {
+      tabs: {
+        movement: {
+          values: [
+            ["NUMBER", "SERVICE", "ACCRUED +3%", "70% OF +3%"],
+            ["1", "service", String(accruedPlusTotal), String(accruedPlusTotal * 0.7)],
+            ["Итого", "", String(accruedPlusTotal), String(accruedPlusTotal * 0.7)],
+          ],
+          summaryRows: []
+        }
+      }
+    }
+  };
 }
 
 test("summary metrics render directly in the top card flow", () => {
@@ -137,7 +155,7 @@ test("top metrics personal orders badge shows zero when field is missing", () =>
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
 });
 
-test("payable helper calculates 70 percent of orders minus paid plus discounted personal orders", () => {
+test("payable helper calculates 70 percent of service orders minus paid plus discounted personal orders", () => {
   const summary = runPayablePatch(() => ({
     totalOrders: 1499.55,
     totalPaid: 965.7039,
@@ -147,8 +165,40 @@ test("payable helper calculates 70 percent of orders minus paid plus discounted 
 
   assert.equal(Number(summary.payable.toFixed(4)), 288.6870);
   assert.equal(summary.total, summary.payable);
-  assert.equal(summary.payableFormula, "totalOrders * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount");
+  assert.equal(summary.payableFormula, "serviceOrdersTotal * 0.7 - abs(totalPaid) + personalOrdersAfterDiscount");
   assert.doesNotMatch(summary.payableFormula, /0\.3/);
+});
+
+test("payable helper uses movement accrued total for service orders and keeps personal orders separate", () => {
+  const summary = runPayablePatch(() => ({
+    totalOrders: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    total: -999
+  }), { state: makeMovementState(1400.3) });
+
+  assert.equal(Number(summary.totalOrders.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.grossTotalOrdersIncludingPersonal.toFixed(4)), 2047.8);
+  assert.equal(Number(summary.serviceOrdersTotal.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.personalOrdersAfterDiscount.toFixed(4)), 647.5);
+  assert.equal(Number(summary.payable.toFixed(4)), 661.0061);
+});
+
+test("top card renders service orders total while personal orders stay in the separate badge", () => {
+  const { elements } = renderMetricsWithSummary({
+    totalOrders: 2047.8,
+    totalPaid: 965.7039,
+    personalOrdersAfterDiscount: 647.5,
+    balance: -630.1078,
+    total: 0,
+    myServices: 204.7059,
+    myCosts: 3560.9325,
+    profit: -2741.8866,
+  }, { state: makeMovementState(1400.3) });
+
+  assert.equal(elements.metricPeriod.textContent, "1400,3000");
+  assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 647,5000");
+  assert.notEqual(elements.metricPeriod.textContent, "2047,8000");
 });
 
 test("payable helper uses the displayed paid amount when internal paid total is negative", () => {
