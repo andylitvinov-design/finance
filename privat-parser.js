@@ -1,3 +1,10 @@
+import {
+  buildProviderImportCoverage,
+  detectPossibleFeeDoubleCount,
+  detectProviderDuplicateRows,
+  validateBalanceAfterChain
+} from "./server/provider-import-diagnostics.js";
+
 const UAH_USD_FALLBACK_RATE = 1 / 43.86;
 
 const PRIVAT_CHANNEL_BY_CURRENCY = {
@@ -7,8 +14,61 @@ const PRIVAT_CHANNEL_BY_CURRENCY = {
 };
 
 export function parsePrivatStatement(input) {
+  return parsePrivatStatementWithDiagnostics(input).ledgerRows;
+}
+
+export function parsePrivatStatementWithDiagnostics(input, options = {}) {
   const rows = extractInputRows(input);
-  return rows.flatMap((row, index) => normalizePrivatLedgerRows(row, index)).filter((row) => row.date && row.amount);
+  const normalizedByInput = rows.map((row, index) => normalizePrivatLedgerRows(row, index));
+  const parsedRows = normalizedByInput.flat();
+  const ledgerRows = parsedRows.filter((row) => row.date && row.amount);
+  const skippedRows = normalizedByInput
+    .map((items, index) => ({ input: rows[index], items }))
+    .filter(({ items }) => !items.some((row) => row.date && row.amount))
+    .map(({ input }) => input);
+  const needsReviewRows = ledgerRows.filter((row) => row.review_status === "needs_review");
+  const duplicateRows = detectProviderDuplicateRows(ledgerRows);
+  const balanceChain = validateBalanceAfterChain(sortPrivatRowsForBalanceChain(ledgerRows), {
+    amountKey: "amount",
+    balanceAfterKey: "balance_after",
+    previousBalance: firstNonEmpty(options.previousBalance, options.openingBalance, options.opening_balance)
+  });
+  const feeDoubleCount = detectPossibleFeeDoubleCount(ledgerRows);
+  const parserWarnings = buildPrivatParserWarnings({
+    needsReviewRows,
+    duplicateRows,
+    balanceChain,
+    feeDoubleCount
+  });
+  const coverage = buildProviderImportCoverage({
+    provider: "privatbank",
+    source: "privat24",
+    inputRows: rows,
+    parsedRows,
+    ledgerRows,
+    skippedRows,
+    duplicateRows,
+    needsReviewRows,
+    parserWarnings,
+    channel: inferPrivatCoverageChannel(ledgerRows),
+    currency: inferPrivatCoverageCurrency(ledgerRows),
+    periodFrom: options.periodFrom,
+    periodTo: options.periodTo
+  });
+  const diagnostics = {
+    coverage,
+    balance_chain: balanceChain,
+    duplicate_rows: duplicateRows,
+    fee_double_count: feeDoubleCount
+  };
+  return {
+    inputRows: rows,
+    parsedRows,
+    ledgerRows,
+    skippedRows,
+    diagnostics,
+    warnings: coverage.parser_warnings
+  };
 }
 
 function extractInputRows(input) {
@@ -83,7 +143,9 @@ function normalizePrivatLedgerRows(row, index = 0) {
     transfer_group_id: transfer ? externalId : "",
     review_status: needsReview ? "needs_review" : "",
     fee_amount: feeAmount ? formatNumber(feeAmount) : "",
-    fee_currency: feeAmount ? currency : ""
+    fee_currency: feeAmount ? currency : "",
+    balance_after: statementBalanceAfter !== null ? formatNumber(statementBalanceAfter) : "",
+    provider_balance_after: statementBalanceAfter !== null ? formatNumber(statementBalanceAfter) : ""
   }];
 }
 
@@ -368,6 +430,42 @@ function normalizeCurrency(value) {
 
 function getPrivatChannel(currency) {
   return PRIVAT_CHANNEL_BY_CURRENCY[normalizeCurrency(currency)] || "приват 24-грн";
+}
+
+function buildPrivatParserWarnings({ needsReviewRows = [], duplicateRows = [], balanceChain = {}, feeDoubleCount = {} } = {}) {
+  const warnings = [];
+  for (const row of needsReviewRows) {
+    warnings.push(`${row.external_id || row.raw_source_id}: needs_review`);
+  }
+  for (const duplicate of duplicateRows) {
+    warnings.push(`duplicate row: ${duplicate.key}`);
+  }
+  if (balanceChain.balance_chain_gap && balanceChain.first_gap_row) {
+    warnings.push(`balance chain gap at ${balanceChain.first_gap_row.row_id || balanceChain.first_gap_row.date}: expected ${balanceChain.first_gap_row.expected_balance_after}, provider ${balanceChain.first_gap_row.provider_balance_after}`);
+  }
+  if (feeDoubleCount.likely_fee_double_count) {
+    warnings.push("possible fee double-count: statement contains total debit and matching principal+fee split rows");
+  }
+  return [...new Set(warnings)];
+}
+
+function sortPrivatRowsForBalanceChain(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftDate = String(left.date || "");
+    const rightDate = String(right.date || "");
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    return String(left.external_id || left.raw_source_id || "").localeCompare(String(right.external_id || right.raw_source_id || ""));
+  });
+}
+
+function inferPrivatCoverageChannel(rows = []) {
+  const channels = [...new Set(rows.map((row) => firstNonEmpty(row.from_channel, row.to_channel)).filter(Boolean))];
+  return channels.length === 1 ? channels[0] : "";
+}
+
+function inferPrivatCoverageCurrency(rows = []) {
+  const currencies = [...new Set(rows.map((row) => String(row.currency || "").trim().toUpperCase()).filter(Boolean))];
+  return currencies.length === 1 ? currencies[0] : "";
 }
 
 function firstNonEmpty(...values) {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  default as privatBankTransactionsHandler,
   fetchPrivatBankStatementEntries,
   normalizePrivatBankStatementItem,
   parsePrivat24PersonalStatementPayload,
@@ -154,6 +155,9 @@ test("parsePrivat24PersonalStatementPayload accepts Privat24 exported headers af
   );
   assert.match(result.ledgerRows[0].comment, /statement balance after: 93.27 UAH/);
   assert.match(result.ledgerRows[1].comment, /statement balance after: 20096.27 UAH/);
+  assert.equal(result.diagnostics.coverage.input_rows_count, 4);
+  assert.equal(result.diagnostics.coverage.ledger_rows_count, 4);
+  assert.equal(result.diagnostics.coverage.hard_fail, false);
 });
 
 test("parsePrivat24PersonalStatementPayload skips title-only lines instead of dropping statement rows", () => {
@@ -167,3 +171,118 @@ test("parsePrivat24PersonalStatementPayload skips title-only lines instead of dr
   assert.equal(result.ledgerRows[0].amount, "5000");
   assert.equal(result.ledgerRows[0].operation, "income");
 });
+
+test("parsePrivat24PersonalStatementPayload validates Privat24 balance-after chain", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    previousBalance: "11239.19",
+    statementText: [
+      "Дата;Категорія;Картка;Опис операції;Сума в валюті картки;Валюта картки;Залишок на кінець періоду;Валюта залишку",
+      "22.05.2026 15:01:35;Платежі за реквізитами;4149;НЕМІШ БОГДАН ЮРІЙОВИЧ ФОП;-20003;UAH;93.27;UAH",
+      "16.05.2026 00:03:34;Зарахування переказу;4149;Урсул Г.;8700;UAH;20096.27;UAH",
+      "12.05.2026 04:06:51;Цифрові товари;4149;GOOGLE *Meetup Social;-4842.92;UAH;11396.27;UAH",
+      "04.05.2026 15:28:41;Зарахування переказу;4149;Литвиненко В.;5000;UAH;16239.19;UAH"
+    ].join("\n")
+  });
+
+  assert.equal(result.diagnostics.balance_chain.balance_chain_ok, true);
+  assert.equal(result.diagnostics.balance_chain.balance_chain_gap, false);
+  assert.equal(result.diagnostics.coverage.parser_warnings.length, 0);
+});
+
+test("parsePrivat24PersonalStatementPayload catches missed +5000 row through balance-after diagnostics", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    previousBalance: "11239.19",
+    statementText: [
+      "Дата;Категорія;Картка;Опис операції;Сума в валюті картки;Валюта картки;Залишок на кінець періоду;Валюта залишку",
+      "16.05.2026 00:03:34;Зарахування переказу;4149;Урсул Г.;8700;UAH;20096.27;UAH",
+      "12.05.2026 04:06:51;Цифрові товари;4149;GOOGLE *Meetup Social;-4842.92;UAH;11396.27;UAH"
+    ].join("\n")
+  });
+
+  assert.equal(result.diagnostics.balance_chain.balance_chain_gap, true);
+  assert.equal(result.diagnostics.balance_chain.first_gap_row.date, "2026-05-12");
+  assert.match(result.warnings.join(" | "), /balance chain gap/);
+});
+
+test("parsePrivat24PersonalStatementPayload catches missed -4842.92 row through balance-after diagnostics", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    previousBalance: "11239.19",
+    statementText: [
+      "Дата;Категорія;Картка;Опис операції;Сума в валюті картки;Валюта картки;Залишок на кінець періоду;Валюта залишку",
+      "16.05.2026 00:03:34;Зарахування переказу;4149;Урсул Г.;8700;UAH;20096.27;UAH",
+      "04.05.2026 15:28:41;Зарахування переказу;4149;Литвиненко В.;5000;UAH;16239.19;UAH"
+    ].join("\n")
+  });
+
+  assert.equal(result.diagnostics.balance_chain.balance_chain_gap, true);
+  assert.equal(result.diagnostics.balance_chain.first_gap_row.date, "2026-05-16");
+  assert.equal(result.diagnostics.balance_chain.expected_balance_after, 24939.19);
+  assert.equal(result.diagnostics.balance_chain.provider_balance_after, 20096.27);
+});
+
+test("parsePrivat24PersonalStatementPayload flags possible fee double-count rows", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    statementRows: [
+      { date: "2026-05-22", amount: "-20003", currency: "UAH", description: "Total payment", external_id: "PB-TOTAL" },
+      { date: "2026-05-22", amount: "-20000", currency: "UAH", description: "Payment principal", external_id: "PB-PRINCIPAL" },
+      { date: "2026-05-22", amount: "-3", currency: "UAH", description: "Payment fee", external_id: "PB-FEE" }
+    ]
+  });
+
+  assert.equal(result.diagnostics.fee_double_count.likely_fee_double_count, true);
+  assert.match(result.warnings.join(" | "), /possible fee double-count/);
+});
+
+test("parsePrivat24PersonalStatementPayload exposes hard fail when input rows produce zero ledger rows", () => {
+  const result = parsePrivat24PersonalStatementPayload({
+    action: "parseStatement",
+    statementRows: [{ unexpected: "operation-like row with no recognized fields" }]
+  });
+
+  assert.equal(result.transactionCount, 0);
+  assert.equal(result.diagnostics.coverage.input_rows_count, 1);
+  assert.equal(result.diagnostics.coverage.ledger_rows_count, 0);
+  assert.equal(result.diagnostics.coverage.hard_fail, true);
+});
+
+test("handler returns failed import response when Privat24 input has rows but zero ledger rows", async () => {
+  const response = createMockResponse();
+  await privatBankTransactionsHandler(
+    {
+      method: "POST",
+      body: {
+        action: "parseStatement",
+        statementRows: [{ unexpected: "operation-like row with no recognized fields" }]
+      }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 422);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.diagnostics.coverage.hard_fail, true);
+});
+
+function createMockResponse() {
+  return {
+    headers: {},
+    statusCode: 200,
+    body: null,
+    setHeader(name, value) {
+      this.headers[name] = value;
+      return this;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    }
+  };
+}
