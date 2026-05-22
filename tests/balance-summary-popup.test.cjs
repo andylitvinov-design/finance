@@ -148,7 +148,7 @@ test("balance summary math matches accrual formula", () => {
   const api = require("../balance-summary-popup.js");
   const summary = api.buildBalanceTextSummary({
     orders: 1000,
-    percentToOrders: 100,
+    percentToOrders: 1.1,
     myOrders: 200,
     paid: 500,
   });
@@ -164,7 +164,7 @@ test("balance summary math matches accrual formula", () => {
 test("missing myOrders source emits diagnostic and never NaN", () => {
   resetBalanceModule();
   const api = require("../balance-summary-popup.js");
-  const summary = api.buildBalanceTextSummary({ orders: 1000, percentToOrders: 100, paid: 500 });
+  const summary = api.buildBalanceTextSummary({ orders: 1000, percentToOrders: 1.1, paid: 500 });
 
   assert.equal(Number.isNaN(summary.myOrders), false);
   assert.equal(summary.myOrders, 0);
@@ -172,7 +172,7 @@ test("missing myOrders source emits diagnostic and never NaN", () => {
   resetBalanceModule();
 });
 
-test("selected period excludes outside rows from orders and paid-derived summary", () => {
+test("occurred table totals drive orders, plus percent total, and percent ratio without exact-source diagnostics", () => {
   resetBalanceModule();
   const api = require("../balance-summary-popup.js");
   const summary = api.buildBalanceTextSummary(
@@ -182,9 +182,71 @@ test("selected period excludes outside rows from orders and paid-derived summary
           tabs: {
             movement: {
               values: [
-                ["NUMBER", "DATE", "ACCRUED", "ACCRUED +3%"],
-                ["1", "2026-04-30", "1000", "1100"],
-                ["2", "2026-05-10", "1000", "1100"],
+                ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%", "ACCRUED", "ACCRUED +3%"],
+                ["1", "2026-05-04", "432.8", "445.784", "9999", "9999"],
+                ["2", "2026-05-10", "1000", "1030", "9999", "9999"],
+              ],
+            },
+            orders: { values: [] },
+          },
+        },
+      },
+      totalPaid: 500,
+      personalOrdersAfterDiscount: 200,
+    },
+    { startDate: "2026-05-01", endDate: "2026-05-21" }
+  );
+
+  assert.equal(summary.orders, 1432.8);
+  assert.equal(summary.totalOrdersPlusPercent, 1475.784);
+  assert.equal(summary.percentToOrders, 1.03);
+  assert.doesNotMatch(summary.diagnostics.join("\n"), /exact orders base|percentToOrders/);
+  resetBalanceModule();
+});
+
+test("default summary reads app state table instead of falling back to top metrics", () => {
+  resetBalanceModule();
+  global.state = {
+    data: {
+      tabs: {
+        movement: {
+          values: [
+            ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%"],
+            ["1", "2026-05-04", "100", "103"],
+          ],
+        },
+        orders: { values: [] },
+      },
+    },
+  };
+  global.elements = {
+    startDate: { value: "2026-05-01" },
+    endDate: { value: "2026-05-21" },
+  };
+  global.buildTopMetricsSummary = () => ({ totalOrders: 9999, totalPaid: 0, personalOrdersAfterDiscount: 0 });
+  const api = require("../balance-summary-popup.js");
+  const summary = api.buildBalanceTextSummary();
+
+  assert.equal(summary.orders, 100);
+  assert.equal(summary.totalOrdersPlusPercent, 103);
+  assert.equal(summary.percentToOrders, 1.03);
+  assert.doesNotMatch(summary.diagnostics.join("\n"), /exact orders base/);
+  resetBalanceModule();
+});
+
+test("selected period excludes outside occurred rows from orders and paid-derived summary", () => {
+  resetBalanceModule();
+  const api = require("../balance-summary-popup.js");
+  const summary = api.buildBalanceTextSummary(
+    {
+      state: {
+        data: {
+          tabs: {
+            movement: {
+              values: [
+                ["NUMBER", "DATE", "OCCURRED", "OCCURRED +3%"],
+                ["1", "2026-04-30", "1000", "1030"],
+                ["2", "2026-05-10", "1000", "1030"],
               ],
             },
             orders: { values: [] },
@@ -198,9 +260,69 @@ test("selected period excludes outside rows from orders and paid-derived summary
   );
 
   assert.equal(summary.orders, 1000);
-  assert.equal(summary.percentToOrders, 100);
-  assert.equal(summary.totalOrdersPlusPercent, 1100);
+  assert.equal(summary.percentToOrders, 1.03);
+  assert.equal(summary.totalOrdersPlusPercent, 1030);
   assert.equal(summary.totalPaid, 500);
-  assert.equal(summary.remainingToPay, 370);
+  assert.equal(summary.remainingToPay, 321);
+  resetBalanceModule();
+});
+
+test("legacy accrued columns still work as fallback", () => {
+  resetBalanceModule();
+  const api = require("../balance-summary-popup.js");
+  const summary = api.buildBalanceTextSummary(
+    {
+      state: {
+        data: {
+          tabs: {
+            movement: {
+              values: [
+                ["NUMBER", "DATE", "ACCRUED", "ACCRUED +3%"],
+                ["1", "2026-05-04", "400", "412"],
+                ["2", "2026-05-10", "600", "618"],
+              ],
+            },
+            orders: { values: [] },
+          },
+        },
+      },
+      totalPaid: 0,
+      personalOrdersAfterDiscount: 0,
+    },
+    { startDate: "2026-05-01", endDate: "2026-05-21" }
+  );
+
+  assert.equal(summary.orders, 1000);
+  assert.equal(summary.totalOrdersPlusPercent, 1030);
+  assert.equal(summary.percentToOrders, 1.03);
+  resetBalanceModule();
+});
+
+test("zero orders denominator does not produce NaN percent ratio", () => {
+  resetBalanceModule();
+  const api = require("../balance-summary-popup.js");
+  const summary = api.buildBalanceTextSummary(
+    {
+      state: {
+        data: {
+          tabs: {
+            movement: {
+              values: [
+                ["NUMBER", "DATE", "OCCURED", "OCCURED +3%"],
+                ["1", "2026-05-04", "0", "0"],
+              ],
+            },
+            orders: { values: [] },
+          },
+        },
+      },
+      totalPaid: 0,
+      personalOrdersAfterDiscount: 0,
+    },
+    { startDate: "2026-05-01", endDate: "2026-05-21" }
+  );
+
+  assert.equal(Number.isNaN(summary.percentToOrders), false);
+  assert.equal(summary.percentToOrders, 0);
   resetBalanceModule();
 });

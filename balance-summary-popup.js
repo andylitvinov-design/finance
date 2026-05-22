@@ -31,6 +31,16 @@
     return (header || []).findIndex((cell) => normalized.has(normalizeCell(cell)));
   }
 
+  function getRootState() {
+    if (typeof state !== "undefined") return state;
+    return root.state || {};
+  }
+
+  function getRootElements() {
+    if (typeof elements !== "undefined") return elements;
+    return root.elements || {};
+  }
+
   function normalizeDateKey(value) {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
@@ -43,9 +53,11 @@
 
   function getSelectedPeriod(options = {}) {
     const doc = options.document || root.document;
+    const appState = getRootState();
+    const appElements = getRootElements();
     return {
-      startDate: normalizeDateKey(options.startDate || root.elements?.startDate?.value || doc?.getElementById?.("startDate")?.value || root.state?.analyticsFact?.periodStart || ""),
-      endDate: normalizeDateKey(options.endDate || root.elements?.endDate?.value || doc?.getElementById?.("endDate")?.value || root.state?.analyticsFact?.periodEnd || ""),
+      startDate: normalizeDateKey(options.startDate || appElements?.startDate?.value || doc?.getElementById?.("startDate")?.value || appState?.analyticsFact?.periodStart || ""),
+      endDate: normalizeDateKey(options.endDate || appElements?.endDate?.value || doc?.getElementById?.("endDate")?.value || appState?.analyticsFact?.periodEnd || ""),
     };
   }
 
@@ -68,7 +80,7 @@
   function findHeaderRowIndex(values) {
     return (values || []).findIndex((row) => {
       const normalized = (row || []).map((cell) => normalizeCell(cell));
-      return normalized.includes("accrued") || normalized.includes("accrued +3%") || normalized.includes("стоимость");
+      return normalized.includes("occurred") || normalized.includes("occured") || normalized.includes("occurred +3%") || normalized.includes("occured +3%") || normalized.includes("accrued") || normalized.includes("accrued +3%") || normalized.includes("стоимость");
     });
   }
 
@@ -80,8 +92,8 @@
 
     const header = rows[headerRowIndex] || [];
     const dateIndex = findHeaderIndexByAliases(header, ["DATE", "ДАТА"]);
-    const baseIndex = findHeaderIndexByAliases(header, ["ACCRUED", "PRICE BASE", "СТОИМОСТЬ", "COST"]);
-    const accruedPlusIndex = findHeaderIndexByAliases(header, ["ACCRUED +3%", "ИТОГО"]);
+    const baseIndex = findHeaderIndexByAliases(header, ["OCCURRED", "OCCURED", "ACCRUED", "PRICE BASE", "СТОИМОСТЬ", "COST"]);
+    const plusIndex = findHeaderIndexByAliases(header, ["OCCURRED +3%", "OCCURED +3%", "ACCRUED +3%", "ИТОГО"]);
     const dataRows = rows.slice(headerRowIndex + 1).filter((row) => {
       if (!hasAnyValue(row) || isTotalRow(row)) return false;
       if (dateIndex !== -1) return isDateInPeriod(normalizeDateKey(row[dateIndex]), period);
@@ -89,8 +101,8 @@
     });
 
     const orders = baseIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[baseIndex]), 0);
-    const totalOrdersPlusPercent = accruedPlusIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[accruedPlusIndex]), 0);
-    const percentToOrders = orders === null || totalOrdersPlusPercent === null ? null : totalOrdersPlusPercent - orders;
+    const totalOrdersPlusPercent = plusIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[plusIndex]), 0);
+    const percentToOrders = orders === null || totalOrdersPlusPercent === null || orders === 0 ? null : totalOrdersPlusPercent / orders;
     return { orders, totalOrdersPlusPercent, percentToOrders, sourceFound: orders !== null || totalOrdersPlusPercent !== null };
   }
 
@@ -102,7 +114,7 @@
   }
 
   function getState(input, options) {
-    return options?.state || input?.state || (input?.data ? input : null) || root.state || {};
+    return options?.state || input?.state || (input?.data ? input : null) || getRootState();
   }
 
   function firstFinite(...values) {
@@ -140,7 +152,9 @@
 
     if (percentToOrders === null) {
       if (movementTotals.percentToOrders !== null || ordersTotals.percentToOrders !== null) {
-        percentToOrders = firstFinite(movementTotals.percentToOrders, 0) + firstFinite(ordersTotals.percentToOrders, 0);
+        const tableOrders = firstFinite(movementTotals.orders, 0) + firstFinite(ordersTotals.orders, 0);
+        const tableOrdersPlusPercent = firstFinite(movementTotals.totalOrdersPlusPercent, 0) + firstFinite(ordersTotals.totalOrdersPlusPercent, 0);
+        percentToOrders = tableOrders > 0 ? tableOrdersPlusPercent / tableOrders : 0;
       } else {
         percentToOrders = 0;
         diagnostics.push("needs verification: source not found for percentToOrders.");
@@ -153,7 +167,7 @@
       } else if (hasOwn(metrics, "totalOrders")) {
         totalOrdersPlusPercent = parseNumber(metrics.totalOrders);
       } else {
-        totalOrdersPlusPercent = orders + percentToOrders;
+        totalOrdersPlusPercent = orders && percentToOrders ? orders * percentToOrders : orders;
       }
     }
 
@@ -183,8 +197,8 @@
       remainingToPay,
       diagnostics,
       sources: {
-        orders: explicitOrders !== null ? "input.orders" : "movement/orders table ACCRUED or top metrics fallback",
-        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders ACCRUED +3% minus ACCRUED",
+        orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED or ACCRUED fallback",
+        percentToOrders: explicitPercent !== null ? "input.percentToOrders" : "movement/orders table OCCURRED +3% divided by OCCURRED",
         totalPaid: "buildTopMetricsSummary.totalPaid",
         myOrders: "buildTopMetricsSummary.personalOrdersAfterDiscount",
       },
