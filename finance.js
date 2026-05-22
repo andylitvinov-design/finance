@@ -4719,6 +4719,7 @@ function buildTopMetricsSummary() {
     balance,
     totalPaid,
     total: upgradeTotals.total,
+    personalOrdersGross: parseLooseNumber(ordersSummary.personalOrdersGross),
     personalOrdersAfterDiscount,
     ownerOrderShare30Pct: upgradeTotals.ownerOrderShare30Pct,
     realIncomeTotal: upgradeTotals.realIncomeTotal,

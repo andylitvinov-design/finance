@@ -43,6 +43,14 @@
     return (header || []).findIndex((cell) => looseAliases.has(normalizeHeaderKey(cell)));
   }
 
+  function findPreferredHeaderIndex(header, aliasGroups) {
+    for (const aliases of aliasGroups) {
+      const index = findHeaderIndexByAliases(header, aliases);
+      if (index !== -1) return index;
+    }
+    return -1;
+  }
+
   function getRootState() {
     if (typeof state !== "undefined") return state;
     return root.state || {};
@@ -112,16 +120,25 @@
 
     const header = rows[headerRowIndex] || [];
     const dateIndex = findHeaderIndexByAliases(header, ["DATE", "ДАТА"]);
-    const baseIndex = findHeaderIndexByAliases(header, ["OCCURRED", "OCCURED", "ACCRUED", "ACCRUED BASE", "PRICE BASE", "СТОИМОСТЬ", "COST", "СУММА ЗАКАЗА", "ЗАКАЗЫ"]);
+    const baseIndex = findPreferredHeaderIndex(header, [
+      ["OCCURRED", "OCCURED"],
+      ["ACCRUED", "ACCRUED BASE"],
+      ["PRICE BASE", "СТОИМОСТЬ", "COST", "СУММА ЗАКАЗА", "ЗАКАЗЫ"],
+    ]);
     const plusIndex = findHeaderIndexByAliases(header, ["OCCURRED +3%", "OCCURED +3%", "OCCURRED+3%", "OCCURED+3%", "ACCRUED +3%", "ACCRUED+3%", "ACCRUED + 3%", "ACCRUED PLUS 3%", "ИТОГО", "TOTAL AFTER DISCOUNT", "TOTAL"]);
+    const totalRows = rows.slice(headerRowIndex + 1).filter(isTotalRow);
     const dataRows = rows.slice(headerRowIndex + 1).filter((row) => {
       if (!hasAnyValue(row) || isTotalRow(row)) return false;
       if (dateIndex !== -1) return isDateInPeriod(normalizeDateKey(row[dateIndex]), period);
       return true;
     });
 
-    const orders = baseIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[baseIndex]), 0);
-    const totalOrdersPlusPercent = plusIndex === -1 ? null : dataRows.reduce((sum, row) => sum + parseNumber(row[plusIndex]), 0);
+    const orders = baseIndex === -1 ? null : (
+      totalRows.length ? parseNumber(totalRows[totalRows.length - 1]?.[baseIndex]) : dataRows.reduce((sum, row) => sum + parseNumber(row[baseIndex]), 0)
+    );
+    const totalOrdersPlusPercent = plusIndex === -1 ? null : (
+      totalRows.length ? parseNumber(totalRows[totalRows.length - 1]?.[plusIndex]) : dataRows.reduce((sum, row) => sum + parseNumber(row[plusIndex]), 0)
+    );
     const percentToOrders = orders === null || totalOrdersPlusPercent === null ? null : totalOrdersPlusPercent - orders;
     return { orders, totalOrdersPlusPercent, percentToOrders, sourceFound: orders !== null || totalOrdersPlusPercent !== null };
   }

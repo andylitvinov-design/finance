@@ -186,11 +186,13 @@ test("canonical top metrics override row-summed movement table in popup", () => 
     ordersAccruedWithPercent: 1400.3,
     totalAccrued: 2047.8,
     totalPaid: 965.7039,
+    personalOrdersGross: 1295,
     personalOrdersAfterDiscount: 647.5,
     percentRate: 3,
     ordersPaymentSummary: {
       ordersAccruedWithPercent: 1400.3,
       percentRate: 3,
+      myOrdersGross: 1295,
       myOrdersDiscounted: 647.5,
       totalAccrued: 2047.8,
       totalPaid: 965.7039,
@@ -212,7 +214,10 @@ test("canonical top metrics override row-summed movement table in popup", () => 
     },
   }, { startDate: "2026-05-01", endDate: "2026-05-21" });
 
+  assert.equal(Number(summary.ordersBase.toFixed(4)), 1360);
   assert.equal(Number(summary.orders.toFixed(4)), 1400.3);
+  assert.equal(Number(summary.myOrders.toFixed(4)), 1295);
+  assert.equal(Number(summary.myOrdersPayable.toFixed(4)), 647.5);
   assert.equal(Number(summary.totalAccrued.toFixed(4)), 2047.8);
   assert.equal(Number(summary.remainingToPay.toFixed(4)), 1082.0961);
   resetBalanceModule();
