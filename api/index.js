@@ -380,13 +380,24 @@ async function maybeOverlayFreshSourceData(data) {
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
     const nextRealIncome = realIncome || movementWarnings.length
       ? {
+          ...(realIncome || {}),
           entries: realIncome?.entries || [],
           rowMatches: realIncome?.rowMatches || [],
+          refundEntries: realIncome?.refundEntries || [],
+          exchangeEntries: realIncome?.exchangeEntries || [],
+          candidateIncomeEntries: realIncome?.candidateIncomeEntries || [],
           matchedEntries: realIncome?.matchedEntries || [],
           unmatchedEntries: realIncome?.unmatchedEntries || [],
           summaryByChannel: realIncome?.summaryByChannel || {},
           summaryTotals: realIncome?.summaryTotals || null,
+          refundSummaryByChannel: realIncome?.refundSummaryByChannel || {},
+          refundSummaryTotals: realIncome?.refundSummaryTotals || null,
+          exchangeSummaryByChannel: realIncome?.exchangeSummaryByChannel || {},
+          exchangeSummaryTotals: realIncome?.exchangeSummaryTotals || null,
           unmatchedSummaryByChannel: realIncome?.unmatchedSummaryByChannel || {},
+          unmatchedSummaryTotals: realIncome?.unmatchedSummaryTotals || null,
+          allSummaryByChannel: realIncome?.allSummaryByChannel || {},
+          allSummaryTotals: realIncome?.allSummaryTotals || null,
           warnings: [...new Set([...(realIncome?.warnings || []), ...movementWarnings])],
         }
       : null;
@@ -733,20 +744,34 @@ async function buildRealIncomePayload(period, movementValues) {
     .forEach((entry) => warnings.push(`${entry.source || "provider"} ${entry.sourceTransactionId || entry.id}: needs verification - provider fee/net missing`));
   const verifiedEntries = entries.filter((entry) => Number(entry.realNetUsd || 0) > 0);
 
-  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(verifiedEntries, movementValues);
+  const refundEntries = verifiedEntries.filter(isRefundIncomeEntry);
+  const exchangeEntries = verifiedEntries.filter((entry) => !isRefundIncomeEntry(entry) && isExchangeOrTransferIncomeEntry(entry));
+  const candidateIncomeEntries = verifiedEntries.filter((entry) => !isRefundIncomeEntry(entry) && !isExchangeOrTransferIncomeEntry(entry));
+
+  const { rowMatches, warnings: matchWarnings } = matchRealIncomeEntriesToMovement(candidateIncomeEntries, movementValues);
   const matchedEntryIds = new Set(rowMatches.map((match) => String(match.matchedEntryId || "").trim()).filter(Boolean));
-  const matchedEntries = verifiedEntries.filter((entry) => matchedEntryIds.has(getRealIncomeEntryKey(entry)));
-  const unmatchedEntries = verifiedEntries.filter((entry) => !matchedEntryIds.has(getRealIncomeEntryKey(entry)));
+  const matchedEntries = candidateIncomeEntries.filter((entry) => matchedEntryIds.has(getRealIncomeEntryKey(entry)));
+  const unmatchedEntries = candidateIncomeEntries.filter((entry) => !matchedEntryIds.has(getRealIncomeEntryKey(entry)));
   warnings.push(...matchWarnings);
   warnings.push(...buildUnmatchedRealIncomeWarnings(unmatchedEntries));
   return {
     entries,
     rowMatches,
+    refundEntries,
+    exchangeEntries,
+    candidateIncomeEntries,
     matchedEntries,
     unmatchedEntries,
-    summaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
-    summaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
+    summaryByChannel: summarizeRealIncomeByChannel(matchedEntries, movementValues),
+    summaryTotals: summarizeRealIncomeTotals(matchedEntries, movementValues),
+    refundSummaryByChannel: summarizeRealIncomeByChannel(refundEntries, movementValues, { includeMovementDirectFallback: false }),
+    refundSummaryTotals: summarizeRealIncomeTotals(refundEntries, movementValues, { includeMovementDirectFallback: false }),
+    exchangeSummaryByChannel: summarizeRealIncomeByChannel(exchangeEntries, movementValues, { includeMovementDirectFallback: false }),
+    exchangeSummaryTotals: summarizeRealIncomeTotals(exchangeEntries, movementValues, { includeMovementDirectFallback: false }),
     unmatchedSummaryByChannel: summarizeRealIncomeByChannel(unmatchedEntries, movementValues, { includeMovementDirectFallback: false }),
+    unmatchedSummaryTotals: summarizeRealIncomeTotals(unmatchedEntries, movementValues, { includeMovementDirectFallback: false }),
+    allSummaryByChannel: summarizeRealIncomeByChannel(verifiedEntries, movementValues),
+    allSummaryTotals: summarizeRealIncomeTotals(verifiedEntries, movementValues),
     warnings: [...new Set(warnings.filter(Boolean))],
   };
 }
@@ -907,6 +932,16 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
     currency,
     feeCurrency,
     organization: String(entry?.organization || "").trim(),
+    counterparty: String(entry?.counterparty || entry?.counterpartyName || "").trim(),
+    description: String(entry?.description || entry?.comment || entry?.organization || "").trim(),
+    comment: String(entry?.comment || "").trim(),
+    operation: String(entry?.operation || "").trim(),
+    operationType: String(entry?.operationType || entry?.operation_type || entry?.transferType || "").trim(),
+    operation_type: String(entry?.operation_type || entry?.operationType || entry?.transferType || "").trim(),
+    category: String(entry?.category || entry?.suggestedCategory || "").trim(),
+    suggestedCategory: String(entry?.suggestedCategory || entry?.category || "").trim(),
+    rawSourceId: String(entry?.rawSourceId || entry?.raw_source_id || entry?.sourceTransactionId || "").trim(),
+    raw_source_id: String(entry?.raw_source_id || entry?.rawSourceId || entry?.sourceTransactionId || "").trim(),
     realGrossLocal: roundNumber(realGrossLocal),
     realFeeLocal: realFeeLocal === null ? null : roundNumber(realFeeLocal),
     realNetLocal: realNetLocal === null ? null : roundNumber(realNetLocal),
@@ -917,6 +952,53 @@ function normalizeRealIncomeEntry(entry, movementRateLookup, index = 0) {
   };
 }
 
+function isRefundIncomeEntry(entry = {}) {
+  const classifier = normalizeRealIncomeClassifier([
+    entry.operation,
+    entry.operationType,
+    entry.operation_type,
+    entry.category,
+    entry.suggestedCategory,
+  ].join(" "));
+  if (/\b(refund|reversal|chargeback)\b/.test(classifier)) return true;
+  const text = normalizeLookupText([
+    entry.sourceTransactionId,
+    entry.rawSourceId,
+    entry.description,
+    entry.comment,
+    entry.organization,
+    entry.counterparty,
+  ].filter(Boolean).join(" "));
+  return /\b(refund|refunded|reversal|chargeback)\b|возврат|повернен|travel refund|hotel refund/.test(text);
+}
+
+function isExchangeOrTransferIncomeEntry(entry = {}) {
+  const classifier = normalizeRealIncomeClassifier([
+    entry.operation,
+    entry.operationType,
+    entry.operation_type,
+    entry.category,
+    entry.suggestedCategory,
+  ].join(" "));
+  if (/\b(exchange|internal_transfer|funding_transfer)\b/.test(classifier)) return true;
+  const channel = normalizeLookupText(entry.channel);
+  const text = normalizeLookupText([
+    entry.sourceTransactionId,
+    entry.rawSourceId,
+    entry.description,
+    entry.comment,
+    entry.organization,
+    entry.counterparty,
+  ].filter(Boolean).join(" "));
+  if (/exchange|internal|wallet|funding|обмен/.test(text)) return true;
+  if (channel === normalizeLookupText("Binance funding") && /(yandex|яндекс|yoomoney|юmoney|юмани|rub|руб|funding|transfer|exchange|обмен|перевод)/.test(text)) return true;
+  return false;
+}
+
+function normalizeRealIncomeClassifier(value) {
+  return normalizeLookupText(value).replace(/\s+/g, "_");
+}
+
 function hasExplicitMoneyValue(value) {
   if (value === null || value === undefined) return false;
   if (typeof value === "string" && !value.trim()) return false;
@@ -924,7 +1006,7 @@ function hasExplicitMoneyValue(value) {
 }
 
 function getExplicitRealIncomeNetUsd(entry) {
-  for (const value of [entry?.usdAmount, entry?.amountUsd, entry?.amount_usd]) {
+  for (const value of [entry?.realNetUsd, entry?.usdAmount, entry?.amountUsd, entry?.amount_usd]) {
     if (!hasExplicitMoneyValue(value)) continue;
     return Math.abs(parseLooseNumber(value));
   }
@@ -989,8 +1071,8 @@ function getRealIncomeSummaryTotalsFromSummary(summaryByChannel = {}) {
   };
 }
 
-function summarizeRealIncomeTotals(entries, movementValues) {
-  return getRealIncomeSummaryTotalsFromSummary(summarizeRealIncomeByChannel(entries, movementValues));
+function summarizeRealIncomeTotals(entries, movementValues, options = {}) {
+  return getRealIncomeSummaryTotalsFromSummary(summarizeRealIncomeByChannel(entries, movementValues, options));
 }
 
 function mergeLedgerRealIncomeFallback({

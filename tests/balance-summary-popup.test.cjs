@@ -324,7 +324,8 @@ test("balance popup renders income distribution by channel from realIncome summa
   const block = api.renderBalanceSummaryBlock(summary, makeMockDocument());
   const text = collectText(block);
 
-  assert.match(text, /Распределение приходов по каналам/);
+  assert.match(text, /Распределение оплат заказов\/услуг по каналам/);
+  assert.match(text, /Возвраты, обмены и внутренние переводы исключены из процентов/);
   assert.match(text, /Wise/);
   assert.match(text, /375,0000/);
   assert.match(text, /75\.0%/);
@@ -376,6 +377,38 @@ test("income distribution falls back to planned received only with verification 
   resetBalanceModule();
 });
 
+test("income distribution percentages use service income summary only", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          PayPal: { realNetUsd: 100 },
+          Wise: { realNetUsd: 300 },
+        },
+        refundSummaryByChannel: {
+          Wise: { realNetUsd: 200 },
+        },
+        exchangeSummaryByChannel: {
+          "Binance funding": { realNetUsd: 500 },
+        },
+        allSummaryByChannel: {
+          PayPal: { realNetUsd: 100 },
+          Wise: { realNetUsd: 500 },
+          "Binance funding": { realNetUsd: 500 },
+        },
+      },
+    },
+  });
+
+  assert.equal(distribution.title, "Распределение оплат заказов/услуг по каналам");
+  assert.equal(distribution.total, 400);
+  assert.equal(distribution.channels.find((row) => row.channel === "Wise").percent, 75);
+  assert.equal(distribution.channels.find((row) => row.channel === "PayPal").percent, 25);
+  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
+  resetBalanceModule();
+});
+
 test("existing balance popup lines remain unchanged when distribution is appended", () => {
   const api = loadApi();
   const block = api.renderBalanceSummaryBlock({
@@ -389,7 +422,7 @@ test("existing balance popup lines remain unchanged when distribution is appende
     remainingToPay: 630,
     diagnostics: [],
     incomeChannelDistribution: {
-      title: "Распределение приходов по каналам",
+      title: "Распределение оплат заказов/услуг по каналам",
       total: 100,
       channels: [{ channel: "PayPal", amount: 100, percent: 100 }],
       diagnostics: [],
