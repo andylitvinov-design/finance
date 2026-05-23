@@ -82,6 +82,13 @@ button:disabled { cursor: wait; opacity: 0.6; transform: none; }
 }
 .balance-summary-block ol { margin: 0; padding-left: 22px; }
 .balance-summary-block li { margin: 4px 0; }
+.balance-income-channel-distribution { margin-top: 12px; display: grid; gap: 8px; }
+.balance-income-channel-distribution h3 { font-size: 14px; line-height: 1.25; }
+.balance-income-channel-distribution table { min-width: 0; }
+.balance-income-channel-distribution td { padding: 6px 8px; font-size: 13px; }
+.balance-income-channel-distribution td:nth-child(2),
+.balance-income-channel-distribution td:nth-child(3) { text-align: right; white-space: nowrap; }
+.balance-income-channel-total td { font-weight: 700; }
 .balance-summary-diagnostics { margin-top: 10px; color: var(--muted); font-size: 13px; }
 .metric {
   padding: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(247,239,230,0.85));
