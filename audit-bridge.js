@@ -48,8 +48,19 @@
     }
   }
 
+  function parseBooleanFlag(value) {
+    if (value === true) return true;
+    if (value === false || value == null) return false;
+    return /^(1|true|yes|on)$/i.test(String(value).trim());
+  }
+
   function shouldUseMobileSafeMode(options = {}) {
-    return isMobileUserAgent(options.userAgent) && isChatGptDebuggerUrl(getDebuggerUrl(options));
+    const explicitFlag = Object.prototype.hasOwnProperty.call(options, "mobileSafeMode")
+      ? options.mobileSafeMode
+      : options.mobileSafeModeFlag ?? root.EZOHATA_AUDIT_MOBILE_SAFE_MODE;
+    return parseBooleanFlag(explicitFlag)
+      && isMobileUserAgent(options.userAgent)
+      && isChatGptDebuggerUrl(getDebuggerUrl(options));
   }
 
   function buildAuditPrompt(snapshot, options = {}) {
@@ -63,6 +74,7 @@
       `Live URL: ${liveUrl}`,
       `Snapshot endpoint: ${HANDOFF_SNAPSHOT_URL}`,
       "Repo: andylitvinov-design/finance",
+      "GitHub: use the ChatGPT GitHub connector/app for this repo if it is already connected. If it is unavailable, state 'GitHub connector missing' and continue from live API evidence; do not ask for secrets/env.",
       "",
       "Required checks:",
       "- failing layer: UI → API route → provider/import → normalization → ledger save → balance → analytics",
@@ -247,11 +259,18 @@
     showFallback,
     debuggerUrl,
     userAgent = root.navigator?.userAgent,
+    mobileSafeMode,
+    mobileSafeModeFlag,
     promptOptions = {},
   }) {
     let prompt = "";
     const resolvedDebuggerUrl = getDebuggerUrl({ debuggerUrl });
-    const useMobileSafeMode = shouldUseMobileSafeMode({ debuggerUrl: resolvedDebuggerUrl, userAgent });
+    const useMobileSafeMode = shouldUseMobileSafeMode({
+      debuggerUrl: resolvedDebuggerUrl,
+      userAgent,
+      mobileSafeMode,
+      mobileSafeModeFlag,
+    });
 
     async function loadPrompt() {
       const snapshot = await fetchAuditSnapshot(fetchImpl);
@@ -275,6 +294,12 @@
       }
     }
 
+    function openDebuggerWindow() {
+      if (useMobileSafeMode || typeof openWindow !== "function") return false;
+      openWindow(resolvedDebuggerUrl);
+      return true;
+    }
+
     async function runAudit() {
       setStatus("Loading snapshot...");
       const nextPrompt = await loadPrompt();
@@ -287,9 +312,9 @@
         setStatus(MOBILE_SAFE_MESSAGE);
         return { ...result, debuggerUrl: resolvedDebuggerUrl, mobileSafeMode: true };
       }
-      openWindow(resolvedDebuggerUrl);
+      const openedDebugger = openDebuggerWindow();
       setStatus(SUCCESS_MESSAGE);
-      return { ...result, debuggerUrl: resolvedDebuggerUrl };
+      return { ...result, debuggerUrl: resolvedDebuggerUrl, openedDebugger };
     }
 
     async function copyCurrentPrompt() {
@@ -307,6 +332,7 @@
       runAudit,
       copyCurrentPrompt,
       loadPrompt,
+      openDebuggerWindow,
       getPrompt: () => prompt,
       getDebuggerUrl: () => resolvedDebuggerUrl,
     };
@@ -345,12 +371,17 @@
       fetchImpl: root.fetch?.bind(root),
       clipboard: root.navigator?.clipboard,
       openWindow(url) {
+        if (isMobileUserAgent(root.navigator?.userAgent) && isChatGptDebuggerUrl(url) && root.location?.assign) {
+          root.location.assign(url);
+          return;
+        }
         root.open(url, "_blank", "noopener");
       },
       setStatus,
       showFallback,
       debuggerUrl: root.EZOHATA_AUDIT_DEBUGGER_URL,
       userAgent: root.navigator?.userAgent,
+      mobileSafeModeFlag: root.EZOHATA_AUDIT_MOBILE_SAFE_MODE,
     });
 
     async function handleAction(action) {
@@ -388,6 +419,7 @@
     isChatGptDebuggerUrl,
     isMobileUserAgent,
     initAuditBridge,
+    parseBooleanFlag,
     shouldUseMobileSafeMode,
   };
 
