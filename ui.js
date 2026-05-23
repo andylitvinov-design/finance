@@ -6169,9 +6169,21 @@ function renderPayoutTransfersBlock() {
   return block;
 }
 
+function getTopMetricMovementBalance() {
+  const values = state.data?.tabs?.movement?.values;
+  if (!Array.isArray(values) || !values.length || typeof getMovementTotalsFromTable !== "function") {
+    return null;
+  }
+  const balanceTotal = getMovementTotalsFromTable(values).balanceTotal;
+  return Number.isFinite(balanceTotal) ? balanceTotal : null;
+}
+
 function renderMetrics() {
   const metrics = buildTopMetricsSummary();
-  const displayedBalance = -metrics.balance;
+  const movementBalance = getTopMetricMovementBalance();
+  const displayedBalance = movementBalance !== null
+    ? movementBalance
+    : (metrics.movementBalance ?? metrics.balance);
   elements.metricPeriod.textContent = formatSheetNumber(metrics.totalOrders, 4);
   elements.metricOrders.textContent = formatSheetNumber(displayedBalance, 4);
   elements.metricBalances.textContent = formatSheetNumber(metrics.totalPaid, 4);
