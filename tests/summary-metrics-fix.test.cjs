@@ -33,7 +33,7 @@ function runPayablePatch(buildTopMetricsSummary) {
   return context.buildTopMetricsSummary();
 }
 
-function renderMetricsWithSummary(summary) {
+function renderMetricsWithSummary(summary, options = {}) {
   const elements = {
     metricPeriod: makeNode(),
     metricOrders: makeNode(),
@@ -47,6 +47,8 @@ function renderMetricsWithSummary(summary) {
   const context = {
     elements,
     buildTopMetricsSummary: () => ({ ...summary }),
+    state: options.state || { data: { tabs: {} } },
+    getMovementTotalsFromTable: options.getMovementTotalsFromTable,
     parseLooseNumber: (value) => {
       const parsed = Number(String(value ?? "").trim().replace(/\s+/g, "").replace(",", "."));
       return Number.isFinite(parsed) ? parsed : 0;
@@ -58,7 +60,7 @@ function renderMetricsWithSummary(summary) {
   vm.createContext(context);
   vm.runInContext(topMetricPayableShareFixJs, context);
   vm.runInContext(
-    `${extractFunction(uiJs, "renderMetrics")}\nthis.renderMetrics = renderMetrics;`,
+    `${extractFunction(uiJs, "getTopMetricMovementBalance")}\n${extractFunction(uiJs, "renderMetrics")}\nthis.renderMetrics = renderMetrics;`,
     context
   );
   vm.runInContext(personalOrdersPayableBadgeJs, context);
@@ -83,11 +85,53 @@ test("summary metrics render directly in the top card flow", () => {
     profit: 50,
   });
 
-  assert.equal(elements.metricOrders.textContent, "-5,7118");
+  assert.equal(elements.metricOrders.textContent, "5,7118");
   assert.equal(elements.metricTransfers.textContent, "5,7118");
   assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
+});
+
+test("top balance uses movement table total without changing payable or paid metrics", () => {
+  const { elements } = renderMetricsWithSummary(
+    {
+      totalOrders: 1400.3,
+      totalAccrued: 2047.8,
+      balance: -630.1078,
+      movementBalance: 212.9422,
+      ordersBalanceTotal: -843.05,
+      legacyCombinedBalance: -630.1078,
+      totalPaid: 965.7039,
+      total: 1082.0961,
+      personalOrdersAfterDiscount: 647.5,
+      myServices: 204.7059,
+      myCosts: 0,
+      profit: 0,
+    },
+    {
+      state: {
+        data: {
+          tabs: {
+            movement: {
+              values: [
+                ["NUMBER", "BALANCE"],
+                [1, "100,0000"],
+                [2, "112,9422"],
+                ["Итого", "212,9422"],
+              ],
+            },
+          },
+        },
+      },
+      getMovementTotalsFromTable: () => ({ balanceTotal: 212.9422 }),
+    }
+  );
+
+  assert.equal(elements.metricOrders.textContent, "212,9422");
+  assert.notEqual(elements.metricOrders.textContent, "-630,1078");
+  assert.notEqual(elements.metricOrders.textContent, "630,1078");
+  assert.equal(elements.metricTransfers.textContent, "1082,0961");
+  assert.equal(elements.metricBalances.textContent, "965,7039");
 });
 
 test("top metrics personal orders badge uses exact payable formula component", () => {

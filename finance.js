@@ -4700,7 +4700,8 @@ function buildTopMetricsSummary() {
 
   const totalOrders = movementAccruedTotal + manualOrdersTotal;
   const totalReceivedUsd = movementReceivedUsdTotal + ordersReceivedUsdTotal;
-  const balance = movementTotals.balanceTotal + ordersBalanceTotal;
+  const movementBalance = movementTotals.balanceTotal;
+  const legacyCombinedBalance = movementBalance + ordersBalanceTotal;
   const totalOrdersSeventyPct = movementSeventyTotal + (manualOrdersTotal * 0.7);
   const ownerOrderShare30Pct = totalOrders - totalOrdersSeventyPct;
   const upgradeTotals = buildAnalyticsUpgradeTotals({
@@ -4716,7 +4717,10 @@ function buildTopMetricsSummary() {
     totalOrders,
     ordersAccruedWithPercent: movementAccruedTotal,
     totalAccrued: totalOrders,
-    balance,
+    balance: movementBalance,
+    movementBalance,
+    ordersBalanceTotal,
+    legacyCombinedBalance,
     totalPaid,
     total: upgradeTotals.total,
     personalOrdersGross: parseLooseNumber(ordersSummary.personalOrdersGross),

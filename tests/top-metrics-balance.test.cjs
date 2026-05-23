@@ -48,7 +48,7 @@ function roundTo2(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
-test("top metrics balance uses explicit balance columns for movement and orders", () => {
+test("top metrics balance uses movement balance and keeps combined balance diagnostic", () => {
   const context = {
     parseLooseNumber,
     normalizeCell,
@@ -92,7 +92,10 @@ test("top metrics balance uses explicit balance columns for movement and orders"
   );
 
   const metrics = context.buildTopMetricsSummary();
-  assert.equal(metrics.balance, 175);
+  assert.equal(metrics.balance, 93);
+  assert.equal(metrics.movementBalance, 93);
+  assert.equal(metrics.ordersBalanceTotal, 82);
+  assert.equal(metrics.legacyCombinedBalance, 175);
   assert.equal(metrics.personalOrdersAfterDiscount, 50);
 });
 
