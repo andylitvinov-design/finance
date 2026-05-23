@@ -18,7 +18,27 @@ Before production debugging, read the shared project memory:
 - `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/RISKS.md`
 - `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/DEBUG_LOG.md`
 
+Before creating or optimizing Claude Code prompts for this finance project, read/apply:
+
+- Repo-local: `CLAUDE_CODE_PROMPTS.md`
+- Global standard: `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/systems/claude-code-prompt-standard.md`
+- Finance-specific standard: `https://raw.githubusercontent.com/andylitvinov-design/ai-projects-brain/main/projects/ezohata-incoming-ledger/CLAUDE_CODE_PROMPTS.md`
+
 After meaningful production work, update the relevant project memory files or explicitly report that a memory update is needed.
+
+## Claude Code Prompt Rule
+
+When Andrey asks to create a Claude Code prompt for finance, use low-token staged prompts:
+
+1. `/clear` for a new task.
+2. One task only.
+3. Diagnose first, no edits.
+4. No broad repo scan.
+5. Ask for the 1-3 most relevant files before expanding scope.
+6. Minimal patch only after the failing layer/root cause is proven.
+7. Tests and production verification are separate prompts when possible.
+
+Never create one giant Claude Code prompt that asks for diagnose + patch + tests + PR + merge + deploy + production verification together.
 
 ## Autonomy
 
