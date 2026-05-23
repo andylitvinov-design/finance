@@ -41,6 +41,25 @@ const FIELD_ALIASES = {
   transferGroupId: "transfer_group_id",
   updatedAt: "updated_at",
 };
+const FOP_TARGET_CHANNEL = "приват-фоп";
+
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[\s_-]+/g, " ");
+}
+
+function isFopTransferAlias(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+  return normalized === "transferfop" ||
+    normalized === "transfer fop" ||
+    normalized === "fop transfer" ||
+    normalized === "перевод фоп" ||
+    (normalized.includes("перевод") && normalized.includes("фоп"));
+}
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -116,6 +135,12 @@ function normalizeUpdateFields(patch = {}) {
   for (const [key, value] of Object.entries(patch || {})) {
     const field = FIELD_ALIASES[key] || key;
     if (ALLOWED_UPDATE_FIELDS.has(field)) output[field] = value;
+  }
+  if (isFopTransferAlias(output.category) || isFopTransferAlias(output.to_channel)) {
+    output.operation = "partner_transfer";
+    output.category = "partner";
+    output.to_channel = FOP_TARGET_CHANNEL;
+    output.direction = "out";
   }
   return output;
 }

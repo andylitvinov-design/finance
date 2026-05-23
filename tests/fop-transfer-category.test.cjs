@@ -69,6 +69,12 @@ function createBridgeContext(options = {}) {
       calls.push({ type: "renderTabs" });
       return "rendered";
     },
+    state: {
+      expenseAccounting: {
+        editingSheetRowNumber: 0,
+        operationDraft: null,
+      },
+    },
     parseLooseNumber(value) {
       const normalized = String(value ?? "").replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
       const numeric = Number(normalized);
@@ -97,6 +103,20 @@ function createBridgeContext(options = {}) {
     async saveExpenseAccountingEntriesDirect(entries) {
       calls.push({ type: "saveExpenses", entries });
       return { rowCount: entries.length };
+    },
+    async saveExpenseOperationEdit(row) {
+      calls.push({ type: "saveOperationEdit", row, draft: { ...context.state.expenseAccounting.operationDraft } });
+      context.state.expenseAccounting.editingSheetRowNumber = 0;
+      context.state.expenseAccounting.operationDraft = null;
+      await context.loadDashboardData();
+      context.setExpenseAccountingStatus(`Ledger row ${row.sheetRowNumber} updated. now`, false);
+      return { savedAt: "now" };
+    },
+    async loadDashboardData() {
+      calls.push({ type: "loadDashboardData" });
+    },
+    setExpenseAccountingStatus(message, isError = false) {
+      calls.push({ type: "setStatus", message, isError });
     },
     async fetch(url, request = {}) {
       calls.push({ type: "fetch", url, request });
@@ -233,6 +253,108 @@ test("FOP transfer entries are converted to transfer rows and update existing Le
     to_channel: "приват-фоп",
     direction: "out",
   });
+});
+
+test("Operations editor FOP intent canonicalizes Ledger draft and syncs one Transfers row", async () => {
+  const { context, calls } = createBridgeContext();
+  context.state.expenseAccounting.editingSheetRowNumber = 77;
+  context.state.expenseAccounting.operationDraft = {
+    sheetRowNumber: 77,
+    date: "2026-05-22",
+    operation: "business_expense",
+    source: "browser_ocr",
+    fromChannel: "приват 24-грн",
+    toChannel: "Перевод ФОП",
+    amount: "20003",
+    amountNet: "20003",
+    currency: "UAH",
+    category: "business",
+    comment: "",
+  };
+
+  await context.saveExpenseOperationEdit({ sheetRowNumber: 77 });
+
+  const editCall = calls.find((call) => call.type === "saveOperationEdit");
+  assert.deepEqual(editCall.draft, {
+    sheetRowNumber: 77,
+    date: "2026-05-22",
+    operation: "partner_transfer",
+    source: "browser_ocr",
+    fromChannel: "приват 24-грн",
+    toChannel: "приват-фоп",
+    amount: "20003",
+    amountNet: "20003",
+    currency: "UAH",
+    category: "partner",
+    comment: "",
+    to_channel: "приват-фоп",
+    direction: "out",
+  });
+  const transferCall = calls.find((call) => call.type === "saveTransfers");
+  assert.ok(transferCall, "Operations editor FOP save must sync Transfers");
+  assert.deepEqual(JSON.parse(JSON.stringify(transferCall.transferRows.at(-1))), {
+    transferDate: "2026-05-22",
+    who: "Перевод ФОП",
+    amount: "20003,0000",
+    currency: "UAH",
+    channel: "приват 24-грн",
+    rate: "",
+    usdAmount: "",
+  });
+  assert.equal(calls.filter((call) => call.type === "loadDashboardData").length, 2);
+});
+
+test("duplicate Operations editor FOP sync does not add a second Transfers row", async () => {
+  const { context, calls } = createBridgeContext();
+  context.getManualTransfersSheetDirect = async () => ({
+    transferRows: [{
+      transferDate: "2026-05-22",
+      who: "Перевод ФОП",
+      amount: "20003",
+      currency: "UAH",
+      channel: "приват 24-грн",
+    }],
+    commissionRows: [],
+  });
+  context.state.expenseAccounting.editingSheetRowNumber = 77;
+  context.state.expenseAccounting.operationDraft = {
+    sheetRowNumber: 77,
+    date: "2026-05-22",
+    operation: "business_expense",
+    fromChannel: "приват 24-грн",
+    toChannel: "Перевод ФОП",
+    amountNet: "20003",
+    currency: "UAH",
+    category: "business",
+  };
+
+  await context.saveExpenseOperationEdit({ sheetRowNumber: 77 });
+
+  assert.equal(calls.some((call) => call.type === "saveTransfers"), false);
+  assert.equal(calls.filter((call) => call.type === "saveOperationEdit").length, 1);
+});
+
+test("normal Operations editor business_expense remains unchanged", async () => {
+  const { context, calls } = createBridgeContext();
+  context.state.expenseAccounting.editingSheetRowNumber = 78;
+  context.state.expenseAccounting.operationDraft = {
+    sheetRowNumber: 78,
+    date: "2026-05-22",
+    operation: "business_expense",
+    fromChannel: "приват 24-грн",
+    toChannel: "",
+    amountNet: "150",
+    currency: "UAH",
+    category: "business",
+  };
+
+  await context.saveExpenseOperationEdit({ sheetRowNumber: 78 });
+
+  const editCall = calls.find((call) => call.type === "saveOperationEdit");
+  assert.equal(editCall.draft.operation, "business_expense");
+  assert.equal(editCall.draft.category, "business");
+  assert.equal(editCall.draft.toChannel, "");
+  assert.equal(calls.some((call) => call.type === "saveTransfers"), false);
 });
 
 test("FOP transfer entries without sheetRowNumber still save to transfers and skip Ledger update", async () => {
