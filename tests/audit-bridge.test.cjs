@@ -11,6 +11,7 @@ const {
   getLiveUrl,
   HANDOFF_SNAPSHOT_URL,
   MAX_PROMPT_CHARS,
+  parseBooleanFlag,
   shouldUseMobileSafeMode,
 } = require("../audit-bridge.js");
 
@@ -31,6 +32,7 @@ test("buildAuditPrompt pretty-prints snapshot JSON with debugger checklist", () 
   assert.match(prompt, /Live URL: https:\/\/example\.test\/app/);
   assert.match(prompt, /Snapshot endpoint: \/api\/audit-snapshot/);
   assert.match(prompt, /Repo: andylitvinov-design\/finance/);
+  assert.match(prompt, /GitHub: use the ChatGPT GitHub connector\/app for this repo if it is already connected/);
   assert.match(prompt, /amount_net invariant/);
   assert.match(prompt, /PayPal gross\/net\/fee completeness/);
   assert.match(prompt, /\n    "fallback_amount_rows": 2/);
@@ -42,21 +44,45 @@ test("debugger and live URLs fall back to safe defaults", () => {
   assert.equal(getDebuggerUrl({ debuggerUrl: "https://chatgpt.com/g/ezo-debugger/" }), "https://chatgpt.com/g/ezo-debugger/");
 });
 
-test("mobile safe mode only applies to mobile ChatGPT debugger URLs", () => {
+test("mobile safe mode is explicit opt-in for mobile ChatGPT debugger URLs", () => {
   const android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36";
 
   assert.equal(shouldUseMobileSafeMode({
     debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
     userAgent: android,
+  }), false);
+  assert.equal(shouldUseMobileSafeMode({
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: android,
+    mobileSafeMode: true,
+  }), true);
+  assert.equal(shouldUseMobileSafeMode({
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: android,
+    mobileSafeModeFlag: "true",
   }), true);
   assert.equal(shouldUseMobileSafeMode({
     debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
     userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    mobileSafeMode: true,
   }), false);
   assert.equal(shouldUseMobileSafeMode({
     debuggerUrl: "https://auditor.example.test/",
     userAgent: android,
+    mobileSafeMode: true,
   }), false);
+});
+
+test("parseBooleanFlag accepts only explicit truthy values", () => {
+  assert.equal(parseBooleanFlag(true), true);
+  assert.equal(parseBooleanFlag("true"), true);
+  assert.equal(parseBooleanFlag("1"), true);
+  assert.equal(parseBooleanFlag("yes"), true);
+  assert.equal(parseBooleanFlag("on"), true);
+  assert.equal(parseBooleanFlag(false), false);
+  assert.equal(parseBooleanFlag("false"), false);
+  assert.equal(parseBooleanFlag("0"), false);
+  assert.equal(parseBooleanFlag(undefined), false);
 });
 
 test("audit snapshot URL is fixed and never includes includeRows", async () => {
@@ -167,13 +193,14 @@ test("desktop runAudit copies prompt and opens configured debugger URL", async (
 
   assert.equal(result.copied, true);
   assert.equal(result.debuggerUrl, "https://chatgpt.com/g/ezo-debugger/");
+  assert.equal(result.openedDebugger, true);
   assert.deepEqual(opened, ["https://chatgpt.com/g/ezo-debugger/"]);
   assert.equal(writes.length, 1);
   assert.match(writes[0], /^EzoHata Debugger task\./);
   assert.match(writes[0], /Snapshot:\n/);
 });
 
-test("Android runAudit copies prompt but does not open ChatGPT debugger URL", async () => {
+test("mobile runAudit opens ChatGPT debugger URL by default", async () => {
   const writes = [];
   const statuses = [];
   const opened = [];
@@ -200,6 +227,50 @@ test("Android runAudit copies prompt but does not open ChatGPT debugger URL", as
     },
     debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
     userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36",
+  });
+
+  const result = await bridge.runAudit();
+
+  assert.equal(result.copied, true);
+  assert.equal(result.mobileSafeMode, undefined);
+  assert.equal(result.openedDebugger, true);
+  assert.equal(result.debuggerUrl, "https://chatgpt.com/g/ezo-debugger/");
+  assert.deepEqual(opened, ["https://chatgpt.com/g/ezo-debugger/"]);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(statuses.at(-1), {
+    message: "Prompt copied. Открыл EzoHata Auditor.",
+    isError: false,
+  });
+});
+
+test("mobile safe mode remains available as explicit opt-in", async () => {
+  const writes = [];
+  const statuses = [];
+  const opened = [];
+  const bridge = createAuditBridge({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { ok: true, warnings: [] };
+      },
+    }),
+    clipboard: {
+      async writeText(value) {
+        writes.push(value);
+      },
+    },
+    openWindow(url) {
+      opened.push(url);
+    },
+    setStatus(message, isError = false) {
+      statuses.push({ message, isError });
+    },
+    showFallback() {
+      throw new Error("fallback should not be shown");
+    },
+    debuggerUrl: "https://chatgpt.com/g/ezo-debugger/",
+    userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36",
+    mobileSafeMode: true,
   });
 
   const result = await bridge.runAudit();
@@ -240,6 +311,7 @@ test("runAudit opens EzoHata Auditor by default", async () => {
 
   assert.equal(result.copied, true);
   assert.equal(result.debuggerUrl, EZOHATA_AUDITOR_URL);
+  assert.equal(result.openedDebugger, true);
   assert.deepEqual(opened, [EZOHATA_AUDITOR_URL]);
 });
 
