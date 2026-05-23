@@ -50,13 +50,13 @@ function table(rows) {
   return tableNode;
 }
 
-function createDocument(children = []) {
+function createDocument(children = [], elementsById = {}) {
   return {
     readyState: "loading",
     children,
     body: new TestElement("body"),
-    getElementById() {
-      return null;
+    getElementById(id) {
+      return elementsById[id] || null;
     },
     addEventListener() {},
   };
@@ -147,4 +147,28 @@ test("movement total balance is recomputed from visible normalized numeric rows 
   assert.equal(ignoredSummaryBalance.textContent, "999,0000");
   assert.equal(afterTotalBalance.textContent, "777,0000");
   assert.equal(changed, 4);
+});
+
+test("top balance metric follows rendered movement total row", () => {
+  const metricOrders = cell("div", "-17,3922");
+  const totalBalance = cell("td", "-340,5000");
+  const document = createDocument(
+    [
+      table([
+        row([cell("th", "NUMBER"), cell("th", "План"), cell("th", "Пришло"), cell("th", "Баланс")]),
+        row([cell("td", "18148"), cell("td", "0"), cell("td", "100"), cell("td", "100,0000")]),
+        row([cell("td", "18149"), cell("td", "0"), cell("td", "112,9422"), cell("td", "112,9422")]),
+        row([cell("td", "Итого"), cell("td", ""), cell("td", ""), totalBalance]),
+      ]),
+    ],
+    { metricOrders }
+  );
+
+  const fixes = loadFixes(document);
+  fixes.normalizeMovementBalanceVarianceTables(document);
+
+  assert.equal(fixes.syncTopMetricMovementBalance(document), true);
+  assert.equal(totalBalance.textContent, "212,9422");
+  assert.equal(metricOrders.textContent, "212,9422");
+  assert.equal(metricOrders.dataset.displaySource, "movement-rendered-total");
 });

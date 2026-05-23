@@ -148,6 +148,41 @@
     return changed;
   }
 
+  function getRenderedMovementTotalBalance(rootNode = root.document) {
+    const tables = queryAll(rootNode, "table");
+    for (const table of tables) {
+      const rows = queryAll(table, "tr");
+      if (rows.length < 2) continue;
+      const headerCells = Array.from(rows[0].children || []);
+      const balanceIndex = findColumnByAliases(headerCells, [
+        "баланс", "balance", "остаток", "отклонение", "delta", "variance"
+      ]);
+      if (balanceIndex === -1) continue;
+      const totalRow = rows.find((row, index) => {
+        if (index === 0) return false;
+        const firstCell = Array.from(row.children || [])[0];
+        return normalizeLookupText(firstCell?.textContent) === "итого";
+      });
+      const totalCell = Array.from(totalRow?.children || [])[balanceIndex];
+      const total = parseLooseNumber(totalCell?.textContent);
+      if (total !== null) return { total, previousText: totalCell.textContent || "" };
+    }
+    return null;
+  }
+
+  function syncTopMetricMovementBalance(rootNode = root.document) {
+    const metric = root.document?.getElementById?.("metricOrders");
+    if (!metric) return false;
+    const renderedBalance = getRenderedMovementTotalBalance(rootNode);
+    if (!renderedBalance) return false;
+    const nextText = formatLikePrevious(renderedBalance.total, renderedBalance.previousText);
+    if (metric.textContent === nextText) return false;
+    metric.textContent = nextText;
+    metric.dataset = metric.dataset || {};
+    metric.dataset.displaySource = "movement-rendered-total";
+    return true;
+  }
+
   function installPaidTotalDisplayFix() {
     normalizePaidTotalDisplay();
     const node = root.document?.getElementById?.("metricBalances");
@@ -161,13 +196,17 @@
 
   function installMovementBalanceDisplayFix() {
     normalizeMovementBalanceVarianceTables(root.document);
+    syncTopMetricMovementBalance(root.document);
     const target = root.document?.getElementById?.("tabPanels") || root.document?.body;
     if (!target || target.dataset?.movementBalanceDisplayObserver === "true") return;
     target.dataset = target.dataset || {};
     target.dataset.movementBalanceDisplayObserver = "true";
     const Observer = root.MutationObserver || globalThis.MutationObserver;
     if (!Observer) return;
-    const observer = new Observer(() => normalizeMovementBalanceVarianceTables(root.document));
+    const observer = new Observer(() => {
+      normalizeMovementBalanceVarianceTables(root.document);
+      syncTopMetricMovementBalance(root.document);
+    });
     observer.observe(target, { childList: true, characterData: true, subtree: true });
   }
 
@@ -177,6 +216,7 @@
     root.renderMetrics = function renderMetricsWithPaidDisplayFix(...args) {
       const result = originalRenderMetrics.apply(this, args);
       normalizePaidTotalDisplay();
+      syncTopMetricMovementBalance(root.document);
       return result;
     };
     root.renderMetrics.__ezohataPaidDisplayWrapped = true;
@@ -189,6 +229,7 @@
     root.renderTabs = function renderTabsWithMovementBalanceSignFix(...args) {
       const result = originalRenderTabs.apply(this, args);
       normalizeMovementBalanceVarianceTables(root.document);
+      syncTopMetricMovementBalance(root.document);
       return result;
     };
     root.renderTabs.__ezohataMovementBalanceDisplayWrapped = true;
@@ -339,6 +380,8 @@
     install,
     normalizePaidTotalDisplay,
     normalizeMovementBalanceVarianceTables,
+    getRenderedMovementTotalBalance,
+    syncTopMetricMovementBalance,
     parseDiscountMultiplier,
     computeDiscountedAmount,
     patchOrdersDiscountMapping,
