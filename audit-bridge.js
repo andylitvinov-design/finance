@@ -2,11 +2,15 @@
   "use strict";
 
   const SNAPSHOT_URL = "/api/audit-snapshot";
+  const HANDOFF_SNAPSHOT_URL = "/api/audit-snapshot?mode=handoff";
+  const DEFAULT_FETCH_TIMEOUT_MS = 20000;
+  const MAX_PROMPT_CHARS = 40000;
   const DEFAULT_DEBUGGER_URL = "https://chatgpt.com/g/g-p-69f388d310288191a55fdcd2cd90edef-ezohata-auditor/project";
   const DEFAULT_LIVE_URL = "https://ezohata-incoming-ledger.vercel.app/";
   const SUCCESS_MESSAGE = "Prompt copied. Открыл EzoHata Auditor.";
   const COPY_SUCCESS_MESSAGE = "Prompt copied.";
   const MOBILE_SAFE_MESSAGE = "Prompt copied. Mobile safe mode: открой EzoHata Auditor вручную и вставь prompt.";
+  const TIMEOUT_MESSAGE = "Audit snapshot timed out after 20s. Скопируй prompt позже или проверь /api/audit-snapshot?mode=handoff.";
 
   function normalizeUrl(value, fallback) {
     const raw = String(value || "").trim();
@@ -50,13 +54,14 @@
 
   function buildAuditPrompt(snapshot, options = {}) {
     const liveUrl = getLiveUrl(options);
-    return [
+    const maxPromptChars = Number(options.maxPromptChars || MAX_PROMPT_CHARS);
+    const prefix = [
       "EzoHata Debugger task.",
       "First prove the failing layer before patching.",
       "Use this audit snapshot as the primary source. Do not ask me to copy anything else unless live verification fails.",
       "",
       `Live URL: ${liveUrl}`,
-      `Snapshot endpoint: ${SNAPSHOT_URL}`,
+      `Snapshot endpoint: ${HANDOFF_SNAPSHOT_URL}`,
       "Repo: andylitvinov-design/finance",
       "",
       "Required checks:",
@@ -76,21 +81,51 @@
       "5. Live verification checklist",
       "",
       "Snapshot:",
-      JSON.stringify(snapshot, null, 2),
     ].join("\n");
+    const source = compactSnapshotForPrompt(snapshot);
+    const fullPrompt = `${prefix}\n${JSON.stringify(source, null, 2)}`;
+    if (fullPrompt.length <= maxPromptChars) return fullPrompt;
+
+    const truncated = truncateSnapshotForPrompt(source, maxPromptChars - prefix.length - 1);
+    return `${prefix}\n${JSON.stringify(truncated, null, 2)}`.slice(0, maxPromptChars);
   }
 
   function getAuditSnapshotUrl() {
-    return SNAPSHOT_URL;
+    return HANDOFF_SNAPSHOT_URL;
   }
 
-  async function fetchAuditSnapshot(fetchImpl) {
+  function createTimeoutError(timeoutMs) {
+    const error = new Error(`Audit snapshot timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    error.code = "AUDIT_SNAPSHOT_TIMEOUT";
+    error.userMessage = TIMEOUT_MESSAGE;
+    return error;
+  }
+
+  async function fetchAuditSnapshot(fetchImpl, options = {}) {
     const doFetch = fetchImpl || root.fetch;
     if (typeof doFetch !== "function") {
       throw new Error("Fetch is unavailable.");
     }
 
-    const response = await doFetch(SNAPSHOT_URL, { cache: "no-store" });
+    const timeoutMs = Number(options.timeoutMs || DEFAULT_FETCH_TIMEOUT_MS);
+    const controller = typeof root.AbortController === "function" ? new root.AbortController() : null;
+    let timeoutId = null;
+    if (controller && timeoutMs > 0) {
+      timeoutId = root.setTimeout(() => controller.abort(), timeoutMs);
+    }
+
+    let response;
+    try {
+      response = await doFetch(HANDOFF_SNAPSHOT_URL, {
+        cache: "no-store",
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") throw createTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      if (timeoutId) root.clearTimeout(timeoutId);
+    }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       throw new Error(payload?.error || `Audit snapshot failed (${response.status}).`);
@@ -99,6 +134,109 @@
       throw new Error("Audit snapshot returned invalid JSON.");
     }
     return payload;
+  }
+
+  function compactSnapshotForPrompt(snapshot = {}) {
+    const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+    const dailyBalances = snapshot.daily_balances || {};
+    const balanceCoverage = snapshot.balance_coverage || {};
+    const alreadyCompact = snapshot.audit_handoff?.compact;
+    if (alreadyCompact) return snapshot;
+    return {
+      ok: snapshot.ok,
+      generated_at: snapshot.generated_at,
+      project: snapshot.project,
+      period: snapshot.period,
+      schema: snapshot.schema,
+      summary: snapshot.summary,
+      balances: snapshot.balances,
+      daily_balances: {
+        uses_amount_net: dailyBalances.uses_amount_net,
+        summary: dailyBalances.summary,
+        actionable_rows: (dailyBalances.actionable_rows || []).slice(0, 10).map(compactActionableRow),
+      },
+      balance_coverage: {
+        summary: balanceCoverage.summary,
+        weekly_summary: {
+          ...(balanceCoverage.weekly_summary || {}),
+          actionable_accounts: (balanceCoverage.weekly_summary?.actionable_accounts || []).slice(0, 10).map(compactActionableRow),
+          copyable_ostatki_rows: balanceCoverage.weekly_summary?.copyable_ostatki_rows
+            ? "[omitted in prompt]"
+            : balanceCoverage.weekly_summary?.copyable_ostatki_rows,
+        },
+        actionable_accounts: (balanceCoverage.actionable_accounts || []).slice(0, 10).map(compactActionableRow),
+      },
+      paypal: snapshot.paypal,
+      exchange: snapshot.exchange,
+      sources: snapshot.sources,
+      warnings: warnings.slice(0, 20),
+      audit_checks: snapshot.audit_checks,
+      audit_handoff: {
+        compact: true,
+        mode: "prompt",
+        omitted_paths: [
+          "daily_balances.rows",
+          "balance_coverage.accounts",
+          "balance_fixes",
+          ...(warnings.length > 20 ? ["warnings[20..]"] : []),
+        ],
+      },
+    };
+  }
+
+  function compactActionableRow(row = {}) {
+    return {
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      status: row.status,
+      opening_balance: row.opening_balance,
+      movement_amount: row.movement_amount,
+      expected_closing_balance: row.expected_closing_balance,
+      provider_balance: row.provider_balance,
+      closing_balance: row.closing_balance,
+      difference: row.difference,
+      action: row.action,
+      reason: row.reason,
+    };
+  }
+
+  function truncateSnapshotForPrompt(snapshot, maxJsonChars) {
+    const maxChars = Math.max(1000, Number(maxJsonChars || 0));
+    const truncated = {
+      ok: snapshot.ok,
+      generated_at: snapshot.generated_at,
+      project: snapshot.project,
+      period: snapshot.period,
+      schema: snapshot.schema,
+      summary: snapshot.summary,
+      balances: snapshot.balances,
+      paypal: snapshot.paypal,
+      exchange: snapshot.exchange,
+      sources: snapshot.sources,
+      warnings: (snapshot.warnings || []).slice(0, 10),
+      audit_checks: snapshot.audit_checks,
+      audit_handoff: {
+        ...(snapshot.audit_handoff || {}),
+        compact: true,
+        prompt_truncated: true,
+        max_prompt_chars: MAX_PROMPT_CHARS,
+      },
+    };
+    const serialized = JSON.stringify(truncated, null, 2);
+    if (serialized.length <= maxChars) return truncated;
+    return {
+      ok: snapshot.ok,
+      project: snapshot.project,
+      period: snapshot.period,
+      summary: snapshot.summary,
+      audit_handoff: {
+        compact: true,
+        prompt_truncated: true,
+        max_prompt_chars: MAX_PROMPT_CHARS,
+        note: "Snapshot was shortened in the browser because it exceeded prompt size guardrails.",
+      },
+    };
   }
 
   function createAuditBridge({
@@ -220,7 +358,7 @@
       try {
         await action();
       } catch (error) {
-        setStatus(error?.message || "Audit bridge failed.", true);
+        setStatus(error?.userMessage || error?.message || "Audit bridge failed.", true);
       } finally {
         setBusy(false);
       }
@@ -238,8 +376,12 @@
 
   const api = {
     buildAuditPrompt,
+    compactSnapshotForPrompt,
     createAuditBridge,
     fetchAuditSnapshot,
+    HANDOFF_SNAPSHOT_URL,
+    MAX_PROMPT_CHARS,
+    DEFAULT_FETCH_TIMEOUT_MS,
     getAuditSnapshotUrl,
     getDebuggerUrl,
     getLiveUrl,

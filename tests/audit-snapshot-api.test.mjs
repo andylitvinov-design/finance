@@ -310,6 +310,41 @@ test("audit snapshot exposes additive daily currency balances without changing b
   ));
 });
 
+test("audit snapshot handoff mode omits large rows but preserves summaries", async () => {
+  const response = await buildFixtureSnapshot({ mode: "handoff" });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.audit_handoff.compact, true);
+  assert.deepEqual(response.period, { from: "2026-05-02", to: "2026-05-02" });
+  assert.ok(response.schema);
+  assert.ok(response.summary);
+  assert.ok(response.balances);
+  assert.ok(response.daily_balances.summary);
+  assert.equal(Object.prototype.hasOwnProperty.call(response.daily_balances, "rows"), false);
+  assert.equal(response.daily_balances.actionable_rows.length, 3);
+  assert.ok(response.balance_coverage.summary);
+  assert.ok(response.balance_coverage.weekly_summary);
+  assert.equal(Object.prototype.hasOwnProperty.call(response.balance_coverage, "accounts"), false);
+  assert.ok(response.balance_coverage.actionable_accounts.length <= 10);
+  assert.ok(response.paypal);
+  assert.ok(response.exchange);
+  assert.ok(response.sources);
+  assert.ok(Array.isArray(response.warnings));
+  assert.ok(Array.isArray(response.audit_checks));
+  assert.ok(response.audit_handoff.omitted_paths.includes("daily_balances.rows"));
+  assert.ok(response.audit_handoff.omitted_paths.includes("balance_coverage.accounts"));
+});
+
+test("default audit snapshot remains backward compatible with detailed daily and coverage rows", async () => {
+  const response = await buildFixtureSnapshot();
+
+  assert.ok(Array.isArray(response.daily_balances.rows));
+  assert.ok(response.daily_balances.rows.length > 0);
+  assert.ok(Array.isArray(response.balance_coverage.accounts));
+  assert.ok(response.balance_coverage.accounts.length > 0);
+  assert.equal(Object.prototype.hasOwnProperty.call(response, "audit_handoff"), false);
+});
+
 test("audit snapshot warns when exchange amount_usd is missing", async () => {
   const response = await buildFixtureSnapshot();
 

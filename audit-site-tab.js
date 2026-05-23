@@ -34,7 +34,7 @@
     titleWrap.innerHTML = [
       "<div>",
       "<h2>Аудит / EzoHata Auditor</h2>",
-      "<div class=\"tab-note\">Кнопка берёт свежий <code>/api/audit-snapshot</code>, копирует prompt и открывает EzoHata Auditor.</div>",
+      "<div class=\"tab-note\">Кнопка берёт свежий <code>/api/audit-snapshot?mode=handoff</code>, копирует prompt и открывает EzoHata Auditor.</div>",
       "</div>",
     ].join("");
     header.appendChild(titleWrap);
@@ -99,7 +99,7 @@
       try {
         await action();
       } catch (error) {
-        setStatus(error?.message || "Audit debugger failed.", true);
+        setStatus(error?.userMessage || error?.message || "Audit debugger failed.", true);
       } finally {
         setBusy(false);
       }
