@@ -130,6 +130,41 @@
     return fallback;
   }
 
+  function findPrioritizedActualUsdIndexes(headerCells, balanceIndex) {
+    const groups = [
+      findColumnIndexesByAliases(headerCells, [
+        "дошло до нас usd",
+        "net received usd",
+        "received net usd"
+      ]),
+      findColumnIndexesByAliases(headerCells, [
+        "оплачено клиентом usd",
+        "client paid usd",
+        "paid by client usd"
+      ]),
+      findColumnIndexesByAliases(headerCells, [
+        "получено в долларах",
+        "received total usd",
+        "total received usd",
+        "received usd",
+        "paid usd",
+        "actual usd",
+        "fact usd"
+      ])
+    ];
+    return groups
+      .map((indexes) => indexes.filter((index) => balanceIndex === -1 || index < balanceIndex))
+      .filter((indexes) => indexes.length);
+  }
+
+  function selectActualUsd(cells, prioritizedIndexGroups, fallback = null) {
+    for (const indexes of prioritizedIndexGroups || []) {
+      const parsed = firstParsedNumber(cells, indexes, null);
+      if (parsed !== null) return parsed;
+    }
+    return fallback;
+  }
+
   function groupZeroTolerance(planTotal) {
     const plan = Math.abs(Number(planTotal) || 0);
     return Math.max(0.02, Math.min(2.5, plan * 0.02));
@@ -151,18 +186,10 @@
       const planIndex = findColumnByAliases(headerCells, [
         "accrued +3%", "70% of +3%", "план", "planned", "plan", "accrued", "стоимость", "cost"
       ]);
-      const actualIndexes = findColumnIndexesByAliases(headerCells, [
-        "дошло до нас usd",
-        "оплачено клиентом usd",
-        "получено в долларах",
-        "received usd",
-        "paid usd",
-        "actual usd",
-        "fact usd"
-      ]);
       const balanceIndex = findColumnByAliases(headerCells, ["balance", "баланс", "остаток"]);
       const reviewIndex = findColumnByAliases(headerCells, ["review note", "комментарий", "note"]);
-      if ([numberIndex, dateIndex, clientIndex, planIndex, balanceIndex].some((index) => index === -1) || !actualIndexes.length) return;
+      const actualIndexGroups = findPrioritizedActualUsdIndexes(headerCells, balanceIndex);
+      if ([numberIndex, dateIndex, clientIndex, planIndex, balanceIndex].some((index) => index === -1) || !actualIndexGroups.length) return;
 
       const totalRowIndex = rows.findIndex((row, index) => {
         if (index <= header.rowIndex) return false;
@@ -177,7 +204,7 @@
       dataRows.forEach((row) => {
         const cells = rowCells(row);
         const plan = parseLooseNumber(cells[planIndex]?.textContent);
-        const actual = firstParsedNumber(cells, actualIndexes, 0);
+        const actual = selectActualUsd(cells, actualIndexGroups, 0);
         const balanceCell = cells[balanceIndex];
         if (plan === null || actual === null || !balanceCell) return;
         const previousText = String(balanceCell.textContent || "");
