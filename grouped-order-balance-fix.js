@@ -230,7 +230,7 @@
           group.push(dataRows[index]);
           index += 1;
         }
-        if (group.length < 2) continue;
+        if (group.length < 3) continue;
 
         const balances = group.map((row) => parseLooseNumber(rowCells(row)[balanceIndex]?.textContent));
         if (balances.some((value) => value === null)) continue;
