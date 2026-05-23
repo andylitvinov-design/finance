@@ -96,6 +96,67 @@ function numericText(value) {
   return Number(String(value || "").replace(",", "."));
 }
 
+test("movement rows 18170-18172 preserve positive and negative balances in signed total", () => {
+  const row18170Balance = cell("td", "0,0000");
+  const row18171Balance = cell("td", "0,0000");
+  const row18172Balance = cell("td", "0,0000");
+  const totalBalance = cell("td", "0,0000");
+  const document = createDocument([
+    table([
+      row([
+        cell("th", "NUMBER"),
+        cell("th", "DATE"),
+        cell("th", "CLIENT"),
+        cell("th", "ACCRUED"),
+        cell("th", "ACCRUED +3%"),
+        cell("th", "ПОЛУЧЕНО В ДОЛЛАРАХ"),
+        cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+        cell("th", "ДОШЛО ДО НАС USD"),
+        cell("th", "BALANCE"),
+      ]),
+      row([cell("td", "18170"), cell("td", "20.05.2026"), cell("td", "Вилл"), cell("td", "25"), cell("td", "25,75"), cell("td", "26,50"), cell("td", "26,50"), cell("td", "26,50"), row18170Balance]),
+      row([cell("td", "18171"), cell("td", "21.05.2026"), cell("td", "Вилл"), cell("td", "0"), cell("td", "0"), cell("td", ""), cell("td", ""), cell("td", ""), row18171Balance]),
+      row([cell("td", "18172"), cell("td", "22.05.2026"), cell("td", "Вилл"), cell("td", "225"), cell("td", "231,75"), cell("td", "25,00"), cell("td", "25,00"), cell("td", "25,00"), row18172Balance]),
+      row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "250"), cell("td", "257,50"), cell("td", "51,50"), cell("td", "51,50"), cell("td", "51,50"), totalBalance]),
+    ]),
+  ]);
+
+  const { fix } = loadFix(document);
+  assert.ok(fix.normalizeGroupedOrderBalanceTables(document) > 0);
+
+  assert.equal(row18170Balance.textContent, "0,7500");
+  assert.equal(row18172Balance.textContent, "-206,7500");
+  assert.equal(totalBalance.textContent, "-206,0000");
+  assert.equal(numericText(row18170Balance.textContent) + numericText(row18172Balance.textContent), -206);
+  assert.equal(row18171Balance.textContent, "0,0000");
+});
+
+test("actual USD selection prefers net received over misleading received total", () => {
+  const balance = cell("td", "0,0000");
+  const totalBalance = cell("td", "0,0000");
+  const document = createDocument([
+    table([
+      row([
+        cell("th", "NUMBER"),
+        cell("th", "DATE"),
+        cell("th", "CLIENT"),
+        cell("th", "ACCRUED +3%"),
+        cell("th", "ПОЛУЧЕНО В ДОЛЛАРАХ"),
+        cell("th", "NET RECEIVED USD"),
+        cell("th", "BALANCE"),
+      ]),
+      row([cell("td", "18172"), cell("td", "22.05.2026"), cell("td", "Вилл"), cell("td", "231,75"), cell("td", "438,50"), cell("td", "25,00"), balance]),
+      row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "231,75"), cell("td", "438,50"), cell("td", "25,00"), totalBalance]),
+    ]),
+  ]);
+
+  const { fix } = loadFix(document);
+  assert.ok(fix.normalizeGroupedOrderBalanceTables(document) > 0);
+
+  assert.equal(balance.textContent, "-206,7500");
+  assert.equal(totalBalance.textContent, "-206,7500");
+});
+
 test("grouped adjacent same-client rows are zeroed only when group balance nets to zero", () => {
   const firstBalance = cell("td", "-103,0000");
   const secondBalance = cell("td", "50,0000");
