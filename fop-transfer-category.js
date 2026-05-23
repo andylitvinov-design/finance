@@ -30,6 +30,23 @@
     return category === "partner" && operation === "partner transfer" && toChannel === normalizeText(FOP_TARGET_CHANNEL);
   }
 
+  function isFopTransferOperationDraft(value) {
+    return isFopTransferCategory(value?.category) ||
+      isFopTransferCategory(value?.toChannel) ||
+      isFopTransferCategory(value?.to_channel);
+  }
+
+  function normalizeFopOperationDraft(draft) {
+    const output = { ...(draft || {}) };
+    if (!isFopTransferOperationDraft(output)) return output;
+    output.operation = "partner_transfer";
+    output.category = "partner";
+    output.toChannel = FOP_TARGET_CHANNEL;
+    output.to_channel = FOP_TARGET_CHANNEL;
+    output.direction = "out";
+    return output;
+  }
+
   function getGlobalValue(name) {
     try {
       if (root[name] !== undefined) return root[name];
@@ -187,6 +204,39 @@
     };
   }
 
+  function operationDraftToFopTransferRow(draft) {
+    const amount = Math.abs(parseAmount(draft?.amountNet || draft?.amount_net || draft?.amount));
+    return {
+      transferDate: normalizeDate(draft?.date) || "",
+      who: String(draft?.comment || FOP_TRANSFER_LABEL).trim() || FOP_TRANSFER_LABEL,
+      amount: normalizePersistedNumber(amount),
+      currency: String(draft?.currency || "").trim().toUpperCase(),
+      channel: String(draft?.fromChannel || draft?.from_channel || "").trim(),
+      rate: "",
+      usdAmount: ""
+    };
+  }
+
+  function sameFopTransferRow(left, right) {
+    return normalizeDate(left?.transferDate || left?.date) === normalizeDate(right?.transferDate || right?.date) &&
+      Math.abs(parseAmount(left?.amount) - parseAmount(right?.amount)) < 0.000001 &&
+      String(left?.currency || "").trim().toUpperCase() === String(right?.currency || "").trim().toUpperCase() &&
+      String(left?.channel || "").trim() === String(right?.channel || "").trim() &&
+      String(left?.who || "").trim() === String(right?.who || "").trim();
+  }
+
+  function appendMissingTransferRows(existingRows, newRows) {
+    const output = Array.isArray(existingRows) ? [...existingRows] : [];
+    const addedRows = [];
+    (Array.isArray(newRows) ? newRows : []).forEach((row) => {
+      if (!row?.transferDate || !row?.channel || parseAmount(row?.amount) <= 0) return;
+      if (output.some((existing) => sameFopTransferRow(existing, row))) return;
+      output.push(row);
+      addedRows.push(row);
+    });
+    return { transferRows: output, addedRows };
+  }
+
   async function readExistingManualTransfers(startDate, endDate) {
     if (typeof getManualTransfersSheetDirect !== "function") return { transferRows: [], commissionRows: [] };
     try {
@@ -194,6 +244,29 @@
     } catch {
       return { transferRows: [], commissionRows: [] };
     }
+  }
+
+  async function syncFopOperationDraftToTransfers(draft) {
+    const row = operationDraftToFopTransferRow(draft);
+    if (!row.transferDate || !row.channel || parseAmount(row.amount) <= 0) {
+      return { fopTransferRows: 0 };
+    }
+    if (typeof saveManualTransfersSheetDirect !== "function") {
+      throw new Error("Не найден saveManualTransfersSheetDirect для сохранения Перевод ФОП в Переводы.");
+    }
+    const startDate = normalizeDate(getDateInputValue("startDate")) || row.transferDate;
+    const endDate = normalizeDate(getDateInputValue("endDate")) || row.transferDate;
+    const existing = await readExistingManualTransfers(startDate, endDate);
+    const deduped = appendMissingTransferRows(existing.transferRows || [], [row]);
+    if (!deduped.addedRows.length) return { fopTransferRows: 0, duplicateSkipped: true };
+    const saved = await saveManualTransfersSheetDirect(
+      startDate,
+      endDate,
+      deduped.transferRows,
+      existing.commissionRows || []
+    );
+    if (typeof loadDashboardData === "function") await loadDashboardData();
+    return { ...saved, fopTransferRows: deduped.addedRows.length };
   }
 
   async function updateLedgerRowsForFopEntries(entries) {
@@ -249,10 +322,11 @@
       if (!startDate || !endDate) throw new Error("Выберите период для сохранения Перевод ФОП.");
       const existing = await readExistingManualTransfers(startDate, endDate);
       const fopTransferRows = fopEntries.map(entryToFopTransferRow).filter((row) => row.transferDate && row.channel && parseAmount(row.amount) > 0);
+      const deduped = appendMissingTransferRows(existing.transferRows || [], fopTransferRows);
       const saved = await saveManualTransfersSheetDirect(
         startDate,
         endDate,
-        [...(existing.transferRows || []), ...fopTransferRows],
+        deduped.transferRows,
         existing.commissionRows || []
       );
       const ledgerUpdate = await updateLedgerRowsForFopEntries(fopEntries);
@@ -260,8 +334,8 @@
         ...result,
         ...saved,
         ...ledgerUpdate,
-        rowCount: Number(result?.rowCount || 0) + fopTransferRows.length,
-        fopTransferRows: fopTransferRows.length
+        rowCount: Number(result?.rowCount || 0) + deduped.addedRows.length,
+        fopTransferRows: deduped.addedRows.length
       };
     }
     wrappedSaveExpenseAccountingEntriesDirect.__fopTransferWrapped = true;
@@ -270,10 +344,47 @@
     return true;
   }
 
+  function installOperationEditorSavePatch() {
+    const original = getFunction("saveExpenseOperationEdit");
+    if (typeof original !== "function" || original.__fopTransferWrapped) return false;
+    async function wrappedSaveExpenseOperationEdit(row) {
+      const draft = root.state?.expenseAccounting?.operationDraft;
+      if (!isFopTransferOperationDraft(draft)) {
+        return original.apply(this, arguments);
+      }
+      const normalizedDraft = normalizeFopOperationDraft(draft);
+      root.state.expenseAccounting.operationDraft = normalizedDraft;
+      const result = await original.apply(this, arguments);
+      const saved = !root.state?.expenseAccounting?.operationDraft &&
+        Number(root.state?.expenseAccounting?.editingSheetRowNumber || 0) === 0;
+      if (!saved) return result;
+      try {
+        const transferResult = await syncFopOperationDraftToTransfers(normalizedDraft);
+        if (typeof setExpenseAccountingStatus === "function" && transferResult?.fopTransferRows) {
+          setExpenseAccountingStatus(`Ledger row ${row?.sheetRowNumber || normalizedDraft.sheetRowNumber} updated. Перевод ФОП добавлен в Transfers.`, false);
+        }
+      } catch (error) {
+        if (typeof setExpenseAccountingStatus === "function") {
+          setExpenseAccountingStatus(error.message || "Не удалось добавить Перевод ФОП в Transfers.", true);
+        } else {
+          throw error;
+        }
+      } finally {
+        if (typeof renderTabs === "function") renderTabs();
+      }
+      return result;
+    }
+    wrappedSaveExpenseOperationEdit.__fopTransferWrapped = true;
+    wrappedSaveExpenseOperationEdit.__original = original;
+    setFunction("saveExpenseOperationEdit", wrappedSaveExpenseOperationEdit);
+    return true;
+  }
+
   function install() {
     installCategoryNormalizer();
     installExpenseRowRenderPatch();
     installSavePatch();
+    installOperationEditorSavePatch();
     installRenderPatch();
     ensureFopTransferOptions();
   }
@@ -284,8 +395,14 @@
     FOP_TARGET_CHANNEL,
     entryToFopTransferRow,
     install,
+    normalizeFopOperationDraft,
+    operationDraftToFopTransferRow,
     isFopTransferCategory,
     isFopTransferLedgerRow,
+    isFopTransferOperationDraft,
+    sameFopTransferRow,
+    appendMissingTransferRows,
+    syncFopOperationDraftToTransfers,
     updateLedgerRowsForFopEntries
   };
 
