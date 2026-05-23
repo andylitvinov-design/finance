@@ -4,10 +4,13 @@ const assert = require("node:assert/strict");
 const {
   buildAuditPrompt,
   createAuditBridge,
+  DEFAULT_FETCH_TIMEOUT_MS,
   fetchAuditSnapshot,
   getAuditSnapshotUrl,
   getDebuggerUrl,
   getLiveUrl,
+  HANDOFF_SNAPSHOT_URL,
+  MAX_PROMPT_CHARS,
   shouldUseMobileSafeMode,
 } = require("../audit-bridge.js");
 
@@ -70,11 +73,68 @@ test("audit snapshot URL is fixed and never includes includeRows", async () => {
   });
 
   assert.deepEqual(payload, snapshot);
-  assert.equal(getAuditSnapshotUrl(), "/api/audit-snapshot");
+  assert.equal(getAuditSnapshotUrl(), "/api/audit-snapshot?mode=handoff");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "/api/audit-snapshot");
-  assert.deepEqual(calls[0].options, { cache: "no-store" });
+  assert.equal(calls[0].url, HANDOFF_SNAPSHOT_URL);
+  assert.equal(calls[0].options.cache, "no-store");
   assert.equal(String(calls[0].url).includes("includeRows"), false);
+});
+
+test("buildAuditPrompt compacts huge snapshots under MAX_PROMPT_CHARS", () => {
+  const hugeRows = Array.from({ length: 500 }, (_, index) => ({
+    date: "2026-05-02",
+    channel: `channel-${index}`,
+    currency: "USD",
+    status: index % 2 ? "ok" : "mismatch",
+    long_raw_dump: "x".repeat(500),
+  }));
+  const snapshot = {
+    ok: true,
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    schema: { ledger_contract: "v2-compatible" },
+    summary: { ledger_rows: 500 },
+    balances: { uses_amount_net: true },
+    daily_balances: {
+      uses_amount_net: true,
+      rows: hugeRows,
+      actionable_rows: hugeRows,
+      summary: { rows: hugeRows.length, mismatch_rows: 250 },
+    },
+    balance_coverage: {
+      accounts: hugeRows,
+      actionable_accounts: hugeRows,
+      summary: { accounts_with_movement: hugeRows.length },
+      weekly_summary: { actionable_accounts: hugeRows, copyable_ostatki_rows: "row\n".repeat(1000) },
+    },
+    balance_fixes: { copyable_ostatki_rows: "row\n".repeat(1000) },
+    warnings: Array.from({ length: 200 }, (_, index) => `warning-${index}`),
+    audit_checks: [],
+  };
+
+  const prompt = buildAuditPrompt(snapshot);
+
+  assert.ok(prompt.length <= MAX_PROMPT_CHARS, `prompt length ${prompt.length}`);
+  assert.doesNotMatch(prompt, /long_raw_dump/);
+  assert.match(prompt, /"compact": true/);
+  assert.match(prompt, /daily_balances\.rows/);
+});
+
+test("fetchAuditSnapshot timeout returns a structured clear message", async () => {
+  await assert.rejects(
+    fetchAuditSnapshot((url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    }), { timeoutMs: 1 }),
+    (error) => {
+      assert.equal(error.code, "AUDIT_SNAPSHOT_TIMEOUT");
+      assert.match(error.userMessage, /timed out after 20s/i);
+      return true;
+    }
+  );
+  assert.equal(DEFAULT_FETCH_TIMEOUT_MS, 20000);
 });
 
 test("desktop runAudit copies prompt and opens configured debugger URL", async () => {

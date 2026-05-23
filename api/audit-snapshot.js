@@ -65,7 +65,8 @@ export async function buildAuditSnapshot(options = {}) {
       status: "needs verification",
       message: "Audit snapshot could not read live ledger data.",
     });
-    return emptySnapshot({ generatedAt, period: periodFilter.period, warnings, auditChecks });
+    const snapshot = emptySnapshot({ generatedAt, period: periodFilter.period, warnings, auditChecks });
+    return isHandoffMode(query) ? compactAuditSnapshotForHandoff(snapshot) : snapshot;
   }
 
   const operations = filterOperations(repository.operations || [], periodFilter);
@@ -139,7 +140,7 @@ export async function buildAuditSnapshot(options = {}) {
     }
   );
 
-  return {
+  const snapshot = {
     ok: true,
     generated_at: generatedAt,
     project: PROJECT_NAME,
@@ -176,6 +177,96 @@ export async function buildAuditSnapshot(options = {}) {
     sources,
     warnings: unique(warnings),
     audit_checks: auditChecks,
+  };
+  return isHandoffMode(query) ? compactAuditSnapshotForHandoff(snapshot) : snapshot;
+}
+
+export function compactAuditSnapshotForHandoff(snapshot = {}) {
+  const omittedPaths = [];
+  const dailyBalances = snapshot.daily_balances || {};
+  const balanceCoverage = snapshot.balance_coverage || {};
+  const balanceFixes = snapshot.balance_fixes || {};
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+
+  if (Object.prototype.hasOwnProperty.call(dailyBalances, "rows")) omittedPaths.push("daily_balances.rows");
+  if (Object.prototype.hasOwnProperty.call(balanceCoverage, "accounts")) omittedPaths.push("balance_coverage.accounts");
+  if (balanceCoverage.weekly_summary?.copyable_ostatki_rows) {
+    omittedPaths.push("balance_coverage.weekly_summary.copyable_ostatki_rows");
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot, "balance_fixes")) omittedPaths.push("balance_fixes");
+  if (warnings.length > 20) omittedPaths.push("warnings[20..]");
+
+  return {
+    ok: snapshot.ok,
+    generated_at: snapshot.generated_at,
+    project: snapshot.project,
+    period: snapshot.period,
+    schema: snapshot.schema,
+    summary: snapshot.summary,
+    balances: snapshot.balances,
+    daily_balances: {
+      uses_amount_net: dailyBalances.uses_amount_net,
+      summary: dailyBalances.summary,
+      actionable_rows: (dailyBalances.actionable_rows || []).slice(0, 10).map(compactActionableRow),
+    },
+    balance_coverage: {
+      summary: balanceCoverage.summary,
+      weekly_summary: compactWeeklyBalanceSummary(balanceCoverage.weekly_summary),
+      actionable_accounts: (balanceCoverage.actionable_accounts || []).slice(0, 10).map(compactActionableRow),
+    },
+    paypal: snapshot.paypal,
+    exchange: snapshot.exchange,
+    sources: snapshot.sources,
+    warnings: warnings.slice(0, 20),
+    audit_checks: snapshot.audit_checks,
+    audit_handoff: {
+      compact: true,
+      mode: "handoff",
+      omitted_paths: omittedPaths,
+      source_size_bytes: Buffer.byteLength(JSON.stringify(snapshot), "utf8"),
+      balance_fixes_summary: {
+        missing_amount_net_rows: Array.isArray(balanceFixes.missing_amount_net_rows)
+          ? balanceFixes.missing_amount_net_rows.length
+          : 0,
+        missing_opening_balance_rows: Array.isArray(balanceFixes.missing_opening_balance_rows)
+          ? balanceFixes.missing_opening_balance_rows.length
+          : 0,
+        missing_ostatki_rows: Array.isArray(balanceFixes.missing_ostatki_rows)
+          ? balanceFixes.missing_ostatki_rows.length
+          : 0,
+      },
+    },
+  };
+}
+
+function compactWeeklyBalanceSummary(weeklySummary = {}) {
+  return {
+    ...weeklySummary,
+    actionable_accounts: (weeklySummary.actionable_accounts || []).slice(0, 10).map(compactActionableRow),
+    copyable_ostatki_rows: weeklySummary.copyable_ostatki_rows
+      ? "[omitted in handoff mode]"
+      : weeklySummary.copyable_ostatki_rows,
+  };
+}
+
+function isHandoffMode(query = {}) {
+  return String(query.mode || "").trim().toLowerCase() === "handoff";
+}
+
+function compactActionableRow(row = {}) {
+  return {
+    date: row.date,
+    channel: row.channel,
+    currency: row.currency,
+    status: row.status,
+    opening_balance: row.opening_balance,
+    movement_amount: row.movement_amount,
+    expected_closing_balance: row.expected_closing_balance,
+    provider_balance: row.provider_balance,
+    closing_balance: row.closing_balance,
+    difference: row.difference,
+    action: row.action,
+    reason: row.reason,
   };
 }
 
