@@ -217,6 +217,33 @@ test("grouped balance fix does not hide truly underpaid groups", () => {
   assert.equal(secondBalance.textContent, "-50,0000");
 });
 
+test("two-row same-client groups keep both signed balances visible", () => {
+  const underpaidBalance = cell("td", "206,0000");
+  const overpaidBalance = cell("td", "-206,0000");
+  const totalBalance = cell("td", "0,0000");
+  const document = createDocument([
+    table([
+      row([
+        cell("th", "NUMBER"),
+        cell("th", "DATE"),
+        cell("th", "CLIENT"),
+        cell("th", "ACCRUED +3%"),
+        cell("th", "ДОШЛО ДО НАС USD"),
+        cell("th", "BALANCE"),
+      ]),
+      row([cell("td", "18171"), cell("td", "22.05.2026"), cell("td", "Вилл"), cell("td", "206"), cell("td", ""), underpaidBalance]),
+      row([cell("td", "18172"), cell("td", "22.05.2026"), cell("td", "Вилл"), cell("td", "25,75"), cell("td", "231,75"), overpaidBalance]),
+      row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "231,75"), cell("td", "231,75"), totalBalance]),
+    ]),
+  ]);
+
+  const { fix } = loadFix(document);
+  assert.ok(fix.normalizeGroupedOrderBalanceTables(document) > 0);
+  assert.equal(underpaidBalance.textContent, "-206,0000");
+  assert.equal(overpaidBalance.textContent, "206,0000");
+  assert.equal(totalBalance.textContent, "0,0000");
+});
+
 test("movement table metadata rows and split payments normalize like the live grouped rows", () => {
   const innaFirstBalance = cell("td", "103");
   const innaSecondBalance = cell("td", "5,15");
