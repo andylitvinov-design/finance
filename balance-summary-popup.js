@@ -162,6 +162,136 @@
     return 0;
   }
 
+  function finiteOrNull(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = parseNumber(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function normalizeChannelLabel(value) {
+    const raw = String(value || "").trim();
+    return raw || "Не указан";
+  }
+
+  function addIncomeChannelAmount(channels, channel, amount, source, diagnostics = []) {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) return;
+    const label = normalizeChannelLabel(channel);
+    const existing = channels.get(label) || { channel: label, amount: 0, source };
+    existing.amount += value;
+    if (source === "plannedReceivedUsdFallback") existing.needsVerification = true;
+    channels.set(label, existing);
+    if (source === "plannedReceivedUsdFallback") {
+      diagnostics.push(`needs verification: ${label} uses plannedReceivedUsd fallback for income channel distribution.`);
+    }
+  }
+
+  function buildIncomeChannelDistributionFromRealIncome(summaryByChannel = {}) {
+    const diagnostics = [];
+    const channels = new Map();
+    Object.entries(summaryByChannel || {}).forEach(([channel, row]) => {
+      const realNetUsd = finiteOrNull(row?.realNetUsd);
+      if (realNetUsd && realNetUsd > 0) {
+        addIncomeChannelAmount(channels, row?.channel || channel, realNetUsd, "realNetUsd", diagnostics);
+        return;
+      }
+      const plannedReceivedUsd = finiteOrNull(row?.plannedReceivedUsd);
+      if (plannedReceivedUsd && plannedReceivedUsd > 0) {
+        addIncomeChannelAmount(channels, row?.channel || channel, plannedReceivedUsd, "plannedReceivedUsdFallback", diagnostics);
+      }
+    });
+    return finalizeIncomeChannelDistribution(Array.from(channels.values()), diagnostics, "realIncome.summaryByChannel");
+  }
+
+  function findMovementHeaderRowIndex(values) {
+    return (values || []).findIndex((row) => {
+      const normalized = (row || []).map((cell) => normalizeHeaderKey(cell));
+      const joined = normalized.join(" ");
+      return /channel|канал|payment|метод|amountusd|amount_usd|netreceived|получено|realincome|реальныеприходы/.test(joined);
+    });
+  }
+
+  function rowLooksLikeIncome(row, indexes) {
+    const operationText = [
+      indexes.operation === -1 ? "" : row[indexes.operation],
+      indexes.direction === -1 ? "" : row[indexes.direction],
+      indexes.comment === -1 ? "" : row[indexes.comment],
+    ].map(normalizeCell).join(" ");
+    if (/transfer|exchange|expense|out|перевод|обмен|расход|списание/.test(operationText)) return false;
+    if (/income|inflow|in|приход|зачисление|оплачено|servicein|ezoin/.test(operationText)) return true;
+    return true;
+  }
+
+  function buildIncomeChannelDistributionFromMovement(values, period) {
+    const rows = Array.isArray(values) ? values : [];
+    const headerRowIndex = findMovementHeaderRowIndex(rows);
+    if (headerRowIndex === -1) return finalizeIncomeChannelDistribution([], [], "movement table");
+    const header = rows[headerRowIndex] || [];
+    const indexes = {
+      date: findHeaderIndexByAliases(header, ["DATE", "ДАТА"]),
+      channel: findPreferredHeaderIndex(header, [
+        ["PAYMENT CHANNEL", "PAYMENT METHOD", "CHANNEL", "КАНАЛ", "КАНАЛ ОПЛАТЫ", "МЕТОД ОПЛАТЫ"],
+        ["TO CHANNEL", "TO_CHANNEL", "КУДА"],
+        ["FROM CHANNEL", "FROM_CHANNEL", "ОТКУДА"],
+      ]),
+      amount: findPreferredHeaderIndex(header, [
+        ["NET RECEIVED USD", "RECEIVED NET USD", "ПОЛУЧЕНО NET USD", "NET", "AMOUNT NET"],
+        ["REAL INCOME", "РЕАЛЬНЫЕ ПРИХОДЫ"],
+        ["AMOUNT USD", "AMOUNT_USD", "USD AMOUNT", "СУММА USD"],
+        ["RECEIVED TOTAL USD", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)"],
+      ]),
+      operation: findHeaderIndexByAliases(header, ["OPERATION", "TYPE", "ОПЕРАЦИЯ", "ТИП"]),
+      direction: findHeaderIndexByAliases(header, ["DIRECTION", "НАПРАВЛЕНИЕ"]),
+      comment: findHeaderIndexByAliases(header, ["COMMENT", "КОММЕНТАРИЙ", "NOTE", "REVIEW NOTE"]),
+    };
+    if (indexes.channel === -1 || indexes.amount === -1) return finalizeIncomeChannelDistribution([], [], "movement table");
+    const channels = new Map();
+    rows.slice(headerRowIndex + 1).forEach((row) => {
+      if (!hasAnyValue(row) || isTotalRow(row)) return;
+      const date = indexes.date === -1 ? "" : normalizeDateKey(row[indexes.date]);
+      if (!isDateInPeriod(date, period)) return;
+      if (!rowLooksLikeIncome(row, indexes)) return;
+      addIncomeChannelAmount(channels, row[indexes.channel], parseNumber(row[indexes.amount]), "movement", []);
+    });
+    return finalizeIncomeChannelDistribution(Array.from(channels.values()), [], "movement table");
+  }
+
+  function finalizeIncomeChannelDistribution(rows, diagnostics = [], source = "") {
+    const channels = (rows || [])
+      .filter((row) => Number(row?.amount || 0) > 0)
+      .sort((left, right) => right.amount - left.amount);
+    const total = channels.reduce((sum, row) => sum + row.amount, 0);
+    const withPercent = total > 0
+      ? channels.map((row) => ({ ...row, percent: (row.amount / total) * 100 }))
+      : [];
+    return {
+      title: "Распределение приходов по каналам",
+      source,
+      total,
+      channels: withPercent,
+      diagnostics: [...new Set(diagnostics.filter(Boolean))],
+    };
+  }
+
+  function buildIncomeChannelDistribution(input = {}, options = {}) {
+    const appState = getState(input, options);
+    const realIncomeSummary = appState?.data?.realIncome?.summaryByChannel || appState?.realIncome?.summaryByChannel || null;
+    if (realIncomeSummary && Object.keys(realIncomeSummary).length) {
+      const distribution = buildIncomeChannelDistributionFromRealIncome(realIncomeSummary);
+      if (distribution.channels.length) return distribution;
+    }
+    const period = options.period || getSelectedPeriod(options);
+    const movementDistribution = buildIncomeChannelDistributionFromMovement(appState?.data?.tabs?.movement?.values || [], period);
+    if (movementDistribution.channels.length) return movementDistribution;
+    return {
+      title: "Распределение приходов по каналам",
+      source: "none",
+      total: 0,
+      channels: [],
+      diagnostics: ["needs verification: source not found for income channel distribution"],
+    };
+  }
+
   function getSharedOrdersPaymentSummary(input) {
     const shared = root.EzohataTopMetricPayableShareFix;
     if (typeof shared?.buildOrdersPaymentSummary === "function") {
@@ -286,6 +416,7 @@
       totalPaid,
       remainingToPay,
       payableFormula: canonical.payableFormula,
+      incomeChannelDistribution: buildIncomeChannelDistribution(metricsOrState, { ...options, state: appState, period }),
       diagnostics,
       sources: {
         orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED/ACCRUED or top metrics fallback",
@@ -307,6 +438,58 @@
     if (!Number.isFinite(rate)) return "needs verification";
     const rounded = Math.round(rate * 10000) / 10000;
     return `${String(rounded).replace(".", ",")}%`;
+  }
+
+  function formatSharePercent(value) {
+    const rate = Number(value);
+    if (!Number.isFinite(rate)) return "needs verification";
+    return `${rate.toFixed(1)}%`;
+  }
+
+  function renderIncomeChannelDistribution(distribution, doc = root.document) {
+    const section = doc.createElement("div");
+    section.className = "balance-income-channel-distribution";
+    const title = doc.createElement("h3");
+    title.textContent = "Распределение приходов по каналам";
+    section.appendChild(title);
+
+    if (!distribution?.channels?.length) {
+      const diagnostic = doc.createElement("div");
+      diagnostic.className = "balance-summary-diagnostics";
+      diagnostic.textContent = "needs verification: source not found for income channel distribution";
+      section.appendChild(diagnostic);
+      return section;
+    }
+
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    distribution.channels.forEach((row) => {
+      const tr = doc.createElement("tr");
+      [row.channel, formatMoney(row.amount), formatSharePercent(row.percent)].forEach((value) => {
+        const td = doc.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    const total = doc.createElement("tr");
+    total.className = "balance-income-channel-total";
+    ["Итого", formatMoney(distribution.total), "100.0%"].forEach((value) => {
+      const td = doc.createElement("td");
+      td.textContent = value;
+      total.appendChild(td);
+    });
+    tbody.appendChild(total);
+    table.appendChild(tbody);
+    section.appendChild(table);
+
+    if (distribution.diagnostics?.length) {
+      const diagnostics = doc.createElement("div");
+      diagnostics.className = "balance-summary-diagnostics";
+      diagnostics.textContent = distribution.diagnostics.join(" ");
+      section.appendChild(diagnostics);
+    }
+    return section;
   }
 
   function renderBalanceSummaryBlock(summary, doc = root.document) {
@@ -331,6 +514,10 @@
       list.appendChild(item);
     });
     block.appendChild(list);
+    block.appendChild(renderIncomeChannelDistribution(
+      summary.incomeChannelDistribution || buildIncomeChannelDistribution(summary),
+      doc
+    ));
     if (summary.diagnostics?.length) {
       const diagnostics = doc.createElement("div");
       diagnostics.className = "balance-summary-diagnostics";
@@ -393,7 +580,9 @@
     BALANCE_BUTTON_ID,
     BALANCE_BLOCK_ID,
     bindBalanceLauncherButton,
+    buildIncomeChannelDistribution,
     buildBalanceTextSummary,
+    renderIncomeChannelDistribution,
     renderBalanceSummaryBlock,
     startBalanceSummary,
     updateBalanceSummaryBlock,

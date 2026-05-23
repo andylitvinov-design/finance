@@ -21,6 +21,37 @@ function loadApi() {
   return require("../balance-summary-popup.js");
 }
 
+function makeMockDocument() {
+  return {
+    createElement(tag) {
+      return {
+        tag,
+        children: [],
+        textContent: "",
+        className: "",
+        id: "",
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        },
+        setAttribute() {},
+      };
+    },
+  };
+}
+
+function collectText(node) {
+  if (!node) return "";
+  return [node.textContent || "", ...(node.children || []).map(collectText)].filter(Boolean).join("\n");
+}
+
+function collectNodes(node, predicate, result = []) {
+  if (!node) return result;
+  if (predicate(node)) result.push(node);
+  (node.children || []).forEach((child) => collectNodes(child, predicate, result));
+  return result;
+}
+
 test("top balance button replaced old top audit launcher while bottom audit script stays loaded", () => {
   assert.match(indexHtml, /id="balanceLauncherButton"[^>]*>Баланс<\/button>/);
   assert.doesNotMatch(indexHtml, /id="auditLauncherButton"[^>]*>Аудит<\/button>/);
@@ -268,5 +299,132 @@ test("zero orders with plus column returns zero percent amount instead of NaN", 
 
   assert.equal(Number.isNaN(summary.percentToOrders), false);
   assert.equal(summary.percentToOrders, 0);
+  resetBalanceModule();
+});
+
+test("balance popup renders income distribution by channel from realIncome summary", () => {
+  const api = loadApi();
+  const summary = api.buildBalanceTextSummary({
+    totalOrdersPlusPercent: 1000,
+    totalPaid: 250,
+    personalOrdersAfterDiscount: 100,
+    state: {
+      data: {
+        realIncome: {
+          summaryByChannel: {
+            PayPal: { realNetUsd: 125 },
+            Wise: { realNetUsd: 375 },
+            Empty: { realNetUsd: 0 },
+          },
+        },
+        tabs: { movement: { values: [] }, orders: { values: [] } },
+      },
+    },
+  });
+  const block = api.renderBalanceSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Распределение приходов по каналам/);
+  assert.match(text, /Wise/);
+  assert.match(text, /375,0000/);
+  assert.match(text, /75\.0%/);
+  assert.match(text, /PayPal/);
+  assert.match(text, /125,0000/);
+  assert.match(text, /25\.0%/);
+  assert.doesNotMatch(text, /Empty/);
+  resetBalanceModule();
+});
+
+test("income distribution ignores zero channels and totals positive rows to 100 percent", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          PayPal: { realNetUsd: 20 },
+          Wise: { realNetUsd: 30 },
+          Zero: { realNetUsd: 0 },
+          Blank: {},
+        },
+      },
+    },
+  });
+
+  assert.equal(distribution.channels.length, 2);
+  assert.equal(distribution.total, 50);
+  assert.equal(Number(distribution.channels.reduce((sum, row) => sum + row.percent, 0).toFixed(4)), 100);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["Wise", "PayPal"]);
+  resetBalanceModule();
+});
+
+test("income distribution falls back to planned received only with verification diagnostic", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          PayPal: { plannedReceivedUsd: 80 },
+          Wise: { realNetUsd: 20, plannedReceivedUsd: 200 },
+        },
+      },
+    },
+  });
+
+  assert.equal(distribution.total, 100);
+  assert.equal(distribution.channels.find((row) => row.channel === "PayPal").needsVerification, true);
+  assert.match(distribution.diagnostics.join("\n"), /plannedReceivedUsd fallback/);
+  resetBalanceModule();
+});
+
+test("existing balance popup lines remain unchanged when distribution is appended", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 1000,
+    percentRate: 3,
+    totalOrdersPlusPercent: 1030,
+    myOrders: 200,
+    myOrdersPayable: 100,
+    totalAccrued: 1130,
+    totalPaid: 500,
+    remainingToPay: 630,
+    diagnostics: [],
+    incomeChannelDistribution: {
+      title: "Распределение приходов по каналам",
+      total: 100,
+      channels: [{ channel: "PayPal", amount: 100, percent: 100 }],
+      diagnostics: [],
+    },
+  }, makeMockDocument());
+  const items = collectNodes(block, (node) => node.tag === "li").map((node) => node.textContent);
+
+  assert.deepEqual(items, [
+    "Сумма заказов за период (ACCRUED): 1000,0000",
+    "Процент к заказам: 3%",
+    "Итого: Заказы + % (ACCRUED +3%): 1030,0000",
+    "Мои заказы: 200,0000",
+    "Мои заказы к начислению (уже с учетом скидки): 100,0000",
+    "ВСЕГО НАЧИСЛЕНО: 1130,0000",
+    "ВСЕГО оплачено: 500,0000",
+    "ОСТАТОК оплатить: 630,0000",
+  ]);
+  resetBalanceModule();
+});
+
+test("empty income distribution source does not crash and renders diagnostic", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    incomeChannelDistribution: api.buildIncomeChannelDistribution({ data: { tabs: { movement: { values: [] } } } }),
+  }, makeMockDocument());
+
+  assert.match(collectText(block), /needs verification: source not found for income channel distribution/);
   resetBalanceModule();
 });
