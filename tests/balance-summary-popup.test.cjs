@@ -420,6 +420,78 @@ test("income distribution falls back to movement only when realIncome summary is
   resetBalanceModule();
 });
 
+test("income distribution renders empty service-income state without movement fallback", () => {
+  const api = loadApi();
+  const movementValues = [
+    ["DATE", "PAYMENT CHANNEL", "NET RECEIVED USD", "OPERATION"],
+    ["2026-05-05", "Binance funding", "915.5", "income"],
+    ["2026-05-06", "Wise refund", "1712.8585", "income"],
+  ];
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          "Binance funding": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
+          "Wise refund": { realNetUsd: 0, plannedReceivedUsd: 1712.8585 },
+        },
+      },
+      tabs: { movement: { values: movementValues } },
+    },
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    incomeChannelDistribution: distribution,
+  }, makeMockDocument());
+  const text = collectText(block);
+
+  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.total, 0);
+  assert.deepEqual(distribution.channels, []);
+  assert.doesNotMatch(text, /Binance funding/);
+  assert.doesNotMatch(text, /915,5000/);
+  assert.doesNotMatch(text, /Wise refund/);
+  assert.doesNotMatch(text, /2628,3585/);
+  assert.match(text, /Нет подтвержденных оплат заказов\/услуг по каналам за период/);
+  resetBalanceModule();
+});
+
+test("income distribution uses positive realIncome rows even when movement has extra inflows", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          PayPal: { realNetUsd: 566.5 },
+        },
+      },
+      tabs: {
+        movement: {
+          values: [
+            ["DATE", "PAYMENT CHANNEL", "NET RECEIVED USD", "OPERATION"],
+            ["2026-05-05", "PayPal", "566.5", "income"],
+            ["2026-05-06", "Binance funding", "915.5", "income"],
+          ],
+        },
+      },
+    },
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
+
+  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.total, 566.5);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["PayPal"]);
+  assert.equal(distribution.channels[0].amount, 566.5);
+  assert.equal(distribution.channels[0].percent, 100);
+  resetBalanceModule();
+});
+
 test("income distribution percentages use service income summary only", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
