@@ -36,6 +36,13 @@ export const USER_CONFIRMED_BINANCE_CURRENT_FACTS = [
   {
     provider: "binance",
     channel: "Бинанс spot",
+    currency: "USDC",
+    amount: 0,
+    comment: "user confirmed current Binance spot USDC balance",
+  },
+  {
+    provider: "binance",
+    channel: "Бинанс spot",
     currency: "USDT",
     amount: 1211.91,
     comment: "user confirmed current Binance spot balance",

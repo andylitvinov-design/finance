@@ -13,6 +13,7 @@ const FALLBACK_USD_RATES = {
   UAH: 1 / 43.86,
   RUB: 1 / 84.5563,
   USDT: 1,
+  USDC: 1,
   LOCAL: 1 / 18,
 };
 
@@ -130,7 +131,7 @@ function normalizeAutoBalanceStatus(value) {
 function normalizeAutoBalanceSource(value) {
   const source = String(value || "").trim().toLowerCase();
   if (source === "paypal_derived_balance") return "paypal_derived_balance";
-  if (source === "paypal_manual_balance" || source === "paypal_manual_confirmed_balance") return source;
+  if (source === "paypal_manual_balance" || source === "paypal_manual_confirmed_balance" || source === "user_confirmed_binance_balance") return source;
   return "provider_auto";
 }
 

@@ -51,6 +51,7 @@ test("current Binance split anchors remain separate and factual", () => {
     "Binance funding|USDT|0|0|zero_balance|false|true",
     "binance save|USDC|2019.822684|2019.822684|ok|false|true",
     "binance save|USDT|5411.3694|5411.3694|ok|false|true",
+    "Бинанс spot|USDC|0|0|zero_balance|false|true",
     "Бинанс spot|USDT|1211.91|1211.91|ok|false|true",
   ]);
 });
@@ -96,7 +97,7 @@ test("Binance repair updates rows when repository parser omits amount_usd", () =
   }));
   const plan = classifyBinanceRepairRows(existing, rows);
 
-  assert.equal(plan.rowsToWrite.length, 6);
+  assert.equal(plan.rowsToWrite.length, 7);
   assert.equal(plan.skippedRows.length, 0);
   assert.equal(plan.rowsToWrite.every((row) => row.safeAction !== "skip_existing_same_value"), true);
 });
