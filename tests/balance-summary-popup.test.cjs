@@ -302,7 +302,7 @@ test("zero orders with plus column returns zero percent amount instead of NaN", 
   resetBalanceModule();
 });
 
-test("balance popup renders income distribution by channel from realIncome summary", () => {
+test("balance popup renders income distribution by channel from matched service/order summary", () => {
   const api = loadApi();
   const summary = api.buildBalanceTextSummary({
     totalOrdersPlusPercent: 1000,
@@ -311,7 +311,7 @@ test("balance popup renders income distribution by channel from realIncome summa
     state: {
       data: {
         realIncome: {
-          summaryByChannel: {
+          serviceOrderSummaryByChannel: {
             PayPal: { realNetUsd: 125 },
             Wise: { realNetUsd: 375 },
             Empty: { realNetUsd: 0 },
@@ -344,7 +344,7 @@ test("income distribution ignores zero and planned-only channels and totals posi
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
-        summaryByChannel: {
+        serviceOrderSummaryByChannel: {
           PayPal: { realNetUsd: 566.5 },
           Wise: { realNetUsd: 30 },
           Zero: { realNetUsd: 0 },
@@ -372,7 +372,7 @@ test("income distribution does not use planned received fallback from realIncome
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
-        summaryByChannel: {
+        serviceOrderSummaryByChannel: {
           PayPal: { plannedReceivedUsd: 80 },
           Wise: { realNetUsd: 20, plannedReceivedUsd: 200 },
           "Binance funding": { plannedReceivedUsd: 915.5 },
@@ -403,7 +403,7 @@ test("income distribution falls back to movement only when realIncome summary is
   const presentZeroSummary = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
-        summaryByChannel: {
+        serviceOrderSummaryByChannel: {
           "Binance funding": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
         },
       },
@@ -414,7 +414,7 @@ test("income distribution falls back to movement only when realIncome summary is
   assert.equal(absentSummary.source, "movement table");
   assert.equal(absentSummary.total, 150);
   assert.deepEqual(absentSummary.channels.map((row) => row.channel), ["PayPal", "Wise"]);
-  assert.equal(presentZeroSummary.source, "realIncome.summaryByChannel");
+  assert.equal(presentZeroSummary.source, "realIncome.serviceOrderSummaryByChannel");
   assert.equal(presentZeroSummary.total, 0);
   assert.deepEqual(presentZeroSummary.channels, []);
   resetBalanceModule();
@@ -430,7 +430,7 @@ test("income distribution renders empty service-income state without movement fa
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
-        summaryByChannel: {
+        serviceOrderSummaryByChannel: {
           "Binance funding": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
           "Wise refund": { realNetUsd: 0, plannedReceivedUsd: 1712.8585 },
         },
@@ -452,7 +452,7 @@ test("income distribution renders empty service-income state without movement fa
   }, makeMockDocument());
   const text = collectText(block);
 
-  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.source, "realIncome.serviceOrderSummaryByChannel");
   assert.equal(distribution.total, 0);
   assert.deepEqual(distribution.channels, []);
   assert.doesNotMatch(text, /Binance funding/);
@@ -468,7 +468,7 @@ test("income distribution uses positive realIncome rows even when movement has e
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
-        summaryByChannel: {
+        serviceOrderSummaryByChannel: {
           PayPal: { realNetUsd: 566.5 },
         },
       },
@@ -484,7 +484,7 @@ test("income distribution uses positive realIncome rows even when movement has e
     },
   }, { startDate: "2026-05-01", endDate: "2026-05-31" });
 
-  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.source, "realIncome.serviceOrderSummaryByChannel");
   assert.equal(distribution.total, 566.5);
   assert.deepEqual(distribution.channels.map((row) => row.channel), ["PayPal"]);
   assert.equal(distribution.channels[0].amount, 566.5);
@@ -492,34 +492,41 @@ test("income distribution uses positive realIncome rows even when movement has e
   resetBalanceModule();
 });
 
-test("income distribution excludes fully unmatched provider inflows from realIncome summary", () => {
+test("income distribution excludes broad unmatched provider inflows when service summary exists", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
+        serviceOrderSummaryByChannel: {
+          PayPal: { realNetUsd: 566.5 },
+        },
         summaryByChannel: {
           PayPal: { realNetUsd: 566.5 },
-          "Binance funding": { realNetUsd: 915.5, plannedReceivedUsd: 0 },
+          "Бинанс spot": { realNetUsd: 103, plannedReceivedUsd: 0 },
+          "приват-фоп": { realNetUsd: 7736.7595, plannedReceivedUsd: 0 },
         },
         unmatchedSummaryByChannel: {
-          "Binance funding": { realNetUsd: 915.5, plannedReceivedUsd: 0 },
+          "Бинанс spot": { realNetUsd: 103, plannedReceivedUsd: 0 },
+          "приват-фоп": { realNetUsd: 7736.7595, plannedReceivedUsd: 0 },
         },
       },
       tabs: {
         movement: {
           values: [
             ["DATE", "PAYMENT CHANNEL", "NET RECEIVED USD", "OPERATION"],
-            ["2026-05-05", "Binance funding", "915.5", "income"],
+            ["2026-05-05", "Бинанс spot", "103", "income"],
+            ["2026-04-22", "приват-фоп", "7736.7595", "income"],
           ],
         },
       },
     },
   }, { startDate: "2026-05-01", endDate: "2026-05-31" });
 
-  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.source, "realIncome.serviceOrderSummaryByChannel");
   assert.equal(distribution.total, 566.5);
   assert.deepEqual(distribution.channels.map((row) => row.channel), ["PayPal"]);
-  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "Бинанс spot"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "приват-фоп"), false);
   resetBalanceModule();
 });
 
@@ -528,9 +535,15 @@ test("income distribution percentages use service income summary only", () => {
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
+        serviceOrderSummaryByChannel: {
+          PayPal: { realNetUsd: 100 },
+          Wise: { realNetUsd: 300 },
+        },
         summaryByChannel: {
           PayPal: { realNetUsd: 100 },
           Wise: { realNetUsd: 300 },
+          "Бинанс spot": { realNetUsd: 103 },
+          "приват-фоп": { realNetUsd: 7736.7595 },
         },
         refundSummaryByChannel: {
           Wise: { realNetUsd: 200 },

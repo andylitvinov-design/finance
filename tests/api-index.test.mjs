@@ -1815,6 +1815,8 @@ test("GET getDashboardData keeps unmatched Wise provider income out of service i
     assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.length, 1);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 978.5);
+    assert.equal(response.body?.data?.realIncome?.serviceOrderSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
+    assert.equal(response.body?.data?.realIncome?.serviceOrderSummaryTotals?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.matchedEntries?.[0]?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.[0]?.realNetUsd, 196.5);
     assert.equal(response.body?.data?.realIncome?.unmatchedSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 196.5);
@@ -1999,6 +2001,9 @@ test("GET getDashboardData splits service income from refunds exchanges and unma
     assert.equal(realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 0);
     assert.equal(realIncome?.summaryByChannel?.["Binance funding"]?.realNetUsd, 0);
+    assert.equal(realIncome?.serviceOrderSummaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
+    assert.equal(realIncome?.serviceOrderSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 0);
+    assert.equal(realIncome?.serviceOrderSummaryByChannel?.["Binance funding"]?.realNetUsd, 0);
     assert.equal(realIncome?.refundSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 116);
     assert.equal(realIncome?.exchangeSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
     assert.equal(realIncome?.unmatchedSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 58);
@@ -2006,6 +2011,7 @@ test("GET getDashboardData splits service income from refunds exchanges and unma
     assert.equal(realIncome?.allSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 174);
     assert.equal(realIncome?.allSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
     assert.equal(realIncome?.summaryTotals?.realNetUsd, 311.06);
+    assert.equal(realIncome?.serviceOrderSummaryTotals?.realNetUsd, 311.06);
     assert.equal(realIncome?.allSummaryTotals?.realNetUsd, 735.06);
     assert.equal(realIncome?.refundEntries?.length, 1);
     assert.equal(realIncome?.exchangeEntries?.length, 1);
@@ -2245,6 +2251,9 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.currency, "UAH");
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.plannedReceivedUsd, 515);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват-фоп"]?.realNetUsd, 515);
+    assert.equal(response.body?.data?.realIncome?.serviceOrderSummaryByChannel?.["приват-фоп"]?.plannedReceivedUsd, 515);
+    assert.equal(response.body?.data?.realIncome?.serviceOrderSummaryByChannel?.["приват-фоп"]?.realNetUsd, 0);
+    assert.equal(response.body?.data?.realIncome?.serviceOrderSummaryTotals?.realNetUsd, 0);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват 24-грн"]?.plannedReceivedUsd, 0);
     assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["приват 24-грн"]?.realNetUsd, 0);
   } finally {
