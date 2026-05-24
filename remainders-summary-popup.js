@@ -105,6 +105,48 @@
     };
   }
 
+  function getDateInputValue(id) {
+    const fromElements = root.elements?.[id]?.value;
+    if (fromElements) return fromElements;
+    return root.document?.getElementById?.(id)?.value || "";
+  }
+
+  function buildAuditSnapshotUrl() {
+    const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
+    const url = new URL("./api/audit-snapshot", base);
+    const from = getDateInputValue("startDate");
+    const to = getDateInputValue("endDate");
+    if (from) url.searchParams.set("from", from);
+    if (to) url.searchParams.set("to", to);
+    return url;
+  }
+
+  async function fetchAuditSnapshotRemainders() {
+    if (typeof root.fetch !== "function") return null;
+    const response = await root.fetch(buildAuditSnapshotUrl().toString(), { cache: "no-store" });
+    if (!response?.ok) throw new Error(`audit snapshot returned ${response?.status || "unknown status"}`);
+    return response.json();
+  }
+
+  async function buildLiveRemaindersSummary(input, options = {}) {
+    const current = buildRemaindersSummary(input, options);
+    if (current.source && current.rows.length) return current;
+    try {
+      const snapshot = await fetchAuditSnapshotRemainders();
+      if (!snapshot) return current;
+      const fetched = buildRemaindersSummary(snapshot);
+      return fetched.source ? fetched : current;
+    } catch (error) {
+      return {
+        ...current,
+        diagnostics: [
+          ...(current.diagnostics || []),
+          `${NEEDS_VERIFICATION}: audit snapshot fetch failed (${String(error?.message || error)}).`,
+        ],
+      };
+    }
+  }
+
   function renderCell(doc, value, className) {
     const cell = doc.createElement("td");
     if (className) cell.className = className;
@@ -194,11 +236,11 @@
     return button;
   }
 
-  function updateRemaindersSummaryBlock() {
+  async function updateRemaindersSummaryBlock() {
     const doc = root.document;
     const existing = doc?.getElementById?.(REMAINDERS_BLOCK_ID);
     if (!existing) return false;
-    const next = renderRemaindersSummaryBlock(buildRemaindersSummary(), doc);
+    const next = renderRemaindersSummaryBlock(await buildLiveRemaindersSummary(), doc);
     existing.parentNode?.replaceChild?.(next, existing);
     return true;
   }
@@ -208,13 +250,13 @@
     const launcher = ensureRemaindersLauncherButton();
     if (!launcher || launcher.__ezohataRemaindersLauncherBound) return Boolean(launcher);
     launcher.__ezohataRemaindersLauncherBound = true;
-    launcher.addEventListener("click", () => {
+    launcher.addEventListener("click", async () => {
       const existing = doc.getElementById(REMAINDERS_BLOCK_ID);
       if (existing) {
         existing.remove?.();
         return;
       }
-      const block = renderRemaindersSummaryBlock(buildRemaindersSummary(), doc);
+      const block = renderRemaindersSummaryBlock(await buildLiveRemaindersSummary(), doc);
       const mount = getSummaryMount(doc);
       if (mount?.insertAdjacentElement) mount.insertAdjacentElement("afterend", block);
       else mount?.appendChild?.(block);
@@ -243,6 +285,7 @@
     REMAINDERS_BUTTON_ID,
     REMAINDERS_BLOCK_ID,
     buildRemaindersSummary,
+    buildLiveRemaindersSummary,
     renderRemaindersSummaryBlock,
     bindRemaindersLauncherButton,
     startRemaindersSummary,
