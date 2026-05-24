@@ -195,7 +195,10 @@
   }
 
   function buildIncomeChannelDistributionFromRealIncome(realIncome = {}) {
-    const summaryByChannel = realIncome?.serviceOrderSummaryByChannel || {};
+    const source = realIncome?.servicePaymentSummaryByChannel
+      ? "realIncome.servicePaymentSummaryByChannel"
+      : "realIncome.serviceOrderSummaryByChannel";
+    const summaryByChannel = realIncome?.servicePaymentSummaryByChannel || realIncome?.serviceOrderSummaryByChannel || {};
     const diagnostics = [];
     const channels = new Map();
     Object.entries(summaryByChannel || {}).forEach(([channel, row]) => {
@@ -204,7 +207,7 @@
         addIncomeChannelAmount(channels, row?.channel || channel, realNetUsd, "realNetUsd", diagnostics);
       }
     });
-    return finalizeIncomeChannelDistribution(Array.from(channels.values()), diagnostics, "realIncome.serviceOrderSummaryByChannel");
+    return finalizeIncomeChannelDistribution(Array.from(channels.values()), diagnostics, source);
   }
 
   function findMovementHeaderRowIndex(values) {
@@ -281,8 +284,8 @@
   function buildIncomeChannelDistribution(input = {}, options = {}) {
     const appState = getState(input, options);
     const realIncome = appState?.data?.realIncome || appState?.realIncome || null;
-    const serviceOrderSummary = realIncome?.serviceOrderSummaryByChannel || null;
-    if (serviceOrderSummary && Object.keys(serviceOrderSummary).length) {
+    const servicePaymentSummary = realIncome?.servicePaymentSummaryByChannel || realIncome?.serviceOrderSummaryByChannel || null;
+    if (servicePaymentSummary && Object.keys(servicePaymentSummary).length) {
       return buildIncomeChannelDistributionFromRealIncome(realIncome);
     }
     const period = options.period || getSelectedPeriod(options);
@@ -466,7 +469,8 @@
     if (!distribution?.channels?.length) {
       const diagnostic = doc.createElement("div");
       diagnostic.className = "balance-summary-diagnostics";
-      diagnostic.textContent = distribution?.source === "realIncome.serviceOrderSummaryByChannel"
+      diagnostic.textContent = distribution?.source === "realIncome.servicePaymentSummaryByChannel" ||
+        distribution?.source === "realIncome.serviceOrderSummaryByChannel"
         ? "Нет подтвержденных оплат заказов/услуг по каналам за период."
         : "needs verification: source not found for income channel distribution";
       section.appendChild(diagnostic);

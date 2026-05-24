@@ -377,8 +377,11 @@ async function maybeOverlayFreshSourceData(data) {
     const freshPayouts = buildFreshPayoutsTableFromRows(sourceRows, data.period);
     const realIncome = await buildRealIncomePayload(data.period, freshMovement.values);
     const enrichedMovement = applyRealIncomeToMovementTable(freshMovement, realIncome);
+    const servicePaymentSummaryByChannel = summarizeMovementServicePaymentsByChannel(enrichedMovement.values);
+    const servicePaymentSummaryTotals = getRealIncomeSummaryTotalsFromSummary(servicePaymentSummaryByChannel);
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
-    const nextRealIncome = realIncome || movementWarnings.length
+    const hasServicePaymentSummary = Object.values(servicePaymentSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
+    const nextRealIncome = realIncome || movementWarnings.length || hasServicePaymentSummary
       ? {
           ...(realIncome || {}),
           entries: realIncome?.entries || [],
@@ -388,6 +391,8 @@ async function maybeOverlayFreshSourceData(data) {
           candidateIncomeEntries: realIncome?.candidateIncomeEntries || [],
           matchedEntries: realIncome?.matchedEntries || [],
           unmatchedEntries: realIncome?.unmatchedEntries || [],
+          servicePaymentSummaryByChannel,
+          servicePaymentSummaryTotals,
           serviceOrderSummaryByChannel: realIncome?.serviceOrderSummaryByChannel || {},
           serviceOrderSummaryTotals: realIncome?.serviceOrderSummaryTotals || null,
           summaryByChannel: realIncome?.summaryByChannel || {},
@@ -1057,6 +1062,78 @@ function summarizeDirectMovementRealIncomeByChannel(movementValues) {
     totals[channel] = roundNumber(totals[channel] + netUsd);
   }
   return totals;
+}
+
+function buildEmptyRealIncomeSummaryRow(channel, plannedReceivedUsd = 0) {
+  return {
+    channel,
+    currency: inferChannelCurrency(channel),
+    plannedReceivedUsd: roundNumber(plannedReceivedUsd),
+    realGrossUsd: 0,
+    realFeeUsd: 0,
+    realNetUsd: 0,
+    differenceUsd: roundNumber(plannedReceivedUsd),
+    differencePct: 0,
+  };
+}
+
+function summarizeMovementServicePaymentsByChannel(movementValues = []) {
+  const movementStats = summarizeMovementChannels(movementValues);
+  const totalsByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
+  const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+
+  for (const row of rows) {
+    if (!isMovementServicePaymentRow(row)) continue;
+    const channel = resolveMovementRowChannel(row);
+    if (!channel || !Object.prototype.hasOwnProperty.call(totalsByChannel, channel)) continue;
+    const netReceivedUsd = parseLooseNumber(row?.[20]);
+    const clientPaidUsd = parseLooseNumber(row?.[18]);
+    const servicePaymentUsd = netReceivedUsd > 0 ? netReceivedUsd : clientPaidUsd;
+    if (!Number.isFinite(servicePaymentUsd) || servicePaymentUsd <= 0) continue;
+    totalsByChannel[channel] = roundNumber(totalsByChannel[channel] + servicePaymentUsd);
+  }
+
+  return Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
+    const realNetUsd = roundNumber(totalsByChannel[channel] || 0);
+    const plannedReceivedUsd = roundNumber(movementStats.plannedReceivedUsdByChannel?.[channel] || 0);
+    if (!realNetUsd) return [channel, buildEmptyRealIncomeSummaryRow(channel, plannedReceivedUsd)];
+    const differenceUsd = roundNumber(plannedReceivedUsd - realNetUsd);
+    return [channel, {
+      channel,
+      currency: inferChannelCurrency(channel),
+      plannedReceivedUsd,
+      realGrossUsd: realNetUsd,
+      realFeeUsd: 0,
+      realNetUsd,
+      differenceUsd,
+      differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
+    }];
+  }));
+}
+
+function isMovementServicePaymentRow(row = []) {
+  const channel = resolveMovementRowChannel(row);
+  if (!channel) return false;
+  const text = normalizeLookupText([
+    row?.[3],
+    row?.[4],
+    row?.[6],
+    row?.[14],
+    row?.[23],
+    row?.[24],
+  ].filter(Boolean).join(" "));
+  if (!text) return false;
+  if (normalizeSummaryText(row?.[23]) === "needs verification") return false;
+  if (isExcludedServicePaymentText(text)) return false;
+  if (["Binance funding", "binance save"].includes(channel)) return false;
+  if (channel === "Бинанс spot" && !/\b(service|order|payment|оплат|заказ|услуг|услуга|servicein|ezoin)\b/.test(text)) return false;
+  const netReceivedUsd = parseLooseNumber(row?.[20]);
+  const clientPaidUsd = parseLooseNumber(row?.[18]);
+  return (netReceivedUsd > 0 || clientPaidUsd > 0);
+}
+
+function isExcludedServicePaymentText(text) {
+  return /\b(refund|refunded|reversal|chargeback|exchange|transfer|deposit|internal|funding|withdraw|top[ -]?up|p2p|c2c|spot|save|savings|earn)\b|возврат|повернен|обмен|перевод|депозит|внутрен|пополн|вывод|фандинг|фандин|спот/.test(text);
 }
 
 function getRealIncomeSummaryTotalsFromSummary(summaryByChannel = {}) {

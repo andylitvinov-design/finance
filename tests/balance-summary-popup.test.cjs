@@ -367,6 +367,49 @@ test("income distribution ignores zero and planned-only channels and totals posi
   resetBalanceModule();
 });
 
+test("income distribution uses service payment summary before provider matched summary", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        servicePaymentSummaryByChannel: {
+          "трансервайз дол": { realNetUsd: 566.5 },
+          "приват-фоп": { realNetUsd: 515 },
+          "монобанк грн": { realNetUsd: 311.5139 },
+          "пейпал дол": { realNetUsd: 113.87 },
+          "пейпал евр": { realNetUsd: 45.82 },
+          "Яндекс руб": { realNetUsd: 179.7284 },
+          "Binance funding": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
+          "Бинанс spot": { realNetUsd: 0, plannedReceivedUsd: 103 },
+          "Wise refund": { realNetUsd: 0, plannedReceivedUsd: 116 },
+        },
+        serviceOrderSummaryByChannel: {
+          "трансервайз дол": { realNetUsd: 566.5 },
+        },
+        summaryByChannel: {
+          "трансервайз дол": { realNetUsd: 566.5 },
+          "Binance funding": { realNetUsd: 915.5 },
+        },
+      },
+    },
+  });
+
+  assert.equal(distribution.source, "realIncome.servicePaymentSummaryByChannel");
+  assert.equal(Number(distribution.total.toFixed(4)), 1732.4323);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), [
+    "трансервайз дол",
+    "приват-фоп",
+    "монобанк грн",
+    "Яндекс руб",
+    "пейпал дол",
+    "пейпал евр",
+  ]);
+  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "Бинанс spot"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "Wise refund"), false);
+  resetBalanceModule();
+});
+
 test("income distribution does not use planned received fallback from realIncome summary", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
