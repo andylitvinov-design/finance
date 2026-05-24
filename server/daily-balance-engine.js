@@ -29,6 +29,7 @@ const PROVIDER_STATUS_PRIORITY = [
 
 const INTRADAY_NOT_EOD = "intraday_not_eod";
 const INTRADAY_DIAGNOSTIC = "Intraday/not-EOD balance snapshot ignored for EOD reconciliation";
+const ANCHOR_RECONCILIATION_TOLERANCE = 0.5;
 
 export function buildDailyCurrencyBalances(operations = [], balanceRows = [], options = {}) {
   if (options?.period) {
@@ -66,7 +67,11 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
       const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`) || Boolean(intradaySnapshot);
       const closing = opening === null || onlyMissingAmountNet ? null : round(opening + movement.net_change);
       const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
-      const closingUsd = snapshotUsdAmount(providerSnapshot);
+      const providerClosingUsd = snapshotUsdAmount(providerSnapshot);
+      const computedClosingUsd = openingUsd !== null && movement.has_usd_change
+        ? round(openingUsd + movement.net_change_usd)
+        : null;
+      const closingUsd = providerClosingUsd;
       const status = onlyMissingAmountNet ? STATUS.MISSING_AMOUNT_NET : resolveStatus({
         needsVerification,
         opening,
@@ -74,7 +79,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         difference,
       });
 
-      rows.push({
+      const row = {
         date: movement.date,
         channel: movement.channel,
         currency: movement.currency,
@@ -97,12 +102,16 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
           balanceIndex,
         }),
         ...(missingNetCount ? { missing_amount_net_rows: missingNetCount } : {}),
-      });
+      };
+      Object.defineProperty(row, "_computed_closing_usd", { value: computedClosingUsd, enumerable: false });
+      Object.defineProperty(row, "_has_usd_change", { value: movement.has_usd_change, enumerable: false });
+      Object.defineProperty(row, "_net_change_usd", { value: movement.net_change_usd, enumerable: false });
+      rows.push(row);
 
       carriedOpening = shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot })
         ? closing
         : providerReported ?? closing;
-      carriedOpeningUsd = closingUsd;
+      carriedOpeningUsd = closingUsd ?? computedClosingUsd;
       lastMovementDate = movement.date;
     }
   }
@@ -459,14 +468,14 @@ function applyConfirmedAnchorIntervals(rows, balanceIndex) {
       const lastComputed = intervalRows.at(-1)?.closing_balance;
       if (lastComputed === null || lastComputed === undefined) continue;
       const closingDifference = round(closingAnchor.amount - lastComputed);
-      if (Math.abs(closingDifference) > 0.0001) continue;
+      if (Math.abs(closingDifference) > ANCHOR_RECONCILIATION_TOLERANCE) continue;
 
       let runningUsd = snapshotUsdAmount(openingAnchor);
       for (const row of intervalRows) {
-        const rowOpeningUsd = runningUsd;
-        const rowClosingUsd = rowOpeningUsd !== null && ["USD", "USDT", "USDC"].includes(row.currency)
-          ? round(rowOpeningUsd + row.net_change)
-          : null;
+        const rowOpeningUsd = runningUsd ?? snapshotUsdAmount(openingAnchor) ?? row.opening_amount_usd ?? null;
+        const rowClosingUsd = rowOpeningUsd !== null && row._has_usd_change
+          ? round(rowOpeningUsd + row._net_change_usd)
+          : row._computed_closing_usd ?? null;
 
         if (row.date < closingAnchor.date && row.status === STATUS.MISSING_PROVIDER) {
           row.status = STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS;
@@ -485,8 +494,9 @@ function applyConfirmedAnchorIntervals(rows, balanceIndex) {
           }
         }
 
-        runningUsd = row.date === closingAnchor.date
-          ? snapshotUsdAmount(closingAnchor)
+        const closingAnchorUsd = snapshotUsdAmount(closingAnchor);
+        runningUsd = closingAnchorUsd !== null && row.date === closingAnchor.date
+          ? closingAnchorUsd
           : rowClosingUsd;
       }
     }
