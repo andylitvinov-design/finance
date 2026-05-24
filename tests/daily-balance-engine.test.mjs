@@ -422,6 +422,95 @@ test("missing same-day provider balance reports later owner-confirmed fact conte
   assert.equal(result.rows[0].later_provider_fact_difference, 0.14);
 });
 
+test("movement dates between confirmed opening and closing anchors are computed from ledger amount_net", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({ date: "2026-05-02", ledgerV2: { date: "2026-05-02", amount_net: "300", balance_amount: 300 } }),
+      operation({ date: "2026-05-10", ledgerV2: { date: "2026-05-10", amount_net: "20", balance_amount: 20 } }),
+      operation({ date: "2026-05-20", ledgerV2: { date: "2026-05-20", amount_net: "-10", balance_amount: -10 } }),
+    ],
+    [
+      { date: "2026-05-01", channel: "wise usd", amount: "1000", currency: "USD", sourceSheet: "Остатки" },
+      { date: "2026-05-20", channel: "wise usd", amount: "1310", currency: "USD", sourceSheet: "Остатки" },
+    ]
+  );
+
+  const may2 = result.rows.find((row) => row.date === "2026-05-02");
+  const may10 = result.rows.find((row) => row.date === "2026-05-10");
+  const may20 = result.rows.find((row) => row.date === "2026-05-20");
+
+  assert.equal(may2.status, "computed_between_confirmed_anchors");
+  assert.equal(may2.source, "computed_from_opening_and_ledger");
+  assert.equal(may2.factual_provider_balance, false);
+  assert.equal(may2.computed_balance, true);
+  assert.equal(may2.provider_reported_balance, null);
+  assert.equal(may2.closing_balance, 1300);
+  assert.equal(may2.next_confirmed_balance_date, "2026-05-20");
+
+  assert.equal(may10.status, "computed_between_confirmed_anchors");
+  assert.equal(may10.closing_balance, 1320);
+  assert.equal(may10.provider_reported_balance, null);
+
+  assert.equal(may20.status, "ok");
+  assert.equal(may20.provider_reported_balance, 1310);
+  assert.equal(may20.difference, 0);
+});
+
+test("closing anchor mismatch keeps intermediate movement rows actionable", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({ date: "2026-05-02", ledgerV2: { date: "2026-05-02", amount_net: "300", balance_amount: 300 } }),
+      operation({ date: "2026-05-20", ledgerV2: { date: "2026-05-20", amount_net: "20", balance_amount: 20 } }),
+    ],
+    [
+      { date: "2026-05-01", channel: "wise usd", amount: "1000", currency: "USD" },
+      { date: "2026-05-20", channel: "wise usd", amount: "1400", currency: "USD" },
+    ]
+  );
+
+  const may2 = result.rows.find((row) => row.date === "2026-05-02");
+  const may20 = result.rows.find((row) => row.date === "2026-05-20");
+  assert.equal(may2.status, "missing_provider_balance");
+  assert.equal(may2.missing_provider_balance_context, "later_fact_exists");
+  assert.equal(may20.status, "mismatch");
+  assert.equal(may20.difference, 80);
+});
+
+test("missing amount_net blocks anchor interval computation", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({ date: "2026-05-02", ledgerV2: { date: "2026-05-02", amount_net: "300", balance_amount: 300 } }),
+      operation({ date: "2026-05-10", ledgerV2: { date: "2026-05-10", amount_net: "", balance_amount: 20 } }),
+      operation({ date: "2026-05-20", ledgerV2: { date: "2026-05-20", amount_net: "-10", balance_amount: -10 } }),
+    ],
+    [
+      { date: "2026-05-01", channel: "wise usd", amount: "1000", currency: "USD" },
+      { date: "2026-05-20", channel: "wise usd", amount: "1290", currency: "USD" },
+    ]
+  );
+
+  const may2 = result.rows.find((row) => row.date === "2026-05-02");
+  const may10 = result.rows.find((row) => row.date === "2026-05-10");
+  assert.equal(may2.status, "missing_provider_balance");
+  assert.equal(may10.status, "missing_amount_net");
+  assert.equal(may10.closing_balance, null);
+});
+
+test("movement without a later confirmed closing anchor remains missing provider balance", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({ date: "2026-05-02", ledgerV2: { date: "2026-05-02", amount_net: "300", balance_amount: 300 } }),
+      operation({ date: "2026-05-10", ledgerV2: { date: "2026-05-10", amount_net: "20", balance_amount: 20 } }),
+    ],
+    [{ date: "2026-05-01", channel: "wise usd", amount: "1000", currency: "USD" }]
+  );
+
+  assert.deepEqual(
+    result.rows.map((row) => row.status),
+    ["missing_provider_balance", "missing_provider_balance"]
+  );
+});
+
 test("previous snapshot plus intervening movement produces next opening balance", () => {
   const result = buildDailyCurrencyBalances(
     [
@@ -478,9 +567,11 @@ test("summary includes status counts and top actionable rows", () => {
 
   assert.deepEqual(result.summary.status_counts, {
     ok: 0,
+    computed_between_confirmed_anchors: 0,
     mismatch: 1,
     missing_opening_balance: 0,
     missing_provider_balance: 1,
+    missing_amount_net: 0,
     needs_verification: 1,
   });
   assert.deepEqual(

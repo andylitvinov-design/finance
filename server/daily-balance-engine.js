@@ -4,6 +4,7 @@ import { isIntradayBalanceComment } from "./manual-google-sheets.js";
 
 const STATUS = {
   OK: "ok",
+  COMPUTED_BETWEEN_CONFIRMED_ANCHORS: "computed_between_confirmed_anchors",
   COMPUTED_FROM_PREVIOUS_DAY: "computed_from_previous_day",
   MANUAL_FACT: "manual_fact",
   PROVIDER_AUTO: "provider_auto",
@@ -40,7 +41,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
     });
   }
 
-  const movements = buildMovements(operations);
+  const movements = buildMovements(operations, { includeMissingAmountNetRows: true });
   const balanceIndex = buildBalanceIndex(balanceRows);
   const rows = [];
 
@@ -60,11 +61,13 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
       const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
       const providerReported = providerSnapshot?.amount ?? null;
       const intradaySnapshot = balanceIndex.intradayByDateKey.get(`${movement.date}|${movement.key}`) || null;
+      const missingNetCount = movement.missing_amount_net_rows || 0;
+      const onlyMissingAmountNet = missingNetCount > 0 && !movement.valid_amount_net_rows;
       const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`) || Boolean(intradaySnapshot);
-      const closing = opening === null ? null : round(opening + movement.net_change);
+      const closing = opening === null || onlyMissingAmountNet ? null : round(opening + movement.net_change);
       const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
       const closingUsd = snapshotUsdAmount(providerSnapshot);
-      const status = resolveStatus({
+      const status = onlyMissingAmountNet ? STATUS.MISSING_AMOUNT_NET : resolveStatus({
         needsVerification,
         opening,
         providerReported,
@@ -93,6 +96,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
           closing,
           balanceIndex,
         }),
+        ...(missingNetCount ? { missing_amount_net_rows: missingNetCount } : {}),
       });
 
       carriedOpening = shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot })
@@ -103,13 +107,16 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
     }
   }
 
+  applyConfirmedAnchorIntervals(rows, balanceIndex);
   rows.sort(compareMovementRows);
 
   const status_counts = buildStatusCounts(rows, [
     STATUS.OK,
+    STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS,
     STATUS.MISMATCH,
     STATUS.MISSING_OPENING,
     STATUS.MISSING_PROVIDER,
+    STATUS.MISSING_AMOUNT_NET,
     STATUS.NEEDS_VERIFICATION,
   ]);
 
@@ -269,6 +276,9 @@ function buildMovements(operations, { includeMissingAmountNetRows = false } = {}
           inflow: 0,
           outflow: 0,
           net_change: 0,
+          net_change_usd: 0,
+          has_usd_change: false,
+          valid_amount_net_rows: 0,
           missing_amount_net_rows: 0,
         };
         current.missing_amount_net_rows += 1;
@@ -289,12 +299,24 @@ function buildMovements(operations, { includeMissingAmountNetRows = false } = {}
       inflow: 0,
       outflow: 0,
       net_change: 0,
+      net_change_usd: 0,
+      has_usd_change: false,
+      valid_amount_net_rows: 0,
       missing_amount_net_rows: 0,
     };
 
     if (amount >= 0) current.inflow += amount;
     else current.outflow += Math.abs(amount);
     current.net_change += amount;
+    current.valid_amount_net_rows += 1;
+    const amountUsd = parseNumber(ledger.amount_usd ?? operation?.amountUsd ?? operation?.amount_usd);
+    if (amountUsd !== null) {
+      current.net_change_usd += amountUsd;
+      current.has_usd_change = true;
+    } else if (["USD", "USDT", "USDC"].includes(currency)) {
+      current.net_change_usd += amount;
+      current.has_usd_change = true;
+    }
     grouped.set(dateKey, current);
   }
 
@@ -409,6 +431,66 @@ function buildMissingProviderContext({ status, movement, closing, balanceIndex }
 function findNearestLaterSnapshot(movement, balanceIndex) {
   const snapshots = balanceIndex.byKey.get(movement.key) || [];
   return snapshots.find((row) => row.date > movement.date && row.amount !== null) || null;
+}
+
+function applyConfirmedAnchorIntervals(rows, balanceIndex) {
+  const rowsByKey = new Map();
+  for (const row of rows || []) {
+    const key = makeKey(row.channel, row.currency);
+    const list = rowsByKey.get(key) || [];
+    list.push(row);
+    rowsByKey.set(key, list);
+  }
+
+  for (const [key, movementRows] of rowsByKey.entries()) {
+    const snapshots = (balanceIndex.byKey.get(key) || [])
+      .filter((row) => row.amount !== null && row.amount !== undefined)
+      .sort((left, right) => left.date.localeCompare(right.date));
+    if (snapshots.length < 2) continue;
+    movementRows.sort(compareMovementRows);
+
+    for (let index = 0; index < snapshots.length - 1; index += 1) {
+      const openingAnchor = snapshots[index];
+      const closingAnchor = snapshots[index + 1];
+      const intervalRows = movementRows.filter((row) => row.date > openingAnchor.date && row.date <= closingAnchor.date);
+      if (!intervalRows.length) continue;
+      if (intervalRows.some((row) => row.status === STATUS.MISSING_AMOUNT_NET || Number(row.missing_amount_net_rows || 0) > 0)) continue;
+
+      const lastComputed = intervalRows.at(-1)?.closing_balance;
+      if (lastComputed === null || lastComputed === undefined) continue;
+      const closingDifference = round(closingAnchor.amount - lastComputed);
+      if (Math.abs(closingDifference) > 0.0001) continue;
+
+      let runningUsd = snapshotUsdAmount(openingAnchor);
+      for (const row of intervalRows) {
+        const rowOpeningUsd = runningUsd;
+        const rowClosingUsd = rowOpeningUsd !== null && ["USD", "USDT", "USDC"].includes(row.currency)
+          ? round(rowOpeningUsd + row.net_change)
+          : null;
+
+        if (row.date < closingAnchor.date && row.status === STATUS.MISSING_PROVIDER) {
+          row.status = STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS;
+          row.source = "computed_from_opening_and_ledger";
+          row.status_detail = STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS;
+          row.factual_provider_balance = false;
+          row.computed_balance = true;
+          row.opening_anchor_date = openingAnchor.date;
+          row.next_confirmed_balance_date = closingAnchor.date;
+          row.next_confirmed_balance_amount = round(closingAnchor.amount);
+          row.interval_closing_difference = closingDifference;
+          if (rowOpeningUsd !== null) row.opening_amount_usd = rowOpeningUsd;
+          if (rowClosingUsd !== null) {
+            row.closing_amount_usd = rowClosingUsd;
+            row.delta_amount_usd = rowOpeningUsd !== null ? round(rowClosingUsd - rowOpeningUsd) : null;
+          }
+        }
+
+        runningUsd = row.date === closingAnchor.date
+          ? snapshotUsdAmount(closingAnchor)
+          : rowClosingUsd;
+      }
+    }
+  }
 }
 
 function buildCoverageBalanceIndex(balanceRows) {
@@ -661,6 +743,7 @@ function buildActionableRows(rows) {
   return (rows || [])
     .filter((row) => row.status && ![
       STATUS.OK,
+      STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS,
       STATUS.COMPUTED_FROM_PREVIOUS_DAY,
       STATUS.MANUAL_FACT,
       STATUS.PROVIDER_AUTO,
@@ -764,6 +847,9 @@ function emptyMovementRow({ date, pair, key }) {
     inflow: 0,
     outflow: 0,
     net_change: 0,
+    net_change_usd: 0,
+    has_usd_change: false,
+    valid_amount_net_rows: 0,
     missing_amount_net_rows: 0,
   };
 }
