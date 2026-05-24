@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const fixJs = fs.readFileSync(path.join(root, "grouped-order-balance-fix.js"), "utf8");
+const liveFixesJs = fs.readFileSync(path.join(root, "live-finance-fixes.js"), "utf8");
 
 class TestElement {
   constructor(tagName, text = "") {
@@ -92,6 +93,39 @@ function loadFix(document, options = {}) {
   return { fix: window.EzohataGroupedOrderBalanceFix, observers, window };
 }
 
+function loadLiveAndGroupedFixes(document, options = {}) {
+  const observers = [];
+  const window = {
+    document,
+    MutationObserver: function MutationObserver(callback) {
+      const observer = {
+        callback,
+        observeTarget: null,
+        observeOptions: null,
+        observe(target, observeOptions) {
+          this.observeTarget = target;
+          this.observeOptions = observeOptions;
+        },
+      };
+      observers.push(observer);
+      return observer;
+    },
+  };
+  if (typeof options.requestAnimationFrame === "function") {
+    window.requestAnimationFrame = options.requestAnimationFrame;
+  }
+  const context = { window, globalThis: window, MutationObserver: window.MutationObserver };
+  vm.createContext(context);
+  vm.runInContext(liveFixesJs, context);
+  vm.runInContext(fixJs, context);
+  return {
+    liveFixes: window.EzohataLiveFinanceFixes,
+    groupedFix: window.EzohataGroupedOrderBalanceFix,
+    observers,
+    window,
+  };
+}
+
 function numericText(value) {
   return Number(String(value || "").replace(",", "."));
 }
@@ -129,6 +163,47 @@ test("movement rows 18170-18172 preserve positive and negative balances in signe
   assert.equal(totalBalance.textContent, "-206,0000");
   assert.equal(numericText(row18170Balance.textContent) + numericText(row18172Balance.textContent), -206);
   assert.equal(row18171Balance.textContent, "0,0000");
+});
+
+test("production live fixes do not override grouped movement net and plan selection", () => {
+  const row18170Balance = cell("td", "0,0000");
+  const row18171Balance = cell("td", "0,0000");
+  const row18172Balance = cell("td", "0,0000");
+  const totalBalance = cell("td", "213,6922");
+  const metricOrders = cell("div", "213,6922");
+  const document = createDocument(
+    [
+      table([
+        row([
+          cell("th", "NUMBER"),
+          cell("th", "DATE"),
+          cell("th", "CLIENT"),
+          cell("th", "ACCRUED"),
+          cell("th", "ACCRUED +3%"),
+          cell("th", "ПОЛУЧЕНО В ДОЛЛАРАХ"),
+          cell("th", "ОПЛАЧЕНО КЛИЕНТОМ USD"),
+          cell("th", "ДОШЛО ДО НАС USD"),
+          cell("th", "BALANCE"),
+        ]),
+        row([cell("td", "18170"), cell("td", "20.05.2026"), cell("td", "Вилл"), cell("td", "25"), cell("td", "25,75"), cell("td", "26,50"), cell("td", "26,50"), cell("td", "26,50"), row18170Balance]),
+        row([cell("td", "18171"), cell("td", "21.05.2026"), cell("td", "Вилл"), cell("td", "0"), cell("td", "0"), cell("td", ""), cell("td", ""), cell("td", ""), row18171Balance]),
+        row([cell("td", "18172"), cell("td", "22.05.2026"), cell("td", "Вилл"), cell("td", "225"), cell("td", "231,75"), cell("td", "438,50"), cell("td", "438,50"), cell("td", "25,00"), row18172Balance]),
+        row([cell("td", "Итого"), cell("td", ""), cell("td", ""), cell("td", "250"), cell("td", "257,50"), cell("td", "465,00"), cell("td", "465,00"), cell("td", "51,50"), totalBalance]),
+      ]),
+    ],
+    { elementsById: { metricOrders } }
+  );
+
+  const { liveFixes, groupedFix } = loadLiveAndGroupedFixes(document);
+  assert.equal(liveFixes.normalizeMovementBalanceVarianceTables(document), 0);
+  assert.ok(groupedFix.normalizeGroupedOrderBalanceTables(document) > 0);
+  assert.equal(liveFixes.syncTopMetricMovementBalance(document), true);
+
+  assert.equal(row18170Balance.textContent, "0,7500");
+  assert.equal(row18171Balance.textContent, "0,0000");
+  assert.equal(row18172Balance.textContent, "-206,7500");
+  assert.equal(totalBalance.textContent, "-206,0000");
+  assert.equal(metricOrders.textContent, "-206,0000");
 });
 
 test("actual USD selection prefers net received over misleading received total", () => {
