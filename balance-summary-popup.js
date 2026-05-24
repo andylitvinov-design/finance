@@ -184,10 +184,23 @@
     channels.set(label, existing);
   }
 
-  function buildIncomeChannelDistributionFromRealIncome(summaryByChannel = {}) {
+  function isFullyUnmatchedProviderInflow(row, unmatchedRow) {
+    const realNetUsd = finiteOrNull(row?.realNetUsd);
+    const unmatchedNetUsd = finiteOrNull(unmatchedRow?.realNetUsd);
+    const plannedReceivedUsd = finiteOrNull(row?.plannedReceivedUsd) || 0;
+    const unmatchedPlannedUsd = finiteOrNull(unmatchedRow?.plannedReceivedUsd) || 0;
+    if (!realNetUsd || realNetUsd <= 0 || !unmatchedNetUsd || unmatchedNetUsd <= 0) return false;
+    if (plannedReceivedUsd > 0 || unmatchedPlannedUsd > 0) return false;
+    return Math.abs(realNetUsd - unmatchedNetUsd) < 0.0001;
+  }
+
+  function buildIncomeChannelDistributionFromRealIncome(realIncome = {}) {
+    const summaryByChannel = realIncome?.summaryByChannel || {};
+    const unmatchedSummaryByChannel = realIncome?.unmatchedSummaryByChannel || {};
     const diagnostics = [];
     const channels = new Map();
     Object.entries(summaryByChannel || {}).forEach(([channel, row]) => {
+      if (isFullyUnmatchedProviderInflow(row, unmatchedSummaryByChannel[channel])) return;
       const realNetUsd = finiteOrNull(row?.realNetUsd);
       if (realNetUsd && realNetUsd > 0) {
         addIncomeChannelAmount(channels, row?.channel || channel, realNetUsd, "realNetUsd", diagnostics);
@@ -269,9 +282,10 @@
 
   function buildIncomeChannelDistribution(input = {}, options = {}) {
     const appState = getState(input, options);
-    const realIncomeSummary = appState?.data?.realIncome?.summaryByChannel || appState?.realIncome?.summaryByChannel || null;
+    const realIncome = appState?.data?.realIncome || appState?.realIncome || null;
+    const realIncomeSummary = realIncome?.summaryByChannel || null;
     if (realIncomeSummary && Object.keys(realIncomeSummary).length) {
-      return buildIncomeChannelDistributionFromRealIncome(realIncomeSummary);
+      return buildIncomeChannelDistributionFromRealIncome(realIncome);
     }
     const period = options.period || getSelectedPeriod(options);
     const movementDistribution = buildIncomeChannelDistributionFromMovement(appState?.data?.tabs?.movement?.values || [], period);
