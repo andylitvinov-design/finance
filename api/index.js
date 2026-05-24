@@ -1084,7 +1084,7 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
 
   for (const row of rows) {
     if (!isMovementServicePaymentRow(row)) continue;
-    const channel = resolveMovementRowChannel(row);
+    const channel = resolveMovementServicePaymentChannel(row);
     if (!channel || !Object.prototype.hasOwnProperty.call(totalsByChannel, channel)) continue;
     const netReceivedUsd = parseLooseNumber(row?.[20]);
     const clientPaidUsd = parseLooseNumber(row?.[18]);
@@ -1112,7 +1112,7 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
 }
 
 function isMovementServicePaymentRow(row = []) {
-  const channel = resolveMovementRowChannel(row);
+  const channel = resolveMovementServicePaymentChannel(row);
   if (!channel) return false;
   const text = normalizeLookupText([
     row?.[3],
@@ -1123,13 +1123,25 @@ function isMovementServicePaymentRow(row = []) {
     row?.[24],
   ].filter(Boolean).join(" "));
   if (!text) return false;
-  if (normalizeSummaryText(row?.[23]) === "needs verification") return false;
   if (isExcludedServicePaymentText(text)) return false;
   if (["Binance funding", "binance save"].includes(channel)) return false;
   if (channel === "Бинанс spot" && !/\b(service|order|payment|оплат|заказ|услуг|услуга|servicein|ezoin)\b/.test(text)) return false;
   const netReceivedUsd = parseLooseNumber(row?.[20]);
   const clientPaidUsd = parseLooseNumber(row?.[18]);
   return (netReceivedUsd > 0 || clientPaidUsd > 0);
+}
+
+function resolveMovementServicePaymentChannel(row = []) {
+  const resolved = resolveMovementRowChannel(row);
+  if (resolved) return resolved;
+
+  const paymentMethod = normalizeLookupText(row?.[14]);
+  const client = String(row?.[2] || "").trim();
+  const clientDefault = inferFallbackPaymentChannelFromClient(client);
+  if (clientDefault && /(сайт|site|card|карта|дол|usd|плат|pay)/.test(paymentMethod)) return clientDefault;
+  if (/(сайт|site).*(rub|руб|рубл)|(?:rub|руб|рубл).*(сайт|site)|^юмани$|^юmoney$|^yoomoney$/.test(paymentMethod)) return "Яндекс руб";
+  if (/(карта андрей|андрей карта)/.test(paymentMethod) && /лозин|lozin/i.test(normalizeLookupText(client))) return "монобанк грн";
+  return "";
 }
 
 function isExcludedServicePaymentText(text) {
