@@ -117,6 +117,32 @@ test("buildRemaindersSummary calculates opening, closing, and delta totals", () 
   resetRemaindersModule();
 });
 
+test("buildRemaindersSummary prefers audit snapshot remainders rows", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    data: {
+      balances: {
+        remainders_rows: [
+          { channel: "Wise EUR", opening_amount_usd: 540, closing_amount_usd: 648, delta_amount_usd: 108 },
+        ],
+      },
+      balance_coverage: {
+        rows: [
+          { channel: "Old fallback", opening_amount_usd: 1, closing_amount_usd: 2 },
+        ],
+      },
+    },
+  });
+
+  assert.equal(summary.source, "data.balances.remainders_rows");
+  assert.equal(summary.rows.length, 1);
+  assert.equal(summary.rows[0].channel, "Wise EUR");
+  assert.equal(summary.rows[0].openingUsd, 540);
+  assert.equal(summary.rows[0].closingUsd, 648);
+  assert.equal(summary.rows[0].deltaUsd, 108);
+  resetRemaindersModule();
+});
+
 test("missing values render needs verification instead of invented balances", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({

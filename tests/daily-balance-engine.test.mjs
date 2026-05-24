@@ -93,6 +93,9 @@ test("opening plus income minus expense calculates closing balance", () => {
     closing_balance: 1250,
     provider_reported_balance: 1250,
     difference: 0,
+    opening_amount_usd: 1000,
+    closing_amount_usd: 1250,
+    delta_amount_usd: 250,
     status: "ok",
   });
 });

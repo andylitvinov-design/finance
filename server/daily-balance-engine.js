@@ -46,6 +46,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
 
   for (const movementRows of movements.byKey.values()) {
     let carriedOpening = null;
+    let carriedOpeningUsd = null;
     let lastMovementDate = null;
     for (const movement of movementRows) {
       const openingSnapshot = findOpeningSnapshot(movement, balanceIndex);
@@ -53,11 +54,16 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
       const opening = carriedOpening === null || hasNewOpeningAnchor
         ? (openingSnapshot?.amount ?? null)
         : carriedOpening;
-      const providerReported = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`)?.amount ?? null;
+      const openingUsd = carriedOpening === null || hasNewOpeningAnchor
+        ? snapshotUsdAmount(openingSnapshot)
+        : carriedOpeningUsd;
+      const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
+      const providerReported = providerSnapshot?.amount ?? null;
       const intradaySnapshot = balanceIndex.intradayByDateKey.get(`${movement.date}|${movement.key}`) || null;
       const needsVerification = balanceIndex.incompleteDateKeys.has(`${movement.date}|${movement.channel}`) || Boolean(intradaySnapshot);
       const closing = opening === null ? null : round(opening + movement.net_change);
       const difference = providerReported !== null && closing !== null ? round(providerReported - closing) : null;
+      const closingUsd = snapshotUsdAmount(providerSnapshot);
       const status = resolveStatus({
         needsVerification,
         opening,
@@ -76,6 +82,9 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         closing_balance: closing,
         provider_reported_balance: providerReported === null ? null : round(providerReported),
         difference,
+        opening_amount_usd: openingUsd,
+        closing_amount_usd: closingUsd,
+        delta_amount_usd: openingUsd !== null && closingUsd !== null ? round(closingUsd - openingUsd) : null,
         status,
         ...buildIntradayDiagnostic(intradaySnapshot),
         ...buildMissingProviderContext({
@@ -86,10 +95,10 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
         }),
       });
 
-      const providerSnapshot = balanceIndex.byDateKey.get(`${movement.date}|${movement.key}`) || null;
       carriedOpening = shouldCarryComputedClosing({ status, closing, providerReported, providerSnapshot })
         ? closing
         : providerReported ?? closing;
+      carriedOpeningUsd = closingUsd;
       lastMovementDate = movement.date;
     }
   }
@@ -142,6 +151,7 @@ export function buildDailyBalanceCoverage({
     const key = makeKey(pair.channel, pair.currency);
     const openingSnapshot = findCoverageOpeningSnapshot(balanceIndex, key, from);
     let opening = openingSnapshot?.amount ?? null;
+    let openingUsd = snapshotUsdAmount(openingSnapshot);
     let blockedByMissingNet = false;
 
     for (const date of dates) {
@@ -155,6 +165,7 @@ export function buildDailyBalanceCoverage({
       const computedClosing = opening === null || blockedByMissingNet
         ? null
         : round(opening + movement.net_change);
+      const closingUsd = snapshotUsdAmount(manualSnapshot) ?? snapshotUsdAmount(autoSnapshot);
       const resolved = resolveCoverageFinal({
         opening,
         computedClosing,
@@ -190,10 +201,14 @@ export function buildDailyBalanceCoverage({
         net_change: round(movement.net_change),
         closing_balance: computedClosing,
         provider_reported_balance: resolved.provider_reported_balance,
+        opening_amount_usd: openingUsd,
+        closing_amount_usd: closingUsd,
+        delta_amount_usd: openingUsd !== null && closingUsd !== null ? round(closingUsd - openingUsd) : null,
       });
 
       if (computedClosing !== null && !blockedByMissingNet) {
         opening = computedClosing;
+        openingUsd = closingUsd;
       }
     }
   }
@@ -341,6 +356,7 @@ function buildBalanceIndex(balanceRows) {
       currency,
       key,
       amount,
+      amount_usd: resolveSnapshotUsdAmount(row, amount, currency),
       source: String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim(),
       sourceSheet: String(row?.sourceSheet || row?.source_sheet || "").trim(),
       sourceRow: row?.sourceRow || row?.source_row || null,
@@ -416,6 +432,7 @@ function buildCoverageBalanceIndex(balanceRows) {
       currency,
       key,
       amount,
+      amount_usd: resolveSnapshotUsdAmount(row, amount, currency),
       status,
       source: String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim(),
       sourceSheet: String(row?.sourceSheet || row?.source_sheet || "").trim(),
@@ -480,6 +497,7 @@ function findOpeningSnapshot(movement, balanceIndex) {
   return {
     ...openingSnapshot,
     amount: round(openingSnapshot.amount),
+    amount_usd: snapshotUsdAmount(openingSnapshot),
   };
 }
 
@@ -756,6 +774,7 @@ function buildSnapshotDiagnostic(row) {
     channel: row.channel,
     currency: row.currency,
     amount: round(row.amount),
+    amount_usd: snapshotUsdAmount(row),
     source: row.sourceType,
     status: row.status || null,
     provider: row.provider || null,
@@ -769,6 +788,31 @@ function buildSnapshotDiagnostic(row) {
 
 function snapshotAmount(row) {
   return row?.amount === null || row?.amount === undefined ? null : round(row.amount);
+}
+
+function snapshotUsdAmount(row) {
+  return row?.amount_usd === null || row?.amount_usd === undefined ? null : round(row.amount_usd);
+}
+
+function resolveSnapshotUsdAmount(row = {}, amount = null, currency = "") {
+  const explicit = parseNumber(
+    row?.amount_usd ??
+      row?.amountUsd ??
+      row?.usdAmount ??
+      row?.balance_usd ??
+      row?.balanceUsd
+  );
+  if (explicit !== null) return round(explicit);
+
+  const numericAmount = amount === null || amount === undefined ? parseNumber(row?.balanceAmount ?? row?.amount) : amount;
+  if (numericAmount === null) return null;
+
+  const rate = parseNumber(row?.rate ?? row?.usdRate ?? row?.usd_rate);
+  if (rate !== null && rate > 0) return round(numericAmount * rate);
+
+  const normalizedCurrency = String(currency || row?.currency || "").trim().toUpperCase();
+  if (["USD", "USDT", "USDC"].includes(normalizedCurrency)) return round(numericAmount);
+  return null;
 }
 
 function getCoverageSourceType(row = {}) {

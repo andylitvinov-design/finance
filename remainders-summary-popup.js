@@ -56,6 +56,10 @@
   function resolveRemaindersRows(input, options = {}) {
     const data = getData(input, options);
     const candidates = [
+      ["data.balances.remainders_rows", data?.balances?.remainders_rows],
+      ["balances.remainders_rows", input?.balances?.remainders_rows],
+      ["data.balances.remaindersRows", data?.balances?.remaindersRows],
+      ["balances.remaindersRows", input?.balances?.remaindersRows],
       ["data.balance_coverage.rows", data?.balance_coverage?.rows],
       ["data.balanceCoverage.rows", data?.balanceCoverage?.rows],
       ["balance_coverage.rows", input?.balance_coverage?.rows],
