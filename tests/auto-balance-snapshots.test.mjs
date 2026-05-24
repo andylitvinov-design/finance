@@ -314,6 +314,41 @@ test("same date provider channel currency replaces existing auto row without del
   ]);
 });
 
+test("USDT and USDC auto balance rows use native amount as USD amount", async () => {
+  const result = await runAutoBalanceSnapshots({
+    query: { date: "2026-05-24", currentDate: "2026-05-24", dryRun: "1" },
+    env: {
+      BINANCE_API_KEY: "key",
+      BINANCE_API_SECRET: "secret",
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.includes("/api/v3/account")) {
+        return jsonResponse({
+          balances: [
+            { asset: "USDT", free: "100", locked: "0" },
+            { asset: "USDC", free: "7.5", locked: "0" },
+          ],
+        });
+      }
+      if (value.includes("/sapi/v1/simple-earn/flexible/position") || value.includes("/sapi/v1/simple-earn/locked/position")) {
+        return jsonResponse({ rows: [] });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+
+  const spotUsdt = result.rows_preview.find((row) => row.provider === "binance" && row.channel === "Бинанс spot" && row.currency === "USDT");
+  assert.equal(spotUsdt.amount, "100");
+  assert.equal(spotUsdt.rate, "1");
+  assert.equal(spotUsdt.usdAmount, "100");
+
+  const spotUsdc = result.rows_preview.find((row) => row.provider === "binance" && row.channel === "Бинанс spot" && row.currency === "USDC");
+  assert.equal(spotUsdc.amount, "7,5");
+  assert.equal(spotUsdc.rate, "1");
+  assert.equal(spotUsdc.usdAmount, "7,5");
+});
+
 test("Wise and Monobank balances produce complete expected provider rows, including zero/missing rows", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
@@ -450,6 +485,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
   assert.ok(calls.some((call) => call.url.includes("/v1/reporting/balances")));
   assert.deepEqual(rows.filter((row) => row.provider === "binance").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Бинанс spot|USDT|103|ok",
+    "Бинанс spot|USDC||missing_provider_balance",
     "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT|10|ok",
   ]);
@@ -545,6 +581,7 @@ test("Binance Earn permission failure preserves spot balance and writes save per
   assert.equal(binance.provider_current_balance_status, "available");
   assert.deepEqual(binance.rows.map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Бинанс spot|USDT|10|ok",
+    "Бинанс spot|USDC||missing_provider_balance",
     "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT||needs_provider_permission",
   ]);

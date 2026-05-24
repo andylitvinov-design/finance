@@ -466,6 +466,7 @@ function buildRemaindersRows(accounts = []) {
         period_end_date: last.date || "",
         row_count: rows.length,
         needs_verification: !complete,
+        ...buildRemaindersVerificationContext({ first, last, complete }),
         ...(computed ? {
           computed_balance: true,
           factual_provider_balance: false,
@@ -476,6 +477,16 @@ function buildRemaindersRows(accounts = []) {
       if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
       return left.currency.localeCompare(right.currency);
     });
+}
+
+function buildRemaindersVerificationContext({ first = {}, last = {}, complete = false } = {}) {
+  if (complete) return {};
+  const currency = String(first.currency || last.currency || "").trim().toUpperCase();
+  if (currency !== "RUB") return {};
+  return {
+    needs_verification_reason: "missing_usd_rate_or_amount_usd",
+    fix_action: "Add a trusted rate or amount_usd for the factual RUB anchor date; native RUB alone is not enough for USD remainders.",
+  };
 }
 
 function nullableRound(value) {
