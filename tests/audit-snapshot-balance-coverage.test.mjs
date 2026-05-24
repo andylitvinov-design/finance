@@ -260,6 +260,72 @@ test("audit snapshot carries factual RUB USD fields when trusted rate is present
   ]);
 });
 
+test("audit snapshot remainders use Binance backward computed USD coverage", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-23", to: "2026-05-23" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-23",
+          operation: "expense",
+          fromChannel: "Бинанс spot",
+          toChannel: "",
+          currency: "USDT",
+          amount: "400",
+          amountUsd: "-400",
+          amountNet: "400",
+          ledgerV2: {
+            date: "2026-05-23",
+            operation: "expense",
+            from_channel: "Бинанс spot",
+            to_channel: "",
+            currency: "USDT",
+            amount: "400",
+            amount_usd: "-400",
+            amount_net: "400",
+            balance_amount: -400,
+            source: "binance",
+          },
+        }),
+      ],
+      balances: [],
+      autoBalances: [
+        { date: "2026-05-24", provider: "binance", channel: "Бинанс spot", currency: "USDT", amount: "1211.91", source: "user_confirmed_binance_balance" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balances.remainders_rows.map((row) => ({
+    channel: row.channel,
+    currency: row.currency,
+    opening_amount_usd: row.opening_amount_usd,
+    closing_amount_usd: row.closing_amount_usd,
+    delta_amount_usd: row.delta_amount_usd,
+    status: row.status,
+    source: row.source,
+    computed_balance: row.computed_balance,
+    factual_provider_balance: row.factual_provider_balance,
+  })), [
+    {
+      channel: "Бинанс spot",
+      currency: "USDT",
+      opening_amount_usd: 1611.91,
+      closing_amount_usd: 1211.91,
+      delta_amount_usd: -400,
+      status: "ok",
+      source: "computed_backward_from_current_binance_anchor_and_ledger",
+      computed_balance: true,
+      factual_provider_balance: false,
+    },
+  ]);
+});
+
 test("audit snapshot exposes weekly balance summary when all account currency rows reconcile", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-05-11", to: "2026-05-17" },
