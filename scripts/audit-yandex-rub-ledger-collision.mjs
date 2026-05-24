@@ -7,6 +7,12 @@ const ACCOUNT = { channel: "Яндекс руб", currency: "RUB" };
 const PERIOD = { from: "2026-04-02", to: "2026-04-24" };
 const OPENING_BALANCE = 144000;
 const PROVIDER_CLOSING_BALANCE = 139786;
+const REMAINING_YANDEX_RUB_ANCHOR = {
+  date: "2026-04-24",
+  channel: "Яндекс руб",
+  currency: "RUB",
+  amount_rub: 334.08,
+};
 const CANDIDATE_SPECS = [
   {
     raw_source_id: "migration:2026-04-24:12:2",
@@ -72,6 +78,10 @@ export function buildYandexRubLedgerCollisionReport(repository = {}) {
   const computedWithoutCandidates = round(computedWithCandidates + candidateTotal);
   const currentDiff = round(providerClosingBalance - computedWithCandidates);
   const remainingDiff = round(providerClosingBalance - computedWithoutCandidates);
+  const remainingRubInput = buildRemainingYandexRubUsdInput(repository, {
+    ...REMAINING_YANDEX_RUB_ANCHOR,
+    amount_rub: remainingDiff,
+  });
 
   return {
     ok: validationErrors.length === 0,
@@ -92,7 +102,8 @@ export function buildYandexRubLedgerCollisionReport(repository = {}) {
     })),
     recommendation: RECOMMENDATION,
     validation_errors: validationErrors,
-    manual_repair_instructions: buildManualRepairInstructions(),
+    remaining_yandex_rub_usd_input: remainingRubInput,
+    manual_repair_instructions: buildManualRepairInstructions(remainingRubInput),
   };
 }
 
@@ -125,7 +136,7 @@ function validateCandidateRow(row, spec) {
   };
 }
 
-function buildManualRepairInstructions() {
+function buildManualRepairInstructions(remainingRubInput = buildRemainingYandexRubUsdInput({}, REMAINING_YANDEX_RUB_ANCHOR)) {
   return [
     {
       step: 1,
@@ -145,16 +156,103 @@ function buildManualRepairInstructions() {
     },
     {
       step: 3,
-      action: "Backfill remaining YooMoney missing operations only with provider/manual proof; do not invent rows.",
+      action: "Backfill remaining YooMoney missing operations only with provider/manual proof; do not invent rows or historical USD/RUB rates.",
       rows: [
-        "~334.08 RUB around/before 2026-04-24",
+        remainingRubInput,
         "~2755.12 RUB around 2026-05-05",
         "~2755.53 RUB around 2026-05-20",
         "~40504.5 RUB between 2026-03-25 and 2026-04-02",
       ],
-      source_rule: "Use provider operation_id if YooMoney returns it. If manual confirmed, use source=yoomoney_manual_confirmed and stable raw_source_id.",
+      source_rule: "Use provider operation_id if YooMoney returns it. If manual confirmed, use source=yoomoney_manual_confirmed and stable raw_source_id. For Яндекс руб/RUB USD conversion, use only an existing Sberbank Russia USD/RUB rate near the anchor date; never silently use CBR, market, current, or generic fallback rates.",
     },
   ];
+}
+
+function buildRemainingYandexRubUsdInput(repository = {}, row = REMAINING_YANDEX_RUB_ANCHOR) {
+  const amountRub = round(row.amount_rub);
+  const rateEvidence = findSberbankUsdRubRate(repository, row.date);
+  const base = {
+    date: row.date,
+    channel: row.channel,
+    currency: row.currency,
+    amount_rub: amountRub,
+  };
+  if (!rateEvidence) {
+    return {
+      ...base,
+      status: "needs_verification",
+      required_input: "date | Яндекс руб | amount RUB | Sberbank USD/RUB rate | amount_usd",
+    };
+  }
+  return {
+    ...base,
+    status: "ready_with_existing_sberbank_rate",
+    sberbank_usd_rub_rate: rateEvidence.usd_rub_rate,
+    amount_usd: roundUsd(amountRub / rateEvidence.usd_rub_rate),
+    comment: "Sberbank Russia USD/RUB rate",
+    source: "Sberbank Russia USD/RUB rate",
+    rate_evidence: rateEvidence,
+  };
+}
+
+function findSberbankUsdRubRate(repository = {}, anchorDate) {
+  const candidates = [
+    ...getExplicitSberbankRateCandidates(repository),
+    ...getLedgerSberbankRateCandidates(repository),
+  ].filter((candidate) => (
+    candidate.date
+    && candidate.usd_rub_rate >= 60
+    && candidate.usd_rub_rate <= 150
+  ));
+  if (!candidates.length) return null;
+  const anchor = Date.parse(`${anchorDate}T00:00:00Z`);
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      distance_days: Number.isFinite(anchor)
+        ? Math.abs((Date.parse(`${candidate.date}T00:00:00Z`) - anchor) / 86400000)
+        : null,
+    }))
+    .sort((a, b) => (a.distance_days ?? 999999) - (b.distance_days ?? 999999))
+    .at(0);
+}
+
+function getExplicitSberbankRateCandidates(repository = {}) {
+  return (repository.sberbankUsdRubRates || repository.sberbank_usd_rub_rates || [])
+    .map((row) => ({
+      date: normalizeDate(row.date),
+      usd_rub_rate: parseAmount(row.usd_rub_rate ?? row.usdRubRate ?? row.rate),
+      source: "Sberbank Russia USD/RUB rate",
+      raw_source_id: String(row.raw_source_id || row.rawSourceId || "").trim(),
+    }));
+}
+
+function getLedgerSberbankRateCandidates(repository = {}) {
+  return (repository.operations || [])
+    .filter((row) => isYandexRubRow(row) && hasSberbankText(row))
+    .map((row) => {
+      const amountRub = Math.abs(parseAmount(row.amountNet ?? row.amount_net ?? row.ledgerV2?.amount_net ?? row.amount ?? row.ledgerV2?.amount) || 0);
+      const amountUsd = Math.abs(parseAmount(row.amountUsd ?? row.amount_usd ?? row.ledgerV2?.amount_usd) || 0);
+      return {
+        date: normalizeDate(row.date ?? row.ledgerV2?.date),
+        usd_rub_rate: amountRub > 0 && amountUsd > 0 ? roundRate(amountRub / amountUsd) : null,
+        source: "Sberbank Russia USD/RUB rate",
+        raw_source_id: getRawSourceId(row),
+      };
+    });
+}
+
+function isYandexRubRow(row) {
+  const ledger = row?.ledgerV2 || {};
+  const channelText = `${ledger.from_channel || ""} ${ledger.to_channel || ""} ${row?.fromChannel || ""} ${row?.toChannel || ""}`;
+  const currency = String(row?.currency || ledger.currency || "").trim().toUpperCase();
+  return currency === "RUB" && /яндекс/i.test(channelText);
+}
+
+function hasSberbankText(row) {
+  const ledger = row?.ledgerV2 || {};
+  const text = `${row?.comment || ""} ${row?.source || ""} ${ledger.comment || ""} ${ledger.source || ""}`;
+  return /sberbank|сбербанк/i.test(text);
 }
 
 function isAccountMovementInPeriod(row) {
@@ -213,6 +311,14 @@ function sum(values) {
 
 function round(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function roundUsd(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function roundRate(value) {
+  return Math.round((Number(value) || 0) * 10000) / 10000;
 }
 
 function printHumanReport(report) {
