@@ -150,7 +150,10 @@ function buildBinanceRepairRow({
 
 function classifyBinanceRepairRow(row, existing) {
   const existingAmount = existing ? toNumber(existing.amount ?? existing.balanceAmount) : null;
-  const existingUsd = existing ? toNumber(existing.usdAmount ?? existing.amountUsd ?? existing.amount_usd) : null;
+  const explicitExistingUsd = existing ? toNumber(existing.usdAmount ?? existing.amountUsd ?? existing.amount_usd) : null;
+  const existingUsd = explicitExistingUsd === null && ["USD", "USDT", "USDC"].includes(String(existing?.currency || row.currency || "").trim().toUpperCase())
+    ? existingAmount
+    : explicitExistingUsd;
   const amount = toNumber(row.amount);
   const usdAmount = toNumber(row.usdAmount);
   const base = {

@@ -72,3 +72,19 @@ test("Binance repair classification is idempotent and reports underdetermined sp
   assert.equal(summary.skipped_rows[0].safe_action, "skip_existing_same_value");
   assert.equal(summary.rows_to_write.some((row) => row.channel === "Бинанс spot" && row.date === "2026-03-25"), false);
 });
+
+test("Binance repair skips USDT rows when repository parser omits amount_usd", () => {
+  const rows = buildUserConfirmedBinanceRows({ targetDate: "2026-05-24" });
+  const existing = rows.map((row) => ({
+    date: row.date,
+    provider: row.provider,
+    channel: row.channel,
+    currency: row.currency,
+    amount: row.amount,
+  }));
+  const plan = classifyBinanceRepairRows(existing, rows);
+
+  assert.equal(plan.rowsToWrite.length, 0);
+  assert.equal(plan.skippedRows.length, 5);
+  assert.equal(plan.skippedRows.every((row) => row.safeAction === "skip_existing_same_value"), true);
+});
