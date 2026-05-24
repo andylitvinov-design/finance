@@ -488,6 +488,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
     "Бинанс spot|USDC||missing_provider_balance",
     "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT|10|ok",
+    "binance save|USDC||missing_provider_balance",
   ]);
   assert.deepEqual(rows.filter((row) => row.provider === "yoomoney").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "Яндекс руб|RUB|1234,56|ok",
@@ -584,6 +585,7 @@ test("Binance Earn permission failure preserves spot balance and writes save per
     "Бинанс spot|USDC||missing_provider_balance",
     "Binance funding|USDT||missing_provider_balance",
     "binance save|USDT||needs_provider_permission",
+    "binance save|USDC||needs_provider_permission",
   ]);
 });
 
@@ -611,7 +613,10 @@ test("Binance Earn flexible and locked positions normalize into one save row", a
           ok: true,
           status: 200,
           async text() {
-            return JSON.stringify({ rows: [{ asset: "USDT", totalAmount: "11.5" }] });
+            return JSON.stringify({ rows: [
+              { asset: "USDT", totalAmount: "11.5" },
+              { asset: "USDC", totalAmount: "4.25" },
+            ] });
           },
         };
       }
@@ -620,18 +625,22 @@ test("Binance Earn flexible and locked positions normalize into one save row", a
           ok: true,
           status: 200,
           async text() {
-            return JSON.stringify({ rows: [{ asset: "USDT", amount: "3.25" }] });
+            return JSON.stringify({ rows: [
+              { asset: "USDT", amount: "3.25" },
+              { asset: "USDC", amount: "2" },
+            ] });
           },
         };
       }
       throw new Error(`Unexpected URL ${value}`);
     },
   });
-  const saveRow = results.find((result) => result.provider === "binance").rows.find((row) => row.channel === "binance save");
+  const saveRows = results.find((result) => result.provider === "binance").rows.filter((row) => row.channel === "binance save");
 
-  assert.equal(saveRow.currency, "USDT");
-  assert.equal(saveRow.amount, "14,75");
-  assert.equal(saveRow.status, "ok");
+  assert.deepEqual(saveRows.map((row) => `${row.currency}|${row.amount}|${row.usdAmount}|${row.status}`), [
+    "USDT|14,75|14,75|ok",
+    "USDC|6,25|6,25|ok",
+  ]);
 });
 
 test("non-JSON provider response becomes structured JSON error rows", async () => {

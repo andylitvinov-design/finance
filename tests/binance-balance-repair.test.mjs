@@ -21,6 +21,8 @@ test("user-confirmed Binance historical expressions resolve to anchor amounts", 
   assert.equal(save.currency, "USDT");
   assert.equal(save.rate, 1);
   assert.equal(save.usdAmount, 7875);
+  assert.equal(save.legacy_combined, true);
+  assert.equal(save.split_solvability, "underdetermined");
   assert.equal(legacy.amount, 345);
   assert.equal(legacy.legacy_combined, true);
   assert.equal(legacy.split_solvability, "underdetermined");
@@ -47,9 +49,19 @@ test("current Binance split anchors remain separate and factual", () => {
 
   assert.deepEqual(current, [
     "Binance funding|USDT|0|0|zero_balance|false|true",
-    "binance save|USDT|7433.55|7433.55|ok|false|true",
+    "binance save|USDC|2019.822684|2019.822684|ok|false|true",
+    "binance save|USDT|5411.3694|5411.3694|ok|false|true",
     "Бинанс spot|USDT|1211.91|1211.91|ok|false|true",
   ]);
+});
+
+test("current Binance save split does not include approximate combined save total", () => {
+  const rows = buildUserConfirmedBinanceRows({ targetDate: "2026-05-24" });
+  const currentSave = rows.filter((row) => row.date === "2026-05-24" && row.channel === "binance save");
+
+  assert.equal(currentSave.some((row) => row.amount === 7433.55), false);
+  assert.deepEqual(currentSave.map((row) => row.currency).sort(), ["USDC", "USDT"]);
+  assert.equal(currentSave.every((row) => row.rate === 1 && row.usdAmount === row.amount), true);
 });
 
 test("Binance repair classification is idempotent and reports underdetermined split", () => {
@@ -73,7 +85,7 @@ test("Binance repair classification is idempotent and reports underdetermined sp
   assert.equal(summary.rows_to_write.some((row) => row.channel === "Бинанс spot" && row.date === "2026-03-25"), false);
 });
 
-test("Binance repair skips USDT rows when repository parser omits amount_usd", () => {
+test("Binance repair updates rows when repository parser omits amount_usd", () => {
   const rows = buildUserConfirmedBinanceRows({ targetDate: "2026-05-24" });
   const existing = rows.map((row) => ({
     date: row.date,
@@ -84,7 +96,7 @@ test("Binance repair skips USDT rows when repository parser omits amount_usd", (
   }));
   const plan = classifyBinanceRepairRows(existing, rows);
 
-  assert.equal(plan.rowsToWrite.length, 0);
-  assert.equal(plan.skippedRows.length, 5);
-  assert.equal(plan.skippedRows.every((row) => row.safeAction === "skip_existing_same_value"), true);
+  assert.equal(plan.rowsToWrite.length, 6);
+  assert.equal(plan.skippedRows.length, 0);
+  assert.equal(plan.rowsToWrite.every((row) => row.safeAction !== "skip_existing_same_value"), true);
 });

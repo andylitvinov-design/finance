@@ -14,8 +14,10 @@ export const USER_CONFIRMED_BINANCE_FACTS = [
     channel: "binance save",
     currency: "USDT",
     expression: "6754 + 2017 - 896",
-    comment: "user confirmed historical Binance save balance",
+    comment: "user confirmed legacy combined Binance save balance; historical currency split unavailable",
     historical: true,
+    legacyCombined: true,
+    splitSolvability: "underdetermined",
   },
   {
     date: "2026-03-25",
@@ -49,8 +51,15 @@ export const USER_CONFIRMED_BINANCE_CURRENT_FACTS = [
     provider: "binance",
     channel: "binance save",
     currency: "USDT",
-    amount: 7433.55,
-    comment: "user confirmed current Binance save balance",
+    amount: 5411.3694,
+    comment: "user confirmed current Binance save USDT balance",
+  },
+  {
+    provider: "binance",
+    channel: "binance save",
+    currency: "USDC",
+    amount: 2019.822684,
+    comment: "user confirmed current Binance save USDC balance",
   },
 ];
 
@@ -136,6 +145,7 @@ function buildBinanceRepairRow({
     amount: round(numericAmount),
     currency: normalizedCurrency,
     rate,
+    amountUsd: rate === 1 ? round(numericAmount) : "",
     usdAmount: rate === 1 ? round(numericAmount) : "",
     source: BINANCE_USER_CONFIRMED_SOURCE,
     rawSourceId,
@@ -163,7 +173,7 @@ function classifyBinanceRepairRow(row, existing) {
     classification: row.legacy_combined ? "legacy_combined_anchor" : "user_confirmed_anchor",
     safeAction: row.legacy_combined ? "write_legacy_combined_anchor" : "write_user_confirmed_anchor",
   };
-  if (existing && existingAmount === amount && existingUsd === usdAmount) {
+  if (existing && existingAmount === amount && explicitExistingUsd === usdAmount) {
     return {
       ...base,
       safeAction: "skip_existing_same_value",
@@ -226,7 +236,7 @@ function toNumber(value) {
 }
 
 function round(value) {
-  return Math.round(Number(value) * 10000) / 10000;
+  return Math.round(Number(value) * 1000000) / 1000000;
 }
 
 function isApplyMode(argv = process.argv) {
