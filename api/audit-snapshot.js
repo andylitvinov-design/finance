@@ -160,7 +160,10 @@ export async function buildAuditSnapshot(options = {}) {
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
       auto_balance_rows_ignored_as_stale_current: balanceSnapshotMerge.autoIgnoredStaleCurrent ?? balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current ?? null,
-      remainders_rows: buildRemaindersRows(balanceCoverage.accounts || []),
+      remainders_rows: buildRemaindersRows(balanceCoverage.accounts || [], {
+        balanceRows,
+        period,
+      }),
     },
     daily_balances: {
       uses_amount_net: true,
@@ -420,8 +423,23 @@ function buildWeeklyBalanceSummary({
   };
 }
 
-function buildRemaindersRows(accounts = []) {
+function buildRemaindersRows(accounts = [], options = {}) {
   const grouped = new Map();
+  for (const anchor of buildRemaindersOpeningAnchors(options.balanceRows || [], options.period || {})) {
+    if (!grouped.has(anchor.key)) grouped.set(anchor.key, []);
+    grouped.get(anchor.key).push({
+      date: anchor.date,
+      channel: anchor.channel,
+      currency: anchor.currency,
+      opening_amount_usd: anchor.opening_amount_usd,
+      closing_amount_usd: null,
+      status: anchor.opening_amount_usd === null ? "needs_verification" : "ok",
+      source: anchor.source,
+      computed_balance: false,
+      factual_provider_balance: true,
+      opening_anchor: true,
+    });
+  }
   for (const account of accounts || []) {
     const channel = String(account?.channel || "").trim();
     const currency = String(account?.currency || "").trim().toUpperCase();
@@ -462,7 +480,7 @@ function buildRemaindersRows(accounts = []) {
         closingUsd,
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
         status: complete ? "ok" : "needs_verification",
-        source: computed ? computedSource : "balance_coverage.accounts",
+        source: computed ? computedSource : (first.opening_anchor ? first.source : "balance_coverage.accounts"),
         period_start_date: first.date || "",
         period_end_date: last.date || "",
         row_count: rows.length,
@@ -478,6 +496,77 @@ function buildRemaindersRows(accounts = []) {
       if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
       return left.currency.localeCompare(right.currency);
     });
+}
+
+function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
+  const from = normalizeDate(period.from);
+  if (!from) return [];
+  const priorKeys = new Set();
+  for (const row of balanceRows || []) {
+    const date = normalizeDate(row?.date);
+    if (!date || date >= from) continue;
+    const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    if (channel && currency) priorKeys.add(`${channel}|${currency}`);
+  }
+  const anchors = new Map();
+  for (const row of balanceRows || []) {
+    const date = normalizeDate(row?.date);
+    if (date !== from) continue;
+    const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    if (!channel || !currency) continue;
+    const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+    const key = `${channel}|${currency}`;
+    if (priorKeys.has(key)) continue;
+    const anchor = {
+      key,
+      date,
+      channel,
+      currency,
+      opening_amount_usd: nullableRound(resolveRemaindersSnapshotUsdAmount(row, amount, currency)),
+      source: getRemaindersAnchorSource(row),
+      priority: getRemaindersAnchorPriority(row),
+    };
+    const existing = anchors.get(key);
+    if (!existing || anchor.priority < existing.priority) anchors.set(key, anchor);
+  }
+  return Array.from(anchors.values()).sort((left, right) => {
+    if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+    return left.currency.localeCompare(right.currency);
+  });
+}
+
+function resolveRemaindersSnapshotUsdAmount(row = {}, amount = null, currency = "") {
+  const explicit = parseNumber(
+    row?.amount_usd ??
+      row?.amountUsd ??
+      row?.usdAmount ??
+      row?.balance_usd ??
+      row?.balanceUsd
+  );
+  if (explicit !== null) return explicit;
+  const numericAmount = amount === null || amount === undefined ? parseNumber(row?.balanceAmount ?? row?.amount) : amount;
+  if (numericAmount === null) return null;
+  const rate = parseNumber(row?.rate ?? row?.usdRate ?? row?.usd_rate);
+  if (rate !== null && rate > 0) return numericAmount * rate;
+  if (["USD", "USDT", "USDC"].includes(String(currency || row?.currency || "").trim().toUpperCase())) return numericAmount;
+  return null;
+}
+
+function getRemaindersAnchorSource(row = {}) {
+  const sheet = String(row?.sourceSheet || row?.source_sheet || "").trim();
+  const source = String(row?.source || row?.balanceSource || row?.balance_source || row?.fact_source || "").trim();
+  if (/Остатки/i.test(sheet) || /manual_fact|manual/i.test(source)) return "manual_may_opening_anchor";
+  if (/Авто Остатки/i.test(sheet) || /provider|auto/i.test(source)) return "auto_may_opening_anchor";
+  return "period_start_balance_anchor";
+}
+
+function getRemaindersAnchorPriority(row = {}) {
+  const source = getRemaindersAnchorSource(row);
+  if (source === "manual_may_opening_anchor") return 0;
+  if (source === "auto_may_opening_anchor") return 1;
+  return 2;
 }
 
 function buildRemaindersVerificationContext({ first = {}, last = {}, complete = false } = {}) {
