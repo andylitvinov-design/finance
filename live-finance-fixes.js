@@ -74,6 +74,14 @@
     });
   }
 
+  function hasDetailedMovementOrderHeader(cells) {
+    return findColumnByAliases(cells, ["number", "номер"]) !== -1
+      && findColumnByAliases(cells, ["client", "клиент", "имя"]) !== -1
+      && findColumnByAliases(cells, ["accrued +3%"]) !== -1
+      && findColumnByAliases(cells, ["дошло до нас usd", "net received usd", "received net usd"]) !== -1
+      && findColumnByAliases(cells, ["balance", "баланс", "остаток"]) !== -1;
+  }
+
   function normalizeMovementBalanceVarianceTables(rootNode = root.document) {
     const tables = queryAll(rootNode, "table");
     let changed = 0;
@@ -82,6 +90,7 @@
       if (rows.length < 2) return;
       const headerCells = Array.from(rows[0].children || []);
       if (!headerCells.length) return;
+      if (hasDetailedMovementOrderHeader(headerCells)) return;
       const planIndex = findColumnByAliases(headerCells, [
         "план", "план = accrued", "planned", "plan", "accrued", "стоимость", "cost"
       ]);
