@@ -1651,7 +1651,7 @@ test("GET getDashboardData adds real income payload and movement net-income colu
   }
 });
 
-test("GET getDashboardData keeps unmatched Wise provider income in real income summary", async () => {
+test("GET getDashboardData keeps unmatched Wise provider income out of service income summary", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
   const previousWiseToken = process.env.WISE_API_TOKEN;
@@ -1813,11 +1813,12 @@ test("GET getDashboardData keeps unmatched Wise provider income in real income s
     assert.equal(response.body?.data?.realIncome?.rowMatches?.length, 1);
     assert.equal(response.body?.data?.realIncome?.matchedEntries?.length, 1);
     assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.length, 1);
-    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 1175);
-    assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 1175);
+    assert.equal(response.body?.data?.realIncome?.summaryByChannel?.["трансервайз дол"]?.realNetUsd, 978.5);
+    assert.equal(response.body?.data?.realIncome?.summaryTotals?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.matchedEntries?.[0]?.realNetUsd, 978.5);
     assert.equal(response.body?.data?.realIncome?.unmatchedEntries?.[0]?.realNetUsd, 196.5);
     assert.equal(response.body?.data?.realIncome?.unmatchedSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 196.5);
+    assert.equal(response.body?.data?.realIncome?.allSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 1175);
     assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /WISE-UNMATCHED: no movement row match/);
     assert.match(response.body?.data?.realIncome?.warnings?.join("\n") || "", /unmatched provider income: трансервайз дол 196,5 USD net/i);
   } finally {
@@ -1826,6 +1827,206 @@ test("GET getDashboardData keeps unmatched Wise provider income in real income s
     else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
     if (previousWiseToken === undefined) delete process.env.WISE_API_TOKEN;
     else process.env.WISE_API_TOKEN = previousWiseToken;
+  }
+});
+
+test("GET getDashboardData splits service income from refunds exchanges and unmatched provider inflows", async () => {
+  const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousPayPalClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousPayPalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const previousWiseToken = process.env.WISE_API_TOKEN;
+  const previousBinanceApiKey = process.env.BINANCE_API_KEY;
+  const previousBinanceApiSecret = process.env.BINANCE_API_SECRET;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.PAYPAL_CLIENT_ID = "client";
+  process.env.PAYPAL_CLIENT_SECRET = "secret";
+  process.env.WISE_API_TOKEN = "wise-token";
+  process.env.BINANCE_API_KEY = "binance-key";
+  process.env.BINANCE_API_SECRET = "binance-secret";
+
+  const makeSourceRow = ({ number, date, client, service, priceBase, accruedPlus, paymentMethod, receivedUsd }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = date;
+    row[3] = client;
+    row[4] = service;
+    row[6] = String(priceBase);
+    row[9] = String(priceBase);
+    row[10] = String(accruedPlus);
+    row[24] = paymentMethod;
+    row[30] = String(receivedUsd);
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-05-01", endDate: "2026-05-31", timeZone: "Europe/Kyiv" },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.05.2026", "дата 2", "31.05.2026"],
+                      [""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
+                      ["ИТОГО", "", "", "", "", "300", "", "", "300", "309", "210", "216,3", "", "", "", "311,06", "", "", "311,06", "0"],
+                    ],
+                  },
+                  orders: { sheetName: "список моих заказы", values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]] },
+                },
+              },
+            });
+          },
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        const rows = [
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          makeSourceRow({
+            number: "18111",
+            date: "2026-05-07",
+            client: "Инна Устименко",
+            service: "Программа Харизма",
+            priceBase: 300,
+            accruedPlus: 309,
+            paymentMethod: "сайт, дол, пэйпэл",
+            receivedUsd: 315,
+          }),
+        ];
+        return { ok: true, status: 200, async text() { return rows.map((row) => row.join(",")).join("\n"); } };
+      }
+
+      if (value.endsWith("/v1/oauth2/token")) {
+        return { ok: true, status: 200, async json() { return { access_token: "paypal-token" }; } };
+      }
+      if (value.includes("/v1/reporting/transactions")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              total_pages: 1,
+              transaction_details: [{
+                transaction_info: {
+                  transaction_id: "PAYPAL-SERVICE-1",
+                  transaction_initiation_date: "2026-05-07T10:00:00Z",
+                  transaction_amount: { value: "324", currency_code: "USD" },
+                  fee_amount: { value: "-12.94", currency_code: "USD" },
+                },
+              }],
+            };
+          },
+        };
+      }
+
+      if (value.endsWith("/v2/profiles")) return { ok: true, async json() { return [{ id: 123 }]; } };
+      if (value.includes("/v4/profiles/123/balances")) return { ok: true, async json() { return [{ id: "balance-eur", currency: "EUR" }]; } };
+      if (value.includes("/v1/profiles/123/balance-statements/balance-eur/statement.json")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              transactions: [
+                {
+                  type: "CREDIT",
+                  date: "2026-05-09T09:00:00.000Z",
+                  referenceNumber: "WISE-HOTEL-REFUND",
+                  amount: { value: "100", currency: "EUR" },
+                  amountUsd: "116",
+                  totalFees: { value: "0", currency: "EUR" },
+                  details: { description: "Hotel refund", type: "REFUND" },
+                },
+                {
+                  type: "CREDIT",
+                  date: "2026-05-18T09:00:00.000Z",
+                  referenceNumber: "WISE-UNMATCHED-MAY",
+                  amount: { value: "50", currency: "EUR" },
+                  amountUsd: "58",
+                  totalFees: { value: "0", currency: "EUR" },
+                  details: { description: "Unmatched incoming transfer", type: "TRANSFER" },
+                },
+              ],
+            };
+          },
+        };
+      }
+
+      if (value.includes("/api/v3/account")) return { ok: true, status: 200, async text() { return JSON.stringify({ balances: [] }); } };
+      if (value.includes("/sapi/v1/capital/deposit/hisrec")) return { ok: true, status: 200, async text() { return "[]"; } };
+      if (value.includes("/sapi/v1/capital/withdraw/history")) return { ok: true, status: 200, async text() { return "[]"; } };
+      if (value.includes("/sapi/v1/pay/transactions")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              data: [{
+                transactionId: "BINANCE-YANDEX-FUNDING",
+                transactionTime: 1778198400000,
+                amount: "250",
+                currency: "USDT",
+                orderType: "C2C",
+                counterparty: "Yandex RUB -> Binance funding",
+                status: "SUCCESS",
+              }],
+            });
+          },
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-31" } }, response);
+
+    const realIncome = response.body?.data?.realIncome;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.ok, true);
+    assert.equal(realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
+    assert.equal(realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 0);
+    assert.equal(realIncome?.summaryByChannel?.["Binance funding"]?.realNetUsd, 0);
+    assert.equal(realIncome?.refundSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 116);
+    assert.equal(realIncome?.exchangeSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
+    assert.equal(realIncome?.unmatchedSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 58);
+    assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
+    assert.equal(realIncome?.allSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 174);
+    assert.equal(realIncome?.allSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
+    assert.equal(realIncome?.summaryTotals?.realNetUsd, 311.06);
+    assert.equal(realIncome?.allSummaryTotals?.realNetUsd, 735.06);
+    assert.equal(realIncome?.refundEntries?.length, 1);
+    assert.equal(realIncome?.exchangeEntries?.length, 1);
+    assert.equal(realIncome?.unmatchedEntries?.length, 1);
+    const paypalRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18111");
+    assert.equal(paypalRow?.[20], "311,06");
+    assert.equal(paypalRow?.[22], "-2,06");
+  } finally {
+    global.fetch = previousFetch;
+    if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
+    if (previousPayPalClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousPayPalClientId;
+    if (previousPayPalClientSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
+    if (previousWiseToken === undefined) delete process.env.WISE_API_TOKEN;
+    else process.env.WISE_API_TOKEN = previousWiseToken;
+    if (previousBinanceApiKey === undefined) delete process.env.BINANCE_API_KEY;
+    else process.env.BINANCE_API_KEY = previousBinanceApiKey;
+    if (previousBinanceApiSecret === undefined) delete process.env.BINANCE_API_SECRET;
+    else process.env.BINANCE_API_SECRET = previousBinanceApiSecret;
   }
 });
 

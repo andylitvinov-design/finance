@@ -5,6 +5,8 @@
   const BALANCE_BLOCK_ID = "balanceSummaryBlock";
   const FALLBACK_PERCENT_RATE = 0.03;
   const FALLBACK_PERCENT_RATE_DISPLAY = 3;
+  const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
+  const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -265,7 +267,8 @@
       ? channels.map((row) => ({ ...row, percent: (row.amount / total) * 100 }))
       : [];
     return {
-      title: "Распределение приходов по каналам",
+      title: INCOME_DISTRIBUTION_TITLE,
+      note: INCOME_DISTRIBUTION_NOTE,
       source,
       total,
       channels: withPercent,
@@ -284,7 +287,8 @@
     const movementDistribution = buildIncomeChannelDistributionFromMovement(appState?.data?.tabs?.movement?.values || [], period);
     if (movementDistribution.channels.length) return movementDistribution;
     return {
-      title: "Распределение приходов по каналам",
+      title: INCOME_DISTRIBUTION_TITLE,
+      note: INCOME_DISTRIBUTION_NOTE,
       source: "none",
       total: 0,
       channels: [],
@@ -450,8 +454,12 @@
     const section = doc.createElement("div");
     section.className = "balance-income-channel-distribution";
     const title = doc.createElement("h3");
-    title.textContent = "Распределение приходов по каналам";
+    title.textContent = distribution?.title || INCOME_DISTRIBUTION_TITLE;
     section.appendChild(title);
+    const note = doc.createElement("div");
+    note.className = "balance-summary-diagnostics";
+    note.textContent = distribution?.note || INCOME_DISTRIBUTION_NOTE;
+    section.appendChild(note);
 
     if (!distribution?.channels?.length) {
       const diagnostic = doc.createElement("div");
