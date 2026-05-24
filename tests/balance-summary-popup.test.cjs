@@ -492,6 +492,37 @@ test("income distribution uses positive realIncome rows even when movement has e
   resetBalanceModule();
 });
 
+test("income distribution excludes fully unmatched provider inflows from realIncome summary", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          PayPal: { realNetUsd: 566.5 },
+          "Binance funding": { realNetUsd: 915.5, plannedReceivedUsd: 0 },
+        },
+        unmatchedSummaryByChannel: {
+          "Binance funding": { realNetUsd: 915.5, plannedReceivedUsd: 0 },
+        },
+      },
+      tabs: {
+        movement: {
+          values: [
+            ["DATE", "PAYMENT CHANNEL", "NET RECEIVED USD", "OPERATION"],
+            ["2026-05-05", "Binance funding", "915.5", "income"],
+          ],
+        },
+      },
+    },
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
+
+  assert.equal(distribution.source, "realIncome.summaryByChannel");
+  assert.equal(distribution.total, 566.5);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["PayPal"]);
+  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
+  resetBalanceModule();
+});
+
 test("income distribution percentages use service income summary only", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
