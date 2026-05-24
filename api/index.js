@@ -978,6 +978,7 @@ function isRefundIncomeEntry(entry = {}) {
 }
 
 function isExchangeOrTransferIncomeEntry(entry = {}) {
+  if (String(entry.source || "").trim().toLowerCase() === "binance_deposit") return true;
   const classifier = normalizeRealIncomeClassifier([
     entry.operation,
     entry.operationType,
