@@ -885,7 +885,7 @@ test("audit snapshot returns copyable missing Остатки rows from balance c
   );
 });
 
-test("audit snapshot reports later Monobank fact context without hiding tiny difference", async () => {
+test("audit snapshot computes bounded Monobank row with small closing-anchor rounding difference", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-05-01", to: "2026-05-21" },
     repositoryLoader: async () => ({
@@ -896,6 +896,7 @@ test("audit snapshot reports later Monobank fact context without hiding tiny dif
           date: "2026-05-11",
           toChannel: "монобанк грн",
           amount: "9105",
+          amountUsd: "207.52",
           amountNet: "9105",
           currency: "UAH",
           source: "monobank",
@@ -904,6 +905,7 @@ test("audit snapshot reports later Monobank fact context without hiding tiny dif
             operation: "income",
             to_channel: "монобанк грн",
             amount: "9105",
+            amount_usd: "207.52",
             amount_net: "9105",
             currency: "UAH",
             balance_amount: 9105,
@@ -912,7 +914,7 @@ test("audit snapshot reports later Monobank fact context without hiding tiny dif
         }),
       ],
       balances: [
-        { date: "2026-05-06", channel: "монобанк грн", currency: "UAH", amount: "3928", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-06", channel: "монобанк грн", currency: "UAH", amount: "3928", usdAmount: "89.71", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-20", channel: "монобанк грн", currency: "UAH", amount: "13033.14", source: "manual_owner_confirmed", sourceSheet: "Остатки" },
       ],
       autoBalances: [],
@@ -924,13 +926,12 @@ test("audit snapshot reports later Monobank fact context without hiding tiny dif
   });
 
   const row = snapshot.daily_balances.rows.find((entry) => entry.channel === "монобанк грн");
-  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.status, "computed_between_confirmed_anchors");
   assert.equal(row.closing_balance, 13033);
   assert.equal(row.difference, null);
-  assert.equal(row.missing_provider_balance_context, "later_fact_exists");
-  assert.equal(row.nearest_later_provider_fact_date, "2026-05-20");
-  assert.equal(row.nearest_later_provider_fact_amount, 13033.14);
-  assert.equal(row.later_provider_fact_difference, 0.14);
+  assert.equal(row.source, "computed_from_opening_and_ledger");
+  assert.equal(row.opening_amount_usd, 89.71);
+  assert.equal(row.closing_amount_usd, 297.23);
 });
 
 test("audit snapshot marks bounded anchor movement rows computed without writing Ostatki fixes", async () => {

@@ -388,13 +388,14 @@ test("Ostatki same-day date is treated as end-of-day provider reported balance",
   assert.equal(result.rows[0].status, "ok");
 });
 
-test("missing same-day provider balance reports later owner-confirmed fact context", () => {
+test("small closing-anchor rounding difference still computes bounded movement row", () => {
   const result = buildDailyCurrencyBalances(
     [
       operation({
         date: "2026-05-11",
         toChannel: "монобанк грн",
         currency: "UAH",
+        amountUsd: "207.52",
         amountNet: "9105",
         balanceAmount: 9105,
         ledgerV2: {
@@ -402,24 +403,24 @@ test("missing same-day provider balance reports later owner-confirmed fact conte
           operation: "income",
           to_channel: "монобанк грн",
           currency: "UAH",
+          amount_usd: "207.52",
           amount_net: "9105",
           balance_amount: 9105,
         },
       }),
     ],
     [
-      { date: "2026-05-06", channel: "монобанк грн", amount: "3928", currency: "UAH", source: "manual_fact", sourceSheet: "Остатки" },
+      { date: "2026-05-06", channel: "монобанк грн", amount: "3928", currency: "UAH", usdAmount: "89.71", source: "manual_fact", sourceSheet: "Остатки" },
       { date: "2026-05-20", channel: "монобанк грн", amount: "13033.14", currency: "UAH", source: "manual_owner_confirmed", sourceSheet: "Остатки" },
     ]
   );
 
-  assert.equal(result.rows[0].status, "missing_provider_balance");
+  assert.equal(result.rows[0].status, "computed_between_confirmed_anchors");
   assert.equal(result.rows[0].difference, null);
   assert.equal(result.rows[0].provider_reported_balance, null);
-  assert.equal(result.rows[0].missing_provider_balance_context, "later_fact_exists");
-  assert.equal(result.rows[0].nearest_later_provider_fact_date, "2026-05-20");
-  assert.equal(result.rows[0].nearest_later_provider_fact_amount, 13033.14);
-  assert.equal(result.rows[0].later_provider_fact_difference, 0.14);
+  assert.equal(result.rows[0].source, "computed_from_opening_and_ledger");
+  assert.equal(result.rows[0].opening_amount_usd, 89.71);
+  assert.equal(result.rows[0].closing_amount_usd, 297.23);
 });
 
 test("movement dates between confirmed opening and closing anchors are computed from ledger amount_net", () => {
