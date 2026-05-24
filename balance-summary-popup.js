@@ -181,11 +181,7 @@
     const label = normalizeChannelLabel(channel);
     const existing = channels.get(label) || { channel: label, amount: 0, source };
     existing.amount += value;
-    if (source === "plannedReceivedUsdFallback") existing.needsVerification = true;
     channels.set(label, existing);
-    if (source === "plannedReceivedUsdFallback") {
-      diagnostics.push(`needs verification: ${label} uses plannedReceivedUsd fallback for income channel distribution.`);
-    }
   }
 
   function buildIncomeChannelDistributionFromRealIncome(summaryByChannel = {}) {
@@ -195,11 +191,6 @@
       const realNetUsd = finiteOrNull(row?.realNetUsd);
       if (realNetUsd && realNetUsd > 0) {
         addIncomeChannelAmount(channels, row?.channel || channel, realNetUsd, "realNetUsd", diagnostics);
-        return;
-      }
-      const plannedReceivedUsd = finiteOrNull(row?.plannedReceivedUsd);
-      if (plannedReceivedUsd && plannedReceivedUsd > 0) {
-        addIncomeChannelAmount(channels, row?.channel || channel, plannedReceivedUsd, "plannedReceivedUsdFallback", diagnostics);
       }
     });
     return finalizeIncomeChannelDistribution(Array.from(channels.values()), diagnostics, "realIncome.summaryByChannel");
@@ -280,8 +271,7 @@
     const appState = getState(input, options);
     const realIncomeSummary = appState?.data?.realIncome?.summaryByChannel || appState?.realIncome?.summaryByChannel || null;
     if (realIncomeSummary && Object.keys(realIncomeSummary).length) {
-      const distribution = buildIncomeChannelDistributionFromRealIncome(realIncomeSummary);
-      if (distribution.channels.length) return distribution;
+      return buildIncomeChannelDistributionFromRealIncome(realIncomeSummary);
     }
     const period = options.period || getSelectedPeriod(options);
     const movementDistribution = buildIncomeChannelDistributionFromMovement(appState?.data?.tabs?.movement?.values || [], period);
