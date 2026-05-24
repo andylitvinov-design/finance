@@ -108,7 +108,12 @@
   function getDateInputValue(id) {
     const fromElements = root.elements?.[id]?.value;
     if (fromElements) return fromElements;
-    return root.document?.getElementById?.(id)?.value || "";
+    const fromInput = root.document?.getElementById?.(id)?.value;
+    if (fromInput) return fromInput;
+    const params = new URL(root.location?.href || "https://ezohata-incoming-ledger.vercel.app/").searchParams;
+    if (id === "startDate") return params.get("from") || params.get("startDate") || "";
+    if (id === "endDate") return params.get("to") || params.get("endDate") || "";
+    return "";
   }
 
   function buildAuditSnapshotUrl() {
