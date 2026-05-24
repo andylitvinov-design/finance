@@ -281,7 +281,7 @@ test("audit snapshot exposes additive daily currency balances without changing b
 
   assert.equal(response.daily_balances.uses_amount_net, true);
   assert.equal(response.daily_balances.summary.rows, response.daily_balances.rows.length);
-  assert.equal(response.daily_balances.actionable_rows.length, 3);
+  assert.equal(response.daily_balances.actionable_rows.length, 4);
   assert.equal(response.daily_balances.actionable_rows[0].status, "missing_opening_balance");
   assert.equal(response.daily_balances.summary.status_counts.ok, 1);
   assert.equal(response.daily_balances.summary.status_counts.missing_opening_balance, 2);
@@ -322,7 +322,7 @@ test("audit snapshot handoff mode omits large rows but preserves summaries", asy
   assert.ok(response.balances);
   assert.ok(response.daily_balances.summary);
   assert.equal(Object.prototype.hasOwnProperty.call(response.daily_balances, "rows"), false);
-  assert.equal(response.daily_balances.actionable_rows.length, 3);
+  assert.equal(response.daily_balances.actionable_rows.length, 4);
   assert.ok(response.balance_coverage.summary);
   assert.ok(response.balance_coverage.weekly_summary);
   assert.equal(Object.prototype.hasOwnProperty.call(response.balance_coverage, "accounts"), false);

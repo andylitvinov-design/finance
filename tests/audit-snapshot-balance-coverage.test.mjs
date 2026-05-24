@@ -472,7 +472,7 @@ test("audit snapshot weekly balance summary blocks ok status when amount_net is 
   });
 
   assert.equal(snapshot.balance_coverage.weekly_summary.status, "failed");
-  assert.equal(snapshot.balance_coverage.weekly_summary.accounts_checked, 0);
+  assert.equal(snapshot.balance_coverage.weekly_summary.accounts_checked, 1);
   assert.equal(snapshot.balance_coverage.weekly_summary.missing_amount_net_rows, 1);
   assert.equal(snapshot.balance_coverage.weekly_summary.excluded_missing_amount_net_rows, 1);
   assert.equal(snapshot.balance_fixes.missing_amount_net_rows[0].channel, "wise usd");
@@ -931,4 +931,79 @@ test("audit snapshot reports later Monobank fact context without hiding tiny dif
   assert.equal(row.nearest_later_provider_fact_date, "2026-05-20");
   assert.equal(row.nearest_later_provider_fact_amount, 13033.14);
   assert.equal(row.later_provider_fact_difference, 0.14);
+});
+
+test("audit snapshot marks bounded anchor movement rows computed without writing Ostatki fixes", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({ date: "2026-05-02", amount: "300", amountUsd: "300", amountNet: "300", ledgerV2: { date: "2026-05-02", amount: "300", amount_usd: "300", amount_net: "300", balance_amount: 300 } }),
+        operation({ date: "2026-05-10", amount: "20", amountUsd: "20", amountNet: "20", ledgerV2: { date: "2026-05-10", amount: "20", amount_usd: "20", amount_net: "20", balance_amount: 20 } }),
+        operation({
+          date: "2026-05-20",
+          operation: "expense",
+          fromChannel: "wise usd",
+          toChannel: "",
+          amount: "10",
+          amountUsd: "-10",
+          amountNet: "10",
+          ledgerV2: {
+            date: "2026-05-20",
+            operation: "expense",
+            from_channel: "wise usd",
+            to_channel: "",
+            amount: "10",
+            amount_usd: "-10",
+            amount_net: "10",
+            currency: "USD",
+            balance_amount: -10,
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000", usdAmount: "1000", sourceSheet: "Остатки" },
+        { date: "2026-05-20", channel: "wise usd", currency: "USD", amount: "1310", usdAmount: "1310", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const accounts = snapshot.balance_coverage.accounts;
+  assert.deepEqual(accounts.map((row) => ({ date: row.date, status: row.status, source: row.source || row.balance_source })), [
+    { date: "2026-05-02", status: "computed_between_confirmed_anchors", source: "computed_from_opening_and_ledger" },
+    { date: "2026-05-10", status: "computed_between_confirmed_anchors", source: "computed_from_opening_and_ledger" },
+    { date: "2026-05-20", status: "ok", source: "manual" },
+  ]);
+  assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 0);
+  assert.equal(snapshot.balance_coverage.summary.computed_between_confirmed_anchor_rows, 2);
+  assert.equal(snapshot.balance_coverage.summary.fully_reconciled_accounts, 3);
+  assert.equal(snapshot.balance_fixes.missing_ostatki_rows.length, 0);
+  assert.deepEqual(snapshot.balances.remainders_rows, [
+    {
+      channel: "wise usd",
+      currency: "USD",
+      opening_amount_usd: 1000,
+      closing_amount_usd: 1310,
+      delta_amount_usd: 310,
+      openingUsd: 1000,
+      closingUsd: 1310,
+      deltaUsd: 310,
+      status: "ok",
+      source: "computed_from_opening_and_ledger",
+      period_start_date: "2026-05-02",
+      period_end_date: "2026-05-20",
+      row_count: 3,
+      needs_verification: false,
+      computed_balance: true,
+      factual_provider_balance: false,
+    },
+  ]);
 });

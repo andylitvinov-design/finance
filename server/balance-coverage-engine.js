@@ -1,8 +1,10 @@
 const STATUS = {
   OK: "ok",
+  COMPUTED_BETWEEN_CONFIRMED_ANCHORS: "computed_between_confirmed_anchors",
   MISMATCH: "mismatch",
   MISSING_OPENING: "missing_opening_balance",
   MISSING_PROVIDER: "missing_provider_balance",
+  MISSING_AMOUNT_NET: "missing_amount_net",
   NEEDS_VERIFICATION: "needs_verification",
 };
 
@@ -20,7 +22,9 @@ export function buildBalanceCoverage(dailyBalanceResult = {}) {
 
 function toCoverageAccount(row) {
   const hasOpeningBalance = row?.opening_balance !== null && row?.opening_balance !== undefined;
-  const hasClosingBalance = row?.provider_reported_balance !== null && row?.provider_reported_balance !== undefined;
+  const hasComputedBalance = row?.computed_balance === true;
+  const hasProviderBalance = row?.provider_reported_balance !== null && row?.provider_reported_balance !== undefined;
+  const hasClosingBalance = hasComputedBalance || hasProviderBalance;
   const openingUsd = toNullableRoundedNumber(row?.opening_amount_usd);
   const closingUsd = toNullableRoundedNumber(row?.closing_amount_usd);
   const deltaUsd = openingUsd !== null && closingUsd !== null
@@ -42,7 +46,7 @@ function toCoverageAccount(row) {
     computed_closing_balance: row?.closing_balance === null || row?.closing_balance === undefined
       ? null
       : round(row.closing_balance),
-    provider_reported_balance: hasClosingBalance ? round(row.provider_reported_balance) : null,
+    provider_reported_balance: hasProviderBalance ? round(row.provider_reported_balance) : null,
     difference: row?.difference === null || row?.difference === undefined ? null : round(row.difference),
     opening_amount_usd: openingUsd,
     closing_amount_usd: closingUsd,
@@ -51,7 +55,15 @@ function toCoverageAccount(row) {
     closingUsd,
     deltaUsd,
     status,
-    balance_source: hasClosingBalance ? "manual" : "missing",
+    balance_source: hasComputedBalance ? "computed_from_opening_and_ledger" : (hasProviderBalance ? "manual" : "missing"),
+    ...(hasComputedBalance ? {
+      source: row?.source || "computed_from_opening_and_ledger",
+      status_detail: row?.status_detail || STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS,
+      computed_balance: true,
+      factual_provider_balance: false,
+      opening_anchor_date: row?.opening_anchor_date || null,
+      next_confirmed_balance_date: row?.next_confirmed_balance_date || null,
+    } : {}),
   };
   return {
     ...account,
@@ -65,6 +77,9 @@ function toCoverageAccount(row) {
 function buildDiagnosis(account) {
   if (account.status === STATUS.OK) {
     return "Сверено: opening_balance + inflow - outflow equals provider_reported_balance.";
+  }
+  if (account.status === STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS) {
+    return `Расчетный остаток: строка между подтвержденными Остатки ${account.opening_anchor_date || "n/a"} и ${account.next_confirmed_balance_date || "n/a"} вычислена из Ledger amount_net.`;
   }
   if (account.status === STATUS.MISSING_OPENING) {
     return `Нет начального остатка: не найдена строка Остатки до ${account.date} для ${account.channel} ${account.currency}.`;
@@ -80,6 +95,9 @@ function buildDiagnosis(account) {
 
 function buildFixAction(account) {
   if (account.status === STATUS.OK) return "Действий не требуется.";
+  if (account.status === STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS) {
+    return "Действий не требуется: это расчетное покрытие между подтвержденными Остатки, не factual provider row.";
+  }
   if (account.status === STATUS.MISSING_OPENING) {
     return "Добавить фактический начальный остаток в Остатки до даты движения; сумму взять из провайдера, не рассчитывать автоматически.";
   }
@@ -106,10 +124,12 @@ function buildFormula(account) {
 function getFixPriority(status) {
   const priority = {
     [STATUS.MISMATCH]: 1,
+    [STATUS.MISSING_AMOUNT_NET]: 1,
     [STATUS.NEEDS_VERIFICATION]: 2,
     [STATUS.MISSING_OPENING]: 3,
     [STATUS.MISSING_PROVIDER]: 4,
     [STATUS.OK]: 0,
+    [STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS]: 0,
   };
   return priority[status] ?? 99;
 }
@@ -117,9 +137,11 @@ function getFixPriority(status) {
 function buildCoverageSummary(accounts, dailySummary) {
   const statusCounts = {
     [STATUS.OK]: 0,
+    [STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS]: 0,
     [STATUS.MISMATCH]: 0,
     [STATUS.MISSING_OPENING]: 0,
     [STATUS.MISSING_PROVIDER]: 0,
+    [STATUS.MISSING_AMOUNT_NET]: 0,
     [STATUS.NEEDS_VERIFICATION]: 0,
   };
 
@@ -129,10 +151,12 @@ function buildCoverageSummary(accounts, dailySummary) {
 
   return {
     accounts_with_movement: accounts.length,
-    fully_reconciled_accounts: statusCounts[STATUS.OK],
+    fully_reconciled_accounts: statusCounts[STATUS.OK] + statusCounts[STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS],
+    computed_between_confirmed_anchor_rows: statusCounts[STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS],
     missing_opening_balance: statusCounts[STATUS.MISSING_OPENING],
     missing_provider_balance: statusCounts[STATUS.MISSING_PROVIDER],
     mismatch: statusCounts[STATUS.MISMATCH],
+    missing_amount_net: statusCounts[STATUS.MISSING_AMOUNT_NET],
     needs_verification: statusCounts[STATUS.NEEDS_VERIFICATION],
     excluded_missing_amount_net_rows: Number(dailySummary.excluded_missing_amount_net_rows || 0),
     status_counts: statusCounts,
@@ -141,7 +165,7 @@ function buildCoverageSummary(accounts, dailySummary) {
 
 function buildActionableAccounts(accounts) {
   return (accounts || [])
-    .filter((account) => account.status && account.status !== STATUS.OK)
+    .filter((account) => account.status && ![STATUS.OK, STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS].includes(account.status))
     .sort(compareActionableRows)
     .slice(0, 10);
 }

@@ -434,6 +434,9 @@ function buildRemaindersRows(accounts = []) {
       opening_amount_usd: nullableRound(account.opening_amount_usd ?? account.openingUsd),
       closing_amount_usd: nullableRound(account.closing_amount_usd ?? account.closingUsd),
       status: account.status || "needs_verification",
+      source: account.source || account.balance_source || "balance_coverage.accounts",
+      computed_balance: account.computed_balance === true,
+      factual_provider_balance: account.factual_provider_balance === false ? false : account.computed_balance !== true,
     };
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(row);
@@ -447,6 +450,7 @@ function buildRemaindersRows(accounts = []) {
       const openingUsd = first.opening_amount_usd;
       const closingUsd = last.closing_amount_usd;
       const complete = openingUsd !== null && closingUsd !== null;
+      const computed = rows.some((row) => row.computed_balance === true);
       return {
         channel: first.channel || last.channel || "",
         currency: first.currency || last.currency || "",
@@ -457,11 +461,15 @@ function buildRemaindersRows(accounts = []) {
         closingUsd,
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
         status: complete ? "ok" : "needs_verification",
-        source: "balance_coverage.accounts",
+        source: computed ? "computed_from_opening_and_ledger" : "balance_coverage.accounts",
         period_start_date: first.date || "",
         period_end_date: last.date || "",
         row_count: rows.length,
         needs_verification: !complete,
+        ...(computed ? {
+          computed_balance: true,
+          factual_provider_balance: false,
+        } : {}),
       };
     })
     .sort((left, right) => {
@@ -541,6 +549,8 @@ function filterDailyBalanceResult(result, periodFilter, excludedMissingAmountNet
       mismatch_rows: status_counts.mismatch,
       missing_opening_balance_rows: status_counts.missing_opening_balance,
       missing_provider_balance_rows: status_counts.missing_provider_balance,
+      missing_amount_net_rows: status_counts.missing_amount_net,
+      computed_between_confirmed_anchor_rows: status_counts.computed_between_confirmed_anchors,
       excluded_missing_amount_net_rows: Number(excludedMissingAmountNetRows || 0),
       status_counts,
     },
@@ -550,9 +560,11 @@ function filterDailyBalanceResult(result, periodFilter, excludedMissingAmountNet
 function buildDailyBalanceStatusCounts(rows) {
   const counts = {
     ok: 0,
+    computed_between_confirmed_anchors: 0,
     mismatch: 0,
     missing_opening_balance: 0,
     missing_provider_balance: 0,
+    missing_amount_net: 0,
     needs_verification: 0,
   };
   for (const row of rows || []) {
@@ -567,9 +579,10 @@ function buildDailyBalanceActionableRows(rows) {
     needs_verification: 1,
     missing_opening_balance: 2,
     missing_provider_balance: 3,
+    missing_amount_net: 4,
   };
   return (rows || [])
-    .filter((row) => row.status && row.status !== "ok")
+    .filter((row) => row.status && !["ok", "computed_between_confirmed_anchors"].includes(row.status))
     .sort((left, right) => {
       const leftPriority = priority[left.status] ?? 99;
       const rightPriority = priority[right.status] ?? 99;
