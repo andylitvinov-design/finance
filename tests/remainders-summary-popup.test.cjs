@@ -263,6 +263,14 @@ test("missing values render needs verification instead of invented balances", ()
   resetRemaindersModule();
 });
 
+test("remainders table has a mobile horizontal scroll container", () => {
+  const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
+
+  assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*overflow-x:\s*auto;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap table\s*\{[^}]*min-width:\s*760px;/s);
+});
+
 test("existing Balance popup behavior remains available", () => {
   const balanceApi = require("../balance-summary-popup.js");
   const block = balanceApi.renderBalanceSummaryBlock({

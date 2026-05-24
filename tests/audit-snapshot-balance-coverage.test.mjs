@@ -74,10 +74,10 @@ test("audit snapshot exposes balance coverage for reconciled account currency ro
       closingUsd: 1206,
       deltaUsd: 206,
       status: "ok",
-      source: "balance_coverage.accounts",
-      period_start_date: "2026-05-02",
+      source: "manual_may_opening_anchor",
+      period_start_date: "2026-05-01",
       period_end_date: "2026-05-02",
-      row_count: 1,
+      row_count: 2,
       needs_verification: false,
     },
   ]);
@@ -452,6 +452,89 @@ test("audit snapshot uses auto balance row as fallback when manual balance row i
   assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance, 1206);
   assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
 });
+
+test("audit snapshot remainders include period-start manual anchors without movement", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "manual wallet", currency: "USD", amount: "500", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-05-01", channel: "manual wallet", currency: "USD", amount: "400", source: "provider_auto", sourceSheet: "Авто Остатки" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balances.remainders_rows, [
+    {
+      channel: "manual wallet",
+      currency: "USD",
+      opening_amount_usd: 500,
+      closing_amount_usd: null,
+      delta_amount_usd: null,
+      openingUsd: 500,
+      closingUsd: null,
+      deltaUsd: null,
+      status: "needs_verification",
+      source: "manual_may_opening_anchor",
+      period_start_date: "2026-05-01",
+      period_end_date: "2026-05-01",
+      row_count: 1,
+      needs_verification: true,
+    },
+  ]);
+});
+
+test("audit snapshot remainders do not treat same-day snapshot as opening when prior anchor exists", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-12", to: "2026-05-12" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-12",
+          toChannel: "wise eur",
+          currency: "EUR",
+          amount: "100",
+          amountUsd: "108",
+          amountNet: "100",
+          ledgerV2: {
+            date: "2026-05-12",
+            operation: "income",
+            to_channel: "wise eur",
+            currency: "EUR",
+            amount: "100",
+            amount_usd: "108",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-11", channel: "wise eur", currency: "EUR", amount: "500", usdAmount: "540" },
+        { date: "2026-05-12", channel: "wise eur", currency: "EUR", amount: "600", usdAmount: "648" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balances.remainders_rows[0].opening_amount_usd, 540);
+  assert.equal(snapshot.balances.remainders_rows[0].closing_amount_usd, 648);
+});
+
 
 test("audit snapshot ignores stale current-only auto balance rows on historical dates", async () => {
   const snapshot = await buildAuditSnapshot({
@@ -1177,9 +1260,9 @@ test("audit snapshot marks bounded anchor movement rows computed without writing
       deltaUsd: 310,
       status: "ok",
       source: "computed_from_opening_and_ledger",
-      period_start_date: "2026-05-02",
+      period_start_date: "2026-05-01",
       period_end_date: "2026-05-20",
-      row_count: 3,
+      row_count: 4,
       needs_verification: false,
       computed_balance: true,
       factual_provider_balance: false,
