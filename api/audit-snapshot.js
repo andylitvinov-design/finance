@@ -501,6 +501,7 @@ function buildRemaindersRows(accounts = [], options = {}) {
 function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
   const from = normalizeDate(period.from);
   if (!from) return [];
+  const isFirstDayOfMonth = /^\d{4}-\d{2}-01$/.test(from);
   const priorKeys = new Set();
   for (const row of balanceRows || []) {
     const date = normalizeDate(row?.date);
@@ -518,7 +519,7 @@ function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
     if (!channel || !currency) continue;
     const amount = parseNumber(row?.balanceAmount ?? row?.amount);
     const key = `${channel}|${currency}`;
-    if (priorKeys.has(key)) continue;
+    if (!isFirstDayOfMonth && priorKeys.has(key)) continue;
     const anchor = {
       key,
       date,
