@@ -143,6 +143,44 @@ test("buildRemaindersSummary prefers audit snapshot remainders rows", () => {
   resetRemaindersModule();
 });
 
+test("buildLiveRemaindersSummary fetches audit snapshot when dashboard state has no source", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = {
+    getElementById(id) {
+      if (id === "startDate") return { value: "2026-05-01" };
+      if (id === "endDate") return { value: "2026-05-31" };
+      return null;
+    },
+  };
+  let requestedUrl = "";
+  global.fetch = async (url) => {
+    requestedUrl = url;
+    return {
+      ok: true,
+      async json() {
+        return {
+          balances: {
+            remainders_rows: [
+              { channel: "Wise USD", opening_amount_usd: 100, closing_amount_usd: 125 },
+            ],
+          },
+        };
+      },
+    };
+  };
+
+  const summary = await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.equal(summary.source, "data.balances.remainders_rows");
+  assert.equal(summary.rows[0].channel, "Wise USD");
+  assert.equal(summary.rows[0].deltaUsd, 25);
+  assert.match(requestedUrl, /\/api\/audit-snapshot\?from=2026-05-01&to=2026-05-31$/);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("missing values render needs verification instead of invented balances", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
