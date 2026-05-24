@@ -1907,6 +1907,16 @@ test("GET getDashboardData splits service income from refunds exchanges and unma
             paymentMethod: "сайт, дол, пэйпэл",
             receivedUsd: 315,
           }),
+          makeSourceRow({
+            number: "18164",
+            date: "2026-05-14",
+            client: "Crypto top-up",
+            service: "Deposit should not count as service payment",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "Бинанс spot",
+            receivedUsd: 103,
+          }),
         ];
         return { ok: true, status: 200, async text() { return rows.map((row) => row.join(",")).join("\n"); } };
       }
@@ -1967,7 +1977,22 @@ test("GET getDashboardData splits service income from refunds exchanges and unma
       }
 
       if (value.includes("/api/v3/account")) return { ok: true, status: 200, async text() { return JSON.stringify({ balances: [] }); } };
-      if (value.includes("/sapi/v1/capital/deposit/hisrec")) return { ok: true, status: 200, async text() { return "[]"; } };
+      if (value.includes("/sapi/v1/capital/deposit/hisrec")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify([{
+              id: "5046711607171328256",
+              amount: "103",
+              coin: "USDT",
+              completeTime: "2026-05-14T13:37:41Z",
+              status: 1,
+              txId: "0x4b98d74ed29a7e451dadf131e77e5032bca43d0add56438ef4ee91b5aef26640",
+            }]);
+          },
+        };
+      }
       if (value.includes("/sapi/v1/capital/withdraw/history")) return { ok: true, status: 200, async text() { return "[]"; } };
       if (value.includes("/sapi/v1/pay/transactions")) {
         return {
@@ -2000,21 +2025,25 @@ test("GET getDashboardData splits service income from refunds exchanges and unma
     assert.equal(response.body?.ok, true);
     assert.equal(realIncome?.summaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(realIncome?.summaryByChannel?.["трансервайз евро"]?.realNetUsd, 0);
+    assert.equal(realIncome?.summaryByChannel?.["Бинанс spot"]?.realNetUsd, 0);
     assert.equal(realIncome?.summaryByChannel?.["Binance funding"]?.realNetUsd, 0);
     assert.equal(realIncome?.serviceOrderSummaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(realIncome?.serviceOrderSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 0);
+    assert.equal(realIncome?.serviceOrderSummaryByChannel?.["Бинанс spot"]?.realNetUsd, 0);
     assert.equal(realIncome?.serviceOrderSummaryByChannel?.["Binance funding"]?.realNetUsd, 0);
     assert.equal(realIncome?.refundSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 116);
+    assert.equal(realIncome?.exchangeSummaryByChannel?.["Бинанс spot"]?.realNetUsd, 103);
     assert.equal(realIncome?.exchangeSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
     assert.equal(realIncome?.unmatchedSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 58);
     assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realNetUsd, 311.06);
     assert.equal(realIncome?.allSummaryByChannel?.["трансервайз евро"]?.realNetUsd, 174);
+    assert.equal(realIncome?.allSummaryByChannel?.["Бинанс spot"]?.realNetUsd, 103);
     assert.equal(realIncome?.allSummaryByChannel?.["Binance funding"]?.realNetUsd, 250);
     assert.equal(realIncome?.summaryTotals?.realNetUsd, 311.06);
     assert.equal(realIncome?.serviceOrderSummaryTotals?.realNetUsd, 311.06);
-    assert.equal(realIncome?.allSummaryTotals?.realNetUsd, 735.06);
+    assert.equal(realIncome?.allSummaryTotals?.realNetUsd, 838.06);
     assert.equal(realIncome?.refundEntries?.length, 1);
-    assert.equal(realIncome?.exchangeEntries?.length, 1);
+    assert.equal(realIncome?.exchangeEntries?.length, 2);
     assert.equal(realIncome?.unmatchedEntries?.length, 1);
     const paypalRow = response.body?.data?.tabs?.movement?.values?.find((row) => row?.[0] === "18111");
     assert.equal(paypalRow?.[20], "311,06");
