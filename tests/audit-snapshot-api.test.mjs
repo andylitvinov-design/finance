@@ -298,6 +298,7 @@ test("audit snapshot exposes additive daily currency balances without changing b
     "auto_balance_rows_used_as_fallback",
     "auto_balance_rows_ignored_due_to_manual",
     "auto_balance_rows_ignored_as_stale_current",
+    "remainders_rows",
   ]);
   assert.ok(response.balances.by_channel.some((row) => row.channel === "пейпал дол" && row.balance_amount === 311.06));
   assert.ok(response.daily_balances.rows.some((row) =>

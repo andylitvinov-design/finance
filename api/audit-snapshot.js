@@ -160,6 +160,7 @@ export async function buildAuditSnapshot(options = {}) {
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
       auto_balance_rows_ignored_as_stale_current: balanceSnapshotMerge.autoIgnoredStaleCurrent ?? balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current ?? null,
+      remainders_rows: buildRemaindersRows(balanceCoverage.accounts || []),
     },
     daily_balances: {
       uses_amount_net: true,
@@ -314,6 +315,7 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       auto_balance_rows_used_as_fallback: null,
       auto_balance_rows_ignored_due_to_manual: null,
       auto_balance_rows_ignored_as_stale_current: null,
+      remainders_rows: [],
     },
     daily_balances: {
       uses_amount_net: true,
@@ -416,6 +418,62 @@ function buildWeeklyBalanceSummary({
     actionable_accounts: balanceCoverage?.actionable_accounts || [],
     copyable_ostatki_rows: String(balanceFixes?.copyable_ostatki_rows || ""),
   };
+}
+
+function buildRemaindersRows(accounts = []) {
+  const grouped = new Map();
+  for (const account of accounts || []) {
+    const channel = String(account?.channel || "").trim();
+    const currency = String(account?.currency || "").trim().toUpperCase();
+    if (!channel || !currency) continue;
+    const key = `${channel}|${currency}`;
+    const row = {
+      date: account.date,
+      channel,
+      currency,
+      opening_amount_usd: nullableRound(account.opening_amount_usd ?? account.openingUsd),
+      closing_amount_usd: nullableRound(account.closing_amount_usd ?? account.closingUsd),
+      status: account.status || "needs_verification",
+    };
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+
+  return Array.from(grouped.values())
+    .map((rows) => {
+      rows.sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")));
+      const first = rows[0] || {};
+      const last = rows.at(-1) || {};
+      const openingUsd = first.opening_amount_usd;
+      const closingUsd = last.closing_amount_usd;
+      const complete = openingUsd !== null && closingUsd !== null;
+      return {
+        channel: first.channel || last.channel || "",
+        currency: first.currency || last.currency || "",
+        opening_amount_usd: openingUsd,
+        closing_amount_usd: closingUsd,
+        delta_amount_usd: complete ? round(closingUsd - openingUsd) : null,
+        openingUsd,
+        closingUsd,
+        deltaUsd: complete ? round(closingUsd - openingUsd) : null,
+        status: complete ? "ok" : "needs_verification",
+        source: "balance_coverage.accounts",
+        period_start_date: first.date || "",
+        period_end_date: last.date || "",
+        row_count: rows.length,
+        needs_verification: !complete,
+      };
+    })
+    .sort((left, right) => {
+      if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+      return left.currency.localeCompare(right.currency);
+    });
+}
+
+function nullableRound(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? round(numeric) : null;
 }
 
 function parsePeriodFilter(query = {}) {

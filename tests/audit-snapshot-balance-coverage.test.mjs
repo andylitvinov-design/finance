@@ -60,8 +60,92 @@ test("audit snapshot exposes balance coverage for reconciled account currency ro
   assert.equal(snapshot.balance_coverage.summary.mismatch, 0);
   assert.equal(snapshot.balance_coverage.accounts[0].computed_closing_balance, 1206);
   assert.equal(snapshot.balance_coverage.accounts[0].provider_reported_balance, 1206);
+  assert.equal(snapshot.balance_coverage.accounts[0].opening_amount_usd, 1000);
+  assert.equal(snapshot.balance_coverage.accounts[0].closing_amount_usd, 1206);
+  assert.equal(snapshot.balance_coverage.accounts[0].delta_amount_usd, 206);
+  assert.deepEqual(snapshot.balances.remainders_rows, [
+    {
+      channel: "wise usd",
+      currency: "USD",
+      opening_amount_usd: 1000,
+      closing_amount_usd: 1206,
+      delta_amount_usd: 206,
+      openingUsd: 1000,
+      closingUsd: 1206,
+      deltaUsd: 206,
+      status: "ok",
+      source: "balance_coverage.accounts",
+      period_start_date: "2026-05-02",
+      period_end_date: "2026-05-02",
+      row_count: 1,
+      needs_verification: false,
+    },
+  ]);
   assert.equal(snapshot.balance_coverage.accounts[0].status, "ok");
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "ok");
+});
+
+test("audit snapshot exposes remainders USD fields from explicit balance USD values", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-12", to: "2026-05-12" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-12",
+          toChannel: "wise eur",
+          currency: "EUR",
+          amount: "100",
+          amountUsd: "108",
+          amountNet: "100",
+          ledgerV2: {
+            date: "2026-05-12",
+            operation: "income",
+            to_channel: "wise eur",
+            currency: "EUR",
+            amount: "100",
+            amount_usd: "108",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-11", channel: "wise eur", currency: "EUR", amount: "500", usdAmount: "540" },
+        { date: "2026-05-12", channel: "wise eur", currency: "EUR", amount: "600", usdAmount: "648" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const account = snapshot.balance_coverage.accounts[0];
+  assert.equal(account.opening_balance, 500);
+  assert.equal(account.provider_reported_balance, 600);
+  assert.equal(account.opening_amount_usd, 540);
+  assert.equal(account.closing_amount_usd, 648);
+  assert.equal(account.delta_amount_usd, 108);
+  assert.deepEqual(snapshot.balances.remainders_rows.map((row) => ({
+    channel: row.channel,
+    currency: row.currency,
+    opening_amount_usd: row.opening_amount_usd,
+    closing_amount_usd: row.closing_amount_usd,
+    delta_amount_usd: row.delta_amount_usd,
+    status: row.status,
+  })), [
+    {
+      channel: "wise eur",
+      currency: "EUR",
+      opening_amount_usd: 540,
+      closing_amount_usd: 648,
+      delta_amount_usd: 108,
+      status: "ok",
+    },
+  ]);
 });
 
 test("audit snapshot exposes weekly balance summary when all account currency rows reconcile", async () => {
@@ -141,6 +225,12 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.balances.by_channel[0].channel, "wise usd");
   assert.equal(snapshot.balances.by_channel[0].balance_amount, 206);
   assert.equal(snapshot.balance_coverage.summary.missing_provider_balance, 1);
+  assert.equal(snapshot.balance_coverage.accounts[0].opening_amount_usd, 1000);
+  assert.equal(snapshot.balance_coverage.accounts[0].closing_amount_usd, null);
+  assert.equal(snapshot.balance_coverage.accounts[0].delta_amount_usd, null);
+  assert.equal(snapshot.balances.remainders_rows[0].status, "needs_verification");
+  assert.equal(snapshot.balances.remainders_rows[0].opening_amount_usd, 1000);
+  assert.equal(snapshot.balances.remainders_rows[0].closing_amount_usd, null);
   assert.equal(snapshot.balance_coverage.weekly_summary.status, "needs_verification");
   assert.equal(snapshot.balance_coverage.weekly_summary.missing_provider_balance, 1);
   assert.match(

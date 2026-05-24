@@ -21,6 +21,11 @@ export function buildBalanceCoverage(dailyBalanceResult = {}) {
 function toCoverageAccount(row) {
   const hasOpeningBalance = row?.opening_balance !== null && row?.opening_balance !== undefined;
   const hasClosingBalance = row?.provider_reported_balance !== null && row?.provider_reported_balance !== undefined;
+  const openingUsd = toNullableRoundedNumber(row?.opening_amount_usd);
+  const closingUsd = toNullableRoundedNumber(row?.closing_amount_usd);
+  const deltaUsd = openingUsd !== null && closingUsd !== null
+    ? round(closingUsd - openingUsd)
+    : toNullableRoundedNumber(row?.delta_amount_usd);
   const status = normalizeStatus(row?.status);
   const account = {
     date: String(row?.date || ""),
@@ -39,6 +44,12 @@ function toCoverageAccount(row) {
       : round(row.closing_balance),
     provider_reported_balance: hasClosingBalance ? round(row.provider_reported_balance) : null,
     difference: row?.difference === null || row?.difference === undefined ? null : round(row.difference),
+    opening_amount_usd: openingUsd,
+    closing_amount_usd: closingUsd,
+    delta_amount_usd: deltaUsd,
+    openingUsd,
+    closingUsd,
+    deltaUsd,
     status,
     balance_source: hasClosingBalance ? "manual" : "missing",
   };
@@ -155,6 +166,12 @@ function compareCoverageRows(left, right) {
 
 function round(value) {
   return Math.round((Number(value) || 0) * 10000) / 10000;
+}
+
+function toNullableRoundedNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? round(numeric) : null;
 }
 
 function formatDiagnosticNumber(value) {
