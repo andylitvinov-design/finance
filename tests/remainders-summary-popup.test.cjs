@@ -181,6 +181,40 @@ test("buildLiveRemaindersSummary fetches audit snapshot when dashboard state has
   delete global.fetch;
 });
 
+test("buildLiveRemaindersSummary fetches audit snapshot instead of trusting manual balance fallback", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = { getElementById: () => null };
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        balances: {
+          remainders_rows: [
+            { channel: "Audit source", opening_amount_usd: 10, closing_amount_usd: 12 },
+          ],
+        },
+      };
+    },
+  });
+
+  const summary = await api.buildLiveRemaindersSummary({
+    data: {
+      manual: {
+        balances: [
+          { channel: "Manual fallback", closing_amount_usd: 999 },
+        ],
+      },
+    },
+  });
+
+  assert.equal(summary.source, "data.balances.remainders_rows");
+  assert.equal(summary.rows[0].channel, "Audit source");
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("missing values render needs verification instead of invented balances", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
