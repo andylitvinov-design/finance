@@ -454,7 +454,9 @@
     if (!distribution?.channels?.length) {
       const diagnostic = doc.createElement("div");
       diagnostic.className = "balance-summary-diagnostics";
-      diagnostic.textContent = "needs verification: source not found for income channel distribution";
+      diagnostic.textContent = distribution?.source === "realIncome.summaryByChannel"
+        ? "Нет подтвержденных оплат заказов/услуг по каналам за период."
+        : "needs verification: source not found for income channel distribution";
       section.appendChild(diagnostic);
       return section;
     }
