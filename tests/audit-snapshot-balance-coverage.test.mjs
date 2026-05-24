@@ -535,6 +535,30 @@ test("audit snapshot remainders do not treat same-day snapshot as opening when p
   assert.equal(snapshot.balances.remainders_rows[0].closing_amount_usd, 648);
 });
 
+test("audit snapshot remainders keep first-of-month source anchors even when prior rows exist", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-04-30", channel: "quiet wallet", currency: "USD", amount: "300", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "quiet wallet", currency: "USD", amount: "500", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balances.remainders_rows[0].channel, "quiet wallet");
+  assert.equal(snapshot.balances.remainders_rows[0].opening_amount_usd, 500);
+  assert.equal(snapshot.balances.remainders_rows[0].source, "manual_may_opening_anchor");
+});
+
 
 test("audit snapshot ignores stale current-only auto balance rows on historical dates", async () => {
   const snapshot = await buildAuditSnapshot({
