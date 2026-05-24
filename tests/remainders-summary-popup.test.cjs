@@ -215,6 +215,29 @@ test("buildLiveRemaindersSummary fetches audit snapshot instead of trusting manu
   delete global.fetch;
 });
 
+test("buildLiveRemaindersSummary uses URL period when date inputs are empty", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/?from=2026-05-01&to=2026-05-31" };
+  global.document = { getElementById: () => null };
+  let requestedUrl = "";
+  global.fetch = async (url) => {
+    requestedUrl = url;
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.match(requestedUrl, /\/api\/audit-snapshot\?from=2026-05-01&to=2026-05-31$/);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("missing values render needs verification instead of invented balances", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
