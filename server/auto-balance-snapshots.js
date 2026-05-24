@@ -57,6 +57,7 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "binance", channel: "Бинанс spot", currency: "USDC", source: "binance_auto" },
   { provider: "binance", channel: "Binance funding", currency: "USDT", source: "binance_auto" },
   { provider: "binance", channel: "binance save", currency: "USDT", source: "binance_auto" },
+  { provider: "binance", channel: "binance save", currency: "USDC", source: "binance_auto" },
   { provider: "tdbank", channel: "БАНК КАНАДА cad", currency: "CAD", source: "tdbank_auto" },
   { provider: "payoneer", channel: "Payoneer - eur", currency: "EUR", source: "payoneer_auto" },
   { provider: "payoneer", channel: "Payoneer - dol", currency: "USD", source: "payoneer_auto" },
@@ -578,28 +579,31 @@ async function collectBinanceBalanceRows({ date, currentDate, env, fetchImpl }) 
     }
 
     if (earnResult.status === "fulfilled") {
-      const earnUsdt = earnResult.value.find((balance) => balance.wallet === "earn" && balance.currency === "USDT");
-      if (earnUsdt) {
+      for (const currency of ["USDT", "USDC"]) {
+        const earnBalance = earnResult.value.find((balance) => balance.wallet === "earn" && balance.currency === currency);
+        if (!earnBalance) continue;
         replaceExpectedRow(rows, buildSnapshotRow({
-          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
+          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === currency),
           date,
-          amount: earnUsdt.amount,
-          rawSourceId: earnUsdt.id,
-          status: Number(earnUsdt.amount) === 0 ? "zero_balance" : "ok",
+          amount: earnBalance.amount,
+          rawSourceId: earnBalance.id,
+          status: Number(earnBalance.amount) === 0 ? "zero_balance" : "ok",
           comment: SNAPSHOT_COMMENT,
         }));
       }
     } else {
       errors.push(`earn: ${String(earnResult.reason?.message || earnResult.reason)}`);
-      replaceExpectedRow(rows, buildSnapshotRow({
-        ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === "USDT"),
-        date,
-        amount: "",
-        amountUsd: "",
-        rawSourceId: "binance:binance save:USDT",
-        status: isPermissionError(earnResult.reason) ? "needs_provider_permission" : "provider_error",
-        comment: toSafeComment(earnResult.reason),
-      }));
+      for (const currency of ["USDT", "USDC"]) {
+        replaceExpectedRow(rows, buildSnapshotRow({
+          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "binance save" && row.currency === currency),
+          date,
+          amount: "",
+          amountUsd: "",
+          rawSourceId: `binance:binance save:${currency}`,
+          status: isPermissionError(earnResult.reason) ? "needs_provider_permission" : "provider_error",
+          comment: toSafeComment(earnResult.reason),
+        }));
+      }
     }
 
     const hasWritable = rows.some((row) => ["ok", "zero_balance"].includes(row.status));
