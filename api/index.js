@@ -388,6 +388,8 @@ async function maybeOverlayFreshSourceData(data) {
           candidateIncomeEntries: realIncome?.candidateIncomeEntries || [],
           matchedEntries: realIncome?.matchedEntries || [],
           unmatchedEntries: realIncome?.unmatchedEntries || [],
+          serviceOrderSummaryByChannel: realIncome?.serviceOrderSummaryByChannel || {},
+          serviceOrderSummaryTotals: realIncome?.serviceOrderSummaryTotals || null,
           summaryByChannel: realIncome?.summaryByChannel || {},
           summaryTotals: realIncome?.summaryTotals || null,
           refundSummaryByChannel: realIncome?.refundSummaryByChannel || {},
@@ -752,6 +754,7 @@ async function buildRealIncomePayload(period, movementValues) {
   const matchedEntryIds = new Set(rowMatches.map((match) => String(match.matchedEntryId || "").trim()).filter(Boolean));
   const matchedEntries = candidateIncomeEntries.filter((entry) => matchedEntryIds.has(getRealIncomeEntryKey(entry)));
   const unmatchedEntries = candidateIncomeEntries.filter((entry) => !matchedEntryIds.has(getRealIncomeEntryKey(entry)));
+  const serviceOrderSummaryByChannel = summarizeRealIncomeByChannel(matchedEntries, movementValues, { includeMovementDirectFallback: false });
   warnings.push(...matchWarnings);
   warnings.push(...buildUnmatchedRealIncomeWarnings(unmatchedEntries));
   return {
@@ -762,6 +765,8 @@ async function buildRealIncomePayload(period, movementValues) {
     candidateIncomeEntries,
     matchedEntries,
     unmatchedEntries,
+    serviceOrderSummaryByChannel,
+    serviceOrderSummaryTotals: getRealIncomeSummaryTotalsFromSummary(serviceOrderSummaryByChannel),
     summaryByChannel: summarizeRealIncomeByChannel(matchedEntries, movementValues),
     summaryTotals: summarizeRealIncomeTotals(matchedEntries, movementValues),
     refundSummaryByChannel: summarizeRealIncomeByChannel(refundEntries, movementValues, { includeMovementDirectFallback: false }),
