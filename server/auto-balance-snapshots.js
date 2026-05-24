@@ -38,6 +38,7 @@ const FALLBACK_USD_RATES = {
   UAH: 1 / 43.86,
   RUB: 1 / 84.5563,
   USDT: 1,
+  USDC: 1,
 };
 
 export const EXPECTED_PROVIDER_BALANCES = [
@@ -53,6 +54,7 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "privatbank", channel: "приват-фоп", currency: "UAH", source: "privatbank_auto" },
   { provider: "yoomoney", channel: "Яндекс руб", currency: "RUB", source: "yoomoney_auto" },
   { provider: "binance", channel: "Бинанс spot", currency: "USDT", source: "binance_auto" },
+  { provider: "binance", channel: "Бинанс spot", currency: "USDC", source: "binance_auto" },
   { provider: "binance", channel: "Binance funding", currency: "USDT", source: "binance_auto" },
   { provider: "binance", channel: "binance save", currency: "USDT", source: "binance_auto" },
   { provider: "tdbank", channel: "БАНК КАНАДА cad", currency: "CAD", source: "tdbank_auto" },
@@ -550,14 +552,15 @@ async function collectBinanceBalanceRows({ date, currentDate, env, fetchImpl }) 
     const errors = [];
 
     if (spotResult.status === "fulfilled") {
-      const spotUsdt = spotResult.value.find((balance) => balance.wallet === "spot" && balance.currency === "USDT");
-      if (spotUsdt) {
+      for (const currency of ["USDT", "USDC"]) {
+        const spotBalance = spotResult.value.find((balance) => balance.wallet === "spot" && balance.currency === currency);
+        if (!spotBalance) continue;
         replaceExpectedRow(rows, buildSnapshotRow({
-          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "Бинанс spot" && row.currency === "USDT"),
+          ...EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === provider && row.channel === "Бинанс spot" && row.currency === currency),
           date,
-          amount: spotUsdt.amount,
-          rawSourceId: spotUsdt.id,
-          status: Number(spotUsdt.amount) === 0 ? "zero_balance" : "ok",
+          amount: spotBalance.amount,
+          rawSourceId: spotBalance.id,
+          status: Number(spotBalance.amount) === 0 ? "zero_balance" : "ok",
           comment: SNAPSHOT_COMMENT,
         }));
       }

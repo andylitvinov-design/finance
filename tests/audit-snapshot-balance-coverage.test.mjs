@@ -148,6 +148,118 @@ test("audit snapshot exposes remainders USD fields from explicit balance USD val
   ]);
 });
 
+test("audit snapshot keeps RUB remainders needs verification when factual anchors lack USD rate", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-05", to: "2026-05-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-05",
+          toChannel: "Яндекс руб",
+          currency: "RUB",
+          amount: "100",
+          amountUsd: "1.2",
+          amountNet: "100",
+          ledgerV2: {
+            date: "2026-05-05",
+            operation: "income",
+            to_channel: "Яндекс руб",
+            currency: "RUB",
+            amount: "100",
+            amount_usd: "1.2",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "yoomoney",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-04", channel: "Яндекс руб", currency: "RUB", amount: "1000" },
+        { date: "2026-05-05", channel: "Яндекс руб", currency: "RUB", amount: "1100" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balances.remainders_rows.map((row) => ({
+    channel: row.channel,
+    currency: row.currency,
+    status: row.status,
+    reason: row.needs_verification_reason,
+    fix_action: row.fix_action,
+  })), [
+    {
+      channel: "Яндекс руб",
+      currency: "RUB",
+      status: "needs_verification",
+      reason: "missing_usd_rate_or_amount_usd",
+      fix_action: "Add a trusted rate or amount_usd for the factual RUB anchor date; native RUB alone is not enough for USD remainders.",
+    },
+  ]);
+});
+
+test("audit snapshot carries factual RUB USD fields when trusted rate is present", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-05", to: "2026-05-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-05",
+          toChannel: "Яндекс руб",
+          currency: "RUB",
+          amount: "100",
+          amountUsd: "1.2",
+          amountNet: "100",
+          ledgerV2: {
+            date: "2026-05-05",
+            operation: "income",
+            to_channel: "Яндекс руб",
+            currency: "RUB",
+            amount: "100",
+            amount_usd: "1.2",
+            amount_net: "100",
+            balance_amount: 100,
+            source: "yoomoney",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-04", channel: "Яндекс руб", currency: "RUB", amount: "1000", rate: "0.012" },
+        { date: "2026-05-05", channel: "Яндекс руб", currency: "RUB", amount: "1100", rate: "0.012" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balances.remainders_rows.map((row) => ({
+    channel: row.channel,
+    currency: row.currency,
+    opening_amount_usd: row.opening_amount_usd,
+    closing_amount_usd: row.closing_amount_usd,
+    delta_amount_usd: row.delta_amount_usd,
+    status: row.status,
+  })), [
+    {
+      channel: "Яндекс руб",
+      currency: "RUB",
+      opening_amount_usd: 12,
+      closing_amount_usd: 13.2,
+      delta_amount_usd: 1.2,
+      status: "ok",
+    },
+  ]);
+});
+
 test("audit snapshot exposes weekly balance summary when all account currency rows reconcile", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { from: "2026-05-11", to: "2026-05-17" },
