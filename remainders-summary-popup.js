@@ -130,7 +130,7 @@
 
   async function buildLiveRemaindersSummary(input, options = {}) {
     const current = buildRemaindersSummary(input, options);
-    if (current.source && current.rows.length) return current;
+    if (/remainders_?rows/i.test(current.source || "") && current.rows.length) return current;
     try {
       const snapshot = await fetchAuditSnapshotRemainders();
       if (!snapshot) return current;
