@@ -315,6 +315,7 @@ test("balance popup renders income distribution by channel from realIncome summa
             PayPal: { realNetUsd: 125 },
             Wise: { realNetUsd: 375 },
             Empty: { realNetUsd: 0 },
+            "Wise refund": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
           },
         },
         tabs: { movement: { values: [] }, orders: { values: [] } },
@@ -333,18 +334,22 @@ test("balance popup renders income distribution by channel from realIncome summa
   assert.match(text, /125,0000/);
   assert.match(text, /25\.0%/);
   assert.doesNotMatch(text, /Empty/);
+  assert.doesNotMatch(text, /Wise refund/);
+  assert.doesNotMatch(text, /915,5000/);
   resetBalanceModule();
 });
 
-test("income distribution ignores zero channels and totals positive rows to 100 percent", () => {
+test("income distribution ignores zero and planned-only channels and totals positive rows to 100 percent", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
     data: {
       realIncome: {
         summaryByChannel: {
-          PayPal: { realNetUsd: 20 },
+          PayPal: { realNetUsd: 566.5 },
           Wise: { realNetUsd: 30 },
           Zero: { realNetUsd: 0 },
+          "Wise refund": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
+          "Binance funding": { plannedReceivedUsd: 915.5 },
           Blank: {},
         },
       },
@@ -352,13 +357,17 @@ test("income distribution ignores zero channels and totals positive rows to 100 
   });
 
   assert.equal(distribution.channels.length, 2);
-  assert.equal(distribution.total, 50);
+  assert.equal(distribution.total, 596.5);
   assert.equal(Number(distribution.channels.reduce((sum, row) => sum + row.percent, 0).toFixed(4)), 100);
-  assert.deepEqual(distribution.channels.map((row) => row.channel), ["Wise", "PayPal"]);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["PayPal", "Wise"]);
+  assert.equal(distribution.channels.find((row) => row.channel === "PayPal").amount, 566.5);
+  assert.equal(Number(distribution.channels.find((row) => row.channel === "PayPal").percent.toFixed(4)), 94.9707);
+  assert.equal(distribution.channels.some((row) => row.channel === "Wise refund"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
   resetBalanceModule();
 });
 
-test("income distribution falls back to planned received only with verification diagnostic", () => {
+test("income distribution does not use planned received fallback from realIncome summary", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
     data: {
@@ -366,14 +375,48 @@ test("income distribution falls back to planned received only with verification 
         summaryByChannel: {
           PayPal: { plannedReceivedUsd: 80 },
           Wise: { realNetUsd: 20, plannedReceivedUsd: 200 },
+          "Binance funding": { plannedReceivedUsd: 915.5 },
         },
       },
     },
   });
 
-  assert.equal(distribution.total, 100);
-  assert.equal(distribution.channels.find((row) => row.channel === "PayPal").needsVerification, true);
-  assert.match(distribution.diagnostics.join("\n"), /plannedReceivedUsd fallback/);
+  assert.equal(distribution.total, 20);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["Wise"]);
+  assert.equal(distribution.channels.find((row) => row.channel === "Wise").percent, 100);
+  assert.equal(distribution.channels.some((row) => row.channel === "PayPal"), false);
+  assert.equal(distribution.channels.some((row) => row.channel === "Binance funding"), false);
+  assert.doesNotMatch(distribution.diagnostics.join("\n"), /plannedReceivedUsd fallback/);
+  resetBalanceModule();
+});
+
+test("income distribution falls back to movement only when realIncome summary is absent", () => {
+  const api = loadApi();
+  const movementValues = [
+    ["DATE", "PAYMENT CHANNEL", "NET RECEIVED USD", "OPERATION"],
+    ["2026-05-05", "PayPal", "100", "income"],
+    ["2026-05-06", "Wise", "50", "income"],
+  ];
+  const absentSummary = api.buildIncomeChannelDistribution({
+    data: { tabs: { movement: { values: movementValues } } },
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
+  const presentZeroSummary = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        summaryByChannel: {
+          "Binance funding": { realNetUsd: 0, plannedReceivedUsd: 915.5 },
+        },
+      },
+      tabs: { movement: { values: movementValues } },
+    },
+  }, { startDate: "2026-05-01", endDate: "2026-05-31" });
+
+  assert.equal(absentSummary.source, "movement table");
+  assert.equal(absentSummary.total, 150);
+  assert.deepEqual(absentSummary.channels.map((row) => row.channel), ["PayPal", "Wise"]);
+  assert.equal(presentZeroSummary.source, "realIncome.summaryByChannel");
+  assert.equal(presentZeroSummary.total, 0);
+  assert.deepEqual(presentZeroSummary.channels, []);
   resetBalanceModule();
 });
 
