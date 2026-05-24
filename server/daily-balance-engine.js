@@ -30,6 +30,7 @@ const PROVIDER_STATUS_PRIORITY = [
 const INTRADAY_NOT_EOD = "intraday_not_eod";
 const INTRADAY_DIAGNOSTIC = "Intraday/not-EOD balance snapshot ignored for EOD reconciliation";
 const ANCHOR_RECONCILIATION_TOLERANCE = 0.5;
+const BINANCE_BACKWARD_SOURCE = "computed_backward_from_current_binance_anchor_and_ledger";
 
 export function buildDailyCurrencyBalances(operations = [], balanceRows = [], options = {}) {
   if (options?.period) {
@@ -116,6 +117,7 @@ export function buildDailyCurrencyBalances(operations = [], balanceRows = [], op
     }
   }
 
+  applyBackwardBinanceAnchorComputation(rows, balanceIndex);
   applyConfirmedAnchorIntervals(rows, balanceIndex);
   rows.sort(compareMovementRows);
 
@@ -501,6 +503,97 @@ function applyConfirmedAnchorIntervals(rows, balanceIndex) {
       }
     }
   }
+}
+
+function applyBackwardBinanceAnchorComputation(rows, balanceIndex) {
+  const rowsByKey = new Map();
+  for (const row of rows || []) {
+    const key = makeKey(row.channel, row.currency);
+    if (!isBinanceStablecoinKey(key)) continue;
+    const list = rowsByKey.get(key) || [];
+    list.push(row);
+    rowsByKey.set(key, list);
+  }
+
+  for (const [key, movementRows] of rowsByKey.entries()) {
+    const anchors = (balanceIndex.byKey.get(key) || [])
+      .filter((row) => row.amount !== null && row.amount !== undefined && isBinanceCurrentAnchor(row))
+      .sort((left, right) => left.date.localeCompare(right.date));
+    if (!anchors.length) continue;
+    movementRows.sort(compareMovementRows);
+
+    for (const row of movementRows) {
+      if (row.status === STATUS.MISSING_AMOUNT_NET || Number(row.missing_amount_net_rows || 0) > 0) continue;
+      const anchor = anchors.find((candidate) => candidate.date > row.date);
+      if (!anchor) continue;
+      const intervalRows = movementRows.filter((candidate) => candidate.date > row.date && candidate.date <= anchor.date);
+      if (intervalRows.some((candidate) => candidate.status === STATUS.MISSING_AMOUNT_NET || Number(candidate.missing_amount_net_rows || 0) > 0)) continue;
+
+      const futureDelta = round(intervalRows.reduce((sum, candidate) => sum + Number(candidate.net_change || 0), 0));
+      const closing = round(anchor.amount - futureDelta);
+      const opening = round(closing - Number(row.net_change || 0));
+      const anchorUsd = snapshotUsdAmount(anchor);
+      const futureDeltaUsd = intervalRows.every((candidate) => candidate._has_usd_change)
+        ? round(intervalRows.reduce((sum, candidate) => sum + Number(candidate._net_change_usd || 0), 0))
+        : null;
+      const closingUsd = anchorUsd !== null && futureDeltaUsd !== null
+        ? round(anchorUsd - futureDeltaUsd)
+        : (isStableUsdCurrency(row.currency) ? closing : null);
+      const openingUsd = closingUsd !== null && row._has_usd_change
+        ? round(closingUsd - Number(row._net_change_usd || 0))
+        : (isStableUsdCurrency(row.currency) ? opening : null);
+      const providerReported = row.provider_reported_balance;
+      const difference = providerReported !== null && providerReported !== undefined
+        ? round(Number(providerReported) - closing)
+        : null;
+      const hasMismatch = difference !== null && Math.abs(difference) > ANCHOR_RECONCILIATION_TOLERANCE;
+
+      row.opening_balance = opening;
+      row.closing_balance = closing;
+      row.difference = difference;
+      row.status = hasMismatch ? STATUS.MISMATCH : STATUS.COMPUTED_BETWEEN_CONFIRMED_ANCHORS;
+      row.source = BINANCE_BACKWARD_SOURCE;
+      row.status_detail = BINANCE_BACKWARD_SOURCE;
+      row.computed_balance = true;
+      row.factual_provider_balance = false;
+      row.opening_anchor_date = null;
+      row.next_confirmed_balance_date = anchor.date;
+      row.next_confirmed_balance_amount = round(anchor.amount);
+      row.next_confirmed_balance_source = anchor.source || "";
+      if (openingUsd !== null) row.opening_amount_usd = openingUsd;
+      if (closingUsd !== null) {
+        row.closing_amount_usd = closingUsd;
+        row.delta_amount_usd = openingUsd !== null ? round(closingUsd - openingUsd) : null;
+      }
+      delete row.missing_provider_balance_context;
+      delete row.missing_provider_balance_reason;
+      delete row.nearest_later_provider_fact_date;
+      delete row.nearest_later_provider_fact_amount;
+      delete row.nearest_later_provider_fact_source;
+      delete row.nearest_later_provider_fact_source_sheet;
+      delete row.nearest_later_provider_fact_source_row;
+      delete row.later_provider_fact_difference;
+    }
+  }
+}
+
+function isBinanceStablecoinKey(key = "") {
+  const [channel, currency] = String(key || "").split("|");
+  return /binance|бинанс/i.test(channel || "") && isStableUsdCurrency(currency);
+}
+
+function isBinanceCurrentAnchor(row = {}) {
+  const text = [
+    row.source,
+    row.sourceSheet,
+    row.provider,
+    row.comment,
+  ].map((value) => String(value || "").trim().toLowerCase()).join(" ");
+  return /user_confirmed_binance_balance|binance/.test(text);
+}
+
+function isStableUsdCurrency(currency = "") {
+  return ["USD", "USDT", "USDC"].includes(String(currency || "").trim().toUpperCase());
 }
 
 function buildCoverageBalanceIndex(balanceRows) {

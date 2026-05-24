@@ -451,6 +451,7 @@ function buildRemaindersRows(accounts = []) {
       const closingUsd = last.closing_amount_usd;
       const complete = openingUsd !== null && closingUsd !== null;
       const computed = rows.some((row) => row.computed_balance === true);
+      const computedSource = rows.find((row) => row.computed_balance === true && row.source)?.source || "computed_from_opening_and_ledger";
       return {
         channel: first.channel || last.channel || "",
         currency: first.currency || last.currency || "",
@@ -461,7 +462,7 @@ function buildRemaindersRows(accounts = []) {
         closingUsd,
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
         status: complete ? "ok" : "needs_verification",
-        source: computed ? "computed_from_opening_and_ledger" : "balance_coverage.accounts",
+        source: computed ? computedSource : "balance_coverage.accounts",
         period_start_date: first.date || "",
         period_end_date: last.date || "",
         row_count: rows.length,

@@ -457,6 +457,153 @@ test("movement dates between confirmed opening and closing anchors are computed 
   assert.equal(may20.difference, 0);
 });
 
+test("Binance current spot anchor computes previous movement day backwards from ledger amount_net", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-23",
+        operation: "expense",
+        fromChannel: "Бинанс spot",
+        toChannel: "",
+        currency: "USDT",
+        amountNet: "400",
+        balanceAmount: -400,
+        ledgerV2: {
+          date: "2026-05-23",
+          operation: "expense",
+          from_channel: "Бинанс spot",
+          to_channel: "",
+          currency: "USDT",
+          amount_net: "400",
+          amount_usd: "-400",
+          balance_amount: -400,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-24", channel: "Бинанс spot", amount: "1211.91", currency: "USDT", source: "user_confirmed_binance_balance", sourceSheet: "Авто Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].status, "computed_between_confirmed_anchors");
+  assert.equal(result.rows[0].source, "computed_backward_from_current_binance_anchor_and_ledger");
+  assert.equal(result.rows[0].status_detail, "computed_backward_from_current_binance_anchor_and_ledger");
+  assert.equal(result.rows[0].computed_balance, true);
+  assert.equal(result.rows[0].factual_provider_balance, false);
+  assert.equal(result.rows[0].opening_balance, 1611.91);
+  assert.equal(result.rows[0].closing_balance, 1211.91);
+  assert.equal(result.rows[0].opening_amount_usd, 1611.91);
+  assert.equal(result.rows[0].closing_amount_usd, 1211.91);
+  assert.equal(result.rows[0].delta_amount_usd, -400);
+  assert.equal(result.rows[0].next_confirmed_balance_date, "2026-05-24");
+});
+
+test("Binance current funding zero anchor computes backwards without factual provider row", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-23",
+        operation: "income",
+        fromChannel: "",
+        toChannel: "Binance funding",
+        currency: "USDT",
+        amountNet: "415.5",
+        balanceAmount: 415.5,
+        ledgerV2: {
+          date: "2026-05-23",
+          operation: "income",
+          from_channel: "",
+          to_channel: "Binance funding",
+          currency: "USDT",
+          amount_net: "415.5",
+          amount_usd: "415.5",
+          balance_amount: 415.5,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-24", channel: "Binance funding", amount: "0", currency: "USDT", source: "user_confirmed_binance_balance", sourceSheet: "Авто Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].status, "computed_between_confirmed_anchors");
+  assert.equal(result.rows[0].source, "computed_backward_from_current_binance_anchor_and_ledger");
+  assert.equal(result.rows[0].provider_reported_balance, null);
+  assert.equal(result.rows[0].opening_balance, -415.5);
+  assert.equal(result.rows[0].closing_balance, 0);
+  assert.equal(result.rows[0].factual_provider_balance, false);
+});
+
+test("missing amount_net blocks Binance backward anchor computation", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-23",
+        operation: "expense",
+        fromChannel: "Бинанс spot",
+        toChannel: "",
+        currency: "USDT",
+        amountNet: "",
+        balanceAmount: -400,
+        ledgerV2: {
+          date: "2026-05-23",
+          operation: "expense",
+          from_channel: "Бинанс spot",
+          to_channel: "",
+          currency: "USDT",
+          amount_net: "",
+          amount_usd: "-400",
+          balance_amount: -400,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-24", channel: "Бинанс spot", amount: "1211.91", currency: "USDT", source: "user_confirmed_binance_balance", sourceSheet: "Авто Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].status, "missing_amount_net");
+  assert.equal(result.rows[0].closing_balance, null);
+  assert.equal(result.rows[0].source, undefined);
+});
+
+test("Binance backward computation keeps mismatch when existing factual anchor disagrees", () => {
+  const result = buildDailyCurrencyBalances(
+    [
+      operation({
+        date: "2026-05-23",
+        operation: "expense",
+        fromChannel: "Бинанс spot",
+        toChannel: "",
+        currency: "USDT",
+        amountNet: "400",
+        balanceAmount: -400,
+        ledgerV2: {
+          date: "2026-05-23",
+          operation: "expense",
+          from_channel: "Бинанс spot",
+          to_channel: "",
+          currency: "USDT",
+          amount_net: "400",
+          amount_usd: "-400",
+          balance_amount: -400,
+        },
+      }),
+    ],
+    [
+      { date: "2026-05-23", channel: "Бинанс spot", amount: "1209", currency: "USDT", sourceSheet: "Остатки" },
+      { date: "2026-05-24", channel: "Бинанс spot", amount: "1211.91", currency: "USDT", source: "user_confirmed_binance_balance", sourceSheet: "Авто Остатки" },
+    ]
+  );
+
+  assert.equal(result.rows[0].status, "mismatch");
+  assert.equal(result.rows[0].provider_reported_balance, 1209);
+  assert.equal(result.rows[0].closing_balance, 1211.91);
+  assert.equal(result.rows[0].difference, -2.91);
+  assert.equal(result.rows[0].computed_balance, true);
+  assert.equal(result.rows[0].source, "computed_backward_from_current_binance_anchor_and_ledger");
+});
+
 test("closing anchor mismatch keeps intermediate movement rows actionable", () => {
   const result = buildDailyCurrencyBalances(
     [
