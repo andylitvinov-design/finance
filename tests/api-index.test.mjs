@@ -751,6 +751,127 @@ test("GET getDashboardData overlays fresh source payout rows when upstream is st
   }
 });
 
+test("GET getDashboardData keeps Kovalev Wise @bolieslavn rows out of ordinary order and payout tables", async () => {
+  const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousWiseToken = process.env.WISE_API_TOKEN;
+  const previousPayPalClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousPayPalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL =
+    "https://script.google.com/macros/s/example/exec";
+  delete process.env.WISE_API_TOKEN;
+  delete process.env.PAYPAL_CLIENT_ID;
+  delete process.env.PAYPAL_CLIENT_SECRET;
+
+  const makeSourceRow = ({ number, client, paymentMethod }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = "2026-05-24";
+    row[3] = client;
+    row[4] = "Регулировка заливки";
+    row[6] = "50";
+    row[9] = "51.5";
+    row[24] = paymentMethod;
+    row[30] = "580";
+    return row.join(",");
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: {
+                  startDate: "2026-05-01",
+                  endDate: "2026-05-31",
+                  timeZone: "Europe/Kiev"
+                },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.05.2026", "дата 2", "31.05.2026"],
+                      ["Поменяй даты.", "", "", ""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE"]
+                    ]
+                  },
+                  payouts: {
+                    sheetName: "список выплат",
+                    values: [
+                      ["Выплаты", "Журнал переводов за период"],
+                      ["POSITION", "DATE", "CLIENT", "SERVICE", "PAYMENT METHOD", "ВАЛЮТА", "СУММА ТЕКУЩАЯ", "AMOUNT (USD)", "КУРС ПЕРЕВОДА", "COMMENT"]
+                    ]
+                  }
+                }
+              }
+            });
+          }
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return [
+              new Array(51).fill("").join(","),
+              new Array(51).fill("").join(","),
+              ",,Дата ,Клиент,Название заказа,Коммент/ остаток,Прайс база,25% акция,кол-во,всего,пр+3%,,%а,%б,,,руб,евр,грн,к-р,к-гр,к-р,к-гр,к-евро,метод оплаты,валюта,дол,руб,грн, +,дол,евро,руб,грн,КАРТА грн,дата,время,хвост,готовность ,ОТЗЫВ?,отчет,Тип/карта,руб,грн,,,Примечание,ВК,№К,Отзыв был?,емейл",
+              makeSourceRow({ number: "18179", client: "Сергей Ковалев", paymentMethod: "Wise @bolieslavn" }),
+              makeSourceRow({ number: "18180", client: "Мария Wise", paymentMethod: "Wise @bolieslavn" }),
+              makeSourceRow({ number: "18181", client: "Sergey Kovalev", paymentMethod: "Wise bolieslavn" }),
+              makeSourceRow({ number: "18182", client: "Сергей Ковалёв", paymentMethod: "transferwise @bolieslavn" }),
+              makeSourceRow({ number: "18183", client: "Сергей Ковалев", paymentMethod: "Wise other" })
+            ].join("\n");
+          }
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({
+      method: "GET",
+      query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-31" }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    const movementRows = response.body?.data?.tabs?.movement?.values || [];
+    const payoutRows = response.body?.data?.tabs?.payouts?.values || [];
+    const movementIds = movementRows.map((row) => row?.[0]).filter(Boolean);
+    const payoutIds = payoutRows.map((row) => row?.[0]).filter(Boolean);
+
+    assert.equal(movementIds.includes("18179"), false);
+    assert.equal(movementIds.includes("18181"), false);
+    assert.equal(movementIds.includes("18182"), false);
+    assert.equal(payoutIds.includes("18179"), false);
+    assert.equal(payoutIds.includes("18181"), false);
+    assert.equal(payoutIds.includes("18182"), false);
+    assert.equal(movementIds.includes("18180"), true);
+    assert.equal(movementIds.includes("18183"), true);
+    assert.equal(payoutIds.includes("18183"), true);
+  } finally {
+    global.fetch = previousFetch;
+    if (previous === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previous;
+    if (previousWiseToken === undefined) delete process.env.WISE_API_TOKEN;
+    else process.env.WISE_API_TOKEN = previousWiseToken;
+    if (previousPayPalClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousPayPalClientId;
+    if (previousPayPalClientSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
+  }
+});
+
 test("GET getDashboardData overlays fresh source movement rows even when upstream has none", async () => {
   const previous = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
