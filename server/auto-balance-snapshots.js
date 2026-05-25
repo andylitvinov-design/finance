@@ -1359,7 +1359,7 @@ function normalizeProvider(value) {
 
 function normalizeAutoSource(value, provider) {
   const raw = String(value || "").trim().toLowerCase();
-  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYPAL_DERIVED_BALANCE_SOURCE, PAYONEER_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYONEER_DERIVED_BALANCE_SOURCE, "user_confirmed_binance_balance"].includes(raw)) return raw;
+  if ([PAYPAL_MANUAL_BALANCE_SOURCE, PAYPAL_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYPAL_DERIVED_BALANCE_SOURCE, PAYONEER_MANUAL_CONFIRMED_BALANCE_SOURCE, PAYONEER_DERIVED_BALANCE_SOURCE, "binance_derived_opening_balance", "revolut_derived_opening_balance", "user_confirmed_binance_balance"].includes(raw)) return raw;
   if (["wise_auto", "paypal_auto", "binance_auto", "monobank_auto", "privatbank_auto", "yoomoney_auto", "tdbank_auto", "payoneer_auto", "revolut_auto", "provider_auto"].includes(raw)) return raw;
   const normalizedProvider = normalizeProvider(provider);
   if (["wise", "paypal", "binance", "monobank", "privatbank", "yoomoney", "tdbank", "payoneer", "revolut"].includes(normalizedProvider)) return `${normalizedProvider}_auto`;
