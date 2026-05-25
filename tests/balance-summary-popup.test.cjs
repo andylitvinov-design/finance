@@ -666,6 +666,13 @@ test("empty income distribution source does not crash and renders diagnostic", (
 
 test("balance summary renders compact channel gap diagnostics", () => {
   const api = loadApi();
+  const servicePaymentSummaryByChannel = {
+    "трансервайз дол": { realNetUsd: 566.5 },
+    "приват-фоп": { realNetUsd: 375.4655 },
+    "монобанк грн": { realNetUsd: 309.0011 },
+    "Яндекс руб": { realNetUsd: 185.5256 },
+    "пейпал дол": { realNetUsd: 115.5 },
+  };
   const block = api.renderBalanceSummaryBlock({
     ordersBase: 0,
     percentRate: 3,
@@ -676,37 +683,57 @@ test("balance summary renders compact channel gap diagnostics", () => {
     totalPaid: 0,
     remainingToPay: 0,
     diagnostics: [],
-    incomeChannelDistribution: api.buildIncomeChannelDistribution({ data: { tabs: { movement: { values: [] } } } }),
+    incomeChannelDistribution: api.buildIncomeChannelDistribution({
+      data: { realIncome: { servicePaymentSummaryByChannel } },
+    }),
+    servicePaymentSummaryByChannel,
     servicePaymentGapByChannel: [
       {
-        channel: "пейпал дол",
+        channel: "Без канала",
         netGapUsd: 103,
         rows: [
-          { reason: "PayPal missing client-paid/provider net" },
-          { reason: "no safe amount" },
+          { reason: "payment channel missing" },
         ],
       },
       {
-        channel: "монобанк грн",
-        netGapUsd: -8.5,
+        channel: "трансервайз дол",
+        netGapUsd: -334.75,
         rows: [{ reason: "duplicate/offset/overpaid" }],
       },
       {
-        channel: "Яндекс руб",
-        netGapUsd: 0,
-        rows: [{ reason: "no safe amount" }],
+        channel: "Бинанс spot",
+        netGapUsd: 25.25,
+        rows: [{ reason: "excluded deposit/non-service" }],
       },
     ],
   }, makeMockDocument());
 
   const text = collectText(block);
-  assert.match(text, /Не распределено по каналам/);
-  assert.match(text, /пейпал дол/);
+  const sections = collectNodes(block, (node) => node.className === "balance-service-payment-gap-section");
+  const sectionTextByTitle = Object.fromEntries(sections.map((section) => [
+    (section.children || []).find((child) => child.tag === "h3")?.textContent,
+    collectText(section),
+  ]));
+
+  assert.match(sectionTextByTitle["Не распределено по каналам"], /Без канала/);
+  assert.match(sectionTextByTitle["Не распределено по каналам"], /payment channel missing/);
   assert.match(text, /103,0000/);
-  assert.match(text, /PayPal missing client-paid\/provider net, no safe amount/);
-  assert.match(text, /монобанк грн/);
-  assert.match(text, /-8,5000/);
-  assert.match(text, /duplicate\/offset\/overpaid/);
-  assert.doesNotMatch(text, /Яндекс руб/);
+  assert.doesNotMatch(sectionTextByTitle["Не распределено по каналам"], /трансервайз дол/);
+
+  assert.match(sectionTextByTitle["Переплаты \/ offset"], /трансервайз дол/);
+  assert.match(sectionTextByTitle["Переплаты \/ offset"], /-334,7500/);
+  assert.match(sectionTextByTitle["Переплаты \/ offset"], /duplicate\/offset\/overpaid/);
+
+  assert.match(sectionTextByTitle["Исключено из оплат"], /Бинанс spot/);
+  assert.match(sectionTextByTitle["Исключено из оплат"], /25,2500/);
+  assert.match(sectionTextByTitle["Исключено из оплат"], /excluded deposit\/non-service/);
+
+  assert.match(text, /Не распределено итого: 103,0000/);
+  assert.match(text, /Переплаты \/ offset итого: 334,7500/);
+  assert.match(text, /Итоговый gap: -231,7500/);
+  assert.match(text, /положительное нераспределенное - offsets = итоговый gap/);
+
+  const distribution = api.buildIncomeChannelDistribution({ data: { realIncome: { servicePaymentSummaryByChannel } } });
+  assert.equal(Number(distribution.total.toFixed(4)), 1551.9922);
   resetBalanceModule();
 });
