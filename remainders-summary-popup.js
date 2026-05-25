@@ -202,7 +202,7 @@
   function scrollRemaindersTable(wrap, left) {
     if (!wrap) return;
     if (typeof wrap.scrollBy === "function") {
-      wrap.scrollBy({ left, behavior: "smooth" });
+      wrap.scrollBy({ left, behavior: "auto" });
       return;
     }
     wrap.scrollLeft = Number(wrap.scrollLeft || 0) + left;
