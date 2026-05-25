@@ -545,11 +545,11 @@ test("audit snapshot remainders include period-start manual anchors without move
       opening_amount_usd: 500,
       closing_amount_usd: null,
       delta_amount_usd: null,
-      movement_usd: null,
-      planned_closing_amount_usd: null,
-      planned_balance_computed: false,
-      planned_balance_source: "needs_verification",
-      planned_balance_reason: "needs_verification: missing_ledger_movement",
+      movement_usd: 0,
+      planned_closing_amount_usd: 500,
+      planned_balance_computed: true,
+      planned_balance_source: "computed_from_opening_plus_ledger_movement",
+      planned_balance_reason: "opening_amount_usd + zero safe ledger movement",
       openingUsd: 500,
       closingUsd: null,
       deltaUsd: null,
@@ -1489,6 +1489,64 @@ test("audit snapshot remainders include closing-only channels", async () => {
   assert.equal(row.closing_amount_usd, 410);
   assert.equal(row.inclusion_source, "closing_anchor");
   assert.equal(row.status, "needs_verification");
+});
+
+test("audit snapshot remainders use zero movement for opening-only anchor without ledger rows", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-25" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "REVOLUT дол", currency: "USD", amount: "378", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows.find((item) => item.channel === "REVOLUT дол");
+  assert.ok(row);
+  assert.equal(row.opening_amount_usd, 378);
+  assert.equal(row.closing_amount_usd, null);
+  assert.equal(row.movement_usd, 0);
+  assert.equal(row.planned_closing_amount_usd, 378);
+  assert.equal(row.planned_balance_computed, true);
+  assert.equal(row.status, "needs_verification");
+  assert.equal(row.planned_balance_reason, "opening_amount_usd + zero safe ledger movement");
+});
+
+test("audit snapshot remainders keep factual closing while planned is computed", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-25" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "деп24-дол", currency: "USD", amount: "0", sourceSheet: "Остатки" },
+        { date: "2026-05-25", channel: "деп24-дол", currency: "USD", amount: "0", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows.find((item) => item.channel === "деп24-дол");
+  assert.ok(row);
+  assert.equal(row.opening_amount_usd, 0);
+  assert.equal(row.closing_amount_usd, 0);
+  assert.equal(row.delta_amount_usd, 0);
+  assert.equal(row.movement_usd, 0);
+  assert.equal(row.planned_closing_amount_usd, 0);
+  assert.equal(row.status, "ok");
 });
 
 test("audit snapshot remainders merge duplicate channel currency inclusions into one row", async () => {

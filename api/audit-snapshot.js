@@ -513,9 +513,7 @@ function buildRemaindersRows(accounts = [], options = {}) {
         planned_closing_amount_usd: plannedClosingUsd,
         planned_balance_computed: plannedClosingUsd !== null,
         planned_balance_source: plannedClosingUsd !== null ? "computed_from_opening_plus_ledger_movement" : "needs_verification",
-        planned_balance_reason: plannedClosingUsd !== null
-          ? "opening_amount_usd + amount_net ledger movement"
-          : buildPlannedBalanceReason({ openingUsd, movementStatus }),
+        planned_balance_reason: buildPlannedBalanceReason({ openingUsd, movementStatus, plannedClosingUsd }),
         openingUsd,
         closingUsd,
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
@@ -580,6 +578,7 @@ function normalizeRemaindersCoverageMovementUsd(account = {}) {
 function summarizeRemaindersMovement(rows = []) {
   const coverageRows = rows.filter((row) => row.inclusion_source === "balance_coverage");
   const ledgerRows = rows.filter((row) => row.inclusion_source === "ledger_movement");
+  const unsafeAmountNet = coverageRows.some((row) => row.movement_usd_reason === "missing_amount_net");
   const coverageHasUnsafeMovement = coverageRows.some((row) => row.movement_usd_safe !== true);
   const coverageHasCompleteAnchors = coverageRows.some((row) =>
     (row.opening_amount_usd !== null || row.openingUsd !== null) &&
@@ -591,7 +590,15 @@ function summarizeRemaindersMovement(rows = []) {
       ? coverageRows
       : ledgerRows;
   if (!movementRows.length) {
-    return { safe: false, movement_usd: null, reason: "missing_ledger_movement" };
+    return { safe: true, movement_usd: 0, reason: "zero_safe_ledger_movement" };
+  }
+  if (!ledgerRows.length && !unsafeAmountNet) {
+    const onlyMissingMovement = movementRows.every((row) =>
+      row.movement_usd_safe !== true &&
+        (row.movement_usd === null || row.movement_usd === undefined) &&
+        (!row.movement_usd_reason || row.movement_usd_reason === "missing_movement_usd" || row.movement_usd_reason === "missing_ledger_movement")
+    );
+    if (onlyMissingMovement) return { safe: true, movement_usd: 0, reason: "zero_safe_ledger_movement" };
   }
   let total = 0;
   for (const row of movementRows) {
@@ -603,8 +610,12 @@ function summarizeRemaindersMovement(rows = []) {
   return { safe: true, movement_usd: round(total), reason: "amount_net_ledger_movement" };
 }
 
-function buildPlannedBalanceReason({ openingUsd, movementStatus }) {
+function buildPlannedBalanceReason({ openingUsd, movementStatus, plannedClosingUsd }) {
   if (openingUsd === null) return "needs_verification: missing opening_amount_usd";
+  if (plannedClosingUsd !== null && movementStatus?.reason === "zero_safe_ledger_movement") {
+    return "opening_amount_usd + zero safe ledger movement";
+  }
+  if (plannedClosingUsd !== null) return "opening_amount_usd + amount_net ledger movement";
   if (!movementStatus.safe) return `needs_verification: ${movementStatus.reason || "missing movement_usd"}`;
   return "needs_verification";
 }

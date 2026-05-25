@@ -441,6 +441,39 @@ test("remainders popup renders movement and planned balance columns", () => {
   resetRemaindersModule();
 });
 
+test("remainders popup renders currency column and same channel currencies distinctly", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        {
+          channel: "binance save",
+          currency: "USDT",
+          opening_amount_usd: 7432,
+          closing_amount_usd: 5411.5338,
+        },
+        {
+          channel: "binance save",
+          currency: "USDC",
+          opening_amount_usd: null,
+          closing_amount_usd: null,
+        },
+      ],
+    },
+  });
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Валюта/);
+  assert.match(text, /USDT/);
+  assert.match(text, /USDC/);
+  assert.deepEqual(summary.rows.map((row) => `${row.channel}/${row.currency}`), [
+    "binance save/USDT",
+    "binance save/USDC",
+  ]);
+  resetRemaindersModule();
+});
+
 test("reconcile result summary is rendered as grouped sections", () => {
   const api = loadApi();
   const panel = api.renderReconcileResult({

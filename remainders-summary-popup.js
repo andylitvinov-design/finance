@@ -8,6 +8,7 @@
   const RECONCILE_BUTTON_TEXT = "Обновить остатки и пересчитать";
 
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
+  const CURRENCY_FIELDS = ["currency", "account_currency", "accountCurrency", "balance_currency", "balanceCurrency"];
   const OPENING_FIELDS = ["opening_amount_usd", "openingUsd", "start_amount_usd", "startUsd", "balance_start_usd", "startBalanceUsd", "opening_balance_usd"];
   const CLOSING_FIELDS = ["closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "balance_end_usd", "endBalanceUsd", "closing_balance_usd"];
   const DELTA_FIELDS = ["delta_amount_usd", "deltaUsd", "change_usd", "changeUsd"];
@@ -81,6 +82,7 @@
 
   function normalizeRemaindersRow(row) {
     const channel = String(firstDefined(row, CHANNEL_FIELDS) || "").trim() || "Не указан";
+    const currency = String(firstDefined(row, CURRENCY_FIELDS) || "").trim().toUpperCase() || "n/a";
     const openingUsd = parseNumber(firstDefined(row, OPENING_FIELDS));
     const closingUsd = parseNumber(firstDefined(row, CLOSING_FIELDS));
     const movementUsd = parseNumber(firstDefined(row, MOVEMENT_FIELDS));
@@ -89,7 +91,7 @@
     const deltaUsd = openingUsd !== null && closingUsd !== null ? closingUsd - openingUsd : fallbackDeltaUsd;
     const needsVerification = openingUsd === null || closingUsd === null || deltaUsd === null;
     const plannedNeedsVerification = plannedClosingUsd === null;
-    return { channel, openingUsd, closingUsd, deltaUsd, movementUsd, plannedClosingUsd, needsVerification, plannedNeedsVerification };
+    return { channel, currency, openingUsd, closingUsd, deltaUsd, movementUsd, plannedClosingUsd, needsVerification, plannedNeedsVerification };
   }
 
   function buildRemaindersSummary(input, options = {}) {
@@ -282,7 +284,7 @@
     const table = doc.createElement("table");
     const thead = doc.createElement("thead");
     const header = doc.createElement("tr");
-    ["Канал", "Было на начало периода, USD", "Стало на конец периода, USD", "Изменение, USD", "Движение средств", "Остатки плановые"].forEach((label) => {
+    ["Канал", "Валюта", "Было на начало периода, USD", "Стало на конец периода, USD", "Изменение, USD", "Движение средств", "Остатки плановые"].forEach((label) => {
       header.appendChild(renderHeaderCell(doc, label));
     });
     thead.appendChild(header);
@@ -293,6 +295,7 @@
       const tr = doc.createElement("tr");
       if (row.needsVerification) tr.className = "needs-verification";
       tr.appendChild(renderCell(doc, row.channel));
+      tr.appendChild(renderCell(doc, row.currency));
       tr.appendChild(renderCell(doc, formatMoney(row.openingUsd), "numeric"));
       tr.appendChild(renderCell(doc, formatMoney(row.closingUsd), "numeric"));
       tr.appendChild(renderCell(doc, formatMoney(row.deltaUsd), "numeric"));
@@ -304,6 +307,7 @@
     const total = doc.createElement("tr");
     total.className = "balance-income-channel-total";
     total.appendChild(renderCell(doc, "ИТОГО"));
+    total.appendChild(renderCell(doc, ""));
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.openingUsd : null), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.closingUsd : null), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.deltaUsd : null), "numeric"));
