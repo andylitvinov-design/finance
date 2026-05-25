@@ -671,14 +671,39 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
       channel: "Без канала",
       netGapUsd: 103,
       rows: [
-        { reason: "PayPal missing client-paid/provider net" },
-        { reason: "no safe amount" },
+        {
+          rowNumber: "18179",
+          date: "2026-05-24",
+          client: "Сергей Ковалев",
+          order: "Регулировка заливки",
+          paymentMethod: "Wise @bolieslavn",
+          accruedUsd: 51.5,
+          clientPaidUsd: 597.4,
+          providerNetUsd: 0,
+          included: false,
+          reason: "no safe amount",
+          status: "NEEDS VERIFICATION",
+          reviewNote: "provider fee/net missing",
+        },
       ],
     },
     {
       channel: "трансервайз дол",
       netGapUsd: -334.75,
-      rows: [{ reason: "duplicate/offset/overpaid transfer" }],
+      rows: [{
+        rowNumber: "18172",
+        date: "2026-05-22",
+        client: "Вилл",
+        order: "посвящение смерти повтор",
+        paymentMethod: "карта Андрей",
+        accruedUsd: 25.75,
+        clientPaidUsd: 231.75,
+        providerNetUsd: 231.75,
+        included: true,
+        reason: "duplicate/offset/overpaid transfer",
+        status: "OVERPAID",
+        reviewNote: "overpaid",
+      }],
     },
     {
       channel: "Binance spot",
@@ -721,13 +746,22 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
   assert.match(requiresCheckText, /Не распределено \/ требует проверки/);
   assert.match(requiresCheckText, /Без канала/);
   assert.match(requiresCheckText, /103,0000/);
-  assert.match(text, /PayPal missing client-paid\/provider net, no safe amount/);
+  assert.match(requiresCheckText, /18179/);
+  assert.match(requiresCheckText, /Сергей Ковалев/);
+  assert.match(requiresCheckText, /Wise @bolieslavn/);
+  assert.match(requiresCheckText, /51,5000/);
+  assert.match(requiresCheckText, /597,4000/);
+  assert.match(requiresCheckText, /provider fee\/net missing/);
 
   const offsetText = collectText(gapSections[1]);
   assert.match(offsetText, /Переплаты \/ offset/);
+  assert.match(offsetText, /Это offset\/переплата, не сумма к оплате\./);
   assert.match(offsetText, /трансервайз дол/);
   assert.match(offsetText, /-334,7500/);
   assert.match(offsetText, /duplicate\/offset\/overpaid transfer/);
+  assert.match(offsetText, /18172/);
+  assert.match(offsetText, /посвящение смерти повтор/);
+  assert.match(offsetText, /OVERPAID/);
 
   const excludedText = collectText(gapSections[2]);
   assert.match(excludedText, /Исключено из оплат/);

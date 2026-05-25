@@ -1236,12 +1236,15 @@ function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSu
       date: normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim(),
       client: String(row?.[2] || "").trim(),
       order: String(row?.[3] || "").trim(),
+      paymentMethod: String(row?.[14] || "").trim(),
       channel,
       accruedUsd: roundNumber(expectedUsd),
       clientPaidUsd: roundNumber(clientPaidUsd),
       providerNetUsd: roundNumber(providerNetUsd),
       included: Boolean(includedAmountUsd > 0),
       reason: reason || "duplicate/offset/overpaid",
+      status: String(row?.[23] || "").trim(),
+      reviewNote: String(row?.[24] || "").trim(),
     });
     diagnosticsByChannel.set(channel, existing);
   }

@@ -543,6 +543,12 @@
     const title = doc.createElement("h4");
     title.textContent = sectionData.title;
     section.appendChild(title);
+    if (sectionData.title === "Переплаты / offset") {
+      const note = doc.createElement("p");
+      note.className = "balance-service-payment-gap-note";
+      note.textContent = "Это offset/переплата, не сумма к оплате.";
+      section.appendChild(note);
+    }
 
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
@@ -558,10 +564,41 @@
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
+      (row.rows || []).forEach((sourceRow) => {
+        const detail = doc.createElement("tr");
+        detail.className = "balance-service-payment-gap-detail";
+        const td = doc.createElement("td");
+        td.setAttribute("colspan", "3");
+        td.textContent = formatServicePaymentGapSourceRow(sourceRow, row.channel);
+        detail.appendChild(td);
+        tbody.appendChild(detail);
+      });
     });
     table.appendChild(tbody);
     section.appendChild(table);
     return section;
+  }
+
+  function formatServicePaymentGapSourceRow(row = {}, fallbackChannel = "") {
+    const fields = [
+      ["row", row.rowNumber],
+      ["date", row.date],
+      ["client", row.client],
+      ["order/service", row.order],
+      ["payment", row.paymentMethod],
+      ["channel", row.channel || fallbackChannel],
+      ["accrued", formatMoney(Number(row.accruedUsd || 0))],
+      ["client paid", formatMoney(Number(row.clientPaidUsd || 0))],
+      ["provider net", formatMoney(Number(row.providerNetUsd || 0))],
+      ["included", row.included ? "yes" : "no"],
+      ["reason", row.reason],
+      ["status", row.status],
+      ["review", row.reviewNote],
+    ];
+    return fields
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "")
+      .map(([label, value]) => `${label}: ${value}`)
+      .join(" | ");
   }
 
   function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
