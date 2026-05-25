@@ -385,6 +385,7 @@ async function maybeOverlayFreshSourceData(data) {
     const enrichedMovement = applyRealIncomeToMovementTable(freshMovement, realIncome);
     const servicePaymentSummaryByChannel = summarizeMovementServicePaymentsByChannel(enrichedMovement.values);
     const servicePaymentSummaryTotals = getRealIncomeSummaryTotalsFromSummary(servicePaymentSummaryByChannel);
+    const servicePaymentGap = buildServicePaymentGapDiagnostics(enrichedMovement.values, servicePaymentSummaryByChannel);
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
     const hasServicePaymentSummary = Object.values(servicePaymentSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
     const nextRealIncome = realIncome || movementWarnings.length || hasServicePaymentSummary
@@ -399,6 +400,8 @@ async function maybeOverlayFreshSourceData(data) {
           unmatchedEntries: realIncome?.unmatchedEntries || [],
           servicePaymentSummaryByChannel,
           servicePaymentSummaryTotals,
+          servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
+          servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
           serviceOrderSummaryByChannel: realIncome?.serviceOrderSummaryByChannel || {},
           serviceOrderSummaryTotals: realIncome?.serviceOrderSummaryTotals || null,
           summaryByChannel: realIncome?.summaryByChannel || {},
@@ -1115,6 +1118,166 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
       differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
     }];
   }));
+}
+
+function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}) {
+  const diagnosticsByChannel = new Map();
+  const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+
+  for (const row of dataRows) {
+    const expectedUsd = parseLooseNumber(row?.[9]) || 0;
+    const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
+    const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
+    const includedByCurrentSummary = isMovementServicePaymentRow(row);
+    const includedAmountUsd = includedByCurrentSummary
+      ? (providerNetUsd > 0 ? providerNetUsd : clientPaidUsd)
+      : 0;
+    const reason = getServicePaymentGapReason(row, {
+      expectedUsd,
+      clientPaidUsd,
+      providerNetUsd,
+      includedAmountUsd,
+      includedByCurrentSummary,
+    });
+    if (!reason && Math.abs(expectedUsd - includedAmountUsd) < 0.0001) continue;
+
+    const channel = getServicePaymentGapChannel(row);
+    const existing = diagnosticsByChannel.get(channel) || {
+      channel,
+      expectedUsd: 0,
+      includedUsd: 0,
+      missingUnsafeUsd: 0,
+      offsetUsd: 0,
+      netGapUsd: 0,
+      rows: [],
+    };
+    existing.expectedUsd = roundNumber(existing.expectedUsd + expectedUsd);
+    existing.includedUsd = roundNumber(existing.includedUsd + includedAmountUsd);
+    if (isUnsafeServicePaymentGapReason(reason)) {
+      existing.missingUnsafeUsd = roundNumber(existing.missingUnsafeUsd + expectedUsd);
+    }
+    if (includedAmountUsd > expectedUsd) {
+      existing.offsetUsd = roundNumber(existing.offsetUsd + (includedAmountUsd - expectedUsd));
+    }
+    existing.rows.push({
+      rowNumber: String(row?.[0] || "").trim(),
+      date: normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim(),
+      client: String(row?.[2] || "").trim(),
+      order: String(row?.[3] || "").trim(),
+      channel,
+      accruedUsd: roundNumber(expectedUsd),
+      clientPaidUsd: roundNumber(clientPaidUsd),
+      providerNetUsd: roundNumber(providerNetUsd),
+      included: Boolean(includedAmountUsd > 0),
+      reason: reason || "duplicate/offset/overpaid",
+    });
+    diagnosticsByChannel.set(channel, existing);
+  }
+
+  const summaryIncludedByChannel = new Map(
+    Object.entries(servicePaymentSummaryByChannel || {}).map(([channel, row]) => [channel, roundNumber(Number(row?.realNetUsd || 0))])
+  );
+  for (const [channel, includedUsd] of summaryIncludedByChannel.entries()) {
+    if (!includedUsd && !diagnosticsByChannel.has(channel)) continue;
+    const existing = diagnosticsByChannel.get(channel) || {
+      channel,
+      expectedUsd: 0,
+      includedUsd: 0,
+      missingUnsafeUsd: 0,
+      offsetUsd: 0,
+      netGapUsd: 0,
+      rows: [],
+    };
+    existing.includedUsd = includedUsd;
+    diagnosticsByChannel.set(channel, existing);
+  }
+
+  const servicePaymentGapByChannel = Array.from(diagnosticsByChannel.values())
+    .map((row) => ({
+      ...row,
+      expectedUsd: roundNumber(row.expectedUsd),
+      includedUsd: roundNumber(row.includedUsd),
+      missingUnsafeUsd: roundNumber(row.missingUnsafeUsd),
+      offsetUsd: roundNumber(row.offsetUsd),
+      netGapUsd: roundNumber(row.expectedUsd - row.includedUsd),
+    }))
+    .filter((row) => (
+      row.expectedUsd ||
+      row.includedUsd ||
+      row.missingUnsafeUsd ||
+      row.offsetUsd ||
+      row.rows.length
+    ))
+    .sort((left, right) => Math.abs(right.netGapUsd) - Math.abs(left.netGapUsd) || left.channel.localeCompare(right.channel, "ru"));
+
+  return {
+    servicePaymentGapByChannel,
+    servicePaymentGapTotals: servicePaymentGapByChannel.reduce((totals, row) => ({
+      expectedUsd: roundNumber(totals.expectedUsd + row.expectedUsd),
+      includedUsd: roundNumber(totals.includedUsd + row.includedUsd),
+      missingUnsafeUsd: roundNumber(totals.missingUnsafeUsd + row.missingUnsafeUsd),
+      offsetUsd: roundNumber(totals.offsetUsd + row.offsetUsd),
+      netGapUsd: roundNumber(totals.netGapUsd + row.netGapUsd),
+    }), {
+      expectedUsd: 0,
+      includedUsd: 0,
+      missingUnsafeUsd: 0,
+      offsetUsd: 0,
+      netGapUsd: 0,
+    }),
+  };
+}
+
+function getServicePaymentGapChannel(row = []) {
+  const channel = resolveMovementServicePaymentChannel(row) || resolveMovementRowChannel(row);
+  return channel || "Без канала";
+}
+
+function getServicePaymentGapReason(row = [], amounts = {}) {
+  const text = normalizeLookupText([
+    row?.[3],
+    row?.[4],
+    row?.[6],
+    row?.[14],
+    row?.[23],
+    row?.[24],
+  ].filter(Boolean).join(" "));
+  const paymentMethod = String(row?.[14] || "").trim();
+  const channel = resolveMovementRowChannel(row);
+  const status = normalizeLookupText(row?.[23]);
+  const review = normalizeLookupText(row?.[24]);
+  const expectedUsd = Number(amounts.expectedUsd || 0);
+  const clientPaidUsd = Number(amounts.clientPaidUsd || 0);
+  const providerNetUsd = Number(amounts.providerNetUsd || 0);
+  const includedAmountUsd = Number(amounts.includedAmountUsd || 0);
+
+  if (!paymentMethod && !channel) return "payment channel missing";
+  if (/\b(refund|refunded|reversal|chargeback)\b|возврат|повернен/.test(text)) return "refund";
+  if (/\b(exchange|internal)\b|обмен/.test(text)) return "exchange";
+  if (/\b(transfer|withdraw|p2p|c2c)\b|перевод|вывод/.test(text)) return "transfer";
+  if (isExcludedServicePaymentText(text) || (["Binance funding", "binance save"].includes(channel)) ||
+    (channel === "Бинанс spot" && !/\b(service|order|payment|оплат|заказ|услуг|услуга|servicein|ezoin)\b/.test(text))) {
+    return "excluded deposit/non-service";
+  }
+  if (includedAmountUsd > expectedUsd && expectedUsd > 0) return "duplicate/offset/overpaid";
+  if ((/paypal|п[еэ]йп/.test(normalizeLookupText(paymentMethod)) || channel?.startsWith("пейпал")) &&
+    (providerNetUsd <= 0 || clientPaidUsd <= 0 || /needs verification|provider fee net missing/.test(`${status} ${review}`))) {
+    return "PayPal missing client-paid/provider net";
+  }
+  if (expectedUsd > 0 && providerNetUsd <= 0 && (!isExplicitNoFeeDirectPayment(paymentMethod) || clientPaidUsd <= 0)) {
+    return "no safe amount";
+  }
+  if (!amounts.includedByCurrentSummary && expectedUsd > 0) return "no safe amount";
+  return "";
+}
+
+function isUnsafeServicePaymentGapReason(reason) {
+  return [
+    "no safe amount",
+    "payment channel missing",
+    "PayPal missing client-paid/provider net",
+    "excluded deposit/non-service",
+  ].includes(reason);
 }
 
 function isMovementServicePaymentRow(row = []) {

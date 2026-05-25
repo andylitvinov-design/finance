@@ -663,3 +663,50 @@ test("empty income distribution source does not crash and renders diagnostic", (
   assert.match(collectText(block), /needs verification: source not found for income channel distribution/);
   resetBalanceModule();
 });
+
+test("balance summary renders compact channel gap diagnostics", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    incomeChannelDistribution: api.buildIncomeChannelDistribution({ data: { tabs: { movement: { values: [] } } } }),
+    servicePaymentGapByChannel: [
+      {
+        channel: "пейпал дол",
+        netGapUsd: 103,
+        rows: [
+          { reason: "PayPal missing client-paid/provider net" },
+          { reason: "no safe amount" },
+        ],
+      },
+      {
+        channel: "монобанк грн",
+        netGapUsd: -8.5,
+        rows: [{ reason: "duplicate/offset/overpaid" }],
+      },
+      {
+        channel: "Яндекс руб",
+        netGapUsd: 0,
+        rows: [{ reason: "no safe amount" }],
+      },
+    ],
+  }, makeMockDocument());
+
+  const text = collectText(block);
+  assert.match(text, /Не распределено по каналам/);
+  assert.match(text, /пейпал дол/);
+  assert.match(text, /103,0000/);
+  assert.match(text, /PayPal missing client-paid\/provider net, no safe amount/);
+  assert.match(text, /монобанк грн/);
+  assert.match(text, /-8,5000/);
+  assert.match(text, /duplicate\/offset\/overpaid/);
+  assert.doesNotMatch(text, /Яндекс руб/);
+  resetBalanceModule();
+});
