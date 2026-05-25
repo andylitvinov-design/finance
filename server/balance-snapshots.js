@@ -143,6 +143,9 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
 export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}, repository = {}) {
   const normalizedRows = (balanceRows || []).map(normalizeBalanceSnapshotRow);
   const normalizedAutoRows = (repository.autoBalances || []).map(normalizeBalanceSnapshotRow);
+  const staleCurrentOnlyAutoRows = (repository.autoBalances || [])
+    .filter((row) => isBalanceRowInPeriod(normalizeBalanceSnapshotRow(row), periodFilter))
+    .filter(isStaleCurrentOnlyAutoSnapshot);
   const mergedSourceRows = Array.isArray(repository.mergedBalances)
     ? repository.mergedBalances
     : mergeManualAndAutoBalances(balanceRows || [], repository.autoBalances || []).rows;
@@ -158,6 +161,14 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   const autoDates = unique(validAutoRows.map((row) => row.date)).sort();
   const mergedDates = unique(validMergedRows.map((row) => row.date)).sort();
   const targetDate = resolveInputTargetDate(periodFilter, validRows);
+  const selectedDate = resolveSelectedDate(periodFilter, validMergedRows, validAutoRows, validRows);
+  const selectedDateSummary = buildSelectedDateSummary({
+    selectedDate,
+    validMergedRows,
+    validAutoRows,
+    validRows,
+    staleCurrentOnlyAutoRows,
+  });
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
   return {
@@ -174,7 +185,9 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
       manual_balance_dates: dates,
       auto_balance_dates: autoDates,
       merged_balance_dates: mergedDates,
+      selected_balance_dates: selectedDateSummary.rows.length ? [selectedDateSummary.selected_date] : [],
       missing_daily_coverage_dates: buildMissingDailyCoverageDates(periodFilter, mergedDates),
+      stale_current_only_auto_rows: staleCurrentOnlyAutoRows.length,
       skipped_non_balance_fact_rows: countSkippedNonBalanceFactRows(repository, periodFilter),
       inserted: 0,
       updated: 0,
@@ -185,14 +198,18 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     manual_rows: buildDetailedRows(validRows),
     auto_rows: buildDetailedRows(validAutoRows),
     merged_rows: buildDetailedRows(validMergedRows),
+    selected_date: selectedDateSummary.selected_date,
+    selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
+    selected_date_source: selectedDateSummary.source,
+    selected_date_diagnostics: selectedDateSummary.diagnostics,
     fact_balance_rows: factBalanceRows,
     input_rows: buildInputRows({
       targetDate,
       balanceRows: normalizedRows.filter((row) => row.valid),
       operations: repository.operations || [],
     }),
-    by_date: buildByDate(validRows, { autoRows: validAutoRows, mergedRows: validMergedRows }),
-    by_channel_currency: buildByChannelCurrency(validRows),
+    by_date: buildByDate(validMergedRows, { manualRows: validRows, autoRows: validAutoRows, mergedRows: validMergedRows }),
+    by_channel_currency: buildByChannelCurrency(validMergedRows),
     auto_dates: autoDates,
     merged_dates: mergedDates,
     missing_date_rows: invalidRows.filter((row) => row.missing.date).length,
@@ -215,6 +232,13 @@ function emptyBalanceSnapshotsSummary() {
     incomplete_rows: 0,
     dates: [],
     rows: [],
+    manual_rows: [],
+    auto_rows: [],
+    merged_rows: [],
+    selected_date: "",
+    selected_date_rows: [],
+    selected_date_source: "none",
+    selected_date_diagnostics: [],
     input_rows: [],
     by_date: [],
     by_channel_currency: [],
@@ -234,7 +258,9 @@ function emptyBalanceSnapshotsSummary() {
       manual_balance_dates: [],
       auto_balance_dates: [],
       merged_balance_dates: [],
+      selected_balance_dates: [],
       missing_daily_coverage_dates: [],
+      stale_current_only_auto_rows: 0,
       skipped_non_balance_fact_rows: 0,
       inserted: 0,
       updated: 0,
@@ -364,6 +390,56 @@ function resolveInputTargetDate(periodFilter = {}, rows = []) {
   return dates.at(-1) || "";
 }
 
+function resolveSelectedDate(periodFilter = {}, mergedRows = [], autoRows = [], manualRows = []) {
+  if (periodFilter.from && periodFilter.to && periodFilter.from === periodFilter.to) return periodFilter.from;
+  if (periodFilter.to) return periodFilter.to;
+  if (periodFilter.from) return periodFilter.from;
+  const dates = unique([
+    ...(mergedRows || []).map((row) => row.date),
+    ...(autoRows || []).map((row) => row.date),
+    ...(manualRows || []).map((row) => row.date),
+  ]).sort();
+  return dates.at(-1) || "";
+}
+
+function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAutoRows = [], validRows = [], staleCurrentOnlyAutoRows = [] } = {}) {
+  if (!selectedDate) {
+    return {
+      selected_date: "",
+      rows: [],
+      source: "none",
+      diagnostics: ["No balance snapshot for this date; run guarded May backfill."],
+    };
+  }
+  const sources = [
+    ["merged", validMergedRows],
+    ["auto", validAutoRows.filter((row) => !isStaleCurrentOnlyAutoSnapshot(row))],
+    ["manual", validRows],
+  ];
+  for (const [source, rows] of sources) {
+    const selectedRows = (rows || []).filter((row) => row.date === selectedDate);
+    if (selectedRows.length) {
+      return {
+        selected_date: selectedDate,
+        rows: selectedRows,
+        source,
+        diagnostics: [],
+      };
+    }
+  }
+  const staleForDate = (staleCurrentOnlyAutoRows || []).filter((row) => normalizeDate(row.date) === selectedDate);
+  const diagnostics = ["No balance snapshot for this date; run guarded May backfill."];
+  if (staleForDate.length) {
+    diagnostics.push(`Ignored ${staleForDate.length} stale current-only auto row(s) for ${selectedDate}.`);
+  }
+  return {
+    selected_date: selectedDate,
+    rows: [],
+    source: "none",
+    diagnostics,
+  };
+}
+
 function loadConfiguredChannels() {
   try {
     const configPath = path.join(process.cwd(), "sheet-config.json");
@@ -404,10 +480,33 @@ function normalizeBalanceSnapshotRow(row) {
     channel,
     currency,
     amount,
+    source: row?.source,
+    fact_source: row?.fact_source,
+    provider: row?.provider,
+    comment: row?.comment,
+    sourceSheet: row?.sourceSheet,
+    status: row?.status,
+    fetchedAt: row?.fetchedAt,
+    fetched_at: row?.fetched_at,
     valid: !reason,
     missing,
     reason,
   };
+}
+
+function isStaleCurrentOnlyAutoSnapshot(row = {}) {
+  const rowDate = normalizeDate(row.date);
+  const fetchedDate = normalizeDate(String(row.fetchedAt || row.fetched_at || "").slice(0, 10));
+  if (!rowDate || !fetchedDate || rowDate === fetchedDate) return false;
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+    row.status,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  return /auto daily provider snapshot|current[- ]?balance|current balance|provider current/.test(text);
 }
 
 function buildMissingDailyCoverageDates(periodFilter = {}, dates = []) {
@@ -441,7 +540,7 @@ function buildDetailedRows(rows) {
     });
 }
 
-function buildByDate(rows, { autoRows = [], mergedRows = [] } = {}) {
+function buildByDate(rows, { manualRows = rows, autoRows = [], mergedRows = [] } = {}) {
   const grouped = new Map();
   for (const row of rows || []) {
     const entry = grouped.get(row.date) || {
@@ -453,14 +552,7 @@ function buildByDate(rows, { autoRows = [], mergedRows = [] } = {}) {
     entry.channel_currency_pairs.add(makeKey(row.channel, row.currency));
     grouped.set(row.date, entry);
   }
-  for (const row of autoRows || []) {
-    const entry = grouped.get(row.date) || {
-      date: row.date,
-      rows: 0,
-      channel_currency_pairs: new Set(),
-    };
-    grouped.set(row.date, entry);
-  }
+  const manualCounts = countRowsByDate(manualRows);
   const autoCounts = countRowsByDate(autoRows);
   const mergedCounts = countRowsByDate(mergedRows);
   return Array.from(grouped.values())
@@ -468,7 +560,7 @@ function buildByDate(rows, { autoRows = [], mergedRows = [] } = {}) {
     .map((row) => ({
       date: row.date,
       rows: row.rows,
-      manual_rows: row.rows,
+      manual_rows: manualCounts.get(row.date) || 0,
       auto_rows: autoCounts.get(row.date) || 0,
       merged_rows: mergedCounts.get(row.date) || row.rows,
       channel_currency_pairs: row.channel_currency_pairs.size,

@@ -97,6 +97,19 @@ function collectText(node) {
   return [node.textContent || "", ...(node.children || []).map(collectText)].filter(Boolean).join("\n");
 }
 
+function createDateDocument({ from = "2026-05-17", to = "2026-05-17" } = {}) {
+  return {
+    createElement(tag) {
+      return new TestElement(tag);
+    },
+    getElementById(id) {
+      if (id === "startDate") return { value: from };
+      if (id === "endDate") return { value: to };
+      return null;
+    },
+  };
+}
+
 test("index contains remainders launcher after balance launcher", () => {
   assert.match(indexHtml, /id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
   assert.match(indexHtml, /id="balanceLauncherButton"[^>]*>Баланс<\/button>\s*<button id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
@@ -266,6 +279,95 @@ test("buildLiveRemaindersSummary uses URL period when date inputs are empty", as
   resetRemaindersModule();
   delete global.location;
   delete global.fetch;
+});
+
+test("buildLiveRemaindersSummary fetches selected-date balance snapshots for Остатки popup", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument();
+  const requestedUrls = [];
+  global.fetch = async (url) => {
+    requestedUrls.push(url);
+    if (/\/api\/balance-snapshots/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            balance_snapshots: {
+              selected_date: "2026-05-17",
+              selected_date_source: "merged",
+              selected_date_rows: [
+                { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 870.42 },
+              ],
+              selected_date_diagnostics: [],
+            },
+          };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  const summary = await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.equal(summary.selectedDateSnapshot.selected_date, "2026-05-17");
+  assert.equal(summary.selectedDateSnapshot.selected_date_source, "merged");
+  assert.ok(requestedUrls.some((url) =>
+    /\/api\/balance-snapshots\?from=2026-05-17&to=2026-05-17$/.test(url)
+  ));
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
+test("remainders popup renders selected-date channel currency balances", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({ balances: { remainders_rows: [] } }),
+    selectedDateSnapshot: {
+      selected_date: "2026-05-17",
+      selected_date_source: "merged",
+      selected_date_rows: [
+        { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 870.42 },
+      ],
+      selected_date_diagnostics: [],
+    },
+  }, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Остатки на выбранную дату/);
+  assert.match(text, /2026-05-17/);
+  assert.match(text, /merged/);
+  assert.match(text, /трансервайз дол/);
+  assert.match(text, /870,42/);
+  resetRemaindersModule();
+});
+
+test("remainders popup renders guarded backfill diagnostic for missing selected-date balances", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({ balances: { remainders_rows: [] } }),
+    selectedDateSnapshot: {
+      selected_date: "2026-05-17",
+      selected_date_source: "none",
+      selected_date_rows: [],
+      selected_date_diagnostics: [
+        "No balance snapshot for this date; run guarded May backfill.",
+        "Ignored 2 stale current-only auto rows for 2026-05-17.",
+      ],
+    },
+  }, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /No balance snapshot for this date; run guarded May backfill\./);
+  assert.match(text, /Ignored 2 stale current-only auto rows/);
+  assert.doesNotMatch(text, /остатки не найдены/i);
+  resetRemaindersModule();
 });
 
 test("missing values render needs verification instead of invented balances", () => {

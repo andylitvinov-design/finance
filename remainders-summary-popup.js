@@ -140,6 +140,17 @@
     return url;
   }
 
+  function buildSelectedDateBalanceSnapshotsUrl() {
+    const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
+    const url = new URL("./api/balance-snapshots", base);
+    const selectedDate = getDateInputValue("endDate") || getDateInputValue("startDate");
+    if (selectedDate) {
+      url.searchParams.set("from", selectedDate);
+      url.searchParams.set("to", selectedDate);
+    }
+    return url;
+  }
+
   function buildReconcileUrl() {
     const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
     return new URL("./api/index?action=reconcileBalancesAndTransfers", base);
@@ -150,6 +161,14 @@
     const response = await root.fetch(buildAuditSnapshotUrl().toString(), { cache: "no-store" });
     if (!response?.ok) throw new Error(`audit snapshot returned ${response?.status || "unknown status"}`);
     return response.json();
+  }
+
+  async function fetchSelectedDateBalanceSnapshot() {
+    if (typeof root.fetch !== "function") return null;
+    const response = await root.fetch(buildSelectedDateBalanceSnapshotsUrl().toString(), { cache: "no-store" });
+    if (!response?.ok) throw new Error(`balance snapshots returned ${response?.status || "unknown status"}`);
+    const payload = await response.json();
+    return payload?.balance_snapshots || null;
   }
 
   async function readJsonResponse(response, label) {
@@ -182,15 +201,26 @@
 
   async function buildLiveRemaindersSummary(input, options = {}) {
     const current = buildRemaindersSummary(input, options);
-    if (/remainders_?rows/i.test(current.source || "") && current.rows.length) return current;
+    const selectedDateSnapshot = await fetchSelectedDateBalanceSnapshot().catch((error) => ({
+      selected_date_source: "none",
+      selected_date_rows: [],
+      selected_date_diagnostics: [
+        `No balance snapshot for this date; run guarded May backfill.`,
+        `${NEEDS_VERIFICATION}: balance snapshots fetch failed (${String(error?.message || error)}).`,
+      ],
+    }));
+    if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
+      return { ...current, selectedDateSnapshot };
+    }
     try {
       const snapshot = await fetchAuditSnapshotRemainders();
-      if (!snapshot) return current;
+      if (!snapshot) return { ...current, selectedDateSnapshot };
       const fetched = buildRemaindersSummary(snapshot);
-      return fetched.source ? fetched : current;
+      return { ...(fetched.source ? fetched : current), selectedDateSnapshot };
     } catch (error) {
       return {
         ...current,
+        selectedDateSnapshot,
         diagnostics: [
           ...(current.diagnostics || []),
           `${NEEDS_VERIFICATION}: audit snapshot fetch failed (${String(error?.message || error)}).`,
@@ -238,6 +268,60 @@
     return controls;
   }
 
+  function renderSelectedDateSnapshotBlock(snapshot, doc = root.document) {
+    if (!snapshot) return null;
+    const rows = Array.isArray(snapshot.selected_date_rows) ? snapshot.selected_date_rows : [];
+    const section = doc.createElement("section");
+    section.className = "selected-date-balance-snapshots";
+    const title = doc.createElement("h4");
+    title.textContent = "Остатки на выбранную дату";
+    section.appendChild(title);
+
+    const meta = doc.createElement("div");
+    meta.className = "tab-note";
+    meta.textContent = `${snapshot.selected_date || "Дата не выбрана"} · ${snapshot.selected_date_source || "none"}`;
+    section.appendChild(meta);
+
+    if (rows.length) {
+      const wrap = doc.createElement("div");
+      wrap.className = "table-wrap remainders-summary-table-wrap";
+      const table = doc.createElement("table");
+      const thead = doc.createElement("thead");
+      const header = doc.createElement("tr");
+      ["Дата", "Канал", "Валюта", "Остаток"].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
+      thead.appendChild(header);
+      table.appendChild(thead);
+      const tbody = doc.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = doc.createElement("tr");
+        tr.appendChild(renderCell(doc, row.date || snapshot.selected_date || "—"));
+        tr.appendChild(renderCell(doc, row.channel || "—"));
+        tr.appendChild(renderCell(doc, row.currency || "—"));
+        tr.appendChild(renderCell(doc, formatSnapshotAmount(row.amount), "numeric"));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      section.appendChild(wrap);
+      return section;
+    }
+
+    const diagnostics = Array.isArray(snapshot.selected_date_diagnostics) && snapshot.selected_date_diagnostics.length
+      ? snapshot.selected_date_diagnostics
+      : ["No balance snapshot for this date; run guarded May backfill."];
+    const note = doc.createElement("div");
+    note.className = "balance-summary-diagnostics";
+    note.textContent = diagnostics.join(" ");
+    section.appendChild(note);
+    return section;
+  }
+
+  function formatSnapshotAmount(value) {
+    const parsed = parseNumber(value);
+    if (!Number.isFinite(parsed)) return "—";
+    return String(Math.round(parsed * 10000) / 10000).replace(".", ",");
+  }
+
   function renderRemaindersSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = REMAINDERS_BLOCK_ID;
@@ -277,6 +361,9 @@
     if (summary.reconcileResult) {
       block.appendChild(renderReconcileResult(summary.reconcileResult, doc));
     }
+
+    const selectedDateBlock = renderSelectedDateSnapshotBlock(summary.selectedDateSnapshot, doc);
+    if (selectedDateBlock) block.appendChild(selectedDateBlock);
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
