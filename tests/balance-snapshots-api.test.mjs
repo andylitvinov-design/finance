@@ -196,7 +196,9 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
     manual_balance_dates: ["2026-05-17"],
     auto_balance_dates: [],
     merged_balance_dates: ["2026-05-17"],
+    selected_balance_dates: ["2026-05-17"],
     missing_daily_coverage_dates: [],
+    stale_current_only_auto_rows: 0,
     skipped_non_balance_fact_rows: 0,
     inserted: 0,
     updated: 0,
@@ -255,6 +257,114 @@ test("balance snapshots reports manual, auto, and merged daily inventories", asy
     { date: "2026-05-03", manual_rows: 1, auto_rows: 1, merged_rows: 1 },
   ]);
   assert.equal(snapshot.balance_snapshots.merged_rows.find((row) => row.date === "2026-05-03")?.amount, 80);
+});
+
+test("balance snapshots selected date returns merged fallback rows when manual rows are empty", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-17", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        {
+          date: "2026-05-17",
+          channel: "wise usd",
+          currency: "USD",
+          amount: "90",
+          source: "provider_auto",
+          sourceSheet: "Авто Остатки",
+          fetchedAt: "2026-05-17T23:01:00.000Z",
+          status: "ok",
+        },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-17");
+  assert.equal(snapshot.balance_snapshots.selected_date_source, "merged");
+  assert.deepEqual(snapshot.balance_snapshots.selected_date_rows, [
+    { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 90 },
+  ]);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.selected_balance_dates, ["2026-05-17"]);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, []);
+});
+
+test("balance snapshots selected date does not trust stale current-only historical auto rows", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-17", to: "2026-05-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        {
+          date: "2026-05-17",
+          channel: "трансервайз дол",
+          currency: "USD",
+          amount: "870.42",
+          source: "wise_auto",
+          sourceSheet: "Авто Остатки",
+          fetchedAt: "2026-05-25T22:23:47.068Z",
+          status: "ok",
+          comment: "auto daily provider snapshot",
+        },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-17");
+  assert.equal(snapshot.balance_snapshots.selected_date_source, "none");
+  assert.deepEqual(snapshot.balance_snapshots.selected_date_rows, []);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.selected_balance_dates, []);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, ["2026-05-17"]);
+  assert.ok(snapshot.balance_snapshots.selected_date_diagnostics.some((message) =>
+    message.includes("No balance snapshot for this date; run guarded May backfill.")
+  ));
+  assert.ok(snapshot.balance_snapshots.selected_date_diagnostics.some((message) =>
+    message.includes("1 stale current-only auto row")
+  ));
+});
+
+test("balance snapshots May coverage detects missing dates from trusted merged coverage", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-03" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        {
+          date: "2026-05-02",
+          channel: "wise usd",
+          currency: "USD",
+          amount: "90",
+          source: "wise_auto",
+          sourceSheet: "Авто Остатки",
+          fetchedAt: "2026-05-25T22:23:47.068Z",
+          status: "ok",
+          comment: "auto daily provider snapshot",
+        },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.merged_balance_dates, ["2026-05-01"]);
+  assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, ["2026-05-02", "2026-05-03"]);
 });
 
 test("balance snapshots input rows use selected to date as target date", () => {
