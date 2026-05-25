@@ -8,6 +8,8 @@
   const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
   const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
   const SERVICE_PAYMENT_GAP_TITLE = "Не распределено по каналам";
+  const SERVICE_PAYMENT_OFFSET_TITLE = "Переплаты / offset";
+  const SERVICE_PAYMENT_EXCLUDED_TITLE = "Исключено из оплат";
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -515,21 +517,22 @@
     return [...new Set((rows || []).map((row) => String(row?.reason || "").trim()).filter(Boolean))].slice(0, 3).join(", ");
   }
 
-  function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
-    const gapRows = (summary.servicePaymentGapByChannel || [])
-      .filter((row) => Math.abs(Number(row?.netGapUsd || 0)) > 0.0001)
-      .sort((left, right) => Math.abs(Number(right?.netGapUsd || 0)) - Math.abs(Number(left?.netGapUsd || 0)));
-    if (!gapRows.length) return null;
+  function isExcludedServicePaymentGap(row) {
+    const reasons = (row?.rows || []).map((item) => normalizeCell(item?.reason)).join(" ");
+    return /refund|возврат|exchange|обмен|transfer|перевод|deposit|депозит|non-service|non service|не сервис|не усл/.test(reasons);
+  }
 
-    const section = doc.createElement("div");
-    section.className = "balance-service-payment-gap";
+  function appendGapSection(section, titleText, rows, totalLabel, totalValue, doc) {
+    if (!rows.length) return;
+    const subsection = doc.createElement("div");
+    subsection.className = "balance-service-payment-gap-section";
     const title = doc.createElement("h3");
-    title.textContent = SERVICE_PAYMENT_GAP_TITLE;
-    section.appendChild(title);
+    title.textContent = titleText;
+    subsection.appendChild(title);
 
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
-    gapRows.forEach((row) => {
+    rows.forEach((row) => {
       const tr = doc.createElement("tr");
       [
         row.channel || "Без канала",
@@ -542,8 +545,50 @@
       });
       tbody.appendChild(tr);
     });
+    const total = doc.createElement("tr");
+    [totalLabel, formatMoney(totalValue), ""].forEach((value) => {
+      const td = doc.createElement("td");
+      td.textContent = value;
+      total.appendChild(td);
+    });
+    tbody.appendChild(total);
     table.appendChild(tbody);
-    section.appendChild(table);
+    subsection.appendChild(table);
+    section.appendChild(subsection);
+  }
+
+  function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
+    const gapRows = (summary.servicePaymentGapByChannel || [])
+      .filter((row) => Math.abs(Number(row?.netGapUsd || 0)) > 0.0001)
+      .sort((left, right) => Math.abs(Number(right?.netGapUsd || 0)) - Math.abs(Number(left?.netGapUsd || 0)));
+    if (!gapRows.length) return null;
+
+    const section = doc.createElement("div");
+    section.className = "balance-service-payment-gap";
+
+    const excludedRows = [];
+    const missingRows = [];
+    const offsetRows = [];
+    gapRows.forEach((row) => {
+      const netGapUsd = Number(row?.netGapUsd || 0);
+      if (isExcludedServicePaymentGap(row)) excludedRows.push(row);
+      else if (netGapUsd > 0) missingRows.push(row);
+      else if (netGapUsd < 0) offsetRows.push(row);
+    });
+
+    const missingTotal = missingRows.reduce((sum, row) => sum + Math.max(0, Number(row?.netGapUsd || 0)), 0);
+    const offsetTotal = offsetRows.reduce((sum, row) => sum + Math.abs(Math.min(0, Number(row?.netGapUsd || 0))), 0);
+    const excludedTotal = excludedRows.reduce((sum, row) => sum + Math.abs(Number(row?.netGapUsd || 0)), 0);
+    const netGapTotal = missingTotal - offsetTotal;
+
+    appendGapSection(section, SERVICE_PAYMENT_GAP_TITLE, missingRows, "Не распределено итого", missingTotal, doc);
+    appendGapSection(section, SERVICE_PAYMENT_OFFSET_TITLE, offsetRows, "Переплаты / offset итого", offsetTotal, doc);
+    appendGapSection(section, SERVICE_PAYMENT_EXCLUDED_TITLE, excludedRows, "Исключено из оплат итого", excludedTotal, doc);
+
+    const explanation = doc.createElement("div");
+    explanation.className = "balance-summary-diagnostics";
+    explanation.textContent = `Не распределено итого: ${formatMoney(missingTotal)}; Переплаты / offset итого: ${formatMoney(offsetTotal)}; Итоговый gap: ${formatMoney(netGapTotal)}. Формула: положительное нераспределенное - offsets = итоговый gap.`;
+    section.appendChild(explanation);
     return section;
   }
 
