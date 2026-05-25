@@ -10,6 +10,7 @@ import {
   EXPECTED_PROVIDER_BALANCES,
   collectProviderBalanceRows,
   buildPayPalManualBalanceRows,
+  derivePayoneerBalanceRow,
   derivePayPalBalanceRow,
   mergeBalanceRowsByDateChannelCurrency,
   savePayPalManualBalanceRows,
@@ -130,6 +131,63 @@ test("missing amount_net blocks derived PayPal balance and does not use gross", 
     { row: 11, date: "2026-05-10", raw_source_id: "paypal-missing-net", reason: "missing_amount_net" },
   ]);
   assert.equal(result.ledger_delta, undefined);
+});
+
+test("Payoneer expected provider balances include USD and EUR channels", () => {
+  assert.deepEqual(
+    EXPECTED_PROVIDER_BALANCES
+      .filter((row) => row.provider === "payoneer")
+      .map((row) => `${row.channel}|${row.currency}|${row.source}`)
+      .sort(),
+    [
+      "Payoneer - dol|USD|payoneer_auto",
+      "Payoneer - eur|EUR|payoneer_auto",
+    ]
+  );
+});
+
+test("Payoneer without API or confirmed opening returns manual-confirmation status, not fake zero", async () => {
+  const result = await runAutoBalanceSnapshots({
+    query: { date: "2026-05-20", currentDate: "2026-05-20", dryRun: "1" },
+    env: {},
+    fetchImpl: async () => {
+      throw new Error("Google Sheets unavailable in test");
+    },
+  });
+
+  const payoneerRows = result.rows_preview.filter((row) => row.provider === "payoneer");
+
+  assert.equal(result.provider_current_balance_status.payoneer, "needs_manual_confirmed_balance");
+  assert.equal(payoneerRows.length, 2);
+  assert.deepEqual(payoneerRows.map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}|${row.source}`).sort(), [
+    "Payoneer - dol|USD||needs_manual_confirmed_balance|payoneer_derived_balance",
+    "Payoneer - eur|EUR||needs_manual_confirmed_balance|payoneer_derived_balance",
+  ]);
+  assert.equal(payoneerRows.some((row) => row.amount === "0"), false);
+});
+
+test("derived Payoneer USD balance uses confirmed opening plus signed Ledger amount_net movements", () => {
+  const result = derivePayoneerBalanceRow({
+    date: "2026-05-20",
+    channel: "Payoneer - dol",
+    currency: "USD",
+    balances: [
+      { date: "2026-05-01", provider: "payoneer", channel: "Payoneer - dol", currency: "USD", amount: "100", source: "payoneer_manual_confirmed_balance", status: "ok" },
+    ],
+    operations: [
+      { date: "2026-05-05", fromChannel: "Payoneer - dol", currency: "USD", amountGross: "25", amountNet: "20", balanceAmount: -20, sheetRowNumber: 17, ledgerV2: { date: "2026-05-05", operation: "expense", from_channel: "Payoneer - dol", currency: "USD", amount_gross: "25", amount_net: "20", balance_amount: -20 } },
+      { date: "2026-05-06", toChannel: "Payoneer - dol", currency: "USD", amountGross: "60", amountNet: "50", balanceAmount: 50, sheetRowNumber: 18, ledgerV2: { date: "2026-05-06", operation: "income", to_channel: "Payoneer - dol", currency: "USD", amount_gross: "60", amount_net: "50", balance_amount: 50 } },
+    ],
+  });
+
+  assert.equal(result.row.source, "payoneer_derived_balance");
+  assert.equal(result.row.status, "derived_from_confirmed_opening");
+  assert.equal(result.row.amount, "130");
+  assert.equal(result.row.rawSourceId, "payoneer_derived_balance:2026-05-20:USD");
+  assert.equal(result.opening_date, "2026-05-01");
+  assert.equal(result.opening_amount, 100);
+  assert.equal(result.ledger_delta, 30);
+  assert.equal(result.movement_row_count, 2);
 });
 
 test("derived PayPal balance rows are idempotent and preserve OAuth warning rows", () => {
