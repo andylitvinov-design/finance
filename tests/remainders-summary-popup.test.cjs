@@ -47,6 +47,16 @@ class TestElement {
     return child;
   }
 
+  replaceChild(next, previous) {
+    const index = this.children.indexOf(previous);
+    if (index !== -1) {
+      next.parentNode = this;
+      previous.parentNode = null;
+      this.children[index] = next;
+    }
+    return previous;
+  }
+
   setAttribute() {}
 
   addEventListener(type, listener) {
@@ -260,6 +270,127 @@ test("missing values render needs verification instead of invented balances", ()
   assert.equal(summary.totals.openingUsd, 0);
   assert.equal(summary.totals.closingUsd, 0);
   assert.equal(summary.totals.deltaUsd, 0);
+  resetRemaindersModule();
+});
+
+test("remainders popup renders reconcile button", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    data: {
+      balances: {
+        remainders_rows: [
+          { channel: "Wise USD", opening_amount_usd: 100, closing_amount_usd: null },
+        ],
+      },
+    },
+  });
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Обновить остатки и пересчитать/);
+  resetRemaindersModule();
+});
+
+test("reconcile workflow posts selected period and renders structured result", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = {
+    getElementById(id) {
+      if (id === "startDate") return { value: "2026-05-01" };
+      if (id === "endDate") return { value: "2026-05-31" };
+      return null;
+    },
+  };
+  let requestedUrl = "";
+  let requestedBody = null;
+  global.fetch = async (url, options) => {
+    requestedUrl = url;
+    requestedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          ok: true,
+          providers_checked: ["wise", "monobank"],
+          balances_pulled: 2,
+          transfers_imported: 3,
+          computed_rows_count: 1,
+          provider_failures: [{ provider: "paypal", error: "PayPal permission missing" }],
+          needs_verification_rows: [{ channel: "Payoneer - dol", currency: "USD", reason: "missing closing_usd" }],
+          audit_snapshot: {
+            balances: {
+              remainders_rows: [
+                { channel: "Computed", opening_amount_usd: 1, closing_amount_usd: 2, computed_balance: true, factual_provider_balance: false },
+              ],
+            },
+          },
+        });
+      },
+    };
+  };
+
+  const result = await api.runBalanceReconcileWorkflow();
+  const panel = api.renderReconcileResult(result, makeMockDocument());
+
+  assert.match(requestedUrl, /\/api\/reconcile-balances-and-transfers$/);
+  assert.deepEqual(requestedBody, { from: "2026-05-01", to: "2026-05-31" });
+  assert.match(collectText(panel), /providers checked: wise, monobank/);
+  assert.match(collectText(panel), /balances pulled: 2/);
+  assert.match(collectText(panel), /transfers imported: 3/);
+  assert.match(collectText(panel), /computed rows: 1/);
+  assert.match(collectText(panel), /Payoneer - dol USD: missing closing_usd/);
+  assert.match(collectText(panel), /paypal: PayPal permission missing/);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
+test("provider non-json failures render safe structured errors", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = { getElementById: () => null };
+  global.fetch = async () => ({
+    ok: false,
+    status: 502,
+    async text() {
+      return "<html>bad gateway</html>";
+    },
+  });
+
+  await assert.rejects(
+    () => api.runBalanceReconcileWorkflow(),
+    /reconcile-balances-and-transfers returned non-JSON response \(502\): <html>bad gateway<\/html>/
+  );
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
+test("computed rows remain computed and not factual after reconcile payload", () => {
+  const api = loadApi();
+  const result = {
+    computed_rows_count: 1,
+    computed_rows_factual_conflicts: 0,
+    audit_snapshot: {
+      balances: {
+        remainders_rows: [
+          {
+            channel: "монобанк грн",
+            opening_amount_usd: 10,
+            closing_amount_usd: 12,
+            computed_balance: true,
+            factual_provider_balance: false,
+          },
+        ],
+      },
+    },
+  };
+  const summary = api.buildRemaindersSummary(result.audit_snapshot);
+
+  assert.equal(result.computed_rows_factual_conflicts, 0);
+  assert.equal(summary.rows[0].channel, "монобанк грн");
+  assert.equal(summary.rows[0].closingUsd, 12);
   resetRemaindersModule();
 });
 
