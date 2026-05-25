@@ -1939,6 +1939,7 @@ function buildMovementRowsFromSource(rows, period) {
     if (!isoDate) continue;
     if (startDate && isoDate < startDate) continue;
     if (endDate && isoDate > endDate) continue;
+    if (isKovalevWiseBoleslavSourceRow(padded, derivedContext)) continue;
 
     seenNumbers.add(number);
     output.push(mapSourceRowToMovementRow(padded, isoDate, derivedContext, actionMultiplierByNumber[number] || 1));
@@ -2176,6 +2177,7 @@ function buildPayoutRowsFromSource(rows, period) {
     if (startDate && isoDate < startDate) continue;
     if (endDate && isoDate > endDate) continue;
     if (!/ковалев/i.test(String(padded[3] || "").trim())) continue;
+    if (isKovalevWiseBoleslavSourceRow(padded, derivedContext)) continue;
     if (isCharitySourceRow(padded)) continue;
 
     const payoutRow = mapSourceRowToPayoutRow(padded, isoDate, derivedContext);
@@ -2247,6 +2249,14 @@ function derivePayoutUsd({ currency, currentAmount, transferRate, receivedUsd, p
 
 function normalizePaymentMethod(row) {
   return extractSourcePaymentMethod(row).paymentMethod;
+}
+
+function isKovalevWiseBoleslavSourceRow(row, derivedContext = buildSourcePaymentContext(row)) {
+  const client = normalizeLookupText(row?.[3]);
+  const paymentMethod = normalizeLookupText(derivedContext.paymentMethod || normalizePaymentMethod(row));
+  return /(ковалев|kovalev)/.test(client) &&
+    /(wise|transferwise|трансервайз)/.test(paymentMethod) &&
+    /bolieslavn?/.test(paymentMethod);
 }
 
 function extractSourcePaymentMethod(row) {
