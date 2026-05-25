@@ -418,6 +418,10 @@ test("remainders table has a mobile horizontal scroll container", () => {
   const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
   const mobileCss = fs.readFileSync(path.join(root, "mobile-finance-table-scroll.css"), "utf8");
 
+  assert.match(styleCss, /\.page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;[^}]*overflow-x:\s*hidden;/s);
+  assert.match(styleCss, /\.hero\s*>\s*\*,\s*\.controls\s*>\s*\*,\s*\.metrics\s*>\s*\*\s*\{[^}]*min-width:\s*0;/s);
+  assert.match(styleCss, /\.actions\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*min-width:\s*0;[^}]*width:\s*100%;/s);
+  assert.match(styleCss, /\.hero\s*\{[^}]*overflow:\s*visible;/s);
   assert.match(styleCss, /\.remainders-summary-block\s*\{[^}]*max-width:\s*100%;[^}]*overflow:\s*visible;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*display:\s*block;[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;[^}]*overflow-x:\s*scroll;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;/s);
@@ -447,8 +451,8 @@ test("remainders table renders visible horizontal scroll controls", () => {
   controls.children[1].listeners.click();
   controls.children[0].listeners.click();
   assert.deepEqual(wrap.scrollCalls, [
-    { left: 240, behavior: "smooth" },
-    { left: -240, behavior: "smooth" },
+    { left: 240, behavior: "auto" },
+    { left: -240, behavior: "auto" },
   ]);
   resetRemaindersModule();
 });

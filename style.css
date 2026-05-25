@@ -625,10 +625,20 @@ tr:nth-child(even) td { background: #fffcf7; }
   .hero-top, .tab-header { flex-direction: column; align-items: stretch; }
 }
 @media (max-width: 680px) {
-  .page { width: min(1400px, calc(100% - 10px)); margin-top: 8px; margin-bottom: 20px; }
+  .page { width: 100%; max-width: 100%; margin: 8px 0 20px; padding: 0 8px; overflow-x: hidden; }
+  .hero > *,
+  .controls > *,
+  .metrics > * { min-width: 0; }
   .controls, .metrics { grid-template-columns: 1fr; }
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    width: 100%;
+  }
   .actions button, .finance-actions button, .tab-actions button, .movement-export-actions button { width: 100%; }
-  .hero, .panel { border-radius: 18px; }
+  .hero, .panel { border-radius: 18px; max-width: 100%; }
+  .hero { overflow: visible; }
   .hero { padding: 16px; }
   .panel { padding: 14px; }
   .status { width: 100%; font-size: 12px; }
