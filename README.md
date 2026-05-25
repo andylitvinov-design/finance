@@ -40,6 +40,19 @@ The older [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andyl
 | `scripts/build-check.mjs` | static bundle validation for `npm run build` |
 | `scripts/release-guard.sh` | release safety guard before push/PR |
 
+## Hermes task packets
+
+Hermes-created draft PRs can start with only a task packet in `.hermes/tasks/*.md`.
+That draft PR is a handoff package, not the final feature or fix. Do not merge it
+as-is just because the task packet exists.
+
+The executor, usually Codex, must read the packet, complete the real change on
+the same PR branch, run the appropriate checks, and update the existing PR. Keep
+the `.hermes/tasks/*.md` file as the audit trail for what Hermes requested.
+
+Hermes-controlled task PRs must not push to `main`, auto-merge, auto-deploy,
+change secrets or env values, or apply data repair.
+
 ## Local Validation
 
 This repo now exposes a minimal npm wrapper without changing the static architecture:
