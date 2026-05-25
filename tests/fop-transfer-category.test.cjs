@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const repoRoot = path.join(__dirname, "..");
 const bridgeJs = fs.readFileSync(path.join(repoRoot, "fop-transfer-category.js"), "utf8");
+const wiseBridgeJs = fs.readFileSync(path.join(repoRoot, "wise-transfer-category.js"), "utf8");
 const configJs = fs.readFileSync(path.join(repoRoot, "config.js"), "utf8");
 const indexHtml = fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
 
@@ -145,20 +146,107 @@ function createBridgeContext(options = {}) {
   return { context, calls, options: selectOptions, tableSelect, mobileSelect, legacySelect };
 }
 
+function createWiseBridgeContext(options = {}) {
+  const setup = createBridgeContext(options);
+  vm.runInContext(wiseBridgeJs, setup.context);
+  return setup;
+}
+
 test("FOP bridge is loaded after ui.js and before expense pie analytics", () => {
   const uiIndex = indexHtml.indexOf('./ui.js');
   const fopIndex = indexHtml.indexOf('./fop-transfer-category.js');
+  const wiseIndex = indexHtml.indexOf('./wise-transfer-category.js');
   const pieIndex = indexHtml.indexOf('./expense-pie-analytics.js');
   assert.ok(uiIndex !== -1, "ui.js must be loaded");
   assert.ok(fopIndex !== -1, "fop-transfer-category.js must be loaded");
+  assert.ok(wiseIndex !== -1, "wise-transfer-category.js must be loaded");
   assert.ok(pieIndex !== -1, "expense-pie-analytics.js must be loaded");
   assert.ok(uiIndex < fopIndex, "FOP bridge must wrap UI functions after ui.js");
-  assert.ok(fopIndex < pieIndex, "FOP bridge should install before later analytics wrappers");
+  assert.ok(fopIndex < wiseIndex, "Wise bridge should wrap after FOP bridge");
+  assert.ok(wiseIndex < pieIndex, "Transfer bridges should install before later analytics wrappers");
 });
 
 test("FOP transfer category is not part of personal expense categories", () => {
   assert.match(configJs, /MANUAL_EXPENSE_ACCOUNTING_CATEGORIES\s*=\s*\[[^\]]+\]/);
   assert.doesNotMatch(configJs, /MANUAL_EXPENSE_ACCOUNTING_CATEGORIES[^;]*(Перевод ФОП|transferFop)/s);
+  assert.doesNotMatch(configJs, /MANUAL_EXPENSE_ACCOUNTING_CATEGORIES[^;]*(Перевод Wise|transferWise)/s);
+});
+
+test("Wise transfer category aliases normalize to transferWise", () => {
+  const { context } = createWiseBridgeContext();
+  assert.equal(context.normalizeManualExpenseCategory("Перевод Wise"), "transferWise");
+  assert.equal(context.normalizeManualExpenseCategory("перевод wise"), "transferWise");
+  assert.equal(context.normalizeManualExpenseCategory("wise transfer"), "transferWise");
+  assert.equal(context.normalizeManualExpenseCategory("business"), "business");
+});
+
+test("Wise transfer entries sync to Nemisha Transfers and update existing Ledger row", async () => {
+  const { context, calls } = createWiseBridgeContext();
+  const result = await context.saveExpenseAccountingEntriesDirect([
+    {
+      sheetRowNumber: 88,
+      date: "2026-05-24",
+      category: "Перевод Wise",
+      localAmount: "580",
+      usdAmount: "580",
+      currency: "USD",
+      channel: "wise boleslav usd",
+      organization: "Сергей Ковалев / Немиша / не мне",
+    },
+  ]);
+
+  assert.equal(result.wiseTransferRows, 1);
+  assert.equal(result.updatedLedgerRows, 1);
+  const transferCall = calls.find((call) => call.type === "saveTransfers");
+  assert.ok(transferCall, "Wise rows must be saved through saveManualTransfersSheetDirect");
+  assert.deepEqual(JSON.parse(JSON.stringify(transferCall.transferRows.at(-1))), {
+    transferDate: "2026-05-24",
+    who: "Сергей Ковалев / Немиша / не мне",
+    amount: "580,0000",
+    currency: "USD",
+    channel: "wise boleslav usd",
+    rate: "",
+    usdAmount: "580,0000",
+  });
+  const ledgerCall = calls.find((call) => call.type === "fetch" && call.url === "/api/ledger-operation");
+  assert.deepEqual(JSON.parse(ledgerCall.request.body), {
+    action: "update",
+    sheetRowNumber: 88,
+    operation: "partner_transfer",
+    category: "partner",
+    to_channel: "wise boleslav usd",
+    direction: "out",
+  });
+});
+
+test("duplicate Operations editor Wise sync does not add a second Transfers row", async () => {
+  const { context, calls } = createWiseBridgeContext();
+  context.getManualTransfersSheetDirect = async () => ({
+    transferRows: [{
+      transferDate: "2026-05-24",
+      who: "Перевод Wise",
+      amount: "580",
+      currency: "USD",
+      channel: "wise boleslav usd",
+    }],
+    commissionRows: [],
+  });
+  context.state.expenseAccounting.editingSheetRowNumber = 88;
+  context.state.expenseAccounting.operationDraft = {
+    sheetRowNumber: 88,
+    date: "2026-05-24",
+    operation: "business_expense",
+    fromChannel: "wise boleslav usd",
+    toChannel: "Перевод Wise",
+    amountNet: "580",
+    currency: "USD",
+    category: "business",
+  };
+
+  await context.saveExpenseOperationEdit({ sheetRowNumber: 88 });
+
+  assert.equal(calls.some((call) => call.type === "saveTransfers"), false);
+  assert.equal(calls.filter((call) => call.type === "saveOperationEdit").length, 1);
 });
 
 test("FOP category aliases normalize to transferFop", () => {

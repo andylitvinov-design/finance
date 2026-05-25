@@ -2148,7 +2148,12 @@ function normalizeManualFinanceTransferRows(rows, options = {}) {
     currency: row?.currency ?? row?.localCurrency ?? "",
     channel: getCanonicalManualChannelKey(row?.channel ?? row?.destination ?? ""),
     rate: row?.rate ?? "",
-    usdAmount: row?.usdAmount ?? ""
+    usdAmount: row?.usdAmount ?? "",
+    raw_source_id: row?.raw_source_id ?? row?.rawSourceId ?? row?.sourceTransactionId ?? "",
+    rawSourceId: row?.rawSourceId ?? row?.raw_source_id ?? row?.sourceTransactionId ?? "",
+    orderId: row?.orderId ?? row?.order_id ?? "",
+    sourceTransactionId: row?.sourceTransactionId ?? row?.raw_source_id ?? row?.rawSourceId ?? "",
+    comment: row?.comment ?? ""
   }));
   if (padToMinimum) {
     while (normalized.length < MANUAL_TRANSFER_MIN_ROWS) normalized.push(createEmptyManualFinanceTransferRow());
@@ -3634,7 +3639,12 @@ function normalizeServerTransferRows(rows) {
     localCurrency: row?.localCurrency || row?.currency || "",
     rate: normalizeManualFinancePersistedNumberInput(row?.rate || ""),
     usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount || ""),
-    destination: canonicalManualFinanceChannel(row?.destination || row?.toAccount || row?.channel || "")
+    destination: canonicalManualFinanceChannel(row?.destination || row?.toAccount || row?.channel || ""),
+    raw_source_id: row?.raw_source_id || row?.rawSourceId || row?.sourceTransactionId || "",
+    rawSourceId: row?.rawSourceId || row?.raw_source_id || row?.sourceTransactionId || "",
+    orderId: row?.orderId || row?.order_id || "",
+    sourceTransactionId: row?.sourceTransactionId || row?.raw_source_id || row?.rawSourceId || "",
+    comment: row?.comment || ""
   })), { padToMinimum: false });
 }
 

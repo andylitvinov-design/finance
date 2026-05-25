@@ -58,10 +58,12 @@ async function repairKovalevWiseTransfer(options = {}) {
     targetRow: target.values,
     targetObject: target.object,
     rawSourceId: target.rawSourceId,
+    movementOrderExists: true,
+    transferExistsOrWillBeUpserted: Boolean(upsert.existingMatch || upsert.changed),
     existingMatch: upsert.existingMatch,
     changed: upsert.changed,
     duplicateCount: upsert.duplicateCount,
-    writeRange: `${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:J`,
+    writeRange: `${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:K`,
     applied: false
   };
   if (!options.apply) return result;
@@ -100,7 +102,7 @@ function buildTargetTransferRow(source) {
     rawSourceId,
     values: [
       source.date,
-      source.client,
+      [source.client, "Немиша", "не мне"].filter(Boolean).join(" / "),
       amount,
       "USD",
       TARGET_CHANNEL,
@@ -108,11 +110,12 @@ function buildTargetTransferRow(source) {
       amount,
       rawSourceId,
       source.orderId,
-      rawSourceId
+      rawSourceId,
+      "Перевод Wise / transfer not to me / transfer to Nemisha / не мне"
     ],
     object: {
       transferDate: source.date,
-      who: source.client,
+      who: [source.client, "Немиша", "не мне"].filter(Boolean).join(" / "),
       amount,
       currency: "USD",
       channel: TARGET_CHANNEL,
@@ -120,7 +123,8 @@ function buildTargetTransferRow(source) {
       usdAmount: amount,
       raw_source_id: rawSourceId,
       orderId: source.orderId,
-      sourceTransactionId: rawSourceId
+      sourceTransactionId: rawSourceId,
+      comment: "Перевод Wise / transfer not to me / transfer to Nemisha / не мне"
     }
   };
 }
@@ -128,7 +132,7 @@ function buildTargetTransferRow(source) {
 async function readTransferSheet(baseUrl) {
   const payload = await manualSheetsFetch(baseUrl, {
     method: "GET",
-    path: `/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/values/${encodeURIComponent(`${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:J`)}`
+    path: `/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/values/${encodeURIComponent(`${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:K`)}`
   });
   return { values: Array.isArray(payload?.values) ? payload.values : [] };
 }
@@ -136,7 +140,7 @@ async function readTransferSheet(baseUrl) {
 async function writeTransferSheet(baseUrl, values) {
   return await manualSheetsFetch(baseUrl, {
     method: "PUT",
-    path: `/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/values/${encodeURIComponent(`${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:J`)}?valueInputOption=USER_ENTERED`,
+    path: `/spreadsheets/1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY/values/${encodeURIComponent(`${quoteSheetTitle(TRANSFER_SHEET_TITLE)}!A1:K`)}?valueInputOption=USER_ENTERED`,
     body: { values }
   });
 }
@@ -171,7 +175,7 @@ function upsertTransferRow(values, target) {
 }
 
 function ensureTransferHeaders(header) {
-  const next = normalizeWidth(header, 10);
+  const next = normalizeWidth(header, 11);
   const required = ["дата перевода", "кто", "сумма", "валюта", "канал куда", "курс", "сумма в долларах"];
   required.forEach((value, index) => {
     if (!String(next[index] || "").trim()) next[index] = value;
@@ -179,6 +183,7 @@ function ensureTransferHeaders(header) {
   next[7] = next[7] || "raw_source_id";
   next[8] = next[8] || "orderId";
   next[9] = next[9] || "sourceTransactionId";
+  next[10] = next[10] || "comment";
   return next;
 }
 

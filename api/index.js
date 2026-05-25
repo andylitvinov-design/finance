@@ -42,6 +42,9 @@ const SOURCE_SPREADSHEET_CSV_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/export?format=csv&gid=${SOURCE_SPREADSHEET_GID}`;
 const SOURCE_SPREADSHEET_URL =
   `https://docs.google.com/spreadsheets/d/${SOURCE_SPREADSHEET_ID}/edit#gid=${SOURCE_SPREADSHEET_GID}`;
+const WISE_TRANSFER_CATEGORY = "Перевод Wise";
+const WISE_TRANSFER_TARGET_CHANNEL = "wise boleslav usd";
+const WISE_TRANSFER_SOURCE_PREFIX = "source-order";
 const CLIENT_PAID_COLUMN_HEADER = "ОПЛАЧЕНО КЛИЕНТОМ USD";
 const PAYMENT_FEE_COLUMN_HEADER = "КОМИССИЯ ПРОВАЙДЕРА USD";
 const NET_RECEIVED_COLUMN_HEADER = "ДОШЛО ДО НАС USD";
@@ -425,6 +428,7 @@ async function maybeOverlayFreshSourceData(data) {
         orders: buildFreshOrdersTable(enrichedMovement),
         ...(freshPayouts ? { payouts: freshPayouts } : {})
       },
+      manual: appendKovalevWiseTransfers(data.manual || {}, enrichedMovement.values || []),
       ...(nextRealIncome ? { realIncome: nextRealIncome } : {})
     };
   } catch (error) {
@@ -481,6 +485,10 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
     manualSpreadsheetId: manualRepository.spreadsheetId,
     fallbackSchema: manualRepository.fallbackSchema || null,
   };
+  nextManual.transfers = appendKovalevWiseTransfers(
+    { transfers: periodTransfers },
+    data.tabs?.movement?.values || []
+  ).transfers;
 
   if (isLedgerRepository) {
     nextManual.primarySource = "ledger";
@@ -568,6 +576,70 @@ function appendManualWarning(data, warning) {
       warnings,
     },
   };
+}
+
+function appendKovalevWiseTransfers(manual = {}, movementValues = []) {
+  const existingTransfers = Array.isArray(manual?.transfers) ? manual.transfers : [];
+  const transfers = existingTransfers.map((row) => ({ ...row }));
+  const existingKeys = new Set(transfers.map(getTransferDedupKey).filter(Boolean));
+  for (const row of movementValues || []) {
+    const transfer = buildKovalevWiseTransferFromMovementRow(row);
+    if (!transfer) continue;
+    const key = getTransferDedupKey(transfer);
+    if (key && existingKeys.has(key)) continue;
+    transfers.push(transfer);
+    if (key) existingKeys.add(key);
+  }
+  return {
+    ...manual,
+    transfers,
+  };
+}
+
+function buildKovalevWiseTransferFromMovementRow(row) {
+  const orderId = String(row?.[0] || "").trim();
+  if (!/^\d+$/.test(orderId)) return null;
+  const client = String(row?.[2] || "").trim();
+  const paymentMethod = String(row?.[14] || "").trim();
+  if (!isKovalevWiseBoleslavMovementRow({ client, paymentMethod })) return null;
+  const amount = firstNonEmpty([row?.[15], row?.[18], row?.[20], row?.[27]]);
+  const numericAmount = parseLooseNumber(amount);
+  if (numericAmount === null || Math.abs(numericAmount) <= 0) return null;
+  const rawSourceId = `${WISE_TRANSFER_SOURCE_PREFIX}:${orderId}`;
+  const normalizedAmount = formatDisplayNumber(Math.abs(numericAmount));
+  return {
+    transferDate: normalizeIsoDate(row?.[1]),
+    who: [client, "Немиша", "не мне"].filter(Boolean).join(" / "),
+    amount: normalizedAmount,
+    currency: "USD",
+    channel: WISE_TRANSFER_TARGET_CHANNEL,
+    rate: "",
+    usdAmount: normalizedAmount,
+    raw_source_id: rawSourceId,
+    rawSourceId,
+    orderId,
+    sourceTransactionId: rawSourceId,
+    comment: `${WISE_TRANSFER_CATEGORY}: transfer not to me / transfer to Nemisha / не мне`,
+  };
+}
+
+function isKovalevWiseBoleslavMovementRow({ client = "", paymentMethod = "" } = {}) {
+  const normalizedClient = normalizeLookupText(client);
+  const normalizedPaymentMethod = normalizeLookupText(paymentMethod);
+  return /(ковалев|kovalev)/.test(normalizedClient) &&
+    /(wise|transferwise|трансервайз)/.test(normalizedPaymentMethod) &&
+    /bolieslavn?/.test(normalizedPaymentMethod);
+}
+
+function getTransferDedupKey(row) {
+  const rawSourceId = String(row?.raw_source_id || row?.rawSourceId || row?.sourceTransactionId || "").trim();
+  if (rawSourceId) return `raw:${rawSourceId}`;
+  const date = normalizeIsoDate(row?.transferDate || row?.date);
+  const who = normalizeLookupText(row?.who || row?.fromAccount || "");
+  const amount = formatDisplayNumber(Math.abs(parseLooseNumber(row?.amount) || 0));
+  const channel = normalizeLookupText(row?.channel || row?.destination || row?.toAccount || "");
+  if (!date || !amount || !channel) return "";
+  return `fallback:${date}:${who}:${amount}:${channel}`;
 }
 
 async function loadSourceRows() {
@@ -1939,7 +2011,6 @@ function buildMovementRowsFromSource(rows, period) {
     if (!isoDate) continue;
     if (startDate && isoDate < startDate) continue;
     if (endDate && isoDate > endDate) continue;
-    if (isKovalevWiseBoleslavSourceRow(padded, derivedContext)) continue;
 
     seenNumbers.add(number);
     output.push(mapSourceRowToMovementRow(padded, isoDate, derivedContext, actionMultiplierByNumber[number] || 1));
@@ -2176,8 +2247,7 @@ function buildPayoutRowsFromSource(rows, period) {
     if (!isoDate) continue;
     if (startDate && isoDate < startDate) continue;
     if (endDate && isoDate > endDate) continue;
-    if (!/ковалев/i.test(String(padded[3] || "").trim())) continue;
-    if (isKovalevWiseBoleslavSourceRow(padded, derivedContext)) continue;
+    if (!/(ковалев|kovalev)/.test(normalizeLookupText(padded[3]))) continue;
     if (isCharitySourceRow(padded)) continue;
 
     const payoutRow = mapSourceRowToPayoutRow(padded, isoDate, derivedContext);
