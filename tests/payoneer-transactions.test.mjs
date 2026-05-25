@@ -104,6 +104,19 @@ test("parsePayoneerStatementRows keeps missing fee structured and does not fake 
   assert.match(result.warnings.join(" | "), /PYO-NOFEE: Payoneer fee is missing/);
 });
 
+test("parsePayoneerStatementRows does not use gross as net when fee and net are missing", () => {
+  const result = parsePayoneerStatementRows([
+    ["Date", "Reference ID", "Details", "Currency", "Gross Amount"],
+    ["2026-05-12", "PYO-GROSSONLY", "Client payment", "USD", "120.00"],
+  ]);
+
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].grossAmount, 120);
+  assert.equal(result.entries[0].netAmount, null);
+  assert.equal(result.entries[0].amount_net, "");
+  assert.match(result.warnings.join(" | "), /PYO-GROSSONLY: Payoneer net amount is missing/);
+});
+
 test("parsePayoneerStatementRows preserves duplicate source transaction ids", () => {
   const result = parsePayoneerStatementRows([
     ["Date", "Payment ID", "Details", "Currency", "Amount", "Fee", "Net"],
