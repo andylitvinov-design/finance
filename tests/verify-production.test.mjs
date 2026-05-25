@@ -5,6 +5,7 @@ import {
   excerptBody,
   fetchEndpoint,
   normalizeSha,
+  verifyProduction,
   verifyAuditSnapshotResponse,
   verifyStatusResponse,
 } from "../scripts/verify-production.mjs";
@@ -25,6 +26,34 @@ test("verifyStatusResponse rejects stale live commit", () => {
     commitRef: "main",
     googleSheetReadOk: true,
   }), "cf5230b23da5"), /Production deploy mismatch/);
+});
+
+test("verifyProduction reports deploy_pending without running app checks when live SHA is stale", async () => {
+  const requestedUrls = [];
+  const result = await verifyProduction("cf5230b23da5", {
+    fetchImpl: async (url) => {
+      requestedUrls.push(String(url));
+      return {
+        status: 200,
+        headers: new Map([["content-type", "application/json; charset=utf-8"]]),
+        text: async () => JSON.stringify({
+          ok: true,
+          status: "ok",
+          commitSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          commitRef: "main",
+          googleSheetReadOk: true,
+        }),
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "deploy_pending");
+  assert.equal(result.expectedSha, "cf5230b23da5");
+  assert.equal(result.liveSha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.match(result.message, /expected commit cf5230b23da5, live commit is aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
+  assert.equal(requestedUrls.length, 1);
+  assert.match(requestedUrls[0], /\/api\/status$/);
 });
 
 test("verifyStatusResponse rejects non-main commitRef when present", () => {

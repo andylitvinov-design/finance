@@ -422,9 +422,14 @@ tr:nth-child(even) td { background: #fffcf7; }
 .analysis-table-wrap table { min-width: 640px; }
 .balance-reconciliation-table-wrap table { min-width: 920px; }
 .remainders-summary-table-wrap {
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
 }
 .remainders-summary-table-wrap table { min-width: 760px; }
 .period-balance-reconciliation-section {
