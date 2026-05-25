@@ -7,7 +7,7 @@
   const FALLBACK_PERCENT_RATE_DISPLAY = 3;
   const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
   const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
-  const SERVICE_PAYMENT_GAP_TITLE = "Не распределено по каналам";
+  const SERVICE_PAYMENT_GAP_TITLE = "Диагностика оплат по каналам";
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -515,21 +515,38 @@
     return [...new Set((rows || []).map((row) => String(row?.reason || "").trim()).filter(Boolean))].slice(0, 3).join(", ");
   }
 
-  function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
-    const gapRows = (summary.servicePaymentGapByChannel || [])
-      .filter((row) => Math.abs(Number(row?.netGapUsd || 0)) > 0.0001)
-      .sort((left, right) => Math.abs(Number(right?.netGapUsd || 0)) - Math.abs(Number(left?.netGapUsd || 0)));
-    if (!gapRows.length) return null;
+  function hasExcludedGapReason(row) {
+    const text = (row?.rows || []).map((item) => String(item?.reason || "")).join(" ").toLowerCase();
+    return /excluded|исключ|deposit|non-service|refund|возврат|exchange|обмен|transfer|перевод/.test(text);
+  }
 
+  function buildServicePaymentGapSections(gapRows = []) {
+    return [
+      {
+        title: "Не распределено / требует проверки",
+        rows: gapRows.filter((row) => Number(row?.netGapUsd || 0) > 0 && !hasExcludedGapReason(row)),
+      },
+      {
+        title: "Переплаты / offset",
+        rows: gapRows.filter((row) => Number(row?.netGapUsd || 0) < 0),
+      },
+      {
+        title: "Исключено из оплат",
+        rows: gapRows.filter((row) => Number(row?.netGapUsd || 0) > 0 && hasExcludedGapReason(row)),
+      },
+    ].filter((section) => section.rows.length);
+  }
+
+  function renderServicePaymentGapSection(sectionData, doc = root.document) {
     const section = doc.createElement("div");
-    section.className = "balance-service-payment-gap";
-    const title = doc.createElement("h3");
-    title.textContent = SERVICE_PAYMENT_GAP_TITLE;
+    section.className = "balance-service-payment-gap-section";
+    const title = doc.createElement("h4");
+    title.textContent = sectionData.title;
     section.appendChild(title);
 
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
-    gapRows.forEach((row) => {
+    sectionData.rows.forEach((row) => {
       const tr = doc.createElement("tr");
       [
         row.channel || "Без канала",
@@ -544,6 +561,24 @@
     });
     table.appendChild(tbody);
     section.appendChild(table);
+    return section;
+  }
+
+  function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
+    const gapRows = (summary.servicePaymentGapByChannel || [])
+      .filter((row) => Math.abs(Number(row?.netGapUsd || 0)) > 0.0001)
+      .sort((left, right) => Math.abs(Number(right?.netGapUsd || 0)) - Math.abs(Number(left?.netGapUsd || 0)));
+    if (!gapRows.length) return null;
+
+    const section = doc.createElement("div");
+    section.className = "balance-service-payment-gap";
+    const title = doc.createElement("h3");
+    title.textContent = SERVICE_PAYMENT_GAP_TITLE;
+    section.appendChild(title);
+
+    buildServicePaymentGapSections(gapRows).forEach((gapSection) => {
+      section.appendChild(renderServicePaymentGapSection(gapSection, doc));
+    });
     return section;
   }
 

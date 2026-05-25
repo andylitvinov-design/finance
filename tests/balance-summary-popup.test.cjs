@@ -664,8 +664,34 @@ test("empty income distribution source does not crash and renders diagnostic", (
   resetBalanceModule();
 });
 
-test("balance summary renders compact channel gap diagnostics", () => {
+test("balance summary splits service payment gap diagnostics by sign and excluded reason", () => {
   const api = loadApi();
+  const gapRows = [
+    {
+      channel: "Без канала",
+      netGapUsd: 103,
+      rows: [
+        { reason: "PayPal missing client-paid/provider net" },
+        { reason: "no safe amount" },
+      ],
+    },
+    {
+      channel: "трансервайз дол",
+      netGapUsd: -334.75,
+      rows: [{ reason: "duplicate/offset/overpaid transfer" }],
+    },
+    {
+      channel: "Binance spot",
+      netGapUsd: 500,
+      rows: [{ reason: "excluded deposit/non-service" }],
+    },
+    {
+      channel: "Яндекс руб",
+      netGapUsd: 0,
+      rows: [{ reason: "no safe amount" }],
+    },
+  ];
+  const originalGapRows = JSON.parse(JSON.stringify(gapRows));
   const block = api.renderBalanceSummaryBlock({
     ordersBase: 0,
     percentRate: 3,
@@ -676,37 +702,43 @@ test("balance summary renders compact channel gap diagnostics", () => {
     totalPaid: 0,
     remainingToPay: 0,
     diagnostics: [],
-    incomeChannelDistribution: api.buildIncomeChannelDistribution({ data: { tabs: { movement: { values: [] } } } }),
-    servicePaymentGapByChannel: [
-      {
-        channel: "пейпал дол",
-        netGapUsd: 103,
-        rows: [
-          { reason: "PayPal missing client-paid/provider net" },
-          { reason: "no safe amount" },
-        ],
-      },
-      {
-        channel: "монобанк грн",
-        netGapUsd: -8.5,
-        rows: [{ reason: "duplicate/offset/overpaid" }],
-      },
-      {
-        channel: "Яндекс руб",
-        netGapUsd: 0,
-        rows: [{ reason: "no safe amount" }],
-      },
-    ],
+    incomeChannelDistribution: {
+      title: "Распределение оплат заказов/услуг по каналам",
+      note: "Возвраты, обмены и внутренние переводы исключены из процентов.",
+      source: "realIncome.servicePaymentSummaryByChannel",
+      total: 1234,
+      channels: [{ channel: "PayPal", amount: 1234, percent: 100 }],
+      diagnostics: [],
+    },
+    servicePaymentGapByChannel: gapRows,
   }, makeMockDocument());
 
   const text = collectText(block);
-  assert.match(text, /Не распределено по каналам/);
-  assert.match(text, /пейпал дол/);
-  assert.match(text, /103,0000/);
+  const gapSections = collectNodes(block, (node) => node.className === "balance-service-payment-gap-section");
+  assert.equal(gapSections.length, 3);
+
+  const requiresCheckText = collectText(gapSections[0]);
+  assert.match(requiresCheckText, /Не распределено \/ требует проверки/);
+  assert.match(requiresCheckText, /Без канала/);
+  assert.match(requiresCheckText, /103,0000/);
   assert.match(text, /PayPal missing client-paid\/provider net, no safe amount/);
-  assert.match(text, /монобанк грн/);
-  assert.match(text, /-8,5000/);
-  assert.match(text, /duplicate\/offset\/overpaid/);
+
+  const offsetText = collectText(gapSections[1]);
+  assert.match(offsetText, /Переплаты \/ offset/);
+  assert.match(offsetText, /трансервайз дол/);
+  assert.match(offsetText, /-334,7500/);
+  assert.match(offsetText, /duplicate\/offset\/overpaid transfer/);
+
+  const excludedText = collectText(gapSections[2]);
+  assert.match(excludedText, /Исключено из оплат/);
+  assert.match(excludedText, /Binance spot/);
+  assert.match(excludedText, /excluded deposit\/non-service/);
+  assert.doesNotMatch(requiresCheckText, /Binance spot/);
+  assert.doesNotMatch(offsetText, /Binance spot/);
+
+  assert.match(text, /Итого/);
+  assert.match(text, /1234,0000/);
   assert.doesNotMatch(text, /Яндекс руб/);
+  assert.deepEqual(gapRows, originalGapRows);
   resetBalanceModule();
 });
