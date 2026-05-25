@@ -540,6 +540,10 @@ function parseIncomingTransferSheetValues(values) {
     const channel = row[4] || "";
     const rate = row[5] || "";
     const usdAmount = row[6] || "";
+    const rawSourceId = row[7] || "";
+    const orderId = row[8] || "";
+    const sourceTransactionId = row[9] || rawSourceId;
+    const comment = row[10] || "";
     const hasMeaningfulTransferData = Boolean(
       transferDate &&
       (
@@ -558,7 +562,10 @@ function parseIncomingTransferSheetValues(values) {
       currency,
       channel,
       rate,
-      usdAmount
+      usdAmount,
+      ...(rawSourceId ? { raw_source_id: rawSourceId, rawSourceId, sourceTransactionId } : {}),
+      ...(orderId ? { orderId } : {}),
+      ...(comment ? { comment } : {})
     });
   }
   return transferRows;

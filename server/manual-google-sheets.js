@@ -1142,17 +1142,28 @@ function parseTransferRows(values) {
   const channelIndex = findHeaderIndex(header, ["канал куда", "channel", "destination"]);
   const rateIndex = findHeaderIndex(header, ["курс", "rate"]);
   const usdIndex = findHeaderIndex(header, ["сумма в долларах", "usd amount", "usdAmount"]);
+  const rawSourceIdIndex = findHeaderIndex(header, ["raw_source_id", "rawSourceId", "sourceTransactionId"]);
+  const orderIdIndex = findHeaderIndex(header, ["orderId", "order_id", "order"]);
+  const commentIndex = findHeaderIndex(header, ["comment", "комментарий", "meaning"]);
   if (dateIndex === -1 || amountIndex === -1 || channelIndex === -1) return [];
   return rows
-    .map((row) => ({
-      transferDate: normalizeDate(row[dateIndex]),
-      who: whoIndex === -1 ? "" : String(row[whoIndex] || "").trim(),
-      amount: String(row[amountIndex] || "").trim(),
-      currency: currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim(),
-      channel: String(row[channelIndex] || "").trim(),
-      rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
-      usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
-    }))
+    .map((row) => {
+      const rawSourceId = rawSourceIdIndex === -1 ? "" : String(row[rawSourceIdIndex] || "").trim();
+      const orderId = orderIdIndex === -1 ? "" : String(row[orderIdIndex] || "").trim();
+      const comment = commentIndex === -1 ? "" : String(row[commentIndex] || "").trim();
+      return {
+        transferDate: normalizeDate(row[dateIndex]),
+        who: whoIndex === -1 ? "" : String(row[whoIndex] || "").trim(),
+        amount: String(row[amountIndex] || "").trim(),
+        currency: currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim(),
+        channel: String(row[channelIndex] || "").trim(),
+        rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
+        usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
+        ...(rawSourceId ? { raw_source_id: rawSourceId, sourceTransactionId: rawSourceId } : {}),
+        ...(orderId ? { orderId } : {}),
+        ...(comment ? { comment } : {}),
+      };
+    })
     .filter((row) => row.transferDate && row.channel && row.amount);
 }
 
