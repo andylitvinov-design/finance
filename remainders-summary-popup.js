@@ -199,6 +199,32 @@
     return cell;
   }
 
+  function scrollRemaindersTable(wrap, left) {
+    if (!wrap) return;
+    if (typeof wrap.scrollBy === "function") {
+      wrap.scrollBy({ left, behavior: "smooth" });
+      return;
+    }
+    wrap.scrollLeft = Number(wrap.scrollLeft || 0) + left;
+  }
+
+  function renderRemaindersScrollControls(wrap, doc = root.document) {
+    const controls = doc.createElement("div");
+    controls.className = "remainders-scroll-controls";
+    [
+      ["Влево", -240],
+      ["Вправо", 240],
+    ].forEach(([label, left]) => {
+      const button = doc.createElement("button");
+      button.type = "button";
+      button.className = "ghost remainders-scroll-button";
+      button.textContent = label;
+      button.addEventListener("click", () => scrollRemaindersTable(wrap, left));
+      controls.appendChild(button);
+    });
+    return controls;
+  }
+
   function renderRemaindersSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = REMAINDERS_BLOCK_ID;
@@ -241,6 +267,7 @@
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
+    block.appendChild(renderRemaindersScrollControls(wrap, doc));
     const table = doc.createElement("table");
     const thead = doc.createElement("thead");
     const header = doc.createElement("tr");
