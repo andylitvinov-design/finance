@@ -414,6 +414,55 @@ test("computed rows remain computed and not factual after reconcile payload", ()
   resetRemaindersModule();
 });
 
+test("remainders popup renders movement and planned balance columns", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        {
+          channel: "Wise USD",
+          opening_amount_usd: 100,
+          closing_amount_usd: null,
+          movement_usd: 25,
+          planned_closing_amount_usd: 125,
+          planned_balance_computed: true,
+        },
+      ],
+    },
+  });
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Движение средств/);
+  assert.match(text, /Остатки плановые/);
+  assert.match(text, /25,0000/);
+  assert.match(text, /125,0000/);
+  assert.match(text, /плановые остатки расчетные/i);
+  resetRemaindersModule();
+});
+
+test("reconcile result summary is rendered as grouped sections", () => {
+  const api = loadApi();
+  const panel = api.renderReconcileResult({
+    providers_checked: ["wise", "paypal"],
+    balances_pulled: 2,
+    transfers_imported: 3,
+    computed_rows_count: 1,
+    provider_failures: [{ provider: "paypal", error: "OAuth failed" }],
+    needs_verification_rows: [
+      { channel: "Payoneer", currency: "USD", reason: "missing anchor" },
+    ],
+  }, makeMockDocument());
+  const text = collectText(panel);
+
+  assert.match(text, /Итог обновления/);
+  assert.match(text, /Провайдеры/);
+  assert.match(text, /Нужна проверка/);
+  assert.match(text, /paypal: OAuth failed/);
+  assert.ok(panel.children.length >= 3);
+  resetRemaindersModule();
+});
+
 test("remainders table has a mobile horizontal scroll container", () => {
   const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
   const mobileCss = fs.readFileSync(path.join(root, "mobile-finance-table-scroll.css"), "utf8");
@@ -425,10 +474,12 @@ test("remainders table has a mobile horizontal scroll container", () => {
   assert.match(styleCss, /\.remainders-summary-block\s*\{[^}]*max-width:\s*100%;[^}]*overflow:\s*visible;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*display:\s*block;[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;[^}]*overflow-x:\s*scroll;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;/s);
-  assert.match(styleCss, /\.remainders-summary-table-wrap table\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*900px;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap table\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*1040px;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap th,\s*\.remainders-summary-table-wrap td\s*\{[^}]*white-space:\s*nowrap;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap table tr > :first-child\s*\{[^}]*max-width:\s*160px;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/s);
   assert.match(mobileCss, /\.remainders-summary-table-wrap\s*\{[^}]*overflow-y:\s*visible;/s);
   assert.match(mobileCss, /\.remainders-summary-table-wrap\s*\{[^}]*touch-action:\s*pan-x pan-y;/s);
+  assert.match(mobileCss, /\.remainders-summary-table-wrap table tr > :first-child\s*\{[^}]*max-width:\s*160px;[^}]*white-space:\s*normal;/s);
 });
 
 test("remainders table renders visible horizontal scroll controls", () => {

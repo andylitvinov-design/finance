@@ -10,7 +10,9 @@
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
   const OPENING_FIELDS = ["opening_amount_usd", "openingUsd", "start_amount_usd", "startUsd", "balance_start_usd", "startBalanceUsd", "opening_balance_usd"];
   const CLOSING_FIELDS = ["closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "balance_end_usd", "endBalanceUsd", "closing_balance_usd"];
-  const DELTA_FIELDS = ["delta_amount_usd", "deltaUsd", "change_usd", "changeUsd", "movement_usd"];
+  const DELTA_FIELDS = ["delta_amount_usd", "deltaUsd", "change_usd", "changeUsd"];
+  const MOVEMENT_FIELDS = ["movement_usd", "movement_amount_usd", "movementUsd"];
+  const PLANNED_FIELDS = ["planned_closing_amount_usd", "plannedClosingUsd", "planned_balance_usd"];
 
   function getRootState() {
     if (typeof state !== "undefined") return state;
@@ -81,26 +83,35 @@
     const channel = String(firstDefined(row, CHANNEL_FIELDS) || "").trim() || "Не указан";
     const openingUsd = parseNumber(firstDefined(row, OPENING_FIELDS));
     const closingUsd = parseNumber(firstDefined(row, CLOSING_FIELDS));
+    const movementUsd = parseNumber(firstDefined(row, MOVEMENT_FIELDS));
+    const plannedClosingUsd = parseNumber(firstDefined(row, PLANNED_FIELDS));
     const fallbackDeltaUsd = parseNumber(firstDefined(row, DELTA_FIELDS));
     const deltaUsd = openingUsd !== null && closingUsd !== null ? closingUsd - openingUsd : fallbackDeltaUsd;
     const needsVerification = openingUsd === null || closingUsd === null || deltaUsd === null;
-    return { channel, openingUsd, closingUsd, deltaUsd, needsVerification };
+    const plannedNeedsVerification = plannedClosingUsd === null;
+    return { channel, openingUsd, closingUsd, deltaUsd, movementUsd, plannedClosingUsd, needsVerification, plannedNeedsVerification };
   }
 
   function buildRemaindersSummary(input, options = {}) {
     const { source, rows } = resolveRemaindersRows(input, options);
     const normalizedRows = rows.map(normalizeRemaindersRow);
     const completeRows = normalizedRows.filter((row) => !row.needsVerification);
+    const plannedRows = normalizedRows.filter((row) => row.plannedClosingUsd !== null);
     const totals = completeRows.reduce((sum, row) => ({
       openingUsd: sum.openingUsd + row.openingUsd,
       closingUsd: sum.closingUsd + row.closingUsd,
       deltaUsd: sum.deltaUsd + row.deltaUsd,
     }), { openingUsd: 0, closingUsd: 0, deltaUsd: 0 });
+    const plannedTotals = plannedRows.reduce((sum, row) => ({
+      movementUsd: sum.movementUsd + row.movementUsd,
+      plannedClosingUsd: sum.plannedClosingUsd + row.plannedClosingUsd,
+    }), { movementUsd: 0, plannedClosingUsd: 0 });
     const needsVerificationCount = normalizedRows.length - completeRows.length;
     return {
       source,
       rows: normalizedRows,
       totals,
+      plannedTotals,
       needsVerificationCount,
       diagnostics: source ? [] : [`${NEEDS_VERIFICATION}: source not found for remainders summary.`],
     };
@@ -271,7 +282,7 @@
     const table = doc.createElement("table");
     const thead = doc.createElement("thead");
     const header = doc.createElement("tr");
-    ["Канал", "Было на начало периода, USD", "Стало на конец периода, USD", "Изменение, USD"].forEach((label) => {
+    ["Канал", "Было на начало периода, USD", "Стало на конец периода, USD", "Изменение, USD", "Движение средств", "Остатки плановые"].forEach((label) => {
       header.appendChild(renderHeaderCell(doc, label));
     });
     thead.appendChild(header);
@@ -285,6 +296,8 @@
       tr.appendChild(renderCell(doc, formatMoney(row.openingUsd), "numeric"));
       tr.appendChild(renderCell(doc, formatMoney(row.closingUsd), "numeric"));
       tr.appendChild(renderCell(doc, formatMoney(row.deltaUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatMoney(row.movementUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatMoney(row.plannedClosingUsd), "numeric"));
       tbody.appendChild(tr);
     });
 
@@ -294,6 +307,8 @@
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.openingUsd : null), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.closingUsd : null), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.totals.deltaUsd : null), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.plannedTotals?.movementUsd : null), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(summary.rows.length ? summary.plannedTotals?.plannedClosingUsd : null), "numeric"));
     tbody.appendChild(total);
     table.appendChild(tbody);
     wrap.appendChild(table);
@@ -302,6 +317,9 @@
     const diagnostics = [...(summary.diagnostics || [])];
     if (summary.needsVerificationCount) {
       diagnostics.push(`${NEEDS_VERIFICATION}: ${summary.needsVerificationCount} row(s) have missing opening/closing USD values.`);
+    }
+    if (summary.rows.some((row) => row.plannedClosingUsd !== null)) {
+      diagnostics.push("Плановые остатки расчетные: opening_amount_usd + Ledger movement_usd from amount_net; factual closing_amount_usd is not overwritten.");
     }
     if (diagnostics.length) {
       const note = doc.createElement("div");
@@ -323,18 +341,33 @@
     const needsReasons = needsRows
       .map((row) => `${row.channel || "Не указан"} ${row.currency || ""}: ${row.reason || row.status || NEEDS_VERIFICATION}`.trim())
       .slice(0, 8);
-    const parts = [
+    appendReconcileSection(doc, panel, "Итог обновления", [
       `providers checked: ${(result.providers_checked || []).join(", ") || "none"}`,
       `balances pulled: ${Number(result.balances_pulled || 0)}`,
       `transfers imported: ${Number(result.transfers_imported || 0)}`,
       `computed rows: ${Number(result.computed_rows_count || 0)}`,
       `needs verification rows: ${needsRows.length}`,
-    ];
-    if (needsReasons.length) parts.push(`reasons: ${needsReasons.join("; ")}`);
-    if (providerFailures.length) parts.push(`provider failures/errors: ${providerFailures.join("; ")}`);
-    if (result.error) parts.push(`error: ${result.error}`);
-    panel.textContent = parts.join(". ");
+    ]);
+    appendReconcileSection(doc, panel, "Провайдеры", providerFailures.length ? providerFailures : ["provider failures/errors: none"]);
+    appendReconcileSection(doc, panel, "Нужна проверка", needsReasons.length ? needsReasons : ["reasons: none"]);
+    if (result.error) appendReconcileSection(doc, panel, "Ошибка", [`error: ${result.error}`]);
     return panel;
+  }
+
+  function appendReconcileSection(doc, panel, title, rows) {
+    const section = doc.createElement("section");
+    section.className = "remainders-reconcile-section";
+    const heading = doc.createElement("strong");
+    heading.textContent = title;
+    section.appendChild(heading);
+    const list = doc.createElement("ul");
+    rows.forEach((text) => {
+      const item = doc.createElement("li");
+      item.textContent = text;
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    panel.appendChild(section);
   }
 
   function getSummaryMount(doc = root.document) {

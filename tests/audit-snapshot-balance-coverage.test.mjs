@@ -70,6 +70,11 @@ test("audit snapshot exposes balance coverage for reconciled account currency ro
       opening_amount_usd: 1000,
       closing_amount_usd: 1206,
       delta_amount_usd: 206,
+      movement_usd: 206,
+      planned_closing_amount_usd: 1206,
+      planned_balance_computed: true,
+      planned_balance_source: "computed_from_opening_plus_ledger_movement",
+      planned_balance_reason: "opening_amount_usd + amount_net ledger movement",
       openingUsd: 1000,
       closingUsd: 1206,
       deltaUsd: 206,
@@ -422,6 +427,65 @@ test("audit snapshot balance coverage flags missing closing balance without chan
   assert.equal(snapshot.audit_checks.find((check) => check.name === "balance_coverage")?.status, "needs verification");
 });
 
+test("audit snapshot remainders expose amount-net movement and planned closing without overwriting factual closing", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { period: "2026-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [operation({ amount: "25", amountUsd: "25", amountNet: "25", ledgerV2: { amount: "25", amount_usd: "25", amount_net: "25", balance_amount: 25 } })],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000" },
+        { date: "2026-05-02", channel: "wise usd", currency: "USD", amount: "1100" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows[0];
+  assert.equal(row.movement_usd, 25);
+  assert.equal(row.planned_closing_amount_usd, 1025);
+  assert.equal(row.planned_balance_computed, true);
+  assert.equal(row.planned_balance_source, "computed_from_opening_plus_ledger_movement");
+  assert.equal(row.closing_amount_usd, 1100);
+});
+
+test("audit snapshot remainders keep planned closing uncomputed when amount-net movement is unsafe", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { period: "2026-05" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          amount: "25",
+          amountUsd: "25",
+          amountNet: "",
+          ledgerV2: { amount: "25", amount_usd: "25", amount_net: "", balance_amount: 25 },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "1000" },
+      ],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows[0];
+  assert.equal(row.movement_usd, null);
+  assert.equal(row.planned_closing_amount_usd, null);
+  assert.equal(row.planned_balance_computed, false);
+  assert.equal(row.planned_balance_source, "needs_verification");
+  assert.match(row.planned_balance_reason, /amount_net/i);
+  assert.equal(row.status, "needs_verification");
+});
+
 test("audit snapshot uses auto balance row as fallback when manual balance row is absent", async () => {
   const snapshot = await buildAuditSnapshot({
     query: { period: "2026-05" },
@@ -480,6 +544,11 @@ test("audit snapshot remainders include period-start manual anchors without move
       opening_amount_usd: 500,
       closing_amount_usd: null,
       delta_amount_usd: null,
+      movement_usd: null,
+      planned_closing_amount_usd: null,
+      planned_balance_computed: false,
+      planned_balance_source: "needs_verification",
+      planned_balance_reason: "needs_verification: missing_ledger_movement",
       openingUsd: 500,
       closingUsd: null,
       deltaUsd: null,
@@ -1279,6 +1348,11 @@ test("audit snapshot marks bounded anchor movement rows computed without writing
       opening_amount_usd: 1000,
       closing_amount_usd: 1310,
       delta_amount_usd: 310,
+      movement_usd: 310,
+      planned_closing_amount_usd: 1310,
+      planned_balance_computed: true,
+      planned_balance_source: "computed_from_opening_plus_ledger_movement",
+      planned_balance_reason: "opening_amount_usd + amount_net ledger movement",
       openingUsd: 1000,
       closingUsd: 1310,
       deltaUsd: 310,

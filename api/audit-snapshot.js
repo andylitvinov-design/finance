@@ -435,6 +435,9 @@ function buildRemaindersRows(accounts = [], options = {}) {
       closing_amount_usd: null,
       status: anchor.opening_amount_usd === null ? "needs_verification" : "ok",
       source: anchor.source,
+      movement_usd: null,
+      movement_usd_safe: false,
+      movement_usd_reason: "missing_ledger_movement",
       computed_balance: false,
       factual_provider_balance: true,
       opening_anchor: true,
@@ -453,6 +456,9 @@ function buildRemaindersRows(accounts = [], options = {}) {
       closing_amount_usd: nullableRound(account.closing_amount_usd ?? account.closingUsd),
       status: account.status || "needs_verification",
       source: account.source || account.balance_source || "balance_coverage.accounts",
+      movement_usd: nullableRound(account.movement_usd),
+      movement_usd_safe: account.movement_usd_safe === true && nullableRound(account.movement_usd) !== null,
+      movement_usd_reason: account.movement_usd_reason || "missing_movement_usd",
       computed_balance: account.computed_balance === true,
       factual_provider_balance: account.factual_provider_balance === false ? false : account.computed_balance !== true,
     };
@@ -467,6 +473,11 @@ function buildRemaindersRows(accounts = [], options = {}) {
       const last = rows.at(-1) || {};
       const openingUsd = first.opening_amount_usd;
       const closingUsd = last.closing_amount_usd;
+      const movementRows = rows.filter((row) => row.opening_anchor !== true);
+      const movementStatus = summarizeRemaindersMovement(movementRows);
+      const plannedClosingUsd = openingUsd !== null && movementStatus.safe
+        ? round(openingUsd + movementStatus.movement_usd)
+        : null;
       const complete = openingUsd !== null && closingUsd !== null;
       const computed = rows.some((row) => row.computed_balance === true);
       const computedSource = rows.find((row) => row.computed_balance === true && row.source)?.source || "computed_from_opening_and_ledger";
@@ -476,6 +487,13 @@ function buildRemaindersRows(accounts = [], options = {}) {
         opening_amount_usd: openingUsd,
         closing_amount_usd: closingUsd,
         delta_amount_usd: complete ? round(closingUsd - openingUsd) : null,
+        movement_usd: movementStatus.safe ? movementStatus.movement_usd : null,
+        planned_closing_amount_usd: plannedClosingUsd,
+        planned_balance_computed: plannedClosingUsd !== null,
+        planned_balance_source: plannedClosingUsd !== null ? "computed_from_opening_plus_ledger_movement" : "needs_verification",
+        planned_balance_reason: plannedClosingUsd !== null
+          ? "opening_amount_usd + amount_net ledger movement"
+          : buildPlannedBalanceReason({ openingUsd, movementStatus }),
         openingUsd,
         closingUsd,
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
@@ -496,6 +514,26 @@ function buildRemaindersRows(accounts = [], options = {}) {
       if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
       return left.currency.localeCompare(right.currency);
     });
+}
+
+function summarizeRemaindersMovement(rows = []) {
+  if (!rows.length) {
+    return { safe: false, movement_usd: null, reason: "missing_ledger_movement" };
+  }
+  let total = 0;
+  for (const row of rows) {
+    if (row.movement_usd_safe !== true || row.movement_usd === null || row.movement_usd === undefined) {
+      return { safe: false, movement_usd: null, reason: row.movement_usd_reason || "missing_movement_usd" };
+    }
+    total += Number(row.movement_usd);
+  }
+  return { safe: true, movement_usd: round(total), reason: "amount_net_ledger_movement" };
+}
+
+function buildPlannedBalanceReason({ openingUsd, movementStatus }) {
+  if (openingUsd === null) return "needs_verification: missing opening_amount_usd";
+  if (!movementStatus.safe) return `needs_verification: ${movementStatus.reason || "missing movement_usd"}`;
+  return "needs_verification";
 }
 
 function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
