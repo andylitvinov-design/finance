@@ -21,10 +21,6 @@
       "destination": "/api/index?action=balanceSnapshots"
     },
     {
-      "source": "/api/reconcile-balances-and-transfers",
-      "destination": "/api/index?action=reconcileBalancesAndTransfers"
-    },
-    {
       "source": "/api/binance-transactions",
       "destination": "/api/index?action=binanceTransactions"
     },
