@@ -90,6 +90,22 @@ button:disabled { cursor: wait; opacity: 0.6; transform: none; }
 .balance-income-channel-distribution td:nth-child(3) { text-align: right; white-space: nowrap; }
 .balance-income-channel-total td { font-weight: 700; }
 .balance-summary-diagnostics { margin-top: 10px; color: var(--muted); font-size: 13px; }
+.remainders-summary-block {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+.remainders-scroll-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0 8px;
+  max-width: 100%;
+}
+.remainders-scroll-button {
+  padding: 8px 12px;
+  white-space: nowrap;
+}
 .metric {
   padding: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(247,239,230,0.85));
   border: 1px solid var(--line); border-radius: 18px;
@@ -422,16 +438,27 @@ tr:nth-child(even) td { background: #fffcf7; }
 .analysis-table-wrap table { min-width: 640px; }
 .balance-reconciliation-table-wrap table { min-width: 920px; }
 .remainders-summary-table-wrap {
+  display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
+  justify-self: stretch;
+  overflow-x: scroll;
   overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   touch-action: pan-x pan-y;
+  scrollbar-width: thin;
 }
-.remainders-summary-table-wrap table { min-width: 760px; }
+.remainders-summary-table-wrap table {
+  width: max-content;
+  min-width: 900px;
+  max-width: none;
+}
+.remainders-summary-table-wrap th,
+.remainders-summary-table-wrap td {
+  white-space: nowrap;
+}
 .period-balance-reconciliation-section {
   display: grid;
   gap: 14px;

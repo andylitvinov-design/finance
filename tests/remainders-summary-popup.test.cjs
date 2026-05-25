@@ -28,9 +28,12 @@ class TestElement {
     this.id = "";
     this.className = "";
     this.type = "";
+    this.disabled = false;
     this.textContent = "";
     this.listeners = {};
     this.nextSibling = null;
+    this.attributes = {};
+    this.scrollCalls = [];
   }
 
   appendChild(child) {
@@ -57,10 +60,27 @@ class TestElement {
     return previous;
   }
 
-  setAttribute() {}
+  setAttribute(name, value) {
+    this.attributes[name] = value;
+  }
 
   addEventListener(type, listener) {
     this.listeners[type] = listener;
+  }
+
+  querySelector(selector) {
+    if (selector === ".remainders-summary-table-wrap" && this.className.split(/\s+/).includes("remainders-summary-table-wrap")) {
+      return this;
+    }
+    for (const child of this.children) {
+      const found = child.querySelector?.(selector);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  scrollBy(options) {
+    this.scrollCalls.push(options);
   }
 }
 
@@ -398,11 +418,39 @@ test("remainders table has a mobile horizontal scroll container", () => {
   const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
   const mobileCss = fs.readFileSync(path.join(root, "mobile-finance-table-scroll.css"), "utf8");
 
-  assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*overflow-x:\s*auto;/s);
+  assert.match(styleCss, /\.remainders-summary-block\s*\{[^}]*max-width:\s*100%;[^}]*overflow:\s*visible;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*display:\s*block;[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;[^}]*overflow-x:\s*scroll;/s);
   assert.match(styleCss, /\.remainders-summary-table-wrap\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;/s);
-  assert.match(styleCss, /\.remainders-summary-table-wrap table\s*\{[^}]*min-width:\s*760px;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap table\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*900px;/s);
+  assert.match(styleCss, /\.remainders-summary-table-wrap th,\s*\.remainders-summary-table-wrap td\s*\{[^}]*white-space:\s*nowrap;/s);
   assert.match(mobileCss, /\.remainders-summary-table-wrap\s*\{[^}]*overflow-y:\s*visible;/s);
   assert.match(mobileCss, /\.remainders-summary-table-wrap\s*\{[^}]*touch-action:\s*pan-x pan-y;/s);
+});
+
+test("remainders table renders visible horizontal scroll controls", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock(api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "PayPal", opening_amount_usd: 1, closing_amount_usd: 2 },
+      ],
+    },
+  }), makeMockDocument());
+  const controls = block.children.find((child) => child.className === "remainders-scroll-controls");
+  const wrap = block.querySelector(".remainders-summary-table-wrap");
+
+  assert.ok(controls);
+  assert.equal(controls.children.length, 2);
+  assert.match(controls.children[0].textContent, /Влево/);
+  assert.match(controls.children[1].textContent, /Вправо/);
+
+  controls.children[1].listeners.click();
+  controls.children[0].listeners.click();
+  assert.deepEqual(wrap.scrollCalls, [
+    { left: 240, behavior: "smooth" },
+    { left: -240, behavior: "smooth" },
+  ]);
+  resetRemaindersModule();
 });
 
 test("existing Balance popup behavior remains available", () => {

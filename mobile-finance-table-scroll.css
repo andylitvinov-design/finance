@@ -43,8 +43,25 @@
   }
 
   .remainders-summary-table-wrap {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    justify-self: stretch;
+    overflow-x: scroll;
     overflow-y: visible;
     touch-action: pan-x pan-y;
+  }
+
+  .remainders-summary-table-wrap table {
+    width: max-content;
+    min-width: 900px;
+    max-width: none;
+  }
+
+  .remainders-summary-table-wrap th,
+  .remainders-summary-table-wrap td {
+    white-space: nowrap;
   }
 
   .analysis-table-wrap th,
