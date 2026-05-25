@@ -42,6 +42,11 @@
     max-width: none;
   }
 
+  .remainders-summary-table-wrap {
+    overflow-y: visible;
+    touch-action: pan-x pan-y;
+  }
+
   .analysis-table-wrap th,
   .analysis-table-wrap td,
   .finance-shell .table-wrap th,

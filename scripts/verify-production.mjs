@@ -39,7 +39,24 @@ export async function verifyProduction(expectedSha, { fetchImpl = fetch } = {}) 
 
   const status = await fetchEndpoint(STATUS_URL, { fetchImpl });
   printEndpointReport("status", status);
-  verifyStatusResponse(status, expected);
+  try {
+    verifyStatusResponse(status, expected);
+  } catch (error) {
+    if (isDeployShaMismatch(error)) {
+      const liveSha = normalizeSha(status.json?.commitSha);
+      return {
+        ok: false,
+        status: "deploy_pending",
+        expectedSha: expected,
+        liveSha,
+        commitRef: status.json?.commitRef || null,
+        buildTime: status.json?.buildTime || null,
+        deployTime: status.json?.deployTime || null,
+        message: `Production deploy pending: expected commit ${expected}, live commit is ${liveSha || "missing"}. App checks skipped until expected SHA is live.`,
+      };
+    }
+    throw error;
+  }
 
   const auditSnapshot = await fetchEndpoint(AUDIT_SNAPSHOT_URL, { fetchImpl });
   printEndpointReport("audit-snapshot", auditSnapshot);
@@ -118,6 +135,11 @@ function assertJsonResponse(result, label) {
 function hasMeaningfulValue(value) {
   const normalized = String(value || "").trim();
   return normalized && normalized !== "unknown";
+}
+
+function isDeployShaMismatch(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.startsWith("Production deploy mismatch: expected commit ");
 }
 
 function printEndpointReport(label, result) {
