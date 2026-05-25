@@ -55,13 +55,20 @@
 
   .remainders-summary-table-wrap table {
     width: max-content;
-    min-width: 900px;
+    min-width: 1040px;
     max-width: none;
   }
 
   .remainders-summary-table-wrap th,
   .remainders-summary-table-wrap td {
     white-space: nowrap;
+  }
+
+  .remainders-summary-table-wrap table tr > :first-child {
+    min-width: 130px;
+    max-width: 160px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .analysis-table-wrap th,

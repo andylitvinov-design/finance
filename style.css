@@ -452,12 +452,29 @@ tr:nth-child(even) td { background: #fffcf7; }
 }
 .remainders-summary-table-wrap table {
   width: max-content;
-  min-width: 900px;
+  min-width: 1040px;
   max-width: none;
 }
 .remainders-summary-table-wrap th,
 .remainders-summary-table-wrap td {
   white-space: nowrap;
+}
+.remainders-summary-table-wrap table tr > :first-child {
+  min-width: 130px;
+  max-width: 160px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.remainders-summary-table-wrap .numeric {
+  white-space: nowrap;
+}
+.remainders-reconcile-result {
+  display: grid;
+  gap: 8px;
+}
+.remainders-reconcile-section ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 .period-balance-reconciliation-section {
   display: grid;

@@ -25,6 +25,10 @@ function toCoverageAccount(row) {
   const hasComputedBalance = row?.computed_balance === true;
   const hasProviderBalance = row?.provider_reported_balance !== null && row?.provider_reported_balance !== undefined;
   const hasClosingBalance = hasComputedBalance || hasProviderBalance;
+  const missingNetCount = Number(row?.missing_amount_net_rows || 0);
+  const movementUsd = missingNetCount
+    ? null
+    : (row?._has_usd_change === true ? toNullableRoundedNumber(row?._net_change_usd) : null);
   const openingUsd = toNullableRoundedNumber(row?.opening_amount_usd);
   const closingUsd = toNullableRoundedNumber(row?.closing_amount_usd);
   const deltaUsd = openingUsd !== null && closingUsd !== null
@@ -51,6 +55,11 @@ function toCoverageAccount(row) {
     opening_amount_usd: openingUsd,
     closing_amount_usd: closingUsd,
     delta_amount_usd: deltaUsd,
+    movement_usd: movementUsd,
+    movement_usd_safe: movementUsd !== null,
+    movement_usd_reason: movementUsd !== null
+      ? "amount_net_ledger_movement"
+      : (missingNetCount ? "missing_amount_net" : "missing_movement_usd"),
     openingUsd,
     closingUsd,
     deltaUsd,
