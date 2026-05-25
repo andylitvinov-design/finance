@@ -2326,3 +2326,203 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
     else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
   }
 });
+
+test("GET getDashboardData adds channel-level service payment gap diagnostics without changing service payment totals", async () => {
+  const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousPayPalClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousPayPalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const previousBinanceApiKey = process.env.BINANCE_API_KEY;
+  const previousBinanceApiSecret = process.env.BINANCE_API_SECRET;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.PAYPAL_CLIENT_ID = "client";
+  process.env.PAYPAL_CLIENT_SECRET = "secret";
+  process.env.BINANCE_API_KEY = "binance-key";
+  process.env.BINANCE_API_SECRET = "binance-secret";
+
+  const makeSourceRow = ({ number, date, client, service, comment = "", priceBase, accruedPlus, paymentMethod, receivedUsd }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = date;
+    row[3] = client;
+    row[4] = service;
+    row[5] = comment;
+    row[6] = String(priceBase);
+    row[9] = String(priceBase);
+    row[10] = String(accruedPlus);
+    row[24] = paymentMethod;
+    if (receivedUsd !== undefined) row[30] = String(receivedUsd);
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-05-01", endDate: "2026-05-31", timeZone: "Europe/Kiev" },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.05.2026", "дата 2", "31.05.2026"],
+                      [""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
+                    ],
+                  },
+                  orders: { sheetName: "список моих заказы", values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]] },
+                },
+              },
+            });
+          },
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        const rows = [
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          makeSourceRow({
+            number: "18201",
+            date: "2026-05-02",
+            client: "PayPal Unsafe",
+            service: "PayPal service without provider net",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "сайт, дол, пэйпэл",
+            receivedUsd: 103,
+          }),
+          makeSourceRow({
+            number: "18202",
+            date: "2026-05-03",
+            client: "Без Канала",
+            service: "Missing payment channel",
+            priceBase: 200,
+            accruedPlus: 206,
+            paymentMethod: "",
+            receivedUsd: 206,
+          }),
+          makeSourceRow({
+            number: "18203",
+            date: "2026-05-04",
+            client: "Прямой Платеж",
+            service: "Direct card overpaid",
+            priceBase: 50,
+            accruedPlus: 51.5,
+            paymentMethod: "монобанк грн",
+            receivedUsd: 60,
+          }),
+          makeSourceRow({
+            number: "18204",
+            date: "2026-05-05",
+            client: "Crypto Topup",
+            service: "Binance deposit top-up",
+            comment: "deposit",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "Бинанс spot",
+            receivedUsd: 103,
+          }),
+        ];
+        return { ok: true, status: 200, async text() { return rows.map((row) => row.join(",")).join("\n"); } };
+      }
+
+      if (value.endsWith("/v1/oauth2/token")) return { ok: true, status: 200, async json() { return { access_token: "paypal-token" }; } };
+      if (value.includes("/v1/reporting/transactions")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              total_pages: 1,
+              transaction_details: [{
+                transaction_info: {
+                  transaction_id: "PAYPAL-NOFEE-GAP",
+                  transaction_initiation_date: "2026-05-02T10:00:00Z",
+                  transaction_amount: { value: "103", currency_code: "USD" },
+                },
+              }],
+            };
+          },
+        };
+      }
+      if (value.includes("/api/v3/account")) return { ok: true, status: 200, async text() { return JSON.stringify({ balances: [] }); } };
+      if (value.includes("/sapi/v1/capital/deposit/hisrec")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify([{ id: "BINANCE-DEPOSIT-GAP", amount: "103", coin: "USDT", completeTime: "2026-05-05T13:00:00Z", status: 1 }]);
+          },
+        };
+      }
+      if (value.includes("/sapi/v1/capital/withdraw/history")) return { ok: true, status: 200, async text() { return "[]"; } };
+      if (value.includes("/sapi/v1/pay/transactions")) return { ok: true, status: 200, async text() { return JSON.stringify({ data: [] }); } };
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-31" } }, response);
+
+    assert.equal(response.statusCode, 200);
+    const realIncome = response.body?.data?.realIncome;
+    assert.equal(realIncome?.servicePaymentSummaryByChannel?.["пейпал дол"]?.realNetUsd, 103);
+    assert.equal(realIncome?.servicePaymentSummaryByChannel?.["монобанк грн"]?.realNetUsd, 60);
+    assert.equal(realIncome?.servicePaymentSummaryByChannel?.["Бинанс spot"]?.realNetUsd, 0);
+    assert.equal(realIncome?.servicePaymentSummaryTotals?.realNetUsd, 163);
+
+    const paypalGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "пейпал дол");
+    assert.equal(paypalGap?.expectedUsd, 103);
+    assert.equal(paypalGap?.includedUsd, 103);
+    assert.equal(paypalGap?.missingUnsafeUsd, 103);
+    assert.equal(paypalGap?.netGapUsd, 0);
+    assert.match(paypalGap?.rows?.[0]?.reason || "", /PayPal missing client-paid\/provider net|no safe amount/);
+
+    const missingChannelGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "Без канала");
+    assert.equal(missingChannelGap?.expectedUsd, 206);
+    assert.equal(missingChannelGap?.includedUsd, 0);
+    assert.equal(missingChannelGap?.netGapUsd, 206);
+    assert.match(missingChannelGap?.rows?.[0]?.reason || "", /payment channel missing/);
+
+    const monoGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "монобанк грн");
+    assert.equal(monoGap?.expectedUsd, 51.5);
+    assert.equal(monoGap?.includedUsd, 60);
+    assert.equal(monoGap?.offsetUsd, 8.5);
+    assert.equal(monoGap?.netGapUsd, -8.5);
+    assert.match(monoGap?.rows?.[0]?.reason || "", /duplicate\/offset\/overpaid/);
+
+    const binanceGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "Бинанс spot");
+    assert.equal(binanceGap?.expectedUsd, 101);
+    assert.equal(binanceGap?.includedUsd, 0);
+    assert.match(binanceGap?.rows?.[0]?.reason || "", /excluded deposit\/non-service/);
+
+    assert.deepEqual(realIncome?.servicePaymentGapTotals, {
+      expectedUsd: 461.5,
+      includedUsd: 163,
+      missingUnsafeUsd: 410,
+      offsetUsd: 8.5,
+      netGapUsd: 298.5,
+    });
+  } finally {
+    global.fetch = previousFetch;
+    if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
+    if (previousPayPalClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousPayPalClientId;
+    if (previousPayPalClientSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
+    if (previousBinanceApiKey === undefined) delete process.env.BINANCE_API_KEY;
+    else process.env.BINANCE_API_KEY = previousBinanceApiKey;
+    if (previousBinanceApiSecret === undefined) delete process.env.BINANCE_API_SECRET;
+    else process.env.BINANCE_API_SECRET = previousBinanceApiSecret;
+  }
+});

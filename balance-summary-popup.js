@@ -7,6 +7,7 @@
   const FALLBACK_PERCENT_RATE_DISPLAY = 3;
   const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
   const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
+  const SERVICE_PAYMENT_GAP_TITLE = "Не распределено по каналам";
 
   function parseNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -426,6 +427,8 @@
       remainingToPay,
       payableFormula: canonical.payableFormula,
       incomeChannelDistribution: buildIncomeChannelDistribution(metricsOrState, { ...options, state: appState, period }),
+      servicePaymentGapByChannel: appState?.data?.realIncome?.servicePaymentGapByChannel || appState?.realIncome?.servicePaymentGapByChannel || metricsOrState.servicePaymentGapByChannel || [],
+      servicePaymentGapTotals: appState?.data?.realIncome?.servicePaymentGapTotals || appState?.realIncome?.servicePaymentGapTotals || metricsOrState.servicePaymentGapTotals || null,
       diagnostics,
       sources: {
         orders: explicitOrders !== null ? "input.orders" : "movement/orders table OCCURRED/ACCRUED or top metrics fallback",
@@ -508,6 +511,42 @@
     return section;
   }
 
+  function summarizeGapReasons(rows = []) {
+    return [...new Set((rows || []).map((row) => String(row?.reason || "").trim()).filter(Boolean))].slice(0, 3).join(", ");
+  }
+
+  function renderServicePaymentGapDiagnostics(summary = {}, doc = root.document) {
+    const gapRows = (summary.servicePaymentGapByChannel || [])
+      .filter((row) => Math.abs(Number(row?.netGapUsd || 0)) > 0.0001)
+      .sort((left, right) => Math.abs(Number(right?.netGapUsd || 0)) - Math.abs(Number(left?.netGapUsd || 0)));
+    if (!gapRows.length) return null;
+
+    const section = doc.createElement("div");
+    section.className = "balance-service-payment-gap";
+    const title = doc.createElement("h3");
+    title.textContent = SERVICE_PAYMENT_GAP_TITLE;
+    section.appendChild(title);
+
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    gapRows.forEach((row) => {
+      const tr = doc.createElement("tr");
+      [
+        row.channel || "Без канала",
+        formatMoney(Number(row.netGapUsd || 0)),
+        summarizeGapReasons(row.rows),
+      ].forEach((value) => {
+        const td = doc.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    section.appendChild(table);
+    return section;
+  }
+
   function renderBalanceSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = BALANCE_BLOCK_ID;
@@ -534,6 +573,8 @@
       summary.incomeChannelDistribution || buildIncomeChannelDistribution(summary),
       doc
     ));
+    const servicePaymentGap = renderServicePaymentGapDiagnostics(summary, doc);
+    if (servicePaymentGap) block.appendChild(servicePaymentGap);
     if (summary.diagnostics?.length) {
       const diagnostics = doc.createElement("div");
       diagnostics.className = "balance-summary-diagnostics";
@@ -599,6 +640,7 @@
     buildIncomeChannelDistribution,
     buildBalanceTextSummary,
     renderIncomeChannelDistribution,
+    renderServicePaymentGapDiagnostics,
     renderBalanceSummaryBlock,
     startBalanceSummary,
     updateBalanceSummaryBlock,
