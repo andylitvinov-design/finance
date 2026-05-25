@@ -2727,6 +2727,9 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(missingChannelGap?.includedUsd, 0);
     assert.equal(missingChannelGap?.netGapUsd, 206);
     assert.match(missingChannelGap?.rows?.[0]?.reason || "", /payment channel missing/);
+    assert.equal(missingChannelGap?.rows?.[0]?.paymentMethod, "");
+    assert.equal(missingChannelGap?.rows?.[0]?.status, "NEEDS VERIFICATION");
+    assert.match(missingChannelGap?.rows?.[0]?.reviewNote || "", /payment channel missing/);
 
     const monoGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "монобанк грн");
     assert.equal(monoGap?.expectedUsd, 51.5);
@@ -2734,6 +2737,9 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(monoGap?.offsetUsd, 8.5);
     assert.equal(monoGap?.netGapUsd, -8.5);
     assert.match(monoGap?.rows?.[0]?.reason || "", /duplicate\/offset\/overpaid/);
+    assert.equal(monoGap?.rows?.[0]?.paymentMethod, "монобанк грн");
+    assert.equal(monoGap?.rows?.[0]?.status, "OVERPAID");
+    assert.match(monoGap?.rows?.[0]?.reviewNote || "", /overpaid/);
 
     const binanceGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "Бинанс spot");
     assert.equal(binanceGap?.expectedUsd, 101);
