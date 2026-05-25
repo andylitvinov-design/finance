@@ -18,14 +18,10 @@ test("Vercel serverless function count stays within Hobby deployment limit", () 
   );
 });
 
-test("reconcile balances endpoint is served through the consolidated api index function", () => {
-  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+test("reconcile balances workflow uses the consolidated api index function", () => {
+  const popupSource = fs.readFileSync(path.join(ROOT, "remainders-summary-popup.js"), "utf8");
 
   assert.ok(
-    config.rewrites.some(
-      (rewrite) =>
-        rewrite.source === "/api/reconcile-balances-and-transfers" &&
-        rewrite.destination === "/api/index?action=reconcileBalancesAndTransfers"
-    )
+    popupSource.includes('./api/index?action=reconcileBalancesAndTransfers')
   );
 });
