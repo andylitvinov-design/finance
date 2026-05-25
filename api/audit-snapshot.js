@@ -163,6 +163,7 @@ export async function buildAuditSnapshot(options = {}) {
       remainders_rows: buildRemaindersRows(balanceCoverage.accounts || [], {
         balanceRows,
         period,
+        operations,
       }),
     },
     daily_balances: {
@@ -426,8 +427,7 @@ function buildWeeklyBalanceSummary({
 function buildRemaindersRows(accounts = [], options = {}) {
   const grouped = new Map();
   for (const anchor of buildRemaindersOpeningAnchors(options.balanceRows || [], options.period || {})) {
-    if (!grouped.has(anchor.key)) grouped.set(anchor.key, []);
-    grouped.get(anchor.key).push({
+    addRemaindersGroupedRow(grouped, {
       date: anchor.date,
       channel: anchor.channel,
       currency: anchor.currency,
@@ -435,6 +435,7 @@ function buildRemaindersRows(accounts = [], options = {}) {
       closing_amount_usd: null,
       status: anchor.opening_amount_usd === null ? "needs_verification" : "ok",
       source: anchor.source,
+      inclusion_source: "opening_anchor",
       movement_usd: null,
       movement_usd_safe: false,
       movement_usd_reason: "missing_ledger_movement",
@@ -443,12 +444,32 @@ function buildRemaindersRows(accounts = [], options = {}) {
       opening_anchor: true,
     });
   }
+  for (const anchor of buildRemaindersClosingAnchors(options.balanceRows || [], options.period || {})) {
+    addRemaindersGroupedRow(grouped, {
+      date: anchor.date,
+      channel: anchor.channel,
+      currency: anchor.currency,
+      opening_amount_usd: null,
+      closing_amount_usd: anchor.closing_amount_usd,
+      status: anchor.closing_amount_usd === null ? "needs_verification" : "ok",
+      source: anchor.source,
+      inclusion_source: "closing_anchor",
+      movement_usd: null,
+      movement_usd_safe: false,
+      movement_usd_reason: "missing_ledger_movement",
+      computed_balance: false,
+      factual_provider_balance: true,
+      closing_anchor: true,
+    });
+  }
+  for (const movement of buildRemaindersLedgerMovementRows(options.operations || [])) {
+    addRemaindersGroupedRow(grouped, movement);
+  }
   for (const account of accounts || []) {
     const channel = String(account?.channel || "").trim();
     const currency = String(account?.currency || "").trim().toUpperCase();
     if (!channel || !currency) continue;
-    const key = `${channel}|${currency}`;
-    const row = {
+    addRemaindersGroupedRow(grouped, {
       date: account.date,
       channel,
       currency,
@@ -456,14 +477,13 @@ function buildRemaindersRows(accounts = [], options = {}) {
       closing_amount_usd: nullableRound(account.closing_amount_usd ?? account.closingUsd),
       status: account.status || "needs_verification",
       source: account.source || account.balance_source || "balance_coverage.accounts",
-      movement_usd: nullableRound(account.movement_usd),
-      movement_usd_safe: account.movement_usd_safe === true && nullableRound(account.movement_usd) !== null,
+      inclusion_source: "balance_coverage",
+      movement_usd: normalizeRemaindersCoverageMovementUsd(account),
+      movement_usd_safe: account.movement_usd_safe === true && normalizeRemaindersCoverageMovementUsd(account) !== null,
       movement_usd_reason: account.movement_usd_reason || "missing_movement_usd",
       computed_balance: account.computed_balance === true,
       factual_provider_balance: account.factual_provider_balance === false ? false : account.computed_balance !== true,
-    };
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
+    });
   }
 
   return Array.from(grouped.values())
@@ -471,16 +491,18 @@ function buildRemaindersRows(accounts = [], options = {}) {
       rows.sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")));
       const first = rows[0] || {};
       const last = rows.at(-1) || {};
-      const openingUsd = first.opening_amount_usd;
-      const closingUsd = last.closing_amount_usd;
-      const movementRows = rows.filter((row) => row.opening_anchor !== true);
-      const movementStatus = summarizeRemaindersMovement(movementRows);
+      const openingRow = rows.find((row) => row.opening_amount_usd !== null && row.opening_amount_usd !== undefined) || {};
+      const closingRow = rows.toReversed().find((row) => row.closing_amount_usd !== null && row.closing_amount_usd !== undefined) || {};
+      const openingUsd = openingRow.opening_amount_usd ?? null;
+      const closingUsd = closingRow.closing_amount_usd ?? null;
+      const movementStatus = summarizeRemaindersMovement(rows);
       const plannedClosingUsd = openingUsd !== null && movementStatus.safe
         ? round(openingUsd + movementStatus.movement_usd)
         : null;
       const complete = openingUsd !== null && closingUsd !== null;
       const computed = rows.some((row) => row.computed_balance === true);
       const computedSource = rows.find((row) => row.computed_balance === true && row.source)?.source || "computed_from_opening_and_ledger";
+      const inclusionSource = summarizeRemaindersInclusionSource(rows);
       return {
         channel: first.channel || last.channel || "",
         currency: first.currency || last.currency || "",
@@ -499,6 +521,7 @@ function buildRemaindersRows(accounts = [], options = {}) {
         deltaUsd: complete ? round(closingUsd - openingUsd) : null,
         status: complete ? "ok" : "needs_verification",
         source: computed ? computedSource : (first.opening_anchor ? first.source : "balance_coverage.accounts"),
+        inclusion_source: inclusionSource,
         period_start_date: first.date || "",
         period_end_date: last.date || "",
         row_count: rows.length,
@@ -516,12 +539,62 @@ function buildRemaindersRows(accounts = [], options = {}) {
     });
 }
 
+function addRemaindersGroupedRow(grouped, row) {
+  const channel = String(row?.channel || "").trim();
+  const currency = String(row?.currency || "").trim().toUpperCase();
+  if (!channel || !currency) return;
+  const key = makeRemaindersKey(channel, currency);
+  const normalized = { ...row, channel, currency };
+  if (!grouped.has(key)) grouped.set(key, []);
+  grouped.get(key).push(normalized);
+}
+
+function makeRemaindersKey(channel, currency) {
+  return `${normalizeRemaindersChannel(channel)}|${String(currency || "").trim().toUpperCase()}`;
+}
+
+function normalizeRemaindersChannel(channel) {
+  return String(channel || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function summarizeRemaindersInclusionSource(rows = []) {
+  const priority = [
+    "opening_anchor",
+    "ledger_movement",
+    "income_channel",
+    "closing_anchor",
+    "balance_coverage",
+  ];
+  const sources = new Set(rows.map((row) => row.inclusion_source).filter(Boolean));
+  return priority.find((source) => sources.has(source)) || "balance_coverage";
+}
+
+function normalizeRemaindersCoverageMovementUsd(account = {}) {
+  const movementUsd = nullableRound(account.movement_usd);
+  if (movementUsd === null) return null;
+  const netChange = parseNumber(account.net_change);
+  if (netChange !== null && netChange < 0) return -Math.abs(movementUsd);
+  return movementUsd;
+}
+
 function summarizeRemaindersMovement(rows = []) {
-  if (!rows.length) {
+  const coverageRows = rows.filter((row) => row.inclusion_source === "balance_coverage");
+  const ledgerRows = rows.filter((row) => row.inclusion_source === "ledger_movement");
+  const coverageHasUnsafeMovement = coverageRows.some((row) => row.movement_usd_safe !== true);
+  const coverageHasCompleteAnchors = coverageRows.some((row) =>
+    (row.opening_amount_usd !== null || row.openingUsd !== null) &&
+    (row.closing_amount_usd !== null || row.closingUsd !== null)
+  );
+  const movementRows = coverageHasUnsafeMovement
+    ? coverageRows
+    : coverageRows.some((row) => row.movement_usd_safe === true) && (coverageHasCompleteAnchors || !ledgerRows.length)
+      ? coverageRows
+      : ledgerRows;
+  if (!movementRows.length) {
     return { safe: false, movement_usd: null, reason: "missing_ledger_movement" };
   }
   let total = 0;
-  for (const row of rows) {
+  for (const row of movementRows) {
     if (row.movement_usd_safe !== true || row.movement_usd === null || row.movement_usd === undefined) {
       return { safe: false, movement_usd: null, reason: row.movement_usd_reason || "missing_movement_usd" };
     }
@@ -546,7 +619,7 @@ function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
     if (!date || date >= from) continue;
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
-    if (channel && currency) priorKeys.add(`${channel}|${currency}`);
+    if (channel && currency) priorKeys.add(makeRemaindersKey(channel, currency));
   }
   const anchors = new Map();
   for (const row of balanceRows || []) {
@@ -556,7 +629,7 @@ function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
     const currency = String(row?.currency || "").trim().toUpperCase();
     if (!channel || !currency) continue;
     const amount = parseNumber(row?.balanceAmount ?? row?.amount);
-    const key = `${channel}|${currency}`;
+    const key = makeRemaindersKey(channel, currency);
     if (!isFirstDayOfMonth && priorKeys.has(key)) continue;
     const anchor = {
       key,
@@ -574,6 +647,111 @@ function buildRemaindersOpeningAnchors(balanceRows = [], period = {}) {
     if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
     return left.currency.localeCompare(right.currency);
   });
+}
+
+function buildRemaindersClosingAnchors(balanceRows = [], period = {}) {
+  const from = normalizeDate(period.from);
+  const to = normalizeDate(period.to);
+  if (!from || !to) return [];
+  const anchors = new Map();
+  for (const row of balanceRows || []) {
+    const date = normalizeDate(row?.date);
+    if (!date || date <= from || date > to) continue;
+    const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    if (!channel || !currency) continue;
+    const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+    const key = makeRemaindersKey(channel, currency);
+    const anchor = {
+      key,
+      date,
+      channel,
+      currency,
+      closing_amount_usd: nullableRound(resolveRemaindersSnapshotUsdAmount(row, amount, currency)),
+      source: getRemaindersAnchorSource(row),
+      priority: getRemaindersAnchorPriority(row),
+    };
+    const existing = anchors.get(key);
+    if (
+      !existing ||
+      anchor.date > existing.date ||
+      (anchor.date === existing.date && anchor.priority < existing.priority)
+    ) {
+      anchors.set(key, anchor);
+    }
+  }
+  return Array.from(anchors.values()).sort((left, right) => {
+    if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+    return left.currency.localeCompare(right.currency);
+  });
+}
+
+function buildRemaindersLedgerMovementRows(operations = []) {
+  const grouped = new Map();
+  for (const operation of operations || []) {
+    for (const movement of getRemaindersOperationMovements(operation)) {
+      const channel = String(movement.channel || "").trim();
+      const currency = String(movement.currency || "").trim().toUpperCase();
+      if (!channel || !currency) continue;
+      const key = makeRemaindersKey(channel, currency);
+      const existing = grouped.get(key) || {
+        date: movement.date,
+        channel,
+        currency,
+        opening_amount_usd: null,
+        closing_amount_usd: null,
+        status: "needs_verification",
+        source: "ledger_movement",
+        inclusion_source: "ledger_movement",
+        movement_usd: 0,
+        movement_usd_safe: true,
+        movement_usd_reason: "amount_usd_ledger_movement",
+        computed_balance: false,
+        factual_provider_balance: false,
+      };
+      existing.date = [existing.date, movement.date].filter(Boolean).sort()[0] || "";
+      existing.movement_usd += movement.movement_usd;
+      grouped.set(key, existing);
+    }
+  }
+  return Array.from(grouped.values()).map((row) => ({
+    ...row,
+    movement_usd: round(row.movement_usd),
+  }));
+}
+
+function getRemaindersOperationMovements(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const operation = String(ledger.operation || row?.operation || "").trim().toLowerCase();
+  const date = normalizeDate(ledger.date || row?.date);
+  const currency = String(ledger.currency || row?.currency || "").trim().toUpperCase();
+  const from = String(ledger.from_channel || row?.fromChannel || row?.from_channel || "").trim();
+  const to = String(ledger.to_channel || row?.toChannel || row?.to_channel || row?.payment_channel || row?.paymentChannel || "").trim();
+  const fallback = String(row?.channel || row?.accountName || row?.account || "").trim();
+  const amountUsd = parseNumber(ledger.amount_usd ?? row?.amountUsd ?? row?.amount_usd);
+  if (!date || !currency || amountUsd === null) return [];
+  if (operation === "income" || operation === "exchange_in") {
+    return [{ date, channel: to || fallback, currency, movement_usd: Math.abs(amountUsd) }];
+  }
+  if (["expense", "business_expense", "personal_expense", "exchange_out"].includes(operation)) {
+    return [{ date, channel: from || fallback, currency, movement_usd: -Math.abs(amountUsd) }];
+  }
+  if (operation === "transfer" || operation === "partner_transfer") {
+    const balanceAmount = parseNumber(ledger.balance_amount ?? row?.balanceAmount);
+    if (balanceAmount !== null) {
+      return [{
+        date,
+        channel: balanceAmount < 0 ? (from || fallback) : (to || fallback || from),
+        currency,
+        movement_usd: balanceAmount < 0 ? -Math.abs(amountUsd) : Math.abs(amountUsd),
+      }];
+    }
+    return [
+      { date, channel: from || fallback, currency, movement_usd: -Math.abs(amountUsd) },
+      { date, channel: to, currency, movement_usd: Math.abs(amountUsd) },
+    ];
+  }
+  return [{ date, channel: fallback || to || from, currency, movement_usd: amountUsd }];
 }
 
 function resolveRemaindersSnapshotUsdAmount(row = {}, amount = null, currency = "") {
@@ -611,7 +789,11 @@ function getRemaindersAnchorPriority(row = {}) {
 function buildRemaindersVerificationContext({ first = {}, last = {}, complete = false } = {}) {
   if (complete) return {};
   const currency = String(first.currency || last.currency || "").trim().toUpperCase();
-  if (currency !== "RUB") return {};
+  if (currency !== "RUB") {
+    return {
+      needs_verification_reason: "missing_opening_or_closing_anchor",
+    };
+  }
   return {
     needs_verification_reason: "missing_usd_rate_or_amount_usd",
     fix_action: "Add a trusted rate or amount_usd for the factual RUB anchor date; native RUB alone is not enough for USD remainders.",

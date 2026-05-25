@@ -80,9 +80,10 @@ test("audit snapshot exposes balance coverage for reconciled account currency ro
       deltaUsd: 206,
       status: "ok",
       source: "manual_may_opening_anchor",
+      inclusion_source: "opening_anchor",
       period_start_date: "2026-05-01",
       period_end_date: "2026-05-02",
-      row_count: 2,
+      row_count: 4,
       needs_verification: false,
     },
   ]);
@@ -554,10 +555,12 @@ test("audit snapshot remainders include period-start manual anchors without move
       deltaUsd: null,
       status: "needs_verification",
       source: "manual_may_opening_anchor",
+      inclusion_source: "opening_anchor",
       period_start_date: "2026-05-01",
       period_end_date: "2026-05-01",
       row_count: 1,
       needs_verification: true,
+      needs_verification_reason: "missing_opening_or_closing_anchor",
     },
   ]);
 });
@@ -1358,12 +1361,176 @@ test("audit snapshot marks bounded anchor movement rows computed without writing
       deltaUsd: 310,
       status: "ok",
       source: "computed_from_opening_and_ledger",
+      inclusion_source: "opening_anchor",
       period_start_date: "2026-05-01",
       period_end_date: "2026-05-20",
-      row_count: 4,
+      row_count: 6,
       needs_verification: false,
       computed_balance: true,
       factual_provider_balance: false,
     },
   ]);
+});
+
+test("audit snapshot remainders include income channel without opening balance", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-09",
+          toChannel: "new paypal usd",
+          amount: "250",
+          amountUsd: "250",
+          amountNet: "250",
+          ledgerV2: {
+            date: "2026-05-09",
+            operation: "income",
+            to_channel: "new paypal usd",
+            amount: "250",
+            amount_usd: "250",
+            amount_net: "250",
+            currency: "USD",
+            source: "paypal",
+          },
+        }),
+      ],
+      balances: [],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows.find((item) => item.channel === "new paypal usd");
+  assert.ok(row);
+  assert.equal(row.currency, "USD");
+  assert.equal(row.opening_amount_usd, null);
+  assert.equal(row.closing_amount_usd, null);
+  assert.equal(row.movement_usd, 250);
+  assert.equal(row.planned_closing_amount_usd, null);
+  assert.equal(row.status, "needs_verification");
+  assert.equal(row.inclusion_source, "ledger_movement");
+  assert.match(row.planned_balance_reason, /missing opening_amount_usd/);
+});
+
+test("audit snapshot remainders include ledger expense movement channel without anchors", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-12",
+          operation: "expense",
+          fromChannel: "cash usd",
+          toChannel: "",
+          amount: "70",
+          amountUsd: "70",
+          amountNet: "70",
+          ledgerV2: {
+            date: "2026-05-12",
+            operation: "expense",
+            from_channel: "cash usd",
+            to_channel: "",
+            amount: "70",
+            amount_usd: "70",
+            amount_net: "70",
+            balance_amount: -70,
+            currency: "USD",
+            source: "manual",
+          },
+        }),
+      ],
+      balances: [],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows.find((item) => item.channel === "cash usd");
+  assert.ok(row);
+  assert.equal(row.movement_usd, -70);
+  assert.equal(row.planned_closing_amount_usd, null);
+  assert.equal(row.status, "needs_verification");
+  assert.equal(row.inclusion_source, "ledger_movement");
+  assert.equal(row.needs_verification_reason, "missing_opening_or_closing_anchor");
+});
+
+test("audit snapshot remainders include closing-only channels", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-05-31", channel: "closing only usd", currency: "USD", amount: "410", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const row = snapshot.balances.remainders_rows.find((item) => item.channel === "closing only usd");
+  assert.ok(row);
+  assert.equal(row.opening_amount_usd, null);
+  assert.equal(row.closing_amount_usd, 410);
+  assert.equal(row.inclusion_source, "closing_anchor");
+  assert.equal(row.status, "needs_verification");
+});
+
+test("audit snapshot remainders merge duplicate channel currency inclusions into one row", async () => {
+  const snapshot = await buildAuditSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [
+        operation({
+          date: "2026-05-10",
+          toChannel: "Wise USD",
+          amount: "50",
+          amountUsd: "50",
+          amountNet: "50",
+          ledgerV2: {
+            date: "2026-05-10",
+            operation: "income",
+            to_channel: "Wise USD",
+            amount: "50",
+            amount_usd: "50",
+            amount_net: "50",
+            currency: "USD",
+            source: "wise",
+          },
+        }),
+      ],
+      balances: [
+        { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", sourceSheet: "Остатки" },
+        { date: "2026-05-31", channel: "WISE USD", currency: "USD", amount: "150", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      commissionRows: [],
+      transfers: [],
+      views: { byDateChannel: [], byCategory: [] },
+      warnings: [],
+    }),
+  });
+
+  const rows = snapshot.balances.remainders_rows.filter((item) => item.channel.toLowerCase() === "wise usd");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].opening_amount_usd, 100);
+  assert.equal(rows[0].closing_amount_usd, 150);
+  assert.equal(rows[0].movement_usd, 50);
 });
