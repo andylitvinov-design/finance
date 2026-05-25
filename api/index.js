@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import autoBalanceSnapshotsHandler from "../server/auto-balance-snapshots.js";
+import reconcileBalancesAndTransfersHandler from "../server/reconcile-balances-and-transfers.js";
 import payoneerTransactionsHandler from "../server/payoneer-transactions.js";
 import revolutTransactionsHandler from "../server/revolut-transactions.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
@@ -31,6 +32,7 @@ const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const AUTO_BALANCE_SNAPSHOTS_ACTION = "autoBalanceSnapshots";
+const RECONCILE_BALANCES_AND_TRANSFERS_ACTION = "reconcileBalancesAndTransfers";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
@@ -173,6 +175,10 @@ export default async function handler(request, response) {
 
   if (debugAction === AUTO_BALANCE_SNAPSHOTS_ACTION) {
     return await autoBalanceSnapshotsHandler(request, response);
+  }
+
+  if (debugAction === RECONCILE_BALANCES_AND_TRANSFERS_ACTION) {
+    return await reconcileBalancesAndTransfersHandler(request, response);
   }
 
   if (debugAction === PAYONEER_TRANSACTIONS_ACTION) {

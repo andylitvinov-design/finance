@@ -5,6 +5,7 @@
   const REMAINDERS_BUTTON_ID = "remaindersLauncherButton";
   const REMAINDERS_BLOCK_ID = "remaindersSummaryBlock";
   const NEEDS_VERIFICATION = "needs verification";
+  const RECONCILE_BUTTON_TEXT = "Обновить остатки и пересчитать";
 
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
   const OPENING_FIELDS = ["opening_amount_usd", "openingUsd", "start_amount_usd", "startUsd", "balance_start_usd", "startBalanceUsd", "opening_balance_usd"];
@@ -126,11 +127,44 @@
     return url;
   }
 
+  function buildReconcileUrl() {
+    const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
+    return new URL("./api/reconcile-balances-and-transfers", base);
+  }
+
   async function fetchAuditSnapshotRemainders() {
     if (typeof root.fetch !== "function") return null;
     const response = await root.fetch(buildAuditSnapshotUrl().toString(), { cache: "no-store" });
     if (!response?.ok) throw new Error(`audit snapshot returned ${response?.status || "unknown status"}`);
     return response.json();
+  }
+
+  async function readJsonResponse(response, label) {
+    const text = await response.text?.().catch?.(() => "") || "";
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      const excerpt = String(text).replace(/\s+/g, " ").slice(0, 300) || "non-JSON response";
+      throw new Error(`${label} returned non-JSON response (${response?.status || "unknown"}): ${excerpt}`);
+    }
+  }
+
+  async function runBalanceReconcileWorkflow() {
+    if (typeof root.fetch !== "function") throw new Error("fetch is unavailable");
+    const from = getDateInputValue("startDate");
+    const to = getDateInputValue("endDate");
+    const response = await root.fetch(buildReconcileUrl().toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ from, to }),
+    });
+    const payload = await readJsonResponse(response, "reconcile-balances-and-transfers");
+    if (!response?.ok || !payload?.ok) {
+      throw new Error(payload?.error || payload?.errors?.[0]?.message || `reconcile returned ${response?.status || "unknown status"}`);
+    }
+    return payload;
   }
 
   async function buildLiveRemaindersSummary(input, options = {}) {
@@ -174,6 +208,36 @@
     const title = doc.createElement("h3");
     title.textContent = "Остатки по каналам";
     block.appendChild(title);
+
+    const actions = doc.createElement("div");
+    actions.className = "balance-summary-actions remainders-summary-actions";
+    const refreshButton = doc.createElement("button");
+    refreshButton.type = "button";
+    refreshButton.className = "secondary";
+    refreshButton.textContent = summary.reconcileLoading ? "Обновляю остатки..." : RECONCILE_BUTTON_TEXT;
+    refreshButton.disabled = Boolean(summary.reconcileLoading);
+    refreshButton.addEventListener("click", async () => {
+      const loading = renderRemaindersSummaryBlock({ ...summary, reconcileLoading: true }, doc);
+      block.parentNode?.replaceChild?.(loading, block);
+      try {
+        const result = await runBalanceReconcileWorkflow();
+        const nextSummary = buildRemaindersSummary(result.audit_snapshot || {});
+        const next = renderRemaindersSummaryBlock({ ...nextSummary, reconcileResult: result }, doc);
+        loading.parentNode?.replaceChild?.(next, loading);
+      } catch (error) {
+        const next = renderRemaindersSummaryBlock({
+          ...summary,
+          reconcileResult: { ok: false, error: String(error?.message || error) },
+        }, doc);
+        loading.parentNode?.replaceChild?.(next, loading);
+      }
+    });
+    actions.appendChild(refreshButton);
+    block.appendChild(actions);
+
+    if (summary.reconcileResult) {
+      block.appendChild(renderReconcileResult(summary.reconcileResult, doc));
+    }
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
@@ -219,6 +283,31 @@
       block.appendChild(note);
     }
     return block;
+  }
+
+  function renderReconcileResult(result, doc = root.document) {
+    const panel = doc.createElement("div");
+    panel.className = "balance-summary-diagnostics remainders-reconcile-result";
+    const failures = Array.isArray(result.provider_failures) ? result.provider_failures : [];
+    const needsRows = Array.isArray(result.needs_verification_rows) ? result.needs_verification_rows : [];
+    const providerFailures = failures
+      .map((row) => `${row.provider || "provider"}: ${row.error || row.status || "error"}`)
+      .slice(0, 6);
+    const needsReasons = needsRows
+      .map((row) => `${row.channel || "Не указан"} ${row.currency || ""}: ${row.reason || row.status || NEEDS_VERIFICATION}`.trim())
+      .slice(0, 8);
+    const parts = [
+      `providers checked: ${(result.providers_checked || []).join(", ") || "none"}`,
+      `balances pulled: ${Number(result.balances_pulled || 0)}`,
+      `transfers imported: ${Number(result.transfers_imported || 0)}`,
+      `computed rows: ${Number(result.computed_rows_count || 0)}`,
+      `needs verification rows: ${needsRows.length}`,
+    ];
+    if (needsReasons.length) parts.push(`reasons: ${needsReasons.join("; ")}`);
+    if (providerFailures.length) parts.push(`provider failures/errors: ${providerFailures.join("; ")}`);
+    if (result.error) parts.push(`error: ${result.error}`);
+    panel.textContent = parts.join(". ");
+    return panel;
   }
 
   function getSummaryMount(doc = root.document) {
@@ -291,7 +380,9 @@
     REMAINDERS_BLOCK_ID,
     buildRemaindersSummary,
     buildLiveRemaindersSummary,
+    runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
+    renderReconcileResult,
     bindRemaindersLauncherButton,
     startRemaindersSummary,
     updateRemaindersSummaryBlock,
