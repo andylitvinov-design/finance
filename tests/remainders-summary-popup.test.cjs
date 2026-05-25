@@ -333,7 +333,7 @@ test("reconcile workflow posts selected period and renders structured result", a
   const result = await api.runBalanceReconcileWorkflow();
   const panel = api.renderReconcileResult(result, makeMockDocument());
 
-  assert.match(requestedUrl, /\/api\/reconcile-balances-and-transfers$/);
+  assert.match(requestedUrl, /\/api\/index\?action=reconcileBalancesAndTransfers$/);
   assert.deepEqual(requestedBody, { from: "2026-05-01", to: "2026-05-31" });
   assert.match(collectText(panel), /providers checked: wise, monobank/);
   assert.match(collectText(panel), /balances pulled: 2/);

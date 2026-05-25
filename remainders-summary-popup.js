@@ -129,7 +129,7 @@
 
   function buildReconcileUrl() {
     const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
-    return new URL("./api/reconcile-balances-and-transfers", base);
+    return new URL("./api/index?action=reconcileBalancesAndTransfers", base);
   }
 
   async function fetchAuditSnapshotRemainders() {
