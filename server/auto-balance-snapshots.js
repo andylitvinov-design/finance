@@ -63,9 +63,23 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "yoomoney", channel: "Яндекс руб", currency: "RUB", source: "yoomoney_auto" },
   { provider: "binance", channel: "Бинанс spot", currency: "USDT", source: "binance_auto" },
   { provider: "binance", channel: "Бинанс spot", currency: "USDC", source: "binance_auto" },
-  { provider: "binance", channel: "Binance funding", currency: "USDT", source: "binance_auto" },
+  {
+    provider: "binance",
+    channel: "Binance funding",
+    currency: "USDT",
+    source: "binance_auto",
+    active_from: "2026-05-24",
+    inactive_reason: "trusted zero anchor first exists on 2026-05-24; earlier May days have no trusted numeric funding balance",
+  },
   { provider: "binance", channel: "binance save", currency: "USDT", source: "binance_auto" },
-  { provider: "binance", channel: "binance save", currency: "USDC", source: "binance_auto" },
+  {
+    provider: "binance",
+    channel: "binance save",
+    currency: "USDC",
+    source: "binance_auto",
+    active: false,
+    inactive_reason: "Binance Earn USDC current-balance row is status-only missing_provider_balance; no trusted numeric anchor exists",
+  },
   { provider: "tdbank", channel: "БАНК КАНАДА cad", currency: "CAD", source: "tdbank_auto" },
   { provider: "payoneer", channel: "Payoneer - eur", currency: "EUR", source: "payoneer_auto" },
   { provider: "payoneer", channel: "Payoneer - dol", currency: "USD", source: "payoneer_auto" },
@@ -74,6 +88,38 @@ export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "revolut", channel: "REVOLUT фунт", currency: "GBP", source: "revolut_auto" },
   { provider: "revolut", channel: "REVOLUT франк", currency: "CHF", source: "revolut_auto" },
 ];
+
+export function filterExpectedProviderBalancesForDate(expectedPairs = EXPECTED_PROVIDER_BALANCES, date = "") {
+  return (expectedPairs || []).filter((pair) => isExpectedProviderBalanceActiveOn(pair, date));
+}
+
+export function buildExpectedProviderBalanceExclusionsForDate(expectedPairs = EXPECTED_PROVIDER_BALANCES, date = "") {
+  return (expectedPairs || [])
+    .filter((pair) => !isExpectedProviderBalanceActiveOn(pair, date))
+    .map((pair) => ({
+      key: makeProviderBalanceKey(pair.channel, pair.currency),
+      channel: pair.channel,
+      currency: String(pair.currency || "").trim().toUpperCase(),
+      active_from: pair.active_from || null,
+      active_to: pair.active_to || null,
+      reason: pair.inactive_reason || "outside active provider balance window",
+    }));
+}
+
+export function isExpectedProviderBalanceActiveOn(pair = {}, date = "") {
+  const normalizedDate = normalizeIsoDate(date);
+  if (!normalizedDate) return pair.active !== false;
+  if (pair.active === false) return false;
+  const activeFrom = normalizeIsoDate(pair.active_from);
+  const activeTo = normalizeIsoDate(pair.active_to);
+  if (activeFrom && normalizedDate < activeFrom) return false;
+  if (activeTo && normalizedDate > activeTo) return false;
+  return true;
+}
+
+function makeProviderBalanceKey(channel, currency) {
+  return `${String(channel || "").trim()}|${String(currency || "").trim().toUpperCase()}`;
+}
 
 export function getProviderCurrentBalanceCapabilities(env = process.env) {
   return [

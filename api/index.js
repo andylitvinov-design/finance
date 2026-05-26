@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeServerAnalyticsPayload } from "../server/analytics-normalizer.js";
 import autoBalanceSnapshotsHandler from "../server/auto-balance-snapshots.js";
 import dailyBalanceBackfillHandler from "../server/backfill-daily-balance-snapshots-route.js";
+import repairMayDailyBalanceSnapshotsHandler from "../server/repair-may-daily-balance-snapshots-route.js";
 import reconcileBalancesAndTransfersHandler from "../server/reconcile-balances-and-transfers.js";
 import payoneerTransactionsHandler from "../server/payoneer-transactions.js";
 import revolutTransactionsHandler from "../server/revolut-transactions.js";
@@ -34,6 +35,7 @@ const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
 const AUTO_BALANCE_SNAPSHOTS_ACTION = "autoBalanceSnapshots";
 const DAILY_BALANCE_BACKFILL_ACTION = "dailyBalanceBackfill";
+const MAY_DAILY_BALANCE_SNAPSHOT_REPAIR_ACTION = "mayDailyBalanceSnapshotRepair";
 const RECONCILE_BALANCES_AND_TRANSFERS_ACTION = "reconcileBalancesAndTransfers";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
@@ -184,6 +186,10 @@ export default async function handler(request, response) {
 
   if (debugAction === DAILY_BALANCE_BACKFILL_ACTION) {
     return await dailyBalanceBackfillHandler(request, response);
+  }
+
+  if (debugAction === MAY_DAILY_BALANCE_SNAPSHOT_REPAIR_ACTION) {
+    return await repairMayDailyBalanceSnapshotsHandler(request, response);
   }
 
   if (debugAction === RECONCILE_BALANCES_AND_TRANSFERS_ACTION) {

@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
-import { EXPECTED_PROVIDER_BALANCES, getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
+import {
+  EXPECTED_PROVIDER_BALANCES,
+  buildExpectedProviderBalanceExclusionsForDate,
+  filterExpectedProviderBalancesForDate,
+  getProviderCurrentBalanceCapabilities,
+} from "./auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
@@ -206,7 +211,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     selected_rows: buildSelectedRows(validMergedRows),
     selected_date: selectedDateSummary.selected_date,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
-    selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES),
+    selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date),
     selected_date_source: selectedDateSummary.source,
     selected_date_diagnostics: selectedDateSummary.diagnostics,
     fact_balance_rows: factBalanceRows,
@@ -585,8 +590,10 @@ function buildSelectedRows(rows) {
     .sort(compareDetailedRows);
 }
 
-function buildSelectedDateCoverage(rows = [], expectedPairs = []) {
-  const expected = normalizeExpectedPairs(expectedPairs);
+function buildSelectedDateCoverage(rows = [], expectedPairs = [], selectedDate = "") {
+  const canonicalExpected = normalizeExpectedPairs(expectedPairs);
+  const expected = filterExpectedProviderBalancesForDate(canonicalExpected, selectedDate);
+  const excludedExpected = buildExpectedProviderBalanceExclusionsForDate(canonicalExpected, selectedDate);
   const counts = new Map();
   let numericRows = 0;
   for (const row of rows || []) {
@@ -615,6 +622,8 @@ function buildSelectedDateCoverage(rows = [], expectedPairs = []) {
     unique_channel_currency_count: counts.size,
     duplicate_channel_currency_count: duplicates.length,
     duplicates,
+    canonical_expected_rows: canonicalExpected.length,
+    excluded_expected: excludedExpected,
     missing_channels: missingChannels,
     status,
   };
@@ -626,7 +635,7 @@ function normalizeExpectedPairs(rows = []) {
     const channel = String(row?.channel || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
     if (!channel || !currency) continue;
-    pairs.set(makeKey(channel, currency), { channel, currency });
+    pairs.set(makeKey(channel, currency), { ...row, channel, currency });
   }
   return Array.from(pairs.values()).sort(compareChannelCurrency);
 }

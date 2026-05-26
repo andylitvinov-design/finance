@@ -25,6 +25,10 @@
       "destination": "/api/index?action=dailyBalanceBackfill"
     },
     {
+      "source": "/api/repair-may-daily-balance-snapshots",
+      "destination": "/api/index?action=mayDailyBalanceSnapshotRepair"
+    },
+    {
       "source": "/api/binance-transactions",
       "destination": "/api/index?action=binanceTransactions"
     },

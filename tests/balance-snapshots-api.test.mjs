@@ -419,12 +419,37 @@ test("balance snapshots selected date reports expected coverage and duplicate ch
   });
 
   assert.equal(snapshot.balance_snapshots.selected_date_rows.length, 3);
-  assert.equal(snapshot.balance_snapshots.selected_date_coverage.expected_rows, 23);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.canonical_expected_rows, 23);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.expected_rows, 22);
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.total_rows, 3);
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.unique_channel_currency_count, 2);
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.duplicate_channel_currency_count, 1);
   assert.ok(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Binance funding|USDT"));
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.status, "partial");
+});
+
+test("balance snapshots selected date reports explicit inactive expected exclusions", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-20", to: "2026-05-20" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-20", channel: "трансервайз дол", currency: "USD", amount: "90", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-20", channel: "Binance funding", currency: "USDT", amount: "0", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.excluded_expected.some((row) => row.key === "Binance funding|USDT"), true);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.excluded_expected.some((row) => row.key === "binance save|USDC"), true);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Binance funding|USDT"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDC"), false);
 });
 
 test("balance snapshots selected date does not trust stale current-only historical auto rows", async () => {

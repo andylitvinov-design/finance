@@ -2,7 +2,7 @@
 import { inspect } from "node:util";
 
 import { loadAutoBalanceRowsFromGoogleSheets } from "../server/auto-balance-repository.js";
-import { saveAutoBalanceSnapshotRows } from "../server/auto-balance-snapshots.js";
+import { EXPECTED_PROVIDER_BALANCES, filterExpectedProviderBalancesForDate, saveAutoBalanceSnapshotRows } from "../server/auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { buildDailyCalculatedBalances } from "../server/daily-calculated-balances.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
@@ -71,6 +71,7 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
   const calculated = buildDailyCalculatedBalances({
     operations,
     balanceRows,
+    activePairs: filterExpectedProviderBalancesForDate(EXPECTED_PROVIDER_BALANCES, to),
     period: { from, to },
     now,
   });
