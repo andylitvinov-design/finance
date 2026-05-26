@@ -880,6 +880,8 @@ function buildReconciliationReport(rows = [], balanceIndex, { period = {}, opera
       opening_adjustment_rows: adjustedOpening.rows,
       adjusted_rows: adjustedOpening.adjusted_rows,
       needs_verification_rows: adjustedOpening.needs_verification_rows,
+      pending_movement_verification_rows: adjustedOpening.pending_movement_verification_rows,
+      paypal_movement_diagnostics: adjustedOpening.paypal_movement_diagnostics,
       system_opening_2026_05_01_total_usd: systemOpeningTotalUsd,
       opening_total_diff_usd: ownerConfirmedOpeningTotalUsd === null ? null : round(systemOpeningTotalUsd - ownerConfirmedOpeningTotalUsd),
       status_counts: reportRows.reduce((counts, row) => {

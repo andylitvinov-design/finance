@@ -12,9 +12,63 @@ import {
 } from "../server/may-2026-owner-opening-balances.js";
 import { buildBackfillDailyBalanceSnapshotsReport } from "../scripts/backfill-daily-balance-snapshots.mjs";
 
+function paypalOperation({ sourceRow, date, channel, currency, balanceAmount, gross = null, fee = null, net = null, rawId = "", description = "" }) {
+  const directionKey = balanceAmount < 0 ? "from_channel" : "to_channel";
+  return {
+    date,
+    source: "paypal",
+    sourceRow,
+    currency,
+    amountNet: net,
+    gross,
+    fee,
+    net,
+    amountGross: gross,
+    amountFee: fee,
+    amount_net: net,
+    balanceAmount,
+    raw_source_id: rawId,
+    sourceTransactionId: rawId,
+    description,
+    counterparty: description,
+    ledgerV2: {
+      date,
+      operation: balanceAmount < 0 ? "expense" : "income",
+      [directionKey]: channel,
+      currency,
+      amount_net: net,
+      amount_gross: gross,
+      amount_fee: fee,
+      balance_amount: balanceAmount,
+      raw_source_id: rawId,
+      external_id: rawId,
+      description,
+      counterparty: description,
+    },
+  };
+}
+
 test("owner-confirmed 2026-05-01 opening balances total exactly 24993 USD", () => {
   assert.equal(ownerMayOpeningTotalUsd(), 24993);
   assert.equal(validateOwnerMayOpeningBalances().ok, true);
+});
+
+test("Binance spot combined owner input is split into USDT and USDC without changing Binance save", () => {
+  const spotUsdt = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "Бинанс spot" && row.currency === "USDT");
+  const spotUsdc = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "Бинанс spot" && row.currency === "USDC");
+  const saveUsdt = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "binance save" && row.currency === "USDT");
+
+  assert.equal(spotUsdt.amount, 1087.6223);
+  assert.equal(spotUsdt.amountUsd, 1087.6223);
+  assert.equal(spotUsdc.amount, 2.3777);
+  assert.equal(spotUsdc.amountUsd, 2.3777);
+  assert.equal(spotUsdt.amount + spotUsdc.amount, 1090);
+  assert.equal(spotUsdt.adjustmentReason, "owner_combined_usdt_usdc_split");
+  assert.equal(spotUsdc.adjustmentReason, "owner_combined_usdt_usdc_split");
+  assert.equal(spotUsdt.confidence, "medium");
+  assert.equal(spotUsdc.confidence, "medium");
+  assert.equal(saveUsdt.amount, 8519);
+  assert.equal(saveUsdt.amountUsd, 8519);
 });
 
 test("native UAH balances keep owner-provided USD equivalents", () => {
@@ -111,7 +165,7 @@ test("audit snapshot exposes owner-confirmed May 1 opening total", async () => {
   assert.equal(response.balances.owner_confirmed_may_opening_total_usd, 24993);
   assert.equal(total, 24993);
   const usdc = response.balances.remainders_rows.find((row) => row.channel === "Бинанс spot" && row.currency === "USDC");
-  assert.equal(usdc?.opening_amount_usd ?? null, null);
+  assert.equal(usdc?.opening_amount_usd ?? null, 2.3777);
 });
 
 test("May daily balance backfill uses 2026-05-01 opening snapshot, not ledger-only reconstruction", async () => {
@@ -211,6 +265,52 @@ test("reconciliation-adjusted May opening flags large Binance diff without auto-
   assert.equal(row.reason, "needs_verification");
   assert.equal(row.confidence, "low");
   assert.equal(report.needs_verification_rows.length, 1);
+});
+
+test("PayPal planned openings are pending movement verification and expose source row diagnostics", () => {
+  const operations = [
+    paypalOperation({ sourceRow: 501, date: "2026-05-10", channel: "пейпал дол", currency: "USD", balanceAmount: -800, gross: -820, fee: -20, net: -800, rawId: "paypal-usd-501", description: "USD withdrawal" }),
+    paypalOperation({ sourceRow: 504, date: "2026-05-11", channel: "пейпал дол", currency: "USD", balanceAmount: -33.39, gross: -34.39, fee: -1, net: -33.39, rawId: "paypal-usd-504", description: "USD fee adjustment" }),
+    paypalOperation({ sourceRow: 502, date: "2026-05-12", channel: "пейпал евр", currency: "EUR", balanceAmount: -422.55, gross: -430, fee: -7.45, net: -422.55, rawId: "paypal-eur-502", description: "EUR transfer" }),
+    paypalOperation({ sourceRow: 503, date: "2026-05-13", channel: "пейпал сad", currency: "CAD", balanceAmount: -19.5, gross: -19.5, fee: 0, net: -19.5, rawId: "paypal-cad-503", description: "CAD transfer" }),
+    paypalOperation({ sourceRow: 777, date: "2026-05-01", channel: "пейпал дол", currency: "USD", balanceAmount: -99, net: -99, rawId: "same-day-not-included" }),
+  ];
+  const report = buildReconciliationAdjustedMayOpening({
+    balanceRows: [
+      { date: "2026-05-31", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "35.30", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "пейпал сad", currency: "CAD", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+    ],
+    operations,
+    period: { from: "2026-05-01", to: "2026-05-31" },
+  });
+
+  const usd = report.rows.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
+  const eur = report.rows.find((row) => row.channel === "пейпал евр" && row.currency === "EUR");
+  const cad = report.rows.find((row) => row.channel === "пейпал сad" && row.currency === "CAD");
+
+  assert.equal(usd.planned_opening_candidate, 868.69);
+  assert.equal(eur.planned_opening_candidate, 422.55);
+  assert.equal(cad.planned_opening_candidate, 19.5);
+  assert.equal(usd.status, "pending_movement_verification");
+  assert.equal(eur.status, "pending_movement_verification");
+  assert.equal(cad.status, "pending_movement_verification");
+  assert.equal(usd.reason, "planned_from_confirmed_balance_minus_ledger_movements");
+  assert.equal(usd.confidence, "medium");
+  assert.equal(usd.adjusted_opening, 435);
+  assert.equal(eur.adjusted_opening, 0);
+  assert.equal(cad.adjusted_opening, 0);
+
+  const diagnostics = report.paypal_movement_diagnostics;
+  assert.deepEqual(diagnostics.map((row) => row.source_row), [501, 504, 502, 503]);
+  assert.equal(diagnostics.every((row) => row.after_2026_05_01), true);
+  assert.equal(diagnostics.every((row) => row.included_in_paypal_movement_sum), true);
+  assert.equal(diagnostics.find((row) => row.source_row === 501).gross, -820);
+  assert.equal(diagnostics.find((row) => row.source_row === 501).fee, -20);
+  assert.equal(diagnostics.find((row) => row.source_row === 501).net, -800);
+  assert.equal(diagnostics.find((row) => row.source_row === 501).raw_source_id, "paypal-usd-501");
+  assert.equal(diagnostics.find((row) => row.source_row === 501).direction, "outflow");
+  assert.equal(diagnostics.find((row) => row.source_row === 777), undefined);
 });
 
 test("May daily balance backfill uses reconciliation-adjusted opening when justified", async () => {

@@ -175,6 +175,8 @@ export async function buildAuditSnapshot(options = {}) {
         reconciliation_adjusted_opening: ownerMayOpeningSeed.reconciliation_adjusted_opening,
         adjusted_rows: ownerMayOpeningSeed.reconciliation_adjusted_opening?.adjusted_rows || [],
         needs_verification_rows: ownerMayOpeningSeed.reconciliation_adjusted_opening?.needs_verification_rows || [],
+        pending_movement_verification_rows: ownerMayOpeningSeed.reconciliation_adjusted_opening?.pending_movement_verification_rows || [],
+        paypal_movement_diagnostics: ownerMayOpeningSeed.reconciliation_adjusted_opening?.paypal_movement_diagnostics || [],
       } : {}),
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,

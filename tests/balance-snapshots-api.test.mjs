@@ -358,7 +358,8 @@ test("balance snapshots selected date applies owner-confirmed May opening seed",
   const selected = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
   assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-01");
   assert.equal(selected.get("binance save|USDT")?.amount, 8519);
-  assert.equal(selected.get("Бинанс spot|USDT")?.amount, 1090);
+  assert.equal(selected.get("Бинанс spot|USDT")?.amount, 1087.6223);
+  assert.equal(selected.get("Бинанс spot|USDC")?.amount, 2.3777);
   assert.equal(selected.get("приват 24-грн|UAH")?.amount, 11239);
   assert.equal(selected.has("binance save|USD"), false);
 });

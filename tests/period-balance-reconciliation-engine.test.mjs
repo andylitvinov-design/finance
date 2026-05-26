@@ -385,6 +385,113 @@ test("May reconciliation report exposes owner input and adjusted opening totals"
   assert.equal(mono.reason, "rounding_or_fx");
 });
 
+test("May reconciliation summary exposes PayPal pending candidates and movement row diagnostics", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-10",
+        source: "paypal",
+        sourceRow: 501,
+        fromChannel: "пейпал дол",
+        currency: "USD",
+        amountNet: "-833.39",
+        balanceAmount: -833.39,
+        raw_source_id: "paypal-usd-501",
+        counterparty: "PayPal USD movement",
+        description: "PayPal USD movement",
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "expense",
+          from_channel: "пейпал дол",
+          currency: "USD",
+          amount_net: "-833.39",
+          amount_gross: "-850",
+          amount_fee: "-16.61",
+          balance_amount: -833.39,
+          raw_source_id: "paypal-usd-501",
+          counterparty: "PayPal USD movement",
+          description: "PayPal USD movement",
+        },
+      },
+      {
+        date: "2026-05-11",
+        source: "paypal",
+        sourceRow: 502,
+        fromChannel: "пейпал евр",
+        currency: "EUR",
+        amountNet: "-422.55",
+        balanceAmount: -422.55,
+        raw_source_id: "paypal-eur-502",
+        ledgerV2: {
+          date: "2026-05-11",
+          operation: "expense",
+          from_channel: "пейпал евр",
+          currency: "EUR",
+          amount_net: "-422.55",
+          balance_amount: -422.55,
+          raw_source_id: "paypal-eur-502",
+        },
+      },
+      {
+        date: "2026-05-12",
+        source: "paypal",
+        sourceRow: 503,
+        fromChannel: "пейпал сad",
+        currency: "CAD",
+        amountNet: "-19.50",
+        balanceAmount: -19.5,
+        raw_source_id: "paypal-cad-503",
+        ledgerV2: {
+          date: "2026-05-12",
+          operation: "expense",
+          from_channel: "пейпал сad",
+          currency: "CAD",
+          amount_net: "-19.50",
+          balance_amount: -19.5,
+          raw_source_id: "paypal-cad-503",
+        },
+      },
+      {
+        date: "2026-05-13",
+        source: "paypal",
+        sourceRow: 504,
+        fromChannel: "пейпал дол",
+        currency: "USD",
+        amountNet: "0",
+        balanceAmount: 0,
+        raw_source_id: "paypal-usd-504",
+        ledgerV2: {
+          date: "2026-05-13",
+          operation: "expense",
+          from_channel: "пейпал дол",
+          currency: "USD",
+          amount_net: "0",
+          balance_amount: 0,
+          raw_source_id: "paypal-usd-504",
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-31", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "35.30", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "пейпал сad", currency: "CAD", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const summary = result.reconciliation_report_summary;
+  const usd = summary.opening_adjustment_rows.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
+
+  assert.equal(usd.planned_opening_candidate, 868.69);
+  assert.equal(usd.status, "pending_movement_verification");
+  assert.equal(usd.adjusted_opening, 435);
+  assert.deepEqual(summary.paypal_movement_diagnostics.map((row) => row.source_row), [501, 504, 502, 503]);
+  assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).included_in_paypal_movement_sum, true);
+  assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).gross, -850);
+  assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).fee, -16.61);
+  assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).net, -833.39);
+});
+
 test("reconciliation report detects likely channel alias mismatch", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

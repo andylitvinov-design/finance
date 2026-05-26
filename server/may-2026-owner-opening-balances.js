@@ -15,7 +15,26 @@ export const OWNER_MAY_OPENING_BALANCES = [
   { inputChannel: "REVOLUT", channel: "REVOLUT дол", currency: "USD", amount: 378, amountUsd: 378 },
   { inputChannel: "Payoneer - eur", channel: "Payoneer - eur", currency: "EUR", amount: "", amountUsd: 1284 },
   { inputChannel: "Payoneer - dol", channel: "Payoneer - dol", currency: "USD", amount: 3, amountUsd: 3 },
-  { inputChannel: "Бинанс spot", channel: "Бинанс spot", currency: "USDT", amount: 1090, amountUsd: 1090 },
+  {
+    inputChannel: "Бинанс spot",
+    channel: "Бинанс spot",
+    currency: "USDT",
+    amount: 1087.6223,
+    amountUsd: 1087.6223,
+    adjustmentReason: "owner_combined_usdt_usdc_split",
+    confidence: "medium",
+    confidenceNote: "high for split arithmetic, medium until confirmed in source rows",
+  },
+  {
+    inputChannel: "Бинанс spot",
+    channel: "Бинанс spot",
+    currency: "USDC",
+    amount: 2.3777,
+    amountUsd: 2.3777,
+    adjustmentReason: "owner_combined_usdt_usdc_split",
+    confidence: "medium",
+    confidenceNote: "high for split arithmetic, medium until confirmed in source rows",
+  },
   { inputChannel: "binance save", channel: "binance save", currency: "USDT", amount: 8519, amountUsd: 8519 },
   { inputChannel: "Нал-я-евр", channel: "Налично -я-евр", currency: "EUR", amount: "", amountUsd: 91 },
   { inputChannel: "местная валюты", channel: "местная валюты", currency: "LOCAL", amount: 0, amountUsd: 0 },
@@ -28,6 +47,15 @@ export const OWNER_MAY_OPENING_BALANCES = [
   { inputChannel: "24-дол", channel: "приват 24-дол", currency: "USD", amount: 43, amountUsd: 43 },
   { inputChannel: "переплата Богдану", channel: "переплата Богдану", currency: "USD", amount: 0, amountUsd: 0 },
 ];
+
+const PAYPAL_PLANNED_OPENING_KEYS = new Set([
+  balanceKey("пейпал дол", "USD"),
+  balanceKey("пейпал евр", "EUR"),
+  balanceKey("пейпал сad", "CAD"),
+]);
+
+const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER = [501, 504, 502, 503];
+const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS = new Set(PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER);
 
 const SUPERSEDED_MAY_OPENING_KEYS = new Set([
   ...OWNER_MAY_OPENING_BALANCES.map((row) => balanceKey(row.channel, row.currency)),
@@ -184,14 +212,18 @@ export function buildReconciliationAdjustedMayOpening({
     const tolerance = getOpeningTolerance(currency);
     const withinTolerance = diff !== null && Math.abs(diff) <= tolerance;
 
-    let reason = "missing_later_confirmed_balance";
-    let confidence = "medium";
+    let reason = owner?.adjustmentReason || "missing_later_confirmed_balance";
+    let confidence = owner?.confidence || "medium";
     let adjustedOpening = ownerInput;
     let adjustedOpeningUsd = ownerInputUsd;
+    let status = "not_adjusted";
+    let plannedOpeningCandidate = null;
+    let plannedOpeningCandidateUsd = null;
 
     if (owner && fact && withinTolerance) {
       reason = "rounding_or_fx";
       confidence = "high";
+      status = "adjusted";
       adjustedOpening = impliedOpening;
       adjustedOpeningUsd = impliedOpeningUsd ?? estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening });
     } else if (owner && fact) {
@@ -200,8 +232,19 @@ export function buildReconciliationAdjustedMayOpening({
     } else if (!owner && fact) {
       reason = "candidate_missing_opening";
       confidence = "low";
+      status = "candidate_missing_opening";
       adjustedOpening = null;
       adjustedOpeningUsd = null;
+    }
+
+    if (owner && fact && PAYPAL_PLANNED_OPENING_KEYS.has(key)) {
+      reason = "planned_from_confirmed_balance_minus_ledger_movements";
+      confidence = "medium";
+      status = "pending_movement_verification";
+      plannedOpeningCandidate = impliedOpening;
+      plannedOpeningCandidateUsd = impliedOpeningUsd;
+      adjustedOpening = ownerInput;
+      adjustedOpeningUsd = ownerInputUsd;
     }
 
     return {
@@ -219,6 +262,10 @@ export function buildReconciliationAdjustedMayOpening({
       reason,
       adjustment_reason: reason,
       confidence,
+      confidence_note: owner?.confidenceNote || null,
+      status,
+      planned_opening_candidate: plannedOpeningCandidate,
+      planned_opening_candidate_usd: plannedOpeningCandidateUsd,
       later_confirmed_balance: fact?.amount ?? null,
       later_confirmed_balance_usd: fact?.amount_usd ?? null,
       later_confirmed_balance_date: fact?.date || null,
@@ -232,6 +279,8 @@ export function buildReconciliationAdjustedMayOpening({
   const adjustedTotal = round(rows.reduce((sum, row) => sum + Number(row.adjusted_opening_usd ?? row.owner_input_usd ?? 0), 0));
   const adjustedRows = rows.filter((row) => row.reason === "rounding_or_fx" && Math.abs(Number(row.diff || 0)) > 0);
   const needsVerificationRows = rows.filter((row) => row.reason === "needs_verification" || row.reason === "candidate_missing_opening");
+  const pendingMovementVerificationRows = rows.filter((row) => row.status === "pending_movement_verification");
+  const paypalMovementDiagnostics = buildPayPalMovementDiagnostics({ operations, rows });
 
   return {
     owner_input_opening_total_usd: ownerTotal,
@@ -243,6 +292,8 @@ export function buildReconciliationAdjustedMayOpening({
     per_channel_table: rows,
     adjusted_rows: adjustedRows,
     needs_verification_rows: needsVerificationRows,
+    pending_movement_verification_rows: pendingMovementVerificationRows,
+    paypal_movement_diagnostics: paypalMovementDiagnostics,
     no_silent_overwrites: true,
   };
 }
@@ -320,6 +371,58 @@ function sumLedgerMovements({ operations = [], channel, currency, from, to }) {
     }
   }
   return { native: round(native), usd: round(usd), hasUsd };
+}
+
+function buildPayPalMovementDiagnostics({ operations = [], rows = [] } = {}) {
+  const paypalRowsByKey = new Map(
+    (rows || [])
+      .filter((row) => PAYPAL_PLANNED_OPENING_KEYS.has(balanceKey(row.channel, row.currency)))
+      .map((row) => [balanceKey(row.channel, row.currency), row])
+  );
+  return (operations || [])
+    .map((operation) => buildPayPalMovementDiagnostic(operation, paypalRowsByKey))
+    .filter(Boolean)
+    .sort((left, right) => PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER.indexOf(left.source_row) - PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER.indexOf(right.source_row));
+}
+
+function buildPayPalMovementDiagnostic(operation, paypalRowsByKey) {
+  const sourceRow = parseSourceRow(operation);
+  if (!PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS.has(sourceRow)) return null;
+  const ledger = operation?.ledgerV2 || {};
+  const date = normalizeDate(operation?.date ?? ledger.date);
+  const currency = String(ledger.currency || operation?.currency || "").trim().toUpperCase();
+  const balanceAmount = parseNumber(ledger.balance_amount ?? operation?.balanceAmount);
+  const channel = getMovementChannel(operation, balanceAmount);
+  const key = balanceKey(channel, currency);
+  const paypalRow = paypalRowsByKey.get(key) || null;
+  const amountNet = parseNumber(ledger.amount_net ?? operation?.amountNet ?? operation?.amount_net ?? operation?.net);
+  const gross = parseNumber(ledger.amount_gross ?? operation?.amountGross ?? operation?.amount_gross ?? operation?.gross);
+  const fee = parseNumber(ledger.amount_fee ?? operation?.amountFee ?? operation?.amount_fee ?? operation?.fee);
+  const net = parseNumber(ledger.net ?? operation?.net ?? ledger.amount_net ?? operation?.amountNet ?? operation?.amount_net);
+  const afterOpeningDate = Boolean(date && date > OWNER_MAY_OPENING_BALANCE_DATE);
+  return {
+    source_row: sourceRow,
+    sourceRow,
+    date: date || null,
+    channel: channel || null,
+    currency: currency || null,
+    amount_net: amountNet,
+    gross,
+    fee,
+    net,
+    sourceTransactionId: String(operation?.sourceTransactionId || operation?.source_transaction_id || ledger.sourceTransactionId || ledger.source_transaction_id || "").trim() || null,
+    raw_source_id: String(operation?.raw_source_id || operation?.rawSourceId || ledger.raw_source_id || ledger.external_id || operation?.externalId || operation?.external_id || "").trim() || null,
+    direction: balanceAmount < 0 ? "outflow" : "inflow",
+    counterparty: String(operation?.counterparty || operation?.counterpartyName || ledger.counterparty || "").trim() || null,
+    description: String(operation?.description || ledger.description || operation?.comment || ledger.comment || "").trim() || null,
+    after_2026_05_01: afterOpeningDate,
+    included_in_paypal_movement_sum: Boolean(afterOpeningDate && paypalRow?.later_confirmed_balance_date && date <= paypalRow.later_confirmed_balance_date && paypalRow.status === "pending_movement_verification"),
+  };
+}
+
+function parseSourceRow(operation = {}) {
+  const parsed = Number(operation?.sourceRow ?? operation?.source_row ?? operation?.ledgerV2?.sourceRow ?? operation?.ledgerV2?.source_row);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function getMovementChannel(operation, amount) {
