@@ -44,10 +44,46 @@ test("period balance reconciliation API snapshot exposes planned and real period
   });
 
   assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.mode.effective, "dry_run");
+  assert.equal(snapshot.mutates_data, false);
   assert.equal(snapshot.period_balance_reconciliation.summary.planned_source_status, "ok");
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].planned_delta, 400);
   assert.equal(snapshot.period_balance_reconciliation.by_currency[0].real_delta, 300);
   assert.equal(snapshot.period_balance_reconciliation.by_channel_currency[0].plan_vs_real_delta, -100);
+  assert.deepEqual(
+    snapshot.period_balance_reconciliation.reconciliation_report.map((row) => ({
+      channel: row.channel,
+      currency: row.currency,
+      opening_2026_05_01: row.opening_2026_05_01,
+      income_amount_net: row.income_amount_net,
+      expense_amount_net: row.expense_amount_net,
+      transfer_in: row.transfer_in,
+      transfer_out: row.transfer_out,
+      exchange_delta: row.exchange_delta,
+      provider_adjustments: row.provider_adjustments,
+      expected_later_balance: row.expected_later_balance,
+      confirmed_later_balance: row.confirmed_later_balance,
+      diff: row.diff,
+      status: row.status,
+      suspected_cause: row.suspected_cause,
+    })),
+    [{
+      channel: "wise usd",
+      currency: "USD",
+      opening_2026_05_01: 1000,
+      income_amount_net: 300,
+      expense_amount_net: 0,
+      transfer_in: 0,
+      transfer_out: 0,
+      exchange_delta: 0,
+      provider_adjustments: 0,
+      expected_later_balance: 1300,
+      confirmed_later_balance: 1300,
+      diff: 0,
+      status: "ok",
+      suspected_cause: "none",
+    }]
+  );
   assert.equal(snapshot.period_balance_reconciliation.diagnostics.balance_snapshot_rows_loaded, 2);
   assert.equal(snapshot.period_balance_reconciliation.diagnostics.analytics_fact_rows_rendered, 1);
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);

@@ -29,6 +29,7 @@ const expense = {
 test("real period balance reconciles when fact equals opening plus real delta", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [income(), expense], balanceRows: balances("1200") });
   const row = result.by_channel_currency[0];
+  const reportRow = result.reconciliation_report[0];
   assert.equal(result.summary.status, "ok");
   assert.equal(row.status, "ok");
   assert.equal(row.real_delta, 200);
@@ -44,6 +45,20 @@ test("real period balance reconciles when fact equals opening plus real delta", 
   assert.equal(row.fact_source, "manual");
   assert.equal(row.can_write_to_ostatki, true);
   assert.equal(row.repair_action, "none");
+  assert.equal(reportRow.channel, "wise usd");
+  assert.equal(reportRow.currency, "USD");
+  assert.equal(reportRow.opening_2026_05_01, 1000);
+  assert.equal(reportRow.income_amount_net, 300);
+  assert.equal(reportRow.expense_amount_net, 100);
+  assert.equal(reportRow.transfer_in, 0);
+  assert.equal(reportRow.transfer_out, 0);
+  assert.equal(reportRow.exchange_delta, 0);
+  assert.equal(reportRow.provider_adjustments, 0);
+  assert.equal(reportRow.expected_later_balance, 1200);
+  assert.equal(reportRow.confirmed_later_balance, 1200);
+  assert.equal(reportRow.diff, 0);
+  assert.equal(reportRow.status, "ok");
+  assert.equal(reportRow.suspected_cause, "none");
 });
 
 test("planned and real deltas are shown separately", () => {
@@ -225,10 +240,141 @@ test("exact closing balance remains authoritative over carried-forward fallback"
 test("mismatch shows factual minus computed real difference", () => {
   const result = buildPeriodBalanceReconciliation({ period, operations: [income()], balanceRows: balances("1290") });
   const row = result.by_channel_currency[0];
+  const reportRow = result.reconciliation_report[0];
   assert.equal(result.summary.status, "failed");
   assert.equal(row.status, "mismatch");
   assert.equal(row.computed_real_closing_balance, 1300);
   assert.equal(row.real_difference, -10);
+  assert.equal(reportRow.expected_later_balance, 1300);
+  assert.equal(reportRow.confirmed_later_balance, 1290);
+  assert.equal(reportRow.diff, -10);
+  assert.equal(reportRow.suspected_cause, "missing_or_extra_ledger_movement");
+});
+
+test("reconciliation report classifies transfers per channel while keeping total neutral", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-10",
+        fromChannel: "wise usd",
+        toChannel: "paypal usd",
+        currency: "USD",
+        amountNet: "100",
+        balanceAmount: -100,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "transfer",
+          from_channel: "wise usd",
+          to_channel: "paypal usd",
+          currency: "USD",
+          amount_net: "100",
+          balance_amount: -100,
+        },
+      },
+      {
+        date: "2026-05-10",
+        fromChannel: "wise usd",
+        toChannel: "paypal usd",
+        currency: "USD",
+        amountNet: "100",
+        balanceAmount: 100,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "transfer",
+          from_channel: "wise usd",
+          to_channel: "paypal usd",
+          currency: "USD",
+          amount_net: "100",
+          balance_amount: 100,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "500" },
+      { date: "2026-05-31", channel: "wise usd", currency: "USD", amount: "400" },
+      { date: "2026-05-01", channel: "paypal usd", currency: "USD", amount: "50" },
+      { date: "2026-05-31", channel: "paypal usd", currency: "USD", amount: "150" },
+    ],
+  });
+
+  const wise = result.reconciliation_report.find((row) => row.channel === "wise usd");
+  const paypal = result.reconciliation_report.find((row) => row.channel === "paypal usd");
+  assert.equal(wise.transfer_out, 100);
+  assert.equal(wise.transfer_in, 0);
+  assert.equal(wise.expected_later_balance, 400);
+  assert.equal(paypal.transfer_in, 100);
+  assert.equal(paypal.transfer_out, 0);
+  assert.equal(paypal.expected_later_balance, 150);
+  assert.equal(result.reconciliation_report_summary.transfer_net, 0);
+});
+
+test("reconciliation report detects likely channel alias mismatch", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [
+      {
+        date: "2026-05-11",
+        toChannel: "Wise USD",
+        currency: "USD",
+        amountNet: "50",
+        balanceAmount: 50,
+        ledgerV2: {
+          date: "2026-05-11",
+          operation: "income",
+          to_channel: "Wise USD",
+          currency: "USD",
+          amount_net: "50",
+          balance_amount: 50,
+        },
+      },
+    ],
+    balanceRows: balances("1050"),
+  });
+
+  const row = result.reconciliation_report.find((entry) => entry.channel === "Wise USD");
+  assert.equal(row.status, "missing_opening_balance");
+  assert.equal(row.suspected_cause, "channel_alias_mismatch");
+  assert.equal(row.alias_candidate, "wise usd");
+});
+
+test("reconciliation report keeps native balances separate from USD equivalents", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-02",
+        fromChannel: "монобанк грн",
+        currency: "UAH",
+        amountNet: "100",
+        amountUsd: "2.5",
+        balanceAmount: -100,
+        ledgerV2: {
+          date: "2026-05-02",
+          operation: "expense",
+          from_channel: "монобанк грн",
+          currency: "UAH",
+          amount_net: "100",
+          amount_usd: "2.5",
+          balance_amount: -100,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "1000", amount_usd: "25" },
+      { date: "2026-05-31", channel: "монобанк грн", currency: "UAH", amount: "900", amount_usd: "22.5" },
+    ],
+  });
+
+  const row = result.reconciliation_report[0];
+  assert.equal(row.opening_2026_05_01, 1000);
+  assert.equal(row.opening_2026_05_01_usd, 25);
+  assert.equal(row.expense_amount_net, 100);
+  assert.equal(row.expense_amount_usd, 2.5);
+  assert.equal(row.expected_later_balance, 900);
+  assert.equal(row.expected_later_balance_usd, 22.5);
+  assert.equal(row.confirmed_later_balance, 900);
+  assert.equal(row.confirmed_later_balance_usd, 22.5);
 });
 
 test("real reconciliation includes movements after the opening snapshot even when selected period starts later", () => {

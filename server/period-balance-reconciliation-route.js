@@ -24,6 +24,12 @@ export default async function periodBalanceReconciliationHandler(request, respon
   if (request.method !== "GET") {
     return response.status(405).json({ ok: false, error: `Unsupported method: ${request.method}` });
   }
+  if (String(request.query?.mode || "").trim().toLowerCase() === "apply") {
+    return response.status(400).json({
+      ok: false,
+      error: "period balance reconciliation is dry-run only; apply mode is not available on this endpoint",
+    });
+  }
 
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: request.query || {},
@@ -36,6 +42,7 @@ export default async function periodBalanceReconciliationHandler(request, respon
 export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const query = options.query || {};
   const period = parsePeriod(query);
+  const mode = parseMode(query);
   const includeDailyBalances = parseBoolean(query.includeDailyBalances);
   const warnings = [];
   const repository = await loadRepository(options.repositoryLoader);
@@ -71,6 +78,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
       generated_at: new Date().toISOString(),
       project: PROJECT_NAME,
       period,
+      mode,
+      mutates_data: false,
       period_balance_reconciliation: reconciliation,
       warnings: unique(warnings),
     };
@@ -134,6 +143,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     generated_at: new Date().toISOString(),
     project: PROJECT_NAME,
     period,
+    mode,
+    mutates_data: false,
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
@@ -737,6 +748,17 @@ function parsePeriod(query = {}) {
 
 function parseBoolean(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function parseMode(query = {}) {
+  const mode = String(query.mode || query.dryRun || "").trim().toLowerCase();
+  return {
+    requested: mode || "dry_run",
+    effective: "dry_run",
+    dry_run: true,
+    apply_available: false,
+    apply_guard: "No Ledger or balance rows are modified by period-balance-reconciliation.",
+  };
 }
 
 function normalizeDate(value) {
