@@ -5,6 +5,7 @@ import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.j
 import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const BALANCE_SHEET_NAME = "Остатки";
@@ -61,10 +62,11 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
   const balanceSnapshots = buildBalanceSnapshotsSummary(manualBalances, periodFilter, {
     ...repository,
     autoBalances: autoBalanceRows,
-    mergedBalances: balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [],
+    mergedBalances: ownerMayOpeningSeed.rows,
     balanceSnapshotMerge,
   });
   auditChecks.push(
@@ -99,6 +101,7 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
     warnings: unique([
       ...(repository.warnings || []).map(toSafeWarning),
       ...(autoBalances.warnings || []).map(toSafeWarning),
+      ...ownerMayOpeningSeed.warnings,
       ...warnings,
     ]),
     audit_checks: auditChecks,

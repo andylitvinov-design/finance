@@ -335,6 +335,34 @@ test("balance snapshots reports manual, auto, and merged daily inventories", asy
   assert.equal(snapshot.balance_snapshots.merged_rows.find((row) => row.date === "2026-05-03")?.amount, 80);
 });
 
+test("balance snapshots selected date applies owner-confirmed May opening seed", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-01" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "7432", amount_usd: "7432", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "435", amount_usd: "435", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", amount_usd: "254", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "26670", amount_usd: "603", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "145614", sourceSheet: "Остатки" },
+        { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount: "1107", amount_usd: "1284", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [],
+      warnings: [],
+    }),
+  });
+
+  const selected = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-01");
+  assert.equal(selected.get("binance save|USDT")?.amount, 8519);
+  assert.equal(selected.get("Бинанс spot|USDT")?.amount, 1090);
+  assert.equal(selected.get("приват 24-грн|UAH")?.amount, 11239);
+  assert.equal(selected.has("binance save|USD"), false);
+});
+
 test("balance snapshots selected date returns merged fallback rows when manual rows are empty", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { from: "2026-05-17", to: "2026-05-17" },
