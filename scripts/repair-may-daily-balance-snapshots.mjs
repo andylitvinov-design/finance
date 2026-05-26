@@ -141,13 +141,14 @@ function rowScore(row) {
 }
 
 function sourceRank(row) {
-  const text = normalizeText([row.source, row.provider, row.comment, row.status].join(" "));
+  const text = normalizeText([row.source, row.provider, row.status].join(" "));
+  const provenance = normalizeText(row.comment);
   const status = normalizeText(row.status);
-  if (/manual|user confirmed|owner confirmed|paypal manual/.test(text)) return 9;
   if (/derived from confirmed|derived confirmed/.test(status)) return 5;
+  if (/manual|user confirmed|owner confirmed|paypal manual/.test(text)) return 9;
   if (/provider auto|wise auto|paypal auto|monobank auto|binance auto|privatbank auto|yoomoney auto|tdbank auto|payoneer auto|revolut auto|auto daily provider snapshot/.test(text)) return 8;
-  if (/derived from confirmed|derived confirmed/.test(text)) return 5;
-  if (/provider error|needs provider permission|missing provider balance/.test(text)) return 1;
+  if (/derived from confirmed|derived confirmed/.test(text) || /derived from confirmed|derived confirmed/.test(provenance)) return 5;
+  if (/provider error|needs provider permission|missing provider balance|provider not implemented/.test(text)) return 1;
   return 3;
 }
 
