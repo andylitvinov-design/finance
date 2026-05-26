@@ -289,7 +289,7 @@ test("buildLiveRemaindersSummary uses URL period when date inputs are empty", as
 test("buildLiveRemaindersSummary fetches selected-date balance snapshots for Остатки popup", async () => {
   const api = loadApi();
   global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
-  global.document = createDateDocument();
+  global.document = createDateDocument({ from: "2026-05-01", to: "2026-05-17" });
   const requestedUrls = [];
   global.fetch = async (url) => {
     requestedUrls.push(url);
@@ -310,6 +310,20 @@ test("buildLiveRemaindersSummary fetches selected-date balance snapshots for О�
         },
       };
     }
+    if (/\/api\/period-balance-reconciliation/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            period_balance_reconciliation: {
+              by_channel_currency: [
+                { channel: "трансервайз дол", currency: "USD", real_delta: 25 },
+              ],
+            },
+          };
+        },
+      };
+    }
     return {
       ok: true,
       async json() {
@@ -323,7 +337,10 @@ test("buildLiveRemaindersSummary fetches selected-date balance snapshots for О�
   assert.equal(summary.selectedDateSnapshot.selected_date, "2026-05-17");
   assert.equal(summary.selectedDateSnapshot.selected_date_source, "merged");
   assert.ok(requestedUrls.some((url) =>
-    /\/api\/balance-snapshots\?from=2026-05-17&to=2026-05-17$/.test(url)
+    /\/api\/balance-snapshots\?from=2026-05-01&to=2026-05-17$/.test(url)
+  ));
+  assert.ok(requestedUrls.some((url) =>
+    /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-17$/.test(url)
   ));
   resetRemaindersModule();
   delete global.location;
@@ -347,11 +364,66 @@ test("remainders popup renders selected-date channel currency balances", () => {
 
   assert.match(text, /Остатки на выбранную дату/);
   assert.match(text, /Остатки сохранены на дату: 2026-05-17/);
-  assert.match(text, /2026-05-17/);
   assert.doesNotMatch(text, /2026-05-17 · merged/);
   assert.doesNotMatch(text, /merged/);
   assert.match(text, /трансервайз дол/);
   assert.match(text, /870,42/);
+  assert.match(text, /ИТОГО USD/);
+  assert.doesNotMatch(text, /Дата/);
+  resetRemaindersModule();
+});
+
+test("remainders popup renders period balance changes from saved snapshots and amount_net movement", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({
+      balances: {
+        remainders_rows: [
+          { channel: "Diagnostic row", currency: "USD", closing_amount_usd: null },
+        ],
+      },
+    }),
+    selectedDateSnapshot: {
+      period_from: "2026-05-01",
+      period_to: "2026-05-17",
+      selected_date: "2026-05-17",
+      selected_date_rows: [
+        { date: "2026-05-17", channel: "Wise USD", currency: "USD", amount: 125 },
+        { date: "2026-05-17", channel: "Wise EUR", currency: "EUR", amount: 40 },
+      ],
+      rows: [
+        { date: "2026-05-01", channel: "Wise USD", currency: "USD", amount: 100 },
+        { date: "2026-05-01", channel: "Wise EUR", currency: "EUR", amount: 50 },
+        { date: "2026-05-17", channel: "Wise USD", currency: "USD", amount: 125 },
+        { date: "2026-05-17", channel: "Wise EUR", currency: "EUR", amount: 40 },
+      ],
+    },
+    periodMovementRows: [
+      { channel: "Wise USD", currency: "USD", real_delta: 20 },
+      { channel: "Wise EUR", currency: "EUR", real_delta: -10 },
+      { channel: "Only movement", currency: "USD", real_delta: 7 },
+    ],
+  }, makeMockDocument());
+  const text = collectText(block);
+  const diagnostics = block.children.find((child) => child.tag === "details");
+
+  assert.match(text, /Изменение за период/);
+  assert.match(text, /Остаток на начало/);
+  assert.match(text, /Остаток на конец/);
+  assert.match(text, /Движение средств/);
+  assert.match(text, /Остаток плановый/);
+  assert.match(text, /Остаток фактический/);
+  assert.match(text, /Расхождение/);
+  assert.match(text, /Wise USD/);
+  assert.match(text, /25/);
+  assert.match(text, /20/);
+  assert.match(text, /120/);
+  assert.match(text, /5/);
+  assert.match(text, /Only movement/);
+  assert.match(text, /ИТОГО USD/);
+  assert.match(text, /ИТОГО EUR/);
+  assert.doesNotMatch(collectText(diagnostics), /Изменение за период/);
+  assert.doesNotMatch(text.replace(collectText(diagnostics), ""), /needs verification/);
   resetRemaindersModule();
 });
 
@@ -654,7 +726,7 @@ test("reconcile button refetches selected-date balance snapshots after successfu
     entry.method === "POST" && /\/api\/index\?action=reconcileBalancesAndTransfers$/.test(entry.url)
   ));
   assert.ok(requested.some((entry) =>
-    entry.method === "GET" && /\/api\/balance-snapshots\?from=2026-05-20&to=2026-05-20$/.test(entry.url)
+    entry.method === "GET" && /\/api\/balance-snapshots\?from=2026-05-01&to=2026-05-20$/.test(entry.url)
   ));
   assert.match(text, /Saved selected row/);
   assert.match(text, /827/);
