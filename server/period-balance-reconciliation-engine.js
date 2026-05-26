@@ -1,4 +1,7 @@
-import { buildReconciliationAdjustedMayOpening } from "./may-2026-owner-opening-balances.js";
+import {
+  applyOwnerMayOpeningBalanceSeed,
+  buildReconciliationAdjustedMayOpening,
+} from "./may-2026-owner-opening-balances.js";
 
 const STATUS = {
   OK: "ok",
@@ -29,9 +32,14 @@ export function buildPeriodBalanceReconciliation({
   const from = normalizeDate(period.from);
   const to = normalizeDate(period.to);
   const warnings = [];
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceRows, {
+    operations,
+    period,
+  });
+  const effectiveBalanceRows = ownerMayOpeningSeed.rows || balanceRows;
   const periodReal = buildRealMovementIndex(operations, { from, to });
   const planned = buildPlannedMovementIndex(plannedRows, { from, to });
-  const balanceIndex = buildBalanceIndex(balanceRows, autoBalanceRows, calculatedBalanceRows);
+  const balanceIndex = buildBalanceIndex(effectiveBalanceRows, autoBalanceRows, calculatedBalanceRows);
   const accountKeys = new Set([
     ...periodReal.byKey.keys(),
     ...planned.byKey.keys(),
@@ -56,7 +64,7 @@ export function buildPeriodBalanceReconciliation({
     period: { from, to },
     operations,
     balanceRows: [
-      ...(balanceRows || []),
+      ...(effectiveBalanceRows || []),
       ...(autoBalanceRows || []),
       ...(calculatedBalanceRows || []),
     ],
