@@ -133,6 +133,10 @@ export function ownerMayOpeningTotalUsd(rows = OWNER_MAY_OPENING_BALANCES) {
   return round((rows || []).reduce((sum, row) => sum + Number(row?.amountUsd || 0), 0));
 }
 
+export function isSupersededOwnerMayOpeningBalanceKey(channel, currency) {
+  return SUPERSEDED_MAY_OPENING_KEYS.has(balanceKey(channel, currency));
+}
+
 function balanceKey(channel, currency) {
   return `${String(channel || "").trim()}|${String(currency || "").trim().toUpperCase()}`;
 }

@@ -1,6 +1,9 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
-import { applyOwnerMayOpeningBalanceSeed } from "../server/may-2026-owner-opening-balances.js";
+import {
+  applyOwnerMayOpeningBalanceSeed,
+  isSupersededOwnerMayOpeningBalanceKey,
+} from "../server/may-2026-owner-opening-balances.js";
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import { buildBalanceCoverage } from "../server/balance-coverage-engine.js";
 import {
@@ -169,6 +172,7 @@ export async function buildAuditSnapshot(options = {}) {
         balanceRows,
         period,
         operations,
+        ownerMayOpeningSeedApplied: ownerMayOpeningSeed.applied,
       }),
     },
     daily_balances: {
@@ -474,6 +478,7 @@ function buildRemaindersRows(accounts = [], options = {}) {
     const channel = String(account?.channel || "").trim();
     const currency = String(account?.currency || "").trim().toUpperCase();
     if (!channel || !currency) continue;
+    if (options.ownerMayOpeningSeedApplied && isSupersededOwnerMayOpeningBalanceKey(channel, currency)) continue;
     addRemaindersGroupedRow(grouped, {
       date: account.date,
       channel,
