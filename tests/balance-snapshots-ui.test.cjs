@@ -224,3 +224,36 @@ test("balance snapshots UI renders input rows first with balance entry headers a
   assert.deepEqual(rows[1], ["2026-05-15", "Остатки", "wise usd", "USD", "1300", "already entered"]);
   assert.deepEqual(rows[2], ["2026-05-15", "Остатки", "paypal eur", "EUR", "—", "needs input"]);
 });
+
+test("balance snapshots UI labels selected, auto, and confirmed balances distinctly", () => {
+  const context = createContext();
+  const section = context.window.EzohataBalanceSnapshotsUi.renderInventory({
+    balance_snapshots: {
+      dates: ["2026-04-01"],
+      valid_rows: 1,
+      incomplete_rows: 0,
+      by_channel_currency: [{ channel: "wise usd", currency: "USD", rows: 1, dates: ["2026-04-01"], first_date: "2026-04-01", last_date: "2026-04-01" }],
+      input_rows: [],
+      selected_rows: [
+        { date: "2026-04-01", channel: "wise usd", currency: "USD", amount: 120, selected_from: "confirmed", source_sheet: "Остатки", status: "confirmed" },
+        { date: "2026-04-01", channel: "paypal eur", currency: "EUR", amount: 55, selected_from: "auto", source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+      ],
+      auto_balance_rows: [
+        { date: "2026-04-01", channel: "wise usd", currency: "USD", amount: 119, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+      ],
+      confirmed_rows: [
+        { date: "2026-04-01", channel: "wise usd", currency: "USD", amount: 120, source_sheet: "Остатки", status: "confirmed" },
+      ],
+    },
+  });
+
+  const tables = section.querySelectorAll("table");
+  const selectedRows = textRows(tables[0]);
+  const autoRows = textRows(tables[1]);
+  const confirmedRows = textRows(tables[2]);
+
+  assert.deepEqual(selectedRows[0], ["Дата", "Канал", "Валюта", "Выбранный остаток", "Выбран из", "Статус"]);
+  assert.deepEqual(selectedRows[1], ["2026-04-01", "wise usd", "USD", "120", "confirmed", "confirmed"]);
+  assert.deepEqual(autoRows[0], ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"]);
+  assert.deepEqual(confirmedRows[0], ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"]);
+});

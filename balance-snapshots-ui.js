@@ -57,8 +57,20 @@
       section.appendChild(el("div", "empty", "Нет активных каналов для ввода остатков."));
     }
 
+    var selectedRows = Array.isArray(data.selected_rows) ? data.selected_rows : [];
+    var autoRows = Array.isArray(data.auto_balance_rows) ? data.auto_balance_rows : [];
+    var confirmedRows = Array.isArray(data.confirmed_rows) ? data.confirmed_rows : [];
     var rows = Array.isArray(data.rows) ? data.rows : [];
-    if (rows.length) section.appendChild(renderRowsTable(rows));
+    if (selectedRows.length) section.appendChild(renderSelectedRowsTable(selectedRows));
+    else if (rows.length) section.appendChild(renderRowsTable(rows));
+    if (autoRows.length) section.appendChild(renderTypedRowsTable(autoRows, {
+      headers: ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"],
+      amountHeader: "Автоостаток",
+    }));
+    if (confirmedRows.length) section.appendChild(renderTypedRowsTable(confirmedRows, {
+      headers: ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"],
+      amountHeader: "Подтвержденный остаток",
+    }));
     if (!rows.length && !inputRows.length) return section;
 
     var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];
@@ -109,6 +121,54 @@
     rows.forEach(function (row) {
       var tr = el("tr");
       [row.date || "—", row.channel || "—", row.currency || "—", formatAmount(row.amount)].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function renderSelectedRowsTable(rows) {
+    var wrap = el("div", "table-wrap balance-snapshots-table-wrap");
+    var table = el("table");
+    var tbody = el("tbody");
+    var head = el("tr");
+    ["Дата", "Канал", "Валюта", "Выбранный остаток", "Выбран из", "Статус"].forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    tbody.appendChild(head);
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      [
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        formatAmount(row.amount),
+        row.selected_from || "—",
+        row.status || "—",
+      ].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function renderTypedRowsTable(rows, options) {
+    var wrap = el("div", "table-wrap balance-snapshots-table-wrap");
+    var table = el("table");
+    var tbody = el("tbody");
+    var head = el("tr");
+    options.headers.forEach(function (cell) { head.appendChild(el("th", "", cell)); });
+    tbody.appendChild(head);
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      [
+        row.date || "—",
+        row.channel || "—",
+        row.currency || "—",
+        formatAmount(row.amount),
+        row.source_sheet || row.source || "—",
+        row.status || "—",
+      ].forEach(function (cell) { tr.appendChild(el("td", "", cell)); });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);

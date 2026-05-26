@@ -197,7 +197,10 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     rows: buildDetailedRows(validRows),
     manual_rows: buildDetailedRows(validRows),
     auto_rows: buildDetailedRows(validAutoRows),
+    confirmed_rows: buildTypedBalanceRows(validRows, "confirmed"),
+    auto_balance_rows: buildTypedBalanceRows(validAutoRows, "auto"),
     merged_rows: buildDetailedRows(validMergedRows),
+    selected_rows: buildSelectedRows(validMergedRows),
     selected_date: selectedDateSummary.selected_date,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
     selected_date_source: selectedDateSummary.source,
@@ -234,7 +237,10 @@ function emptyBalanceSnapshotsSummary() {
     rows: [],
     manual_rows: [],
     auto_rows: [],
+    confirmed_rows: [],
+    auto_balance_rows: [],
     merged_rows: [],
+    selected_rows: [],
     selected_date: "",
     selected_date_rows: [],
     selected_date_source: "none",
@@ -538,6 +544,83 @@ function buildDetailedRows(rows) {
       if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
       return left.currency.localeCompare(right.currency);
     });
+}
+
+function buildTypedBalanceRows(rows, balanceKind) {
+  return (rows || [])
+    .map((row) => ({
+      date: row.date,
+      channel: row.channel,
+      currency: row.currency,
+      amount: row.amount,
+      balance_kind: balanceKind,
+      source: normalizeDisplaySource(row),
+      source_sheet: row.sourceSheet || (balanceKind === "confirmed" ? BALANCE_SHEET_NAME : "Авто Остатки"),
+      status: normalizeDisplayStatus(row, balanceKind),
+    }))
+    .sort(compareDetailedRows);
+}
+
+function buildSelectedRows(rows) {
+  return (rows || [])
+    .map((row) => {
+      const selectedFrom = isConfirmedBalanceRow(row) ? "confirmed" : "auto";
+      return {
+        date: row.date,
+        channel: row.channel,
+        currency: row.currency,
+        amount: row.amount,
+        balance_kind: "selected",
+        source: normalizeDisplaySource(row),
+        source_sheet: row.sourceSheet || (selectedFrom === "confirmed" ? BALANCE_SHEET_NAME : "Авто Остатки"),
+        status: normalizeDisplayStatus(row, selectedFrom),
+        selected_from: selectedFrom,
+      };
+    })
+    .sort(compareDetailedRows);
+}
+
+function compareDetailedRows(left, right) {
+  if (left.date !== right.date) return left.date.localeCompare(right.date);
+  if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+  return left.currency.localeCompare(right.currency);
+}
+
+function isConfirmedBalanceRow(row = {}) {
+  return normalizeDisplaySource(row) === "manual_fact" || String(row.sourceSheet || "") === BALANCE_SHEET_NAME;
+}
+
+function normalizeDisplaySource(row = {}) {
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+    row.status,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/manual[_ -]owner[_ -]confirmed|owner[_ -]confirmed|manual_fact|manual confirmed|manual balance|manual_confirmed_balance|paypal_manual_balance|paypal_manual_confirmed_balance/.test(text)) {
+    return "manual_fact";
+  }
+  if (/derived_from_confirmed_balance|paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed/.test(text)) {
+    return "derived_balance";
+  }
+  if (/provider_auto|auto snapshot|provider|wise|paypal|binance|monobank|privat|yoomoney|revolut|payoneer/.test(text)) {
+    return "provider_auto";
+  }
+  return isConfirmedBalanceRowSourceSheet(row) ? "manual_fact" : "provider_auto";
+}
+
+function normalizeDisplayStatus(row = {}, balanceKind) {
+  const explicit = String(row.status || "").trim();
+  if (explicit) return explicit;
+  if (balanceKind === "confirmed") return "confirmed";
+  if (balanceKind === "auto") return normalizeDisplaySource(row) === "derived_balance" ? "derived_from_confirmed_balance" : "auto";
+  return normalizeDisplaySource(row) === "manual_fact" ? "confirmed" : "auto";
+}
+
+function isConfirmedBalanceRowSourceSheet(row = {}) {
+  return String(row.sourceSheet || "").trim() === BALANCE_SHEET_NAME;
 }
 
 function buildByDate(rows, { manualRows = rows, autoRows = [], mergedRows = [] } = {}) {

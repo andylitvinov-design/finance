@@ -219,6 +219,82 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
   ));
 });
 
+test("balance snapshots API exposes confirmed, auto, and selected balances separately", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-04-01", to: "2026-04-01" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-04-01", channel: "wise usd", currency: "USD", amount: "120", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      ],
+      autoBalances: [
+        { date: "2026-04-01", channel: "wise usd", currency: "USD", amount: "119", source: "derived_from_confirmed_balance", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-04-01", channel: "paypal eur", currency: "EUR", amount: "55", source: "derived_from_confirmed_balance", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.balance_snapshots.confirmed_rows, [
+    {
+      date: "2026-04-01",
+      channel: "wise usd",
+      currency: "USD",
+      amount: 120,
+      balance_kind: "confirmed",
+      source: "manual_fact",
+      source_sheet: "Остатки",
+      status: "confirmed",
+    },
+  ]);
+  assert.deepEqual(snapshot.balance_snapshots.auto_balance_rows, [
+    {
+      date: "2026-04-01",
+      channel: "paypal eur",
+      currency: "EUR",
+      amount: 55,
+      balance_kind: "auto",
+      source: "derived_balance",
+      source_sheet: "Авто Остатки",
+      status: "derived_from_confirmed_balance",
+    },
+    {
+      date: "2026-04-01",
+      channel: "wise usd",
+      currency: "USD",
+      amount: 119,
+      balance_kind: "auto",
+      source: "derived_balance",
+      source_sheet: "Авто Остатки",
+      status: "derived_from_confirmed_balance",
+    },
+  ]);
+  assert.deepEqual(snapshot.balance_snapshots.selected_rows, [
+    {
+      date: "2026-04-01",
+      channel: "paypal eur",
+      currency: "EUR",
+      amount: 55,
+      balance_kind: "selected",
+      source: "derived_balance",
+      source_sheet: "Авто Остатки",
+      status: "derived_from_confirmed_balance",
+      selected_from: "auto",
+    },
+    {
+      date: "2026-04-01",
+      channel: "wise usd",
+      currency: "USD",
+      amount: 120,
+      balance_kind: "selected",
+      source: "manual_fact",
+      source_sheet: "Остатки",
+      status: "confirmed",
+      selected_from: "confirmed",
+    },
+  ]);
+});
+
 test("balance snapshots reports manual, auto, and merged daily inventories", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { from: "2026-05-01", to: "2026-05-03" },

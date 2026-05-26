@@ -123,6 +123,64 @@ test("backfill daily balance snapshots apply writes only planned derived rows", 
   assert.equal(report.save.rowCount, 1);
 });
 
+test("backfill daily balance snapshots does not overwrite confirmed same-date balances and is idempotent", async () => {
+  const saved = [];
+  const baseOptions = {
+    from: "2026-04-01",
+    to: "2026-04-02",
+    now: new Date("2026-05-26T10:00:00.000Z"),
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-03-31", channel: "wise usd", currency: "USD", amount: "100", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-04-02", channel: "wise usd", currency: "USD", amount: "120", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      operations: [
+        operation({
+          date: "2026-04-01",
+          amountNet: "5",
+          balanceAmount: 5,
+          toChannel: "wise usd",
+          fromChannel: "",
+          ledgerV2: { date: "2026-04-01", amount_net: "5", balance_amount: 5, to_channel: "wise usd", from_channel: "" },
+        }),
+        operation({
+          date: "2026-04-02",
+          amountNet: "15",
+          balanceAmount: 15,
+          toChannel: "wise usd",
+          fromChannel: "",
+          ledgerV2: { date: "2026-04-02", amount_net: "15", balance_amount: 15, to_channel: "wise usd", from_channel: "" },
+        }),
+      ],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+  };
+
+  const first = await buildBackfillDailyBalanceSnapshotsReport({
+    ...baseOptions,
+    apply: true,
+    saveRows: async (rows) => {
+      saved.push(...rows);
+      return { rowCount: rows.length, sheetName: "Авто Остатки" };
+    },
+  });
+
+  assert.equal(first.planned_rows_count, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].date, "2026-04-01");
+  assert.equal(saved[0].amount, 105);
+
+  const second = await buildBackfillDailyBalanceSnapshotsReport({
+    ...baseOptions,
+    apply: false,
+    autoBalanceLoader: async () => ({ ok: true, balances: saved, warnings: [] }),
+  });
+
+  assert.equal(second.planned_rows_count, 0);
+});
+
 test("backfill daily balance snapshots parses dry-run arguments by default", () => {
   assert.deepEqual(parseArgs(["--from=2026-05-01", "--to", "2026-05-31", "--json"]), {
     from: "2026-05-01",
