@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { EXPECTED_PROVIDER_BALANCES } from "../server/auto-balance-snapshots.js";
+import {
+  EXPECTED_PROVIDER_BALANCES,
+  buildExpectedProviderBalanceExclusionsForDate,
+  filterExpectedProviderBalancesForDate,
+} from "../server/auto-balance-snapshots.js";
 
 const DEFAULT_BASE_URL = "https://ezohata-incoming-ledger.vercel.app";
 const DEFAULT_FROM = "2026-05-01";
@@ -180,7 +184,9 @@ function buildDateCoverage(date, rows, expected) {
   const dayRows = rows.filter((row) => row.date === date);
   const keyCounts = countKeys(dayRows);
   const numericRows = dayRows.filter((row) => row.amount_numeric).length;
-  const missingExpected = expected
+  const activeExpected = filterExpectedProviderBalancesForDate(expected, date);
+  const excludedExpected = buildExpectedProviderBalanceExclusionsForDate(expected, date);
+  const missingExpected = activeExpected
     .filter((pair) => !keyCounts.has(makeKey(pair.channel, pair.currency)))
     .map((pair) => makeKey(pair.channel, pair.currency));
   const duplicates = duplicateEntries(keyCounts);
@@ -197,7 +203,9 @@ function buildDateCoverage(date, rows, expected) {
     missing_amount_rows: missingAmountRows,
     unique_channel_currency_count: keyCounts.size,
     duplicate_channel_currency_count: duplicates.length,
-    expected_rows: expected.length,
+    expected_rows: activeExpected.length,
+    canonical_expected_rows: expected.length,
+    excluded_expected: excludedExpected,
     missing_expected_count: missingExpected.length,
     missing_channels: missingExpected,
     duplicates,
@@ -321,7 +329,7 @@ function uniquePairs(rows = []) {
     const channel = String(row.channel || "").trim();
     const currency = String(row.currency || "").trim().toUpperCase();
     if (!channel || !currency) continue;
-    pairs.set(makeKey(channel, currency), { channel, currency });
+    pairs.set(makeKey(channel, currency), { ...row, channel, currency });
   }
   return Array.from(pairs.values()).sort((left, right) =>
     left.channel === right.channel ? left.currency.localeCompare(right.currency) : left.channel.localeCompare(right.channel)
