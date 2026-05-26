@@ -14,12 +14,13 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
   const manualFactKeys = new Set(manualRows
     .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
     .map(balanceKey));
+  const manualBalanceKeys = new Set(manualRows.map(balanceKey));
   const autoFallbackRows = [];
   let autoIgnored = 0;
   let autoIgnoredStaleCurrent = 0;
 
   for (const row of autoBalances || []) {
-    if (manualFactKeys.has(balanceKey(row))) {
+    if (manualFactKeys.has(balanceKey(row)) || manualBalanceKeys.has(balanceKey(row))) {
       autoIgnored += 1;
       continue;
     }

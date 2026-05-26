@@ -108,3 +108,33 @@ test("derived auto rows are not promoted to manual facts by provenance comments"
   assert.equal(result.rows[0].source, "derived_balance");
   assert.equal(result.rows[0].fact_source, "derived_balance");
 });
+
+test("existing Остатки balance row suppresses same-key auto fallback row", () => {
+  const result = mergeManualAndAutoBalances(
+    [
+      {
+        date: "2026-05-22",
+        channel: "трансервайз дол",
+        currency: "USD",
+        amount: "1084.1",
+        source: "manual-google-sheets",
+        comment: "wise auto snapshot",
+        sourceSheet: "Остатки",
+      },
+    ],
+    [
+      {
+        date: "2026-05-22",
+        channel: "трансервайз дол",
+        currency: "USD",
+        amount: "1084.1",
+        source: "wise_auto",
+        sourceSheet: "Авто Остатки",
+      },
+    ]
+  );
+
+  assert.equal(result.autoIgnored, 1);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].sourceSheet, "Остатки");
+});
