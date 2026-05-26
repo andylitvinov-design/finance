@@ -92,7 +92,7 @@ test("unmapped owner balance channel fails validation instead of becoming silent
   assert.match(invalid.errors.join("\n"), /unmapped owner balance channel: новый канал/);
 });
 
-test("owner seed replaces stale May opening anchors and preserves exact owner total", () => {
+test("owner seed replaces stale May opening anchors and supersedes combined Revolut owner input", () => {
   const seed = applyOwnerMayOpeningBalanceSeed([
     { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425", sourceSheet: "Остатки" },
     { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "7432", amount_usd: "7432", sourceSheet: "Остатки" },
@@ -110,9 +110,12 @@ test("owner seed replaces stale May opening anchors and preserves exact owner to
   const total = mayRows.reduce((sum, row) => sum + Number(row.amount_usd ?? row.amountUsd ?? 0), 0);
 
   assert.equal(seed.applied, true);
-  assert.equal(Math.round(total * 10000) / 10000, 24993);
+  assert.equal(Math.round(total * 10000) / 10000, 24633.38);
   assert.equal(mayRows.some((row) => row.channel === "legacy_combined_binance_spot_funding"), false);
   assert.equal(mayRows.find((row) => row.channel === "binance save").amount_usd, 8519);
+  assert.equal(mayRows.find((row) => row.channel === "REVOLUT дол").amount, 18.38);
+  assert.equal(mayRows.find((row) => row.channel === "REVOLUT дол").superseded_owner_input.amount, 378);
+  assert.equal(mayRows.find((row) => row.channel === "REVOLUT евро").amount, 213.48);
   assert.equal(mayRows.find((row) => row.channel === "приват 24-грн").amount, 11239);
   assert.equal(mayRows.find((row) => row.channel === "приват 24-грн").amount_usd, 254);
 });
@@ -163,7 +166,7 @@ test("audit snapshot exposes owner-confirmed May 1 opening total", async () => {
   const total = response.balances.remainders_rows.reduce((sum, row) => sum + Number(row.opening_amount_usd || 0), 0);
   assert.equal(response.balances.owner_confirmed_may_opening_balance_seed_applied, true);
   assert.equal(response.balances.owner_confirmed_may_opening_total_usd, 24993);
-  assert.equal(total, 24993);
+  assert.equal(Math.round(total * 10000) / 10000, 24633.38);
   const usdc = response.balances.remainders_rows.find((row) => row.channel === "Бинанс spot" && row.currency === "USDC");
   assert.equal(usdc?.opening_amount_usd ?? null, 2.3777);
 });
@@ -313,6 +316,94 @@ test("PayPal planned openings are pending movement verification and expose sourc
   assert.equal(diagnostics.find((row) => row.source_row === 777), undefined);
 });
 
+test("reconciliation-adjusted May opening supersedes combined Revolut owner input with currency split", () => {
+  const operations = [
+    {
+      date: "2026-05-05",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: {
+        date: "2026-05-05",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "100",
+        balance_amount: -100,
+      },
+    },
+    {
+      date: "2026-05-20",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "2.74",
+      balanceAmount: -2.74,
+      ledgerV2: {
+        date: "2026-05-20",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "2.74",
+        balance_amount: -2.74,
+      },
+    },
+  ];
+  const report = buildReconciliationAdjustedMayOpening({
+    balanceRows: [
+      { date: "2026-05-31", channel: "REVOLUT дол", currency: "USD", amount: "18.38", amount_usd: "18.38", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT франк", currency: "CHF", amount: "15", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT фунт", currency: "GBP", amount: "0", sourceSheet: "Остатки" },
+    ],
+    operations,
+    period: { from: "2026-05-01", to: "2026-05-31" },
+  });
+
+  const byKey = new Map(report.rows.filter((row) => /^REVOLUT /.test(row.channel)).map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(byKey.get("REVOLUT дол|USD").owner_input, 18.38);
+  assert.equal(byKey.get("REVOLUT дол|USD").adjusted_opening, 18.38);
+  assert.equal(byKey.get("REVOLUT дол|USD").superseded_owner_input.amount, 378);
+  assert.equal(byKey.get("REVOLUT дол|USD").diff, 0);
+  assert.equal(byKey.get("REVOLUT дол|USD").reason, "owner_revolut_currency_split_from_new_screenshot");
+  assert.equal(byKey.get("REVOLUT дол|USD").confidence, "high");
+  assert.equal(byKey.get("REVOLUT евро|EUR").adjusted_opening, 213.48);
+  assert.equal(byKey.get("REVOLUT евро|EUR").ledger_movement_from_2026_05_02_to_confirmed_date, -102.74);
+  assert.equal(byKey.get("REVOLUT евро|EUR").reason, "owner_revolut_currency_split_from_new_screenshot");
+  assert.equal(byKey.get("REVOLUT евро|EUR").confidence, "medium-high");
+  assert.equal(byKey.get("REVOLUT франк|CHF").adjusted_opening, 15);
+  assert.equal(byKey.get("REVOLUT франк|CHF").confidence, "high");
+  assert.equal(byKey.get("REVOLUT фунт|GBP").adjusted_opening, 0);
+  assert.equal(byKey.get("REVOLUT фунт|GBP").confidence, "high");
+});
+
+test("Revolut currency split reconciliation does not mutate Ledger rows", () => {
+  const operations = [{
+    date: "2026-05-20",
+    fromChannel: "REVOLUT евро",
+    currency: "EUR",
+    amountNet: "2.74",
+    balanceAmount: -2.74,
+    ledgerV2: {
+      date: "2026-05-20",
+      operation: "expense",
+      from_channel: "REVOLUT евро",
+      currency: "EUR",
+      amount_net: "2.74",
+      balance_amount: -2.74,
+    },
+  }];
+  const before = JSON.stringify(operations);
+
+  buildReconciliationAdjustedMayOpening({
+    balanceRows: [{ date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", sourceSheet: "Остатки" }],
+    operations,
+    period: { from: "2026-05-01", to: "2026-05-31" },
+  });
+
+  assert.equal(JSON.stringify(operations), before);
+});
+
 test("May daily balance backfill uses reconciliation-adjusted opening when justified", async () => {
   const report = await buildBackfillDailyBalanceSnapshotsReport({
     from: "2026-05-01",
@@ -394,6 +485,6 @@ test("audit snapshot exposes owner input total and adjusted opening total separa
 
   assert.equal(response.balances.owner_confirmed_may_opening_total_usd, 24993);
   assert.equal(response.balances.owner_input_opening_total_usd, 24993);
-  assert.equal(response.balances.reconciliation_adjusted_opening_total_usd > 24993, true);
+  assert.equal(response.balances.reconciliation_adjusted_opening_total_usd < 24993, true);
   assert.equal(response.balances.adjusted_rows[0].reason, "rounding_or_fx");
 });
