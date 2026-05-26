@@ -21,6 +21,10 @@
       "destination": "/api/index?action=balanceSnapshots"
     },
     {
+      "source": "/api/backfill-daily-balance-snapshots",
+      "destination": "/api/index?action=dailyBalanceBackfill"
+    },
+    {
       "source": "/api/binance-transactions",
       "destination": "/api/index?action=binanceTransactions"
     },
