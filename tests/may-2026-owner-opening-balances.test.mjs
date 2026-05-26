@@ -68,7 +68,24 @@ test("audit snapshot exposes owner-confirmed May 1 opening total", async () => {
     repositoryLoader: async () => ({
       ok: true,
       schema: "ledger-v2-compatible",
-      operations: [],
+      operations: [{
+        date: "2026-05-01",
+        fromChannel: "",
+        toChannel: "Бинанс spot",
+        currency: "USDC",
+        amountUsd: "0.03",
+        amountNet: "0.03",
+        balanceAmount: 0.03,
+        ledgerV2: {
+          date: "2026-05-01",
+          operation: "income",
+          to_channel: "Бинанс spot",
+          currency: "USDC",
+          amount_usd: "0.03",
+          amount_net: "0.03",
+          balance_amount: 0.03,
+        },
+      }],
       balances: [
         { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425", sourceSheet: "Остатки" },
         { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "7432", amount_usd: "7432", sourceSheet: "Остатки" },
@@ -79,7 +96,9 @@ test("audit snapshot exposes owner-confirmed May 1 opening total", async () => {
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "145614", sourceSheet: "Остатки" },
         { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount: "1107", amount_usd: "1284", sourceSheet: "Остатки" },
       ],
-      autoBalances: [],
+      autoBalances: [
+        { date: "2026-05-24", channel: "Бинанс spot", currency: "USDC", amount: "2.8903", amount_usd: "2.8903", provider: "binance", source: "provider_auto" },
+      ],
       commissionRows: [],
       views: { byDateChannel: [], byCategory: [] },
       warnings: [],
@@ -90,6 +109,8 @@ test("audit snapshot exposes owner-confirmed May 1 opening total", async () => {
   assert.equal(response.balances.owner_confirmed_may_opening_balance_seed_applied, true);
   assert.equal(response.balances.owner_confirmed_may_opening_total_usd, 24993);
   assert.equal(total, 24993);
+  const usdc = response.balances.remainders_rows.find((row) => row.channel === "Бинанс spot" && row.currency === "USDC");
+  assert.equal(usdc?.opening_amount_usd ?? null, null);
 });
 
 test("May daily balance backfill uses 2026-05-01 opening snapshot, not ledger-only reconstruction", async () => {
