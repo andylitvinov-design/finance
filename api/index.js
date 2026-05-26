@@ -1203,6 +1203,7 @@ function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSu
   const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
 
   for (const row of dataRows) {
+    if (isKovalevWiseBoleslavMovementRow({ client: row?.[2], paymentMethod: row?.[14] })) continue;
     const expectedUsd = parseLooseNumber(row?.[9]) || 0;
     const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
     const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
@@ -1359,6 +1360,7 @@ function isUnsafeServicePaymentGapReason(reason) {
 }
 
 function isMovementServicePaymentRow(row = []) {
+  if (isKovalevWiseBoleslavMovementRow({ client: row?.[2], paymentMethod: row?.[14] })) return false;
   const channel = resolveMovementServicePaymentChannel(row);
   if (!channel) return false;
   const text = normalizeLookupText([
