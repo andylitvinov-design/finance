@@ -1080,3 +1080,65 @@ test("Revolut 2026-05-21 reconciliation includes USD EUR GBP and CHF manual bala
     ]
   );
 });
+
+test("May reconciliation summary uses Revolut currency-split openings instead of old combined 378", () => {
+  const operations = [
+    {
+      date: "2026-05-05",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: {
+        date: "2026-05-05",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "100",
+        balance_amount: -100,
+      },
+    },
+    {
+      date: "2026-05-20",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "2.74",
+      balanceAmount: -2.74,
+      ledgerV2: {
+        date: "2026-05-20",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "2.74",
+        balance_amount: -2.74,
+      },
+    },
+  ];
+  const originalOperations = structuredClone(operations);
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations,
+    balanceRows: [
+      { date: "2026-05-21", channel: "REVOLUT дол", currency: "USD", amount: "18.38", amount_usd: "18.38", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT франк", currency: "CHF", amount: "15", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT фунт", currency: "GBP", amount: "0", source: "manual_confirmed_balance", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const rows = result.reconciliation_report_summary.opening_adjustment_rows;
+  const usd = rows.find((row) => row.channel === "REVOLUT дол" && row.currency === "USD");
+  const eur = rows.find((row) => row.channel === "REVOLUT евро" && row.currency === "EUR");
+  const chf = rows.find((row) => row.channel === "REVOLUT франк" && row.currency === "CHF");
+  const gbp = rows.find((row) => row.channel === "REVOLUT фунт" && row.currency === "GBP");
+
+  assert.equal(usd.owner_input, 18.38);
+  assert.equal(usd.adjusted_opening, 18.38);
+  assert.equal(usd.diff, 0);
+  assert.equal(usd.superseded_owner_input.amount, 378);
+  assert.equal(eur.adjusted_opening, 213.48);
+  assert.equal(chf.adjusted_opening, 15);
+  assert.equal(gbp.adjusted_opening, 0);
+  assert.equal(rows.some((row) => row.channel === "REVOLUT дол" && row.owner_input === 378), false);
+  assert.deepEqual(operations, originalOperations);
+});
