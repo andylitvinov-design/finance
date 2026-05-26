@@ -398,6 +398,26 @@ test("Revolut split openings are derived from current screenshots minus post-May
   assert.deepEqual(operations, originalOperations);
 });
 
+test("Revolut EUR keeps screenshot split reason when post-May-1 movements are not in Ledger", () => {
+  const report = buildReconciliationAdjustedMayOpening({
+    balanceRows: [
+      { date: "2026-05-21", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", sourceSheet: "Остатки" },
+    ],
+    operations: [],
+    period: { from: "2026-05-01", to: "2026-05-31" },
+  });
+
+  const eur = report.rows.find((row) => row.channel === "REVOLUT евро" && row.currency === "EUR");
+  assert.equal(eur.owner_input, 213.48);
+  assert.equal(eur.implied_opening, 110.74);
+  assert.equal(eur.adjusted_opening, 213.48);
+  assert.equal(eur.diff, -102.74);
+  assert.equal(eur.reason, "owner_revolut_currency_split_from_new_screenshot");
+  assert.equal(eur.confidence, "medium-high");
+  assert.equal(eur.status, "adjusted");
+  assert.equal(report.needs_verification_rows.some((row) => row.channel === "REVOLUT евро"), false);
+});
+
 test("May daily balance backfill uses reconciliation-adjusted opening when justified", async () => {
   const report = await buildBackfillDailyBalanceSnapshotsReport({
     from: "2026-05-01",
