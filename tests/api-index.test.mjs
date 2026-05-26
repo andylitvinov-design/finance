@@ -2666,6 +2666,61 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
             paymentMethod: "Бинанс spot",
             receivedUsd: 103,
           }),
+          makeSourceRow({
+            number: "18174",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Приват ФОП no safe amount row 18174",
+            priceBase: 200,
+            accruedPlus: 206,
+            paymentMethod: "приват-фоп",
+          }),
+          makeSourceRow({
+            number: "18175",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Приват ФОП no safe amount row 18175",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "приват-фоп",
+          }),
+          makeSourceRow({
+            number: "18176",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Каналы нарушения социальных связей",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "приват-фоп",
+          }),
+          makeSourceRow({
+            number: "18177",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Канал нарушения работоспособности систем",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "приват-фоп",
+          }),
+          makeSourceRow({
+            number: "18178",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Чистка Енергетики з Експрес карти",
+            priceBase: 30,
+            accruedPlus: 30.9,
+            paymentMethod: "приват-фоп",
+          }),
+          makeSourceRow({
+            number: "18179",
+            date: "2026-05-24",
+            client: "Сергей Ковалев",
+            service: "Регулировка заливки",
+            priceBase: 50,
+            accruedPlus: 51.5,
+            paymentMethod: "Wise @bolieslavn",
+            receivedUsd: 597.4,
+          }),
         ];
         return { ok: true, status: 200, async text() { return rows.map((row) => row.join(",")).join("\n"); } };
       }
@@ -2727,6 +2782,23 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(missingChannelGap?.includedUsd, 0);
     assert.equal(missingChannelGap?.netGapUsd, 206);
     assert.match(missingChannelGap?.rows?.[0]?.reason || "", /payment channel missing/);
+    assert.equal(
+      realIncome?.servicePaymentGapByChannel?.some((row) => row.rows?.some((sourceRow) => sourceRow.rowNumber === "18179")),
+      false
+    );
+    assert.equal(realIncome?.servicePaymentSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 0);
+
+    const privateFopGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "приват-фоп");
+    assert.equal(privateFopGap?.expectedUsd, 545.9);
+    assert.equal(privateFopGap?.includedUsd, 0);
+    assert.equal(privateFopGap?.netGapUsd, 545.9);
+    assert.deepEqual(privateFopGap?.rows?.map((row) => [row.rowNumber, row.included, row.reason]), [
+      ["18174", false, "no safe amount"],
+      ["18175", false, "no safe amount"],
+      ["18176", false, "no safe amount"],
+      ["18177", false, "no safe amount"],
+      ["18178", false, "no safe amount"],
+    ]);
 
     const monoGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "монобанк грн");
     assert.equal(monoGap?.expectedUsd, 51.5);
@@ -2741,11 +2813,11 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.match(binanceGap?.rows?.[0]?.reason || "", /excluded deposit\/non-service/);
 
     assert.deepEqual(realIncome?.servicePaymentGapTotals, {
-      expectedUsd: 461.5,
+      expectedUsd: 1007.4,
       includedUsd: 163,
-      missingUnsafeUsd: 410,
+      missingUnsafeUsd: 955.9,
       offsetUsd: 8.5,
-      netGapUsd: 298.5,
+      netGapUsd: 844.4,
     });
   } finally {
     global.fetch = previousFetch;
