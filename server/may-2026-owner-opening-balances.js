@@ -99,6 +99,7 @@ const PAYPAL_PLANNED_OPENING_KEYS = new Set([
 
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER = [501, 504, 502, 503];
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS = new Set(PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER);
+const REVOLUT_CURRENCY_SPLIT_REASON = "owner_revolut_currency_split_from_new_screenshot";
 
 const SUPERSEDED_MAY_OPENING_KEYS = new Set([
   ...OWNER_MAY_OPENING_BALANCES.map((row) => balanceKey(row.channel, row.currency)),
@@ -265,7 +266,13 @@ export function buildReconciliationAdjustedMayOpening({
     let plannedOpeningCandidateUsd = null;
     const preservesOwnerAdjustmentReason = Boolean(owner?.adjustmentReason);
 
-    if (owner && fact && withinTolerance) {
+    if (owner && fact && owner.adjustmentReason === REVOLUT_CURRENCY_SPLIT_REASON) {
+      reason = owner.adjustmentReason;
+      confidence = owner.confidence || "medium";
+      status = "adjusted";
+      adjustedOpening = ownerInput;
+      adjustedOpeningUsd = ownerInputUsd;
+    } else if (owner && fact && withinTolerance) {
       reason = preservesOwnerAdjustmentReason ? owner.adjustmentReason : "rounding_or_fx";
       confidence = owner?.confidence || "high";
       status = "adjusted";
