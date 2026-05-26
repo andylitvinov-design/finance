@@ -93,6 +93,22 @@ test("repair May daily balance snapshots keeps provider row even when derived ro
   assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "derived-provider");
 });
 
+test("repair May daily balance snapshots does not promote derived provenance comments as manual rows", async () => {
+  const report = await buildRepairMayDailyBalanceSnapshotsReport({
+    from: "2026-05-17",
+    to: "2026-05-17",
+    readValues: async () => [
+      header,
+      ["2026-05-17", "wise", "трансервайз евро", "0", "EUR", "", "", "wise_auto", "2026-05-18T07:03:54.942Z", "4920195", "zero_balance", "auto daily provider snapshot"],
+      ["2026-05-17", "derived", "трансервайз евро", "0", "EUR", "1.09", "0", "provider_auto", "2026-05-26T06:21:49.802Z", "derived_from_confirmed_balance:2026-05-17:трансервайз евро:EUR", "derived_from_confirmed_balance", "Derived from confirmed manual_fact balance on 2026-05-01 plus Ledger amount_net movements."],
+    ],
+  });
+
+  assert.equal(report.duplicate_groups_count, 1);
+  assert.equal(report.duplicate_groups[0].kept.raw_source_id, "4920195");
+  assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "derived_from_confirmed_balance:2026-05-17:трансервайз евро:EUR");
+});
+
 test("repair May daily balance snapshots keeps numeric derived row over status-only provider row", async () => {
   const report = await buildRepairMayDailyBalanceSnapshotsReport({
     from: "2026-05-26",
