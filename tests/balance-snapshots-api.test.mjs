@@ -399,6 +399,34 @@ test("balance snapshots selected date returns merged fallback rows when manual r
   assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, []);
 });
 
+test("balance snapshots selected date reports expected coverage and duplicate channel rows", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-26", to: "2026-05-26" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-26", channel: "трансервайз дол", currency: "USD", amount: "90", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-26", channel: "трансервайз дол", currency: "USD", amount: "91", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-26", channel: "пейпал дол", currency: "USD", amount: "10", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  assert.equal(snapshot.balance_snapshots.selected_date_rows.length, 3);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.expected_rows, 23);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.total_rows, 3);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.unique_channel_currency_count, 2);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.duplicate_channel_currency_count, 1);
+  assert.ok(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Binance funding|USDT"));
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.status, "partial");
+});
+
 test("balance snapshots selected date does not trust stale current-only historical auto rows", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { from: "2026-05-17", to: "2026-05-17" },

@@ -355,6 +355,51 @@ test("remainders popup renders selected-date channel currency balances", () => {
   resetRemaindersModule();
 });
 
+test("remainders popup renders selected-date partial coverage warning", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({ balances: { remainders_rows: [] } }),
+    selectedDateSnapshot: {
+      selected_date: "2026-05-26",
+      selected_date_source: "merged",
+      selected_date_rows: [
+        { date: "2026-05-26", channel: "трансервайз дол", currency: "USD", amount: 870.42 },
+      ],
+      selected_date_coverage: {
+        expected_rows: 23,
+        unique_channel_currency_count: 22,
+        missing_channels: ["Binance funding|USDT"],
+        duplicate_channel_currency_count: 0,
+        status: "partial",
+      },
+      selected_date_diagnostics: [],
+    },
+  }, makeMockDocument());
+  const text = collectText(block);
+
+  assert.match(text, /Частичное покрытие: 22 из 23/);
+  assert.match(text, /Binance funding\|USDT/);
+  resetRemaindersModule();
+});
+
+test("remainders planned needs-verification table is rendered as collapsed diagnostics", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock(api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "Missing opening", currency: "USD", closing_amount_usd: 10, movement_usd: 10 },
+      ],
+    },
+  }), makeMockDocument());
+
+  const diagnostics = block.children.find((child) => child.tag === "details");
+  assert.ok(diagnostics);
+  assert.equal(diagnostics.open, false);
+  assert.match(collectText(diagnostics), /Диагностика сверки/);
+  assert.match(collectText(diagnostics), /Missing opening/);
+  resetRemaindersModule();
+});
+
 test("selected-date balances resolve multiple snapshot amount field names", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
@@ -767,7 +812,7 @@ test("remainders table has a mobile horizontal scroll container", () => {
   assert.match(mobileCss, /\.remainders-summary-table-wrap table tr > :first-child\s*\{[^}]*max-width:\s*160px;[^}]*white-space:\s*normal;/s);
 });
 
-test("remainders table renders visible horizontal scroll controls", () => {
+test("collapsed remainders diagnostics table keeps horizontal scroll controls", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock(api.buildRemaindersSummary({
     balances: {
@@ -776,9 +821,12 @@ test("remainders table renders visible horizontal scroll controls", () => {
       ],
     },
   }), makeMockDocument());
-  const controls = block.children.find((child) => child.className === "remainders-scroll-controls");
+  const diagnostics = block.children.find((child) => child.tag === "details");
+  const controls = diagnostics.children.find((child) => child.className === "remainders-scroll-controls");
   const wrap = block.querySelector(".remainders-summary-table-wrap");
 
+  assert.ok(diagnostics);
+  assert.equal(diagnostics.open, false);
   assert.ok(controls);
   assert.equal(controls.children.length, 2);
   assert.match(controls.children[0].textContent, /Влево/);

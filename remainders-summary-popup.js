@@ -293,8 +293,25 @@
       if (snapshot.selected_date) {
         const meta = doc.createElement("div");
         meta.className = "tab-note";
-        meta.textContent = `Остатки сохранены на дату: ${snapshot.selected_date}`;
+        const coverage = snapshot.selected_date_coverage || {};
+        const uniqueCount = Number(coverage.unique_channel_currency_count || rows.length);
+        const expectedCount = Number(coverage.expected_rows || 0);
+        meta.textContent = expectedCount
+          ? `Остатки сохранены на дату: ${snapshot.selected_date} · каналов: ${uniqueCount}`
+          : `Остатки сохранены на дату: ${snapshot.selected_date}`;
         section.appendChild(meta);
+        if (expectedCount && (uniqueCount < expectedCount || Number(coverage.duplicate_channel_currency_count || 0) > 0)) {
+          const warning = doc.createElement("div");
+          warning.className = "balance-summary-diagnostics";
+          const missing = Array.isArray(coverage.missing_channels) ? coverage.missing_channels.slice(0, 12) : [];
+          const duplicateCount = Number(coverage.duplicate_channel_currency_count || 0);
+          warning.textContent = [
+            uniqueCount < expectedCount ? `Частичное покрытие: ${uniqueCount} из ${expectedCount}` : "",
+            missing.length ? `нет: ${missing.join(", ")}` : "",
+            duplicateCount ? `дубликаты: ${duplicateCount}` : "",
+          ].filter(Boolean).join(" · ");
+          section.appendChild(warning);
+        }
       }
       const wrap = doc.createElement("div");
       wrap.className = "table-wrap remainders-summary-table-wrap";
@@ -382,9 +399,17 @@
     const selectedDateBlock = renderSelectedDateSnapshotBlock(summary.selectedDateSnapshot, doc);
     if (selectedDateBlock) block.appendChild(selectedDateBlock);
 
+    const details = doc.createElement("details");
+    details.className = "remainders-diagnostics-details";
+    details.open = false;
+    const detailsSummary = doc.createElement("summary");
+    detailsSummary.textContent = "Диагностика сверки";
+    details.appendChild(detailsSummary);
+    block.appendChild(details);
+
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
-    block.appendChild(renderRemaindersScrollControls(wrap, doc));
+    details.appendChild(renderRemaindersScrollControls(wrap, doc));
     const table = doc.createElement("table");
     const thead = doc.createElement("thead");
     const header = doc.createElement("tr");
@@ -420,7 +445,7 @@
     tbody.appendChild(total);
     table.appendChild(tbody);
     wrap.appendChild(table);
-    block.appendChild(wrap);
+    details.appendChild(wrap);
 
     const diagnostics = [...(summary.diagnostics || [])];
     if (summary.needsVerificationCount) {
@@ -433,7 +458,7 @@
       const note = doc.createElement("div");
       note.className = "balance-summary-diagnostics";
       note.textContent = diagnostics.join(" ");
-      block.appendChild(note);
+      details.appendChild(note);
     }
     return block;
   }
