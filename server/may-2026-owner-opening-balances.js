@@ -1,5 +1,6 @@
 export const OWNER_MAY_OPENING_BALANCE_DATE = "2026-05-01";
 export const OWNER_MAY_OPENING_BALANCE_SOURCE = "manual_owner_confirmed_2026_05_01";
+export const REVOLUT_CURRENCY_SPLIT_REASON = "owner_revolut_currency_split_from_new_screenshot";
 
 export const OWNER_MAY_OPENING_BALANCES = [
   { inputChannel: "смано ЯД", channel: "Яндекс руб", currency: "RUB", amount: "", amountUsd: 1722 },
@@ -57,6 +58,13 @@ const PAYPAL_PLANNED_OPENING_KEYS = new Set([
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER = [501, 504, 502, 503];
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS = new Set(PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER);
 
+export const REVOLUT_MAY_OPENING_CURRENCY_SPLIT = [
+  { inputChannel: "REVOLUT USD", channel: "REVOLUT дол", currency: "USD", amount: 18.38, amountUsd: 18.38, confidence: "high" },
+  { inputChannel: "REVOLUT EUR", channel: "REVOLUT евро", currency: "EUR", amount: 213.48, amountUsd: null, confidence: "medium-high", pendingConfirmation: "all_post_may_1_transactions_included" },
+  { inputChannel: "REVOLUT CHF", channel: "REVOLUT франк", currency: "CHF", amount: 15, amountUsd: null, confidence: "high" },
+  { inputChannel: "REVOLUT GBP", channel: "REVOLUT фунт", currency: "GBP", amount: 0, amountUsd: null, confidence: "high" },
+];
+
 const SUPERSEDED_MAY_OPENING_KEYS = new Set([
   ...OWNER_MAY_OPENING_BALANCES.map((row) => balanceKey(row.channel, row.currency)),
   balanceKey("binance save", "USD"),
@@ -104,6 +112,10 @@ export function buildOwnerMayOpeningBalanceRows(rows = OWNER_MAY_OPENING_BALANCE
     balanceSource: "manual_fact",
     sourceSheet: "Owner Confirmed",
     comment: `Owner-confirmed opening balance for ${OWNER_MAY_OPENING_BALANCE_DATE}; input channel: ${row.inputChannel}.`,
+    ...(row.supersededOwnerInput ? { superseded_owner_input: row.supersededOwnerInput } : {}),
+    ...(row.adjustmentReason ? { adjustment_reason: row.adjustmentReason } : {}),
+    ...(row.confidence ? { confidence: row.confidence } : {}),
+    ...(row.pendingConfirmation ? { pending_confirmation: row.pendingConfirmation } : {}),
   }));
 }
 
@@ -172,7 +184,7 @@ export function validateOwnerMayOpeningBalances(rows = OWNER_MAY_OPENING_BALANCE
     const key = balanceKey(row.channel, row.currency);
     if (seen.has(key)) errors.push(`duplicate mapped owner balance key: ${key}`);
     seen.add(key);
-    if (!Number.isFinite(Number(row.amountUsd))) errors.push(`missing amount_usd for ${row.inputChannel}`);
+    if (!row.allowMissingAmountUsd && !Number.isFinite(Number(row.amountUsd))) errors.push(`missing amount_usd for ${row.inputChannel}`);
   }
   const total = ownerMayOpeningTotalUsd(rows);
   if (total !== 24993) errors.push(`owner total_usd mismatch: ${total} !== 24993`);
@@ -193,6 +205,7 @@ export function buildReconciliationAdjustedMayOpening({
   for (const row of ownerRows || []) {
     ownerByKey.set(balanceKey(row.channel, row.currency), row);
   }
+  applyRevolutCurrencySplit(ownerByKey);
   const latestFacts = buildLatestLaterConfirmedBalanceIndex(balanceRows, period);
   const keys = new Set([...ownerByKey.keys(), ...latestFacts.keys()]);
   const rows = Array.from(keys).map((key) => {
@@ -220,7 +233,12 @@ export function buildReconciliationAdjustedMayOpening({
     let plannedOpeningCandidate = null;
     let plannedOpeningCandidateUsd = null;
 
-    if (owner && fact && withinTolerance) {
+    if (owner?.adjustmentReason === REVOLUT_CURRENCY_SPLIT_REASON) {
+      reason = REVOLUT_CURRENCY_SPLIT_REASON;
+      confidence = owner.confidence || "high";
+      adjustedOpening = ownerInput;
+      adjustedOpeningUsd = ownerInputUsd;
+    } else if (owner && fact && withinTolerance) {
       reason = "rounding_or_fx";
       confidence = "high";
       status = "adjusted";
@@ -272,6 +290,8 @@ export function buildReconciliationAdjustedMayOpening({
       ledger_movement_from_2026_05_02_to_confirmed_date: fact ? movement.native : null,
       ledger_movement_usd_from_2026_05_02_to_confirmed_date: fact && movement.hasUsd ? movement.usd : null,
       source: owner ? "owner_input" : "candidate_from_later_confirmed_balance",
+      ...(owner?.supersededOwnerInput ? { superseded_owner_input: owner.supersededOwnerInput } : {}),
+      ...(owner?.pendingConfirmation ? { pending_confirmation: owner.pendingConfirmation } : {}),
     };
   }).sort((left, right) => left.channel === right.channel ? left.currency.localeCompare(right.currency) : left.channel.localeCompare(right.channel));
 
@@ -313,9 +333,9 @@ function splitBalanceKey(key) {
 
 function buildAdjustedOwnerRows(ownerRows, report) {
   const rowsByKey = new Map((report?.rows || []).map((row) => [balanceKey(row.channel, row.currency), row]));
-  return (ownerRows || []).map((row) => {
+  const adjustedRows = (ownerRows || []).map((row) => {
     const adjustment = rowsByKey.get(balanceKey(row.channel, row.currency));
-    if (!adjustment || adjustment.reason !== "rounding_or_fx") return row;
+    if (!adjustment || !["rounding_or_fx", REVOLUT_CURRENCY_SPLIT_REASON].includes(adjustment.reason)) return row;
     return {
       ...row,
       amount: adjustment.adjusted_opening ?? row.amount,
@@ -323,8 +343,53 @@ function buildAdjustedOwnerRows(ownerRows, report) {
       ownerInputAmount: row.amount,
       ownerInputAmountUsd: row.amountUsd,
       adjustmentReason: adjustment.reason,
+      confidence: adjustment.confidence,
+      supersededOwnerInput: adjustment.superseded_owner_input,
+      pendingConfirmation: adjustment.pending_confirmation,
+      allowMissingAmountUsd: adjustment.adjusted_opening_usd === null,
     };
   });
+  const seen = new Set(adjustedRows.map((row) => balanceKey(row.channel, row.currency)));
+  for (const adjustment of report?.rows || []) {
+    const key = balanceKey(adjustment.channel, adjustment.currency);
+    if (adjustment.reason !== REVOLUT_CURRENCY_SPLIT_REASON || seen.has(key)) continue;
+    adjustedRows.push({
+      inputChannel: adjustment.input_channel || adjustment.channel,
+      channel: adjustment.channel,
+      currency: adjustment.currency,
+      amount: adjustment.adjusted_opening,
+      amountUsd: adjustment.adjusted_opening_usd,
+      adjustmentReason: adjustment.reason,
+      confidence: adjustment.confidence,
+      supersededOwnerInput: adjustment.superseded_owner_input,
+      pendingConfirmation: adjustment.pending_confirmation,
+      allowMissingAmountUsd: adjustment.adjusted_opening_usd === null,
+    });
+    seen.add(key);
+  }
+  return adjustedRows;
+}
+
+function applyRevolutCurrencySplit(ownerByKey) {
+  const oldKey = balanceKey("REVOLUT дол", "USD");
+  const old = ownerByKey.get(oldKey);
+  if (!old || old.inputChannel !== "REVOLUT") return;
+  const supersededOwnerInput = {
+    inputChannel: old.inputChannel,
+    channel: old.channel,
+    currency: old.currency,
+    amount: old.amount,
+    amountUsd: old.amountUsd,
+    reason: REVOLUT_CURRENCY_SPLIT_REASON,
+  };
+  for (const row of REVOLUT_MAY_OPENING_CURRENCY_SPLIT) {
+    ownerByKey.set(balanceKey(row.channel, row.currency), {
+      ...row,
+      adjustmentReason: REVOLUT_CURRENCY_SPLIT_REASON,
+      supersededOwnerInput,
+      allowMissingAmountUsd: row.amountUsd === null,
+    });
+  }
 }
 
 function buildLatestLaterConfirmedBalanceIndex(balanceRows = [], period = {}) {

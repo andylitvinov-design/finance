@@ -378,7 +378,7 @@ test("May reconciliation report exposes owner input and adjusted opening totals"
   const summary = result.reconciliation_report_summary;
   const mono = summary.opening_adjustment_rows.find((row) => row.channel === "монобанк грн");
   assert.equal(summary.owner_input_opening_total_usd, 24993);
-  assert.equal(summary.reconciliation_adjusted_opening_total_usd > 24993, true);
+  assert.equal(summary.reconciliation_adjusted_opening_total_usd < 24993, true);
   assert.equal(mono.owner_input, 26670);
   assert.equal(mono.implied_opening, 26670.14);
   assert.equal(mono.adjusted_opening, 26670.14);
@@ -490,6 +490,63 @@ test("May reconciliation summary exposes PayPal pending candidates and movement 
   assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).gross, -850);
   assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).fee, -16.61);
   assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).net, -833.39);
+});
+
+test("May reconciliation report exposes Revolut currency split without mutating operations", () => {
+  const operations = [
+    {
+      date: "2026-05-05",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: {
+        date: "2026-05-05",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "100",
+        balance_amount: -100,
+      },
+    },
+    {
+      date: "2026-05-20",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "2.74",
+      balanceAmount: -2.74,
+      ledgerV2: {
+        date: "2026-05-20",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "2.74",
+        balance_amount: -2.74,
+      },
+    },
+  ];
+  const before = JSON.stringify(operations);
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations,
+    balanceRows: [
+      { date: "2026-05-31", channel: "REVOLUT дол", currency: "USD", amount: "18.38", amount_usd: "18.38", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT франк", currency: "CHF", amount: "15", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT фунт", currency: "GBP", amount: "0", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const revolut = new Map(result.reconciliation_report_summary.opening_adjustment_rows
+    .filter((row) => /^REVOLUT /.test(row.channel))
+    .map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(revolut.get("REVOLUT дол|USD").adjusted_opening, 18.38);
+  assert.equal(revolut.get("REVOLUT дол|USD").superseded_owner_input.amount, 378);
+  assert.equal(revolut.get("REVOLUT евро|EUR").adjusted_opening, 213.48);
+  assert.equal(revolut.get("REVOLUT евро|EUR").confidence, "medium-high");
+  assert.equal(revolut.get("REVOLUT франк|CHF").adjusted_opening, 15);
+  assert.equal(revolut.get("REVOLUT фунт|GBP").adjusted_opening, 0);
+  assert.equal(JSON.stringify(operations), before);
 });
 
 test("reconciliation report detects likely channel alias mismatch", () => {
