@@ -1,5 +1,3 @@
-import { buildBackfillDailyBalanceSnapshotsReport } from "../scripts/backfill-daily-balance-snapshots.mjs";
-
 export const MAY_2026_BACKFILL_CONFIRMATION = "apply-may-2026-daily-balance-backfill";
 
 export default async function handler(request, response) {
@@ -44,7 +42,7 @@ export async function runDailyBalanceBackfillRoute(options = {}) {
     });
   }
 
-  const buildReport = options.buildReport || buildBackfillDailyBalanceSnapshotsReport;
+  const buildReport = options.buildReport || await loadBackfillReportBuilder();
   const report = await buildReport({ from, to, apply });
   return jsonResult(report.ok ? 200 : 500, {
     ...report,
@@ -72,4 +70,9 @@ function isMay2026Window(from, to) {
 
 function isTruthy(value) {
   return ["1", "true", "yes", "apply"].includes(String(value || "").trim().toLowerCase());
+}
+
+async function loadBackfillReportBuilder() {
+  const module = await import("../scripts/backfill-daily-balance-snapshots.mjs");
+  return module.buildBackfillDailyBalanceSnapshotsReport;
 }

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   MAY_2026_BACKFILL_CONFIRMATION,
@@ -73,4 +75,13 @@ test("daily balance backfill route rejects non-May windows", async () => {
   assert.equal(result.status, 400);
   assert.equal(result.body.ok, false);
   assert.equal(result.body.error, "may_2026_window_required");
+});
+
+test("daily balance backfill route avoids static mjs imports for Vercel CJS bundling", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "server/backfill-daily-balance-snapshots-route.js"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(source, /^import .*scripts\/backfill-daily-balance-snapshots\.mjs/m);
 });
