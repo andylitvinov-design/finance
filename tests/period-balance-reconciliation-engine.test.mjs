@@ -1142,3 +1142,29 @@ test("May reconciliation summary uses Revolut currency-split openings instead of
   assert.equal(rows.some((row) => row.channel === "REVOLUT дол" && row.owner_input === 378), false);
   assert.deepEqual(operations, originalOperations);
 });
+
+test("May period reconciliation uses owner Revolut split opening instead of stale combined USD fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "REVOLUT дол", currency: "USD", amount: "378", amount_usd: "378", sourceSheet: "Остатки" },
+      { date: "2026-05-31", channel: "REVOLUT дол", currency: "USD", amount: "18.38", amount_usd: "18.38", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "435", amount_usd: "435", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", amount_usd: "254", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "26670", amount_usd: "603", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "8519", amount_usd: "8519", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount_usd: "1722", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount_usd: "1284", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "трансервайз дол", currency: "USD", amount: "2639", amount_usd: "2639", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((entry) => entry.channel === "REVOLUT дол" && entry.currency === "USD");
+  assert.equal(row.opening_balance, 18.38);
+  assert.equal(row.computed_real_closing_balance, 18.38);
+  assert.equal(row.factual_closing_balance, 18.38);
+  assert.equal(row.real_difference, 0);
+  assert.equal(row.status, "ok");
+});
