@@ -307,6 +307,48 @@ test("reconciliation report classifies transfers per channel while keeping total
   assert.equal(paypal.transfer_out, 0);
   assert.equal(paypal.expected_later_balance, 150);
   assert.equal(result.reconciliation_report_summary.transfer_net, 0);
+  assert.equal(result.reconciliation_report_summary.owner_confirmed_opening_2026_05_01_total_usd, 24993);
+});
+
+test("single-row transfers synthesize the receiving channel in the report", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-10",
+        fromChannel: "wise usd",
+        toChannel: "paypal usd",
+        currency: "USD",
+        amountNet: "100",
+        balanceAmount: -100,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "transfer",
+          from_channel: "wise usd",
+          to_channel: "paypal usd",
+          currency: "USD",
+          amount_net: "100",
+          amount_usd: "100",
+          balance_amount: -100,
+          transfer_group_id: "transfer-1",
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "500" },
+      { date: "2026-05-31", channel: "wise usd", currency: "USD", amount: "400" },
+      { date: "2026-05-01", channel: "paypal usd", currency: "USD", amount: "50" },
+      { date: "2026-05-31", channel: "paypal usd", currency: "USD", amount: "150" },
+    ],
+  });
+
+  const wise = result.reconciliation_report.find((row) => row.channel === "wise usd");
+  const paypal = result.reconciliation_report.find((row) => row.channel === "paypal usd");
+  assert.equal(wise.transfer_out, 100);
+  assert.equal(wise.expected_later_balance, 400);
+  assert.equal(paypal.transfer_in, 100);
+  assert.equal(paypal.expected_later_balance, 150);
+  assert.equal(result.reconciliation_report_summary.transfer_net, 0);
 });
 
 test("reconciliation report detects likely channel alias mismatch", () => {

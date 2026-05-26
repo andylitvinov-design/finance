@@ -50,7 +50,7 @@ export function buildPeriodBalanceReconciliation({
     .filter(Boolean)
     .sort(compareRows);
 
-  const reconciliationReport = buildReconciliationReport(rows, balanceIndex);
+  const reconciliationReport = buildReconciliationReport(rows, balanceIndex, { period: { from, to } });
   const byCurrency = buildCurrencyRows(rows);
   const missingAmountNetRows = rows.reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
   const summary = buildSummary(rows, {
@@ -407,6 +407,26 @@ function buildRealMovementIndex(operations, period) {
     current.rows += 1;
     current.movement_dates.push(date);
     byKey.set(key, current);
+
+    const syntheticTransfer = buildSyntheticTransferIn(row, {
+      date,
+      currency,
+      balanceAmount,
+      amountUsd,
+      operations,
+    });
+    if (syntheticTransfer) {
+      const syntheticKey = makeKey(syntheticTransfer.channel, currency);
+      const syntheticCurrent = byKey.get(syntheticKey) || emptyMovement();
+      addMovementBreakdown(syntheticCurrent, row, {
+        balanceAmount: syntheticTransfer.balanceAmount,
+        amountUsd: syntheticTransfer.amountUsd,
+        currency,
+      });
+      syntheticCurrent.rows += 1;
+      syntheticCurrent.movement_dates.push(date);
+      byKey.set(syntheticKey, syntheticCurrent);
+    }
   }
 
   return {
@@ -414,6 +434,42 @@ function buildRealMovementIndex(operations, period) {
     missing_amount_net_rows: missingAmountNetRows,
     paypal_missing_amount_net_rows: paypalMissingAmountNetRows,
   };
+}
+
+function buildSyntheticTransferIn(row, { date, currency, balanceAmount, amountUsd, operations }) {
+  if (normalizeOperation(row) !== "transfer" || balanceAmount >= 0) return null;
+  const ledger = row?.ledgerV2 || {};
+  const toChannel = String(ledger.to_channel || row?.toChannel || "").trim();
+  const fromChannel = String(ledger.from_channel || row?.fromChannel || "").trim();
+  if (!toChannel || !fromChannel) return null;
+  if (hasOppositeTransferLeg(row, { date, currency, amount: Math.abs(balanceAmount), operations })) return null;
+  return {
+    channel: toChannel,
+    balanceAmount: Math.abs(balanceAmount),
+    amountUsd: amountUsd === null ? null : Math.abs(amountUsd),
+  };
+}
+
+function hasOppositeTransferLeg(row, { date, currency, amount, operations }) {
+  const ledger = row?.ledgerV2 || {};
+  const groupId = String(ledger.transfer_group_id || row?.transferGroupId || row?.transfer_group_id || "").trim();
+  const fromChannel = String(ledger.from_channel || row?.fromChannel || "").trim();
+  const toChannel = String(ledger.to_channel || row?.toChannel || "").trim();
+  return (operations || []).some((candidate) => {
+    if (candidate === row || normalizeOperation(candidate) !== "transfer") return false;
+    const candidateLedger = candidate?.ledgerV2 || {};
+    const candidateDate = normalizeDate(candidate?.date ?? candidateLedger.date);
+    const candidateCurrency = String(candidateLedger.currency || candidate?.currency || "").trim().toUpperCase();
+    const candidateAmount = parseNumber(candidateLedger.balance_amount ?? candidate?.balanceAmount);
+    if (candidateDate !== date || candidateCurrency !== currency || candidateAmount === null || candidateAmount <= 0) return false;
+    const candidateGroupId = String(candidateLedger.transfer_group_id || candidate?.transferGroupId || candidate?.transfer_group_id || "").trim();
+    if (groupId && candidateGroupId && groupId === candidateGroupId) return true;
+    const candidateFrom = String(candidateLedger.from_channel || candidate?.fromChannel || "").trim();
+    const candidateTo = String(candidateLedger.to_channel || candidate?.toChannel || "").trim();
+    return candidateFrom === fromChannel
+      && candidateTo === toChannel
+      && Math.abs(Math.abs(candidateAmount) - amount) < 0.0001;
+  });
 }
 
 function getMovementWindowStart(openingDate, from) {
@@ -754,7 +810,7 @@ function buildCurrencyRows(rows) {
     .sort((left, right) => left.currency.localeCompare(right.currency));
 }
 
-function buildReconciliationReport(rows = [], balanceIndex) {
+function buildReconciliationReport(rows = [], balanceIndex, { period = {} } = {}) {
   const reportRows = rows.map((row) => {
     const key = makeKey(row.channel, row.currency);
     const aliasCandidate = balanceIndex?.findAliasCandidate?.(key) || null;
@@ -800,10 +856,15 @@ function buildReconciliationReport(rows = [], balanceIndex) {
     };
   });
 
+  const systemOpeningTotalUsd = round(reportRows.reduce((sum, row) => sum + Number(row.opening_2026_05_01_usd || 0), 0));
+  const ownerConfirmedOpeningTotalUsd = getOwnerConfirmedOpeningTotalUsd(period);
   return {
     rows: reportRows,
     summary: {
       rows: reportRows.length,
+      owner_confirmed_opening_2026_05_01_total_usd: ownerConfirmedOpeningTotalUsd,
+      system_opening_2026_05_01_total_usd: systemOpeningTotalUsd,
+      opening_total_diff_usd: ownerConfirmedOpeningTotalUsd === null ? null : round(systemOpeningTotalUsd - ownerConfirmedOpeningTotalUsd),
       status_counts: reportRows.reduce((counts, row) => {
         counts[row.status] = (counts[row.status] || 0) + 1;
         return counts;
@@ -814,6 +875,10 @@ function buildReconciliationReport(rows = [], balanceIndex) {
       diff_usd: round(reportRows.reduce((sum, row) => sum + Number(row.diff_usd || 0), 0)),
     },
   };
+}
+
+function getOwnerConfirmedOpeningTotalUsd(period = {}) {
+  return period.from === "2026-05-01" ? 24993 : null;
 }
 
 function classifySuspectedCause(row, aliasCandidate) {
