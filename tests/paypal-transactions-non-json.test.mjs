@@ -470,3 +470,27 @@ test("income with PayPal fee preserves gross amount, fee metadata, direction, an
   assert.equal(fee?.direction, "expense");
   assert.equal(fee?.localAmount, 12.94);
 });
+
+test("income without PayPal fee keeps gross but leaves net empty for incomplete balance", () => {
+  const entries = normalizePayPalTransactionDetails([
+    {
+      transaction_info: {
+        transaction_id: "TXN-INCOME-NO-FEE",
+        transaction_initiation_date: "2026-05-11T12:00:00Z",
+        transaction_amount: { value: "36.00", currency_code: "EUR" }
+      }
+    }
+  ]);
+
+  const income = entries.find((entry) => entry.id === "paypal-TXN-INCOME-NO-FEE");
+
+  assert.equal(income?.localAmount, 36);
+  assert.equal(income?.grossAmount, 36);
+  assert.equal(income?.feeAmount, null);
+  assert.equal(income?.netAmount, null);
+  assert.equal(income?.amountNet, null);
+  assert.equal(income?.amount_net, null);
+  assert.equal(income?.usdAmount, null);
+  assert.equal(income?.direction, "income");
+  assert.equal(entries.some((entry) => entry.id === "paypal-fee-TXN-INCOME-NO-FEE"), false);
+});
