@@ -135,7 +135,7 @@ function rowScore(row) {
   let score = 0;
   if (row.hasNumericAmount) score += 1000;
   if (["ok", "zero_balance", "derived_from_confirmed_balance", "derived_from_confirmed_opening"].includes(row.status)) score += 100;
-  score += sourceRank(row) * 10;
+  score += sourceRank(row) * 100;
   score += row.values.filter((cell) => String(cell ?? "").trim()).length;
   return score;
 }
