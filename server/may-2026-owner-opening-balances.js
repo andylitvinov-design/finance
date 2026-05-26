@@ -53,9 +53,11 @@ const DETECTION_KEYS = new Set([
   balanceKey("нал-мам-евро", "EUR"),
 ]);
 
-export function buildOwnerMayOpeningBalanceRows(rows = OWNER_MAY_OPENING_BALANCES) {
+export function buildOwnerMayOpeningBalanceRows(rows = OWNER_MAY_OPENING_BALANCES, options = {}) {
   const validation = validateOwnerMayOpeningBalances(rows);
-  if (!validation.ok) {
+  const adjustedTotalOnly = options.allowAdjustedTotal === true
+    && validation.errors.every((error) => /^owner total_usd mismatch: /.test(error));
+  if (!validation.ok && !adjustedTotalOnly) {
     throw new Error(`Invalid owner-confirmed 2026-05-01 opening balances: ${validation.errors.join("; ")}`);
   }
   return rows.map((row) => ({
@@ -83,10 +85,26 @@ export function applyOwnerMayOpeningBalanceSeed(balanceRows = [], options = {}) 
       rows: balanceRows,
       applied: false,
       owner_total_usd: ownerMayOpeningTotalUsd(),
+      owner_input_opening_total_usd: ownerMayOpeningTotalUsd(),
+      reconciliation_adjusted_opening: buildReconciliationAdjustedMayOpening({
+        ownerRows: options.ownerRows || OWNER_MAY_OPENING_BALANCES,
+        balanceRows,
+        operations: options.operations || [],
+        period: options.period || {},
+      }),
       warnings: [],
     };
   }
-  const ownerRows = buildOwnerMayOpeningBalanceRows(options.ownerRows || OWNER_MAY_OPENING_BALANCES);
+  const reconciliationAdjustedOpening = buildReconciliationAdjustedMayOpening({
+    ownerRows: options.ownerRows || OWNER_MAY_OPENING_BALANCES,
+    balanceRows,
+    operations: options.operations || [],
+    period: options.period || {},
+  });
+  const ownerRows = buildOwnerMayOpeningBalanceRows(
+    buildAdjustedOwnerRows(options.ownerRows || OWNER_MAY_OPENING_BALANCES, reconciliationAdjustedOpening),
+    { allowAdjustedTotal: true }
+  );
   const filtered = (balanceRows || []).filter((row) => {
     if (normalizeDate(row?.date) !== OWNER_MAY_OPENING_BALANCE_DATE) return true;
     return !SUPERSEDED_MAY_OPENING_KEYS.has(balanceKey(row?.channel || row?.accountName || row?.account, row?.currency));
@@ -95,6 +113,10 @@ export function applyOwnerMayOpeningBalanceSeed(balanceRows = [], options = {}) 
     rows: [...filtered, ...ownerRows],
     applied: true,
     owner_total_usd: ownerMayOpeningTotalUsd(options.ownerRows || OWNER_MAY_OPENING_BALANCES),
+    owner_input_opening_total_usd: reconciliationAdjustedOpening.owner_input_opening_total_usd,
+    reconciliation_adjusted_opening_total_usd: reconciliationAdjustedOpening.reconciliation_adjusted_opening_total_usd,
+    diff_from_owner_input_total_usd: reconciliationAdjustedOpening.diff_from_owner_input_total_usd,
+    reconciliation_adjusted_opening: reconciliationAdjustedOpening,
     warnings: [`owner-confirmed ${OWNER_MAY_OPENING_BALANCE_DATE} opening balance seed applied; total_usd=24993`],
   };
 }
@@ -133,6 +155,98 @@ export function ownerMayOpeningTotalUsd(rows = OWNER_MAY_OPENING_BALANCES) {
   return round((rows || []).reduce((sum, row) => sum + Number(row?.amountUsd || 0), 0));
 }
 
+export function buildReconciliationAdjustedMayOpening({
+  ownerRows = OWNER_MAY_OPENING_BALANCES,
+  balanceRows = [],
+  operations = [],
+  period = {},
+} = {}) {
+  const ownerByKey = new Map();
+  for (const row of ownerRows || []) {
+    ownerByKey.set(balanceKey(row.channel, row.currency), row);
+  }
+  const latestFacts = buildLatestLaterConfirmedBalanceIndex(balanceRows, period);
+  const keys = new Set([...ownerByKey.keys(), ...latestFacts.keys()]);
+  const rows = Array.from(keys).map((key) => {
+    const [channel, currency] = splitBalanceKey(key);
+    const owner = ownerByKey.get(key) || null;
+    const fact = latestFacts.get(key) || null;
+    const movement = fact
+      ? sumLedgerMovements({ operations, channel, currency, from: addDays(OWNER_MAY_OPENING_BALANCE_DATE, 1), to: fact.date })
+      : { native: 0, usd: 0, hasUsd: false };
+    const ownerInput = parseNumber(owner?.amount);
+    const ownerInputUsd = parseNumber(owner?.amountUsd);
+    const impliedOpening = fact ? round(fact.amount - movement.native) : null;
+    const impliedOpeningUsd = fact && fact.amount_usd !== null
+      ? round(fact.amount_usd - (movement.hasUsd ? movement.usd : 0))
+      : estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening: impliedOpening });
+    const diff = ownerInput !== null && impliedOpening !== null ? round(impliedOpening - ownerInput) : null;
+    const tolerance = getOpeningTolerance(currency);
+    const withinTolerance = diff !== null && Math.abs(diff) <= tolerance;
+
+    let reason = "missing_later_confirmed_balance";
+    let confidence = "medium";
+    let adjustedOpening = ownerInput;
+    let adjustedOpeningUsd = ownerInputUsd;
+
+    if (owner && fact && withinTolerance) {
+      reason = "rounding_or_fx";
+      confidence = "high";
+      adjustedOpening = impliedOpening;
+      adjustedOpeningUsd = impliedOpeningUsd ?? estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening });
+    } else if (owner && fact) {
+      reason = "needs_verification";
+      confidence = "low";
+    } else if (!owner && fact) {
+      reason = "candidate_missing_opening";
+      confidence = "low";
+      adjustedOpening = null;
+      adjustedOpeningUsd = null;
+    }
+
+    return {
+      channel,
+      currency,
+      owner_input: ownerInput,
+      owner_input_usd: ownerInputUsd,
+      owner_input_total_usd: ownerInputUsd,
+      implied_opening: impliedOpening,
+      implied_opening_usd: impliedOpeningUsd,
+      adjusted_opening: adjustedOpening,
+      adjusted_opening_usd: adjustedOpeningUsd,
+      diff,
+      tolerance,
+      reason,
+      adjustment_reason: reason,
+      confidence,
+      later_confirmed_balance: fact?.amount ?? null,
+      later_confirmed_balance_usd: fact?.amount_usd ?? null,
+      later_confirmed_balance_date: fact?.date || null,
+      ledger_movement_from_2026_05_02_to_confirmed_date: fact ? movement.native : null,
+      ledger_movement_usd_from_2026_05_02_to_confirmed_date: fact && movement.hasUsd ? movement.usd : null,
+      source: owner ? "owner_input" : "candidate_from_later_confirmed_balance",
+    };
+  }).sort((left, right) => left.channel === right.channel ? left.currency.localeCompare(right.currency) : left.channel.localeCompare(right.channel));
+
+  const ownerTotal = ownerMayOpeningTotalUsd(ownerRows);
+  const adjustedTotal = round(rows.reduce((sum, row) => sum + Number(row.adjusted_opening_usd ?? row.owner_input_usd ?? 0), 0));
+  const adjustedRows = rows.filter((row) => row.reason === "rounding_or_fx" && Math.abs(Number(row.diff || 0)) > 0);
+  const needsVerificationRows = rows.filter((row) => row.reason === "needs_verification" || row.reason === "candidate_missing_opening");
+
+  return {
+    owner_input_opening_total_usd: ownerTotal,
+    owner_input_total_usd: ownerTotal,
+    reconciliation_adjusted_opening_total_usd: adjustedTotal,
+    adjusted_total_usd: adjustedTotal,
+    diff_from_owner_input_total_usd: round(adjustedTotal - ownerTotal),
+    rows,
+    per_channel_table: rows,
+    adjusted_rows: adjustedRows,
+    needs_verification_rows: needsVerificationRows,
+    no_silent_overwrites: true,
+  };
+}
+
 export function isSupersededOwnerMayOpeningBalanceKey(channel, currency) {
   return SUPERSEDED_MAY_OPENING_KEYS.has(balanceKey(channel, currency));
 }
@@ -141,9 +255,130 @@ function balanceKey(channel, currency) {
   return `${String(channel || "").trim()}|${String(currency || "").trim().toUpperCase()}`;
 }
 
+function splitBalanceKey(key) {
+  const [channel, currency] = String(key || "").split("|");
+  return [channel || "", currency || ""];
+}
+
+function buildAdjustedOwnerRows(ownerRows, report) {
+  const rowsByKey = new Map((report?.rows || []).map((row) => [balanceKey(row.channel, row.currency), row]));
+  return (ownerRows || []).map((row) => {
+    const adjustment = rowsByKey.get(balanceKey(row.channel, row.currency));
+    if (!adjustment || adjustment.reason !== "rounding_or_fx") return row;
+    return {
+      ...row,
+      amount: adjustment.adjusted_opening ?? row.amount,
+      amountUsd: adjustment.adjusted_opening_usd ?? row.amountUsd,
+      ownerInputAmount: row.amount,
+      ownerInputAmountUsd: row.amountUsd,
+      adjustmentReason: adjustment.reason,
+    };
+  });
+}
+
+function buildLatestLaterConfirmedBalanceIndex(balanceRows = [], period = {}) {
+  const latest = new Map();
+  for (const row of balanceRows || []) {
+    const date = normalizeDate(row?.date);
+    if (!date || date <= OWNER_MAY_OPENING_BALANCE_DATE) continue;
+    const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+    if (!channel || !currency || amount === null) continue;
+    const key = balanceKey(channel, currency);
+    const current = latest.get(key);
+    if (current && current.date > date) continue;
+    latest.set(key, {
+      date,
+      channel,
+      currency,
+      amount,
+      amount_usd: resolveUsdAmount(row, amount, currency),
+    });
+  }
+  return latest;
+}
+
+function sumLedgerMovements({ operations = [], channel, currency, from, to }) {
+  let native = 0;
+  let usd = 0;
+  let hasUsd = false;
+  for (const operation of operations || []) {
+    const ledger = operation?.ledgerV2 || {};
+    const date = normalizeDate(operation?.date ?? ledger.date);
+    if (!date || date < from || date > to) continue;
+    const operationCurrency = String(ledger.currency || operation?.currency || "").trim().toUpperCase();
+    if (operationCurrency !== currency) continue;
+    const amount = parseNumber(ledger.balance_amount ?? operation?.balanceAmount);
+    if (amount === null) continue;
+    if (getMovementChannel(operation, amount) !== channel) continue;
+    native += amount;
+    const amountUsd = parseSignedUsdAmount(operation, amount, currency);
+    if (amountUsd !== null) {
+      usd += amountUsd;
+      hasUsd = true;
+    }
+  }
+  return { native: round(native), usd: round(usd), hasUsd };
+}
+
+function getMovementChannel(operation, amount) {
+  const ledger = operation?.ledgerV2 || {};
+  const from = String(ledger.from_channel || operation?.fromChannel || operation?.from_channel || "").trim();
+  const to = String(ledger.to_channel || operation?.toChannel || operation?.to_channel || "").trim();
+  const fallback = String(operation?.channel || operation?.accountName || operation?.account || "").trim();
+  return Number(amount) < 0 ? (from || fallback || to) : (to || fallback || from);
+}
+
+function parseSignedUsdAmount(operation, amount, currency) {
+  const ledger = operation?.ledgerV2 || {};
+  const parsed = parseNumber(ledger.amount_usd ?? operation?.amountUsd ?? operation?.amount_usd);
+  if (parsed !== null) return Number(amount) < 0 ? -Math.abs(parsed) : Math.abs(parsed);
+  if (isStableUsdCurrency(currency)) return amount;
+  return null;
+}
+
+function resolveUsdAmount(row, amount, currency) {
+  const parsed = parseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? row?.balance_usd);
+  if (parsed !== null) return parsed;
+  if (isStableUsdCurrency(currency)) return amount;
+  return null;
+}
+
+function estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening }) {
+  if (ownerInput === null || ownerInputUsd === null || adjustedOpening === null) return ownerInputUsd;
+  if (ownerInput === 0) return ownerInputUsd;
+  return round(adjustedOpening * (ownerInputUsd / ownerInput));
+}
+
+function getOpeningTolerance(currency) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  if (normalized === "UAH") return 5;
+  if (["BTC", "ETH", "BNB"].includes(normalized)) return 0.00000001;
+  return 0.5;
+}
+
+function isStableUsdCurrency(currency) {
+  return ["USD", "USDT", "USDC"].includes(String(currency || "").trim().toUpperCase());
+}
+
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function addDays(date, days) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const normalized = String(value).replace(",", ".").replace(/\s+/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function round(value) {

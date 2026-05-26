@@ -61,9 +61,13 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances?.balances) ? autoBalances.balances : [];
   const merged = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
-  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(merged.rows || merged.merged || []);
-  const balanceRows = ownerMayOpeningSeed.rows;
   const operations = Array.isArray(repository.operations) ? repository.operations : [];
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(merged.rows || merged.merged || [], {
+    operations,
+    period: { from, to },
+    force: from <= "2026-05-01" && to >= "2026-05-01",
+  });
+  const balanceRows = ownerMayOpeningSeed.rows;
   const calculated = buildDailyCalculatedBalances({
     operations,
     balanceRows,
@@ -97,6 +101,10 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
       stale_current_only_auto_rows: merged.autoIgnoredStaleCurrent || merged.auto_balance_rows_ignored_as_stale_current || 0,
       owner_confirmed_may_opening_balance_seed_applied: ownerMayOpeningSeed.applied,
       owner_confirmed_may_opening_total_usd: ownerMayOpeningSeed.applied ? ownerMayOpeningSeed.owner_total_usd : null,
+      owner_input_opening_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.owner_input_opening_total_usd ?? null,
+      reconciliation_adjusted_opening_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.reconciliation_adjusted_opening_total_usd ?? null,
+      diff_from_owner_input_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.diff_from_owner_input_total_usd ?? null,
+      reconciliation_adjusted_opening: ownerMayOpeningSeed.reconciliation_adjusted_opening,
     },
     save,
     warnings: [

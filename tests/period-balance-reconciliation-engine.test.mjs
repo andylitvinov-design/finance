@@ -351,6 +351,40 @@ test("single-row transfers synthesize the receiving channel in the report", () =
   assert.equal(result.reconciliation_report_summary.transfer_net, 0);
 });
 
+test("May reconciliation report exposes owner input and adjusted opening totals", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [{
+      date: "2026-05-02",
+      toChannel: "монобанк грн",
+      currency: "UAH",
+      amountNet: "10",
+      balanceAmount: 10,
+      ledgerV2: {
+        date: "2026-05-02",
+        operation: "income",
+        to_channel: "монобанк грн",
+        currency: "UAH",
+        amount_net: "10",
+        balance_amount: 10,
+      },
+    }],
+    balanceRows: [
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "26670", amount_usd: "603", sourceSheet: "Owner Confirmed" },
+      { date: "2026-05-20", channel: "монобанк грн", currency: "UAH", amount: "26680.14", amount_usd: "603.0032", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const summary = result.reconciliation_report_summary;
+  const mono = summary.opening_adjustment_rows.find((row) => row.channel === "монобанк грн");
+  assert.equal(summary.owner_input_opening_total_usd, 24993);
+  assert.equal(summary.reconciliation_adjusted_opening_total_usd > 24993, true);
+  assert.equal(mono.owner_input, 26670);
+  assert.equal(mono.implied_opening, 26670.14);
+  assert.equal(mono.adjusted_opening, 26670.14);
+  assert.equal(mono.reason, "rounding_or_fx");
+});
+
 test("reconciliation report detects likely channel alias mismatch", () => {
   const result = buildPeriodBalanceReconciliation({
     period,
