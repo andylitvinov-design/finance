@@ -1,4 +1,5 @@
 export const MAY_2026_BACKFILL_CONFIRMATION = "apply-may-2026-daily-balance-backfill";
+export const DAILY_BALANCE_BACKFILL_CONFIRMATION = "apply-daily-balance-backfill";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -25,20 +26,20 @@ export async function runDailyBalanceBackfillRoute(options = {}) {
   const query = options.query || {};
   const from = normalizeDate(query.from);
   const to = normalizeDate(query.to);
-  if (!isMay2026Window(from, to)) {
+  if (!isValidDateWindow(from, to)) {
     return jsonResult(400, {
       ok: false,
-      error: "may_2026_window_required",
-      message: "This guarded route only backfills dates inside 2026-05-01..2026-05-31.",
+      error: "valid_date_range_required",
+      message: "Pass from and to as YYYY-MM-DD with from <= to.",
     });
   }
 
   const apply = isTruthy(query.apply || query.write);
-  if (apply && String(query.confirm || "").trim() !== MAY_2026_BACKFILL_CONFIRMATION) {
+  if (apply && !isAcceptedConfirmation({ from, to, confirm: query.confirm })) {
     return jsonResult(403, {
       ok: false,
       error: "apply_confirmation_required",
-      message: `Pass confirm=${MAY_2026_BACKFILL_CONFIRMATION} with apply=1 to write derived rows.`,
+      message: `Pass confirm=${DAILY_BALANCE_BACKFILL_CONFIRMATION} with apply=1 to write derived rows outside the legacy May 2026 backfill window.`,
     });
   }
 
@@ -48,7 +49,8 @@ export async function runDailyBalanceBackfillRoute(options = {}) {
     ...report,
     dryRun: !apply,
     route_guard: {
-      may_2026_only: true,
+      may_2026_only: false,
+      range_limited_to_may_2026: false,
       apply_requires_confirmation: true,
       confirmation: apply ? "accepted" : "not_requested",
     },
@@ -64,8 +66,18 @@ function normalizeDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
 }
 
+function isValidDateWindow(from, to) {
+  return Boolean(from && to && from <= to);
+}
+
 function isMay2026Window(from, to) {
   return from >= "2026-05-01" && to <= "2026-05-31" && from <= to;
+}
+
+function isAcceptedConfirmation({ from, to, confirm }) {
+  const value = String(confirm || "").trim();
+  if (value === DAILY_BALANCE_BACKFILL_CONFIRMATION) return true;
+  return isMay2026Window(from, to) && value === MAY_2026_BACKFILL_CONFIRMATION;
 }
 
 function isTruthy(value) {
