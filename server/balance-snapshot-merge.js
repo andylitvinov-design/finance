@@ -63,12 +63,13 @@ function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
     row.source,
     row.fact_source,
     row.provider,
+    row.status,
     row.comment,
     row.sourceSheet,
   ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/derived_from_confirmed_balance|paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(text)) return "derived_balance";
   if (/manual[_ -]owner[_ -]confirmed|owner[_ -]confirmed/.test(text)) return "manual_fact";
   if (/manual_fact|paypal_manual_balance|paypal_manual_confirmed_balance|manual paypal balance|manual confirmed|manual fact/.test(text)) return "manual_fact";
-  if (/derived_from_confirmed_balance|paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed paypal balance/.test(text)) return "derived_balance";
   if (/auto snapshot|provider_auto|provider|wise|paypal|monobank|binance|privat|yoomoney/.test(text)) return "provider_auto";
   return fallback;
 }
