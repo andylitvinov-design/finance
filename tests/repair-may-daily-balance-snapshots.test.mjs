@@ -61,6 +61,22 @@ test("repair May daily balance snapshots apply writes deduped rows and keeps num
   assert.equal(report.save.rowCount, 1);
 });
 
+test("repair May daily balance snapshots prefers provider auto rows over derived rows when both are numeric", async () => {
+  const report = await buildRepairMayDailyBalanceSnapshotsReport({
+    from: "2026-05-17",
+    to: "2026-05-17",
+    readValues: async () => [
+      header,
+      ["2026-05-17", "wise", "трансервайз евро", "0", "EUR", "1", "0", "wise_auto", "2026-05-17T23:00:00.000Z", "wise-provider", "zero_balance", "auto daily provider snapshot"],
+      ["2026-05-17", "derived", "трансервайз евро", "0", "EUR", "1", "0", "provider_auto", "2026-05-18T00:00:00.000Z", "derived-provider", "derived_from_confirmed_balance", "derived from confirmed balance with extra metadata"],
+    ],
+  });
+
+  assert.equal(report.duplicate_groups_count, 1);
+  assert.equal(report.duplicate_groups[0].kept.raw_source_id, "wise-provider");
+  assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "derived-provider");
+});
+
 test("repair May daily balance snapshots refuses apply without confirmation", async () => {
   await assert.rejects(
     () => buildRepairMayDailyBalanceSnapshotsReport({

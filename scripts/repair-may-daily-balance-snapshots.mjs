@@ -142,9 +142,11 @@ function rowScore(row) {
 
 function sourceRank(row) {
   const text = normalizeText([row.source, row.provider, row.comment, row.status].join(" "));
+  const status = normalizeText(row.status);
   if (/manual|user confirmed|owner confirmed|paypal manual/.test(text)) return 9;
-  if (/provider auto|wise auto|paypal auto|monobank auto|binance auto|privatbank auto|yoomoney auto|tdbank auto|payoneer auto|revolut auto/.test(text)) return 8;
-  if (/derived from confirmed|derived_from_confirmed/.test(text)) return 5;
+  if (/derived from confirmed|derived confirmed/.test(status)) return 5;
+  if (/provider auto|wise auto|paypal auto|monobank auto|binance auto|privatbank auto|yoomoney auto|tdbank auto|payoneer auto|revolut auto|auto daily provider snapshot/.test(text)) return 8;
+  if (/derived from confirmed|derived confirmed/.test(text)) return 5;
   if (/provider error|needs provider permission|missing provider balance/.test(text)) return 1;
   return 3;
 }
@@ -188,7 +190,8 @@ function buildHeaderIndexes(header = []) {
 }
 
 function findIndex(header, names) {
-  const index = header.findIndex((cell) => names.includes(cell));
+  const normalizedNames = names.map(normalizeText);
+  const index = header.findIndex((cell) => normalizedNames.includes(cell));
   return index === -1 ? 0 : index;
 }
 
@@ -282,7 +285,7 @@ function normalizeChannel(value) {
 }
 
 function normalizeText(value) {
-  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 }
 
 function parseNumber(value) {
