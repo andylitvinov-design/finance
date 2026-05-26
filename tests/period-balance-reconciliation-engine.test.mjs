@@ -385,7 +385,7 @@ test("May reconciliation report exposes owner input and adjusted opening totals"
   assert.equal(mono.reason, "rounding_or_fx");
 });
 
-test("May reconciliation summary exposes PayPal pending candidates and movement row diagnostics", () => {
+test("May reconciliation summary finalizes PayPal candidates when movement row diagnostics verify amount_net", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-31" },
     operations: [
@@ -483,8 +483,10 @@ test("May reconciliation summary exposes PayPal pending candidates and movement 
   const usd = summary.opening_adjustment_rows.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
 
   assert.equal(usd.planned_opening_candidate, 868.69);
-  assert.equal(usd.status, "pending_movement_verification");
-  assert.equal(usd.adjusted_opening, 435);
+  assert.equal(usd.status, "adjusted");
+  assert.equal(usd.reason, "paypal_movement_verified");
+  assert.equal(usd.adjusted_opening, 868.69);
+  assert.equal(summary.pending_movement_verification_rows.length, 0);
   assert.deepEqual(summary.paypal_movement_diagnostics.map((row) => row.source_row), [501, 504, 502, 503]);
   assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).included_in_paypal_movement_sum, true);
   assert.equal(summary.paypal_movement_diagnostics.find((row) => row.source_row === 501).gross, -850);

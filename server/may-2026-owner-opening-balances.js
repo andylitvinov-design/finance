@@ -56,6 +56,11 @@ const PAYPAL_PLANNED_OPENING_KEYS = new Set([
 
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER = [501, 504, 502, 503];
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS = new Set(PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER);
+const PAYPAL_VERIFIED_OPENING_DIAGNOSTIC_ROWS_BY_KEY = new Map([
+  [balanceKey("пейпал дол", "USD"), [501, 504]],
+  [balanceKey("пейпал евр", "EUR"), [502]],
+  [balanceKey("пейпал сad", "CAD"), [503]],
+]);
 
 const SUPERSEDED_MAY_OPENING_KEYS = new Set([
   ...OWNER_MAY_OPENING_BALANCES.map((row) => balanceKey(row.channel, row.currency)),
@@ -245,6 +250,14 @@ export function buildReconciliationAdjustedMayOpening({
       plannedOpeningCandidateUsd = impliedOpeningUsd;
       adjustedOpening = ownerInput;
       adjustedOpeningUsd = ownerInputUsd;
+
+      if (paypalOpeningMovementDiagnosticsAreVerified({ operations, key, fact })) {
+        reason = "paypal_movement_verified";
+        confidence = "high";
+        status = "adjusted";
+        adjustedOpening = impliedOpening;
+        adjustedOpeningUsd = impliedOpeningUsd ?? estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening });
+      }
     }
 
     return {
@@ -277,7 +290,7 @@ export function buildReconciliationAdjustedMayOpening({
 
   const ownerTotal = ownerMayOpeningTotalUsd(ownerRows);
   const adjustedTotal = round(rows.reduce((sum, row) => sum + Number(row.adjusted_opening_usd ?? row.owner_input_usd ?? 0), 0));
-  const adjustedRows = rows.filter((row) => row.reason === "rounding_or_fx" && Math.abs(Number(row.diff || 0)) > 0);
+  const adjustedRows = rows.filter((row) => row.status === "adjusted" && Math.abs(Number(row.diff || 0)) > 0);
   const needsVerificationRows = rows.filter((row) => row.reason === "needs_verification" || row.reason === "candidate_missing_opening");
   const pendingMovementVerificationRows = rows.filter((row) => row.status === "pending_movement_verification");
   const paypalMovementDiagnostics = buildPayPalMovementDiagnostics({ operations, rows });
@@ -385,6 +398,21 @@ function buildPayPalMovementDiagnostics({ operations = [], rows = [] } = {}) {
     .sort((left, right) => PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER.indexOf(left.source_row) - PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER.indexOf(right.source_row));
 }
 
+function paypalOpeningMovementDiagnosticsAreVerified({ operations = [], key, fact } = {}) {
+  const requiredRows = PAYPAL_VERIFIED_OPENING_DIAGNOSTIC_ROWS_BY_KEY.get(key) || [];
+  if (!requiredRows.length || !fact?.date) return false;
+  const matchedRows = new Set();
+  for (const operation of operations || []) {
+    const diagnostic = buildPayPalMovementDiagnostic(operation, new Map());
+    if (!diagnostic || !requiredRows.includes(diagnostic.source_row)) continue;
+    if (diagnostic.date <= OWNER_MAY_OPENING_BALANCE_DATE || diagnostic.date > fact.date) return false;
+    if (!Number.isFinite(diagnostic.amount_net)) return false;
+    if (!diagnostic.raw_source_id) return false;
+    matchedRows.add(diagnostic.source_row);
+  }
+  return requiredRows.every((sourceRow) => matchedRows.has(sourceRow));
+}
+
 function buildPayPalMovementDiagnostic(operation, paypalRowsByKey) {
   const sourceRow = parseSourceRow(operation);
   if (!PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROWS.has(sourceRow)) return null;
@@ -416,7 +444,7 @@ function buildPayPalMovementDiagnostic(operation, paypalRowsByKey) {
     counterparty: String(operation?.counterparty || operation?.counterpartyName || ledger.counterparty || "").trim() || null,
     description: String(operation?.description || ledger.description || operation?.comment || ledger.comment || "").trim() || null,
     after_2026_05_01: afterOpeningDate,
-    included_in_paypal_movement_sum: Boolean(afterOpeningDate && paypalRow?.later_confirmed_balance_date && date <= paypalRow.later_confirmed_balance_date && paypalRow.status === "pending_movement_verification"),
+    included_in_paypal_movement_sum: Boolean(afterOpeningDate && paypalRow?.later_confirmed_balance_date && date <= paypalRow.later_confirmed_balance_date && ["adjusted", "pending_movement_verification"].includes(paypalRow.status)),
   };
 }
 
