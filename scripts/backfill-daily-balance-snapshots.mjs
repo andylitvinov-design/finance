@@ -6,6 +6,7 @@ import { saveAutoBalanceSnapshotRows } from "../server/auto-balance-snapshots.js
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { buildDailyCalculatedBalances } from "../server/daily-calculated-balances.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import { applyOwnerMayOpeningBalanceSeed } from "../server/may-2026-owner-opening-balances.js";
 
 const TARGET_SHEET = "Авто Остатки";
 const DERIVED_SOURCE = "derived_from_confirmed_balance";
@@ -60,7 +61,8 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances?.balances) ? autoBalances.balances : [];
   const merged = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
-  const balanceRows = merged.rows || merged.merged || [];
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(merged.rows || merged.merged || []);
+  const balanceRows = ownerMayOpeningSeed.rows;
   const operations = Array.isArray(repository.operations) ? repository.operations : [];
   const calculated = buildDailyCalculatedBalances({
     operations,
@@ -93,9 +95,12 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
       auto_used: merged.autoUsed || merged.auto_balance_rows_used_as_fallback || 0,
       auto_ignored_due_to_manual: merged.autoIgnored || merged.auto_balance_rows_ignored_due_to_manual || 0,
       stale_current_only_auto_rows: merged.autoIgnoredStaleCurrent || merged.auto_balance_rows_ignored_as_stale_current || 0,
+      owner_confirmed_may_opening_balance_seed_applied: ownerMayOpeningSeed.applied,
+      owner_confirmed_may_opening_total_usd: ownerMayOpeningSeed.applied ? ownerMayOpeningSeed.owner_total_usd : null,
     },
     save,
     warnings: [
+      ...ownerMayOpeningSeed.warnings,
       ...(repository.warnings || []),
       ...(autoBalances.warnings || []),
       ...(calculated.warnings || []),

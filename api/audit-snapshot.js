@@ -1,5 +1,6 @@
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
+import { applyOwnerMayOpeningBalanceSeed } from "../server/may-2026-owner-opening-balances.js";
 import { buildDailyCurrencyBalances } from "../server/daily-balance-engine.js";
 import { buildBalanceCoverage } from "../server/balance-coverage-engine.js";
 import {
@@ -77,7 +78,8 @@ export async function buildAuditSnapshot(options = {}) {
   const manualBalanceRows = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(repository.autoBalances) ? repository.autoBalances : [];
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalanceRows, autoBalanceRows);
-  const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
+  const balanceRows = ownerMayOpeningSeed.rows;
   const periodDailyBalanceResult = buildDailyCurrencyBalances(operations, balanceRows);
   const dailyBalanceResult = filterDailyBalanceResult(
     buildDailyCurrencyBalances(repository.operations || [], balanceRows),
@@ -98,6 +100,7 @@ export async function buildAuditSnapshot(options = {}) {
   });
 
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
+  warnings.push(...ownerMayOpeningSeed.warnings);
   warnings.push(...balanceResult.warnings);
   warnings.push(...paypal.warnings);
   warnings.push(...exchange.warnings);
@@ -157,6 +160,8 @@ export async function buildAuditSnapshot(options = {}) {
       manual_balance_rows: manualBalanceRows.length,
       auto_balance_rows: autoBalanceRows.length,
       merged_balance_rows: balanceRows.length,
+      owner_confirmed_may_opening_balance_seed_applied: ownerMayOpeningSeed.applied,
+      owner_confirmed_may_opening_total_usd: ownerMayOpeningSeed.applied ? ownerMayOpeningSeed.owner_total_usd : null,
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
       auto_balance_rows_ignored_as_stale_current: balanceSnapshotMerge.autoIgnoredStaleCurrent ?? balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current ?? null,

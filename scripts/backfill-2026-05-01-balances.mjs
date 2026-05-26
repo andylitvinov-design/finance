@@ -2,38 +2,34 @@
 
 import { saveAutoBalanceSnapshotRows } from "../server/auto-balance-snapshots.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
+import {
+  OWNER_MAY_OPENING_BALANCES,
+  ownerMayOpeningTotalUsd,
+  validateOwnerMayOpeningBalances,
+} from "../server/may-2026-owner-opening-balances.js";
 
 export const TARGET_DATE = "2026-05-01";
 export const BACKFILL_COMMENT = "user provided 2026-05-01 balance";
 
-export const USER_BALANCE_ROWS = [
-  { inputChannel: "яндекс", channel: "Яндекс руб", currency: "RUB", nativeAmount: null, amountUsd: 1722, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "пейпал дол", channel: "пейпал дол", currency: "USD", nativeAmount: 435.0, amountUsd: 435.0, valueType: "native_usd", resolution: "exact_known_channel" },
-  { inputChannel: "пейпал евр", channel: "пейпал евр", currency: "EUR", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "exact_known_channel" },
-  { inputChannel: "деп24-дол", channel: "деп24-дол", currency: "USD", nativeAmount: 0, amountUsd: 0, valueType: "native_usd", resolution: "user_provided_channel_not_in_config" },
-  { inputChannel: "деп24-евро", channel: "деп24-евро", currency: "EUR", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "user_provided_channel_not_in_config" },
-  { inputChannel: "пейпал cad", channel: "пейпал сad", currency: "CAD", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "known_channel_alias" },
-  { inputChannel: "24-грн", channel: "приват 24-грн", currency: "UAH", nativeAmount: 11239, amountUsd: 254, valueType: "native_plus_usd", resolution: "known_channel_alias" },
-  { inputChannel: "монобанк", channel: "монобанк грн", currency: "UAH", nativeAmount: 26670, amountUsd: 603, valueType: "native_plus_usd", resolution: "known_channel_alias" },
-  { inputChannel: "трансервайз евро", channel: "трансервайз евро", currency: "EUR", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "exact_known_channel" },
-  { inputChannel: "трансервайз дол", channel: "трансервайз дол", currency: "USD", nativeAmount: 2639, amountUsd: 2639, valueType: "native_usd", resolution: "exact_known_channel" },
-  { inputChannel: "REVOLUT", channel: "REVOLUT дол", currency: "EUR", nativeAmount: null, amountUsd: 378, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "Payoneer - eur", channel: "Payoneer - eur", currency: "EUR", nativeAmount: null, amountUsd: 1284, valueType: "usd_equivalent_only", resolution: "exact_known_channel" },
-  { inputChannel: "Payoneer - dol", channel: "Payoneer - dol", currency: "USD", nativeAmount: 3, amountUsd: 3, valueType: "native_usd", resolution: "exact_known_channel" },
-  { inputChannel: "Бинанс spot", channel: "Бинанс spot", currency: "USD", nativeAmount: 1090, amountUsd: 1090, valueType: "native_usd", resolution: "exact_known_channel" },
-  { inputChannel: "binance save", channel: "binance save", currency: "USD", nativeAmount: 8519, amountUsd: 8519, valueType: "native_usd", resolution: "exact_known_channel" },
-  { inputChannel: "Нал-я-евр", channel: "Налично -я-евр", currency: "EUR", nativeAmount: null, amountUsd: 91, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "местная валюты", channel: "местная валюты", currency: "LOCAL", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "known_channel_local_currency" },
-  { inputChannel: "БАНК КАНАДА", channel: "БАНК КАНАДА cad", currency: "CAD", nativeAmount: null, amountUsd: 7351, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "ФОП - мама", channel: "приват-фоп", currency: "UAH", nativeAmount: 0, amountUsd: 0, valueType: "explicit_zero", resolution: "known_channel_alias" },
-  { inputChannel: "24-евро", channel: "приват 24-евро", currency: "EUR", nativeAmount: null, amountUsd: 1.0, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "карта тай", channel: "", currency: "", nativeAmount: null, amountUsd: 0, valueType: "missing_channel_alias", resolution: "missing_channel_alias" },
-  { inputChannel: "нал-мам-е", channel: "нал-мам-евро", currency: "EUR", nativeAmount: null, amountUsd: 580, valueType: "usd_equivalent_only", resolution: "known_channel_alias" },
-  { inputChannel: "нал-мам-д", channel: "нал-мам-дол", currency: "USD", nativeAmount: null, amountUsd: null, valueType: "blank", resolution: "known_channel_alias" },
-  { inputChannel: "24-дол", channel: "приват 24-дол", currency: "USD", nativeAmount: 43, amountUsd: 43, valueType: "native_usd", resolution: "known_channel_alias" },
-];
+export const USER_BALANCE_ROWS = OWNER_MAY_OPENING_BALANCES.map((row) => ({
+  inputChannel: row.inputChannel,
+  channel: row.channel,
+  currency: row.currency,
+  nativeAmount: row.amount,
+  amountUsd: row.amountUsd,
+  valueType: row.amount === "" ? "usd_equivalent_only" : Number(row.amount) === 0 ? "explicit_zero" : "native_or_usd",
+  resolution: "owner_confirmed_channel",
+}));
 
 export function buildBackfillRows(rows = USER_BALANCE_ROWS) {
+  const validation = validateOwnerMayOpeningBalances(rows.map((row) => ({
+    inputChannel: row.inputChannel,
+    channel: row.channel,
+    currency: row.currency,
+    amount: row.nativeAmount,
+    amountUsd: row.amountUsd,
+  })));
+  if (!validation.ok) throw new Error(validation.errors.join("; "));
   return rows.map((row) => ({
     date: TARGET_DATE,
     channel: row.channel,
@@ -94,6 +90,7 @@ export function classifyBackfillRows(existingBalances = [], rows = buildBackfill
 export function summarizeBackfillPlan(classification) {
   return {
     target_date: TARGET_DATE,
+    expected_total_usd: ownerMayOpeningTotalUsd(),
     create: classification.rowsToWrite.filter((row) => row.action === "create").length,
     update: classification.rowsToWrite.filter((row) => row.action === "update").length,
     skip: classification.skippedRows.length,

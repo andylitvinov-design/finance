@@ -295,6 +295,8 @@ test("audit snapshot exposes additive daily currency balances without changing b
     "manual_balance_rows",
     "auto_balance_rows",
     "merged_balance_rows",
+    "owner_confirmed_may_opening_balance_seed_applied",
+    "owner_confirmed_may_opening_total_usd",
     "auto_balance_rows_used_as_fallback",
     "auto_balance_rows_ignored_due_to_manual",
     "auto_balance_rows_ignored_as_stale_current",
