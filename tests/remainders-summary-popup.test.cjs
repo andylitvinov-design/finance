@@ -141,16 +141,21 @@ test("buildRemaindersSummary calculates opening, closing, and delta totals", () 
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
     data: {
-      balance_coverage: {
+      balances: {
         rows: [
           { channel: "PayPal", opening_amount_usd: "100", closing_amount_usd: "125" },
           { paymentChannel: "Wise", startUsd: "200,50", endUsd: "150,25", deltaUsd: "999" },
         ],
       },
+      balance_coverage: {
+        rows: [
+          { channel: "Diagnostic fallback", opening_amount_usd: "1", closing_amount_usd: "2" },
+        ],
+      },
     },
   });
 
-  assert.equal(summary.source, "data.balance_coverage.rows");
+  assert.equal(summary.source, "data.balances.rows");
   assert.equal(summary.rows.length, 2);
   assert.equal(summary.rows[0].deltaUsd, 25);
   assert.equal(summary.rows[1].deltaUsd, -50.25);
@@ -341,10 +346,47 @@ test("remainders popup renders selected-date channel currency balances", () => {
   const text = collectText(block);
 
   assert.match(text, /Остатки на выбранную дату/);
+  assert.match(text, /Остатки сохранены на дату: 2026-05-17/);
   assert.match(text, /2026-05-17/);
-  assert.match(text, /merged/);
+  assert.doesNotMatch(text, /2026-05-17 · merged/);
+  assert.doesNotMatch(text, /merged/);
   assert.match(text, /трансервайз дол/);
   assert.match(text, /870,42/);
+  resetRemaindersModule();
+});
+
+test("selected-date balances resolve multiple snapshot amount field names", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({ balances: { remainders_rows: [] } }),
+    selectedDateSnapshot: {
+      selected_date: "2026-05-20",
+      selected_date_source: "merged",
+      selected_date_rows: [
+        { date: "2026-05-20", channel: "amount row", currency: "USD", amount: 1 },
+        { date: "2026-05-20", channel: "balance row", currency: "USD", balance: 2 },
+        { date: "2026-05-20", channel: "amount usd row", currency: "USD", amount_usd: 3 },
+        { date: "2026-05-20", channel: "balance usd row", currency: "USD", balance_usd: 4 },
+        { date: "2026-05-20", channel: "closing row", currency: "USD", closing_amount_usd: 5 },
+        { date: "2026-05-20", channel: "end row", currency: "USD", end_amount_usd: 6 },
+      ],
+      selected_date_diagnostics: [],
+    },
+  }, makeMockDocument());
+  const text = collectText(block);
+
+  assert.equal(api.getSnapshotAmount({ amount: 1 }), 1);
+  assert.equal(api.getSnapshotAmount({ balance: 2 }), 2);
+  assert.equal(api.getSnapshotAmount({ amount_usd: 3 }), 3);
+  assert.equal(api.getSnapshotAmount({ balance_usd: 4 }), 4);
+  assert.equal(api.getSnapshotAmount({ closing_amount_usd: 5 }), 5);
+  assert.equal(api.getSnapshotAmount({ end_amount_usd: 6 }), 6);
+  assert.match(text, /1/);
+  assert.match(text, /2/);
+  assert.match(text, /3/);
+  assert.match(text, /4/);
+  assert.match(text, /5/);
+  assert.match(text, /6/);
   resetRemaindersModule();
 });
 
@@ -370,7 +412,7 @@ test("remainders popup renders guarded backfill diagnostic for missing selected-
   resetRemaindersModule();
 });
 
-test("missing values render needs verification instead of invented balances", () => {
+test("balance coverage diagnostics are not selected as visible remainders rows", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
     data: {
@@ -385,9 +427,36 @@ test("missing values render needs verification instead of invented balances", ()
   const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
   const text = collectText(block);
 
-  assert.equal(summary.needsVerificationCount, 2);
+  assert.equal(summary.source, null);
+  assert.equal(summary.rows.length, 0);
+  assert.equal(summary.needsVerificationCount, 0);
   assert.match(text, /Канал/);
   assert.match(text, /ИТОГО/);
+  assert.match(text, /source not found for remainders summary/);
+  assert.doesNotMatch(text, /Missing opening/);
+  assert.doesNotMatch(text, /Missing closing/);
+  assert.equal(summary.totals.openingUsd, 0);
+  assert.equal(summary.totals.closingUsd, 0);
+  assert.equal(summary.totals.deltaUsd, 0);
+  resetRemaindersModule();
+});
+
+test("actual remainders rows still render needs verification without inventing balances", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { account: "Missing opening", closingUsd: 10, movement_usd: 10 },
+        { wallet: "Missing closing", openingUsd: 10 },
+      ],
+    },
+  });
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.equal(summary.needsVerificationCount, 2);
+  assert.match(text, /Missing opening/);
+  assert.match(text, /Missing closing/);
   assert.match(text, /needs verification/);
   assert.equal(summary.totals.openingUsd, 0);
   assert.equal(summary.totals.closingUsd, 0);
@@ -463,6 +532,87 @@ test("reconcile workflow posts selected period and renders structured result", a
   assert.match(collectText(panel), /computed rows: 1/);
   assert.match(collectText(panel), /Payoneer - dol USD: missing closing_usd/);
   assert.match(collectText(panel), /paypal: PayPal permission missing/);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
+test("reconcile button refetches selected-date balance snapshots after successful POST", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument({ from: "2026-05-01", to: "2026-05-20" });
+  const requested = [];
+  global.fetch = async (url, options = {}) => {
+    requested.push({ url, method: options.method || "GET" });
+    if (options.method === "POST") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            ok: true,
+            providers_checked: ["wise"],
+            balances_pulled: 1,
+            transfers_imported: 0,
+            computed_rows_count: 0,
+            provider_failures: [],
+            needs_verification_rows: [],
+            audit_snapshot: {
+              balances: {
+                remainders_rows: [
+                  { channel: "Audit row", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 2 },
+                ],
+              },
+            },
+          });
+        },
+      };
+    }
+    if (/\/api\/balance-snapshots/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            balance_snapshots: {
+              selected_date: "2026-05-20",
+              selected_date_source: "merged",
+              selected_date_rows: [
+                { date: "2026-05-20", channel: "Saved selected row", currency: "USD", amount: 827 },
+              ],
+              selected_date_diagnostics: [],
+            },
+          };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+  const parent = new TestElement("div");
+  const block = api.renderRemaindersSummaryBlock(api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "Initial row", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 1 },
+      ],
+    },
+  }), makeMockDocument());
+  parent.appendChild(block);
+
+  await block.children[1].children[0].listeners.click();
+  const text = collectText(parent.children[0]);
+
+  assert.ok(requested.some((entry) =>
+    entry.method === "POST" && /\/api\/index\?action=reconcileBalancesAndTransfers$/.test(entry.url)
+  ));
+  assert.ok(requested.some((entry) =>
+    entry.method === "GET" && /\/api\/balance-snapshots\?from=2026-05-20&to=2026-05-20$/.test(entry.url)
+  ));
+  assert.match(text, /Saved selected row/);
+  assert.match(text, /827/);
   resetRemaindersModule();
   delete global.location;
   delete global.fetch;

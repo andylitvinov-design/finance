@@ -14,6 +14,7 @@
   const DELTA_FIELDS = ["delta_amount_usd", "deltaUsd", "change_usd", "changeUsd"];
   const MOVEMENT_FIELDS = ["movement_usd", "movement_amount_usd", "movementUsd"];
   const PLANNED_FIELDS = ["planned_closing_amount_usd", "plannedClosingUsd", "planned_balance_usd"];
+  const SNAPSHOT_AMOUNT_FIELDS = ["amount", "balance", "amount_usd", "balance_usd", "closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "closing_balance_usd"];
 
   function getRootState() {
     if (typeof state !== "undefined") return state;
@@ -64,10 +65,6 @@
       ["balances.remainders_rows", input?.balances?.remainders_rows],
       ["data.balances.remaindersRows", data?.balances?.remaindersRows],
       ["balances.remaindersRows", input?.balances?.remaindersRows],
-      ["data.balance_coverage.rows", data?.balance_coverage?.rows],
-      ["data.balanceCoverage.rows", data?.balanceCoverage?.rows],
-      ["balance_coverage.rows", input?.balance_coverage?.rows],
-      ["balanceCoverage.rows", input?.balanceCoverage?.rows],
       ["data.balances.rows", data?.balances?.rows],
       ["balances.rows", input?.balances?.rows],
       ["data.manual.balanceRows", data?.manual?.balanceRows],
@@ -75,9 +72,24 @@
     ];
     for (const [source, value] of candidates) {
       const rows = asRows(value);
-      if (rows?.length) return { source, rows };
+      const visibleRows = rows?.filter(isVisibleRemaindersRow);
+      if (visibleRows?.length) return { source, rows: visibleRows };
     }
     return { source: null, rows: [] };
+  }
+
+  function isVisibleRemaindersRow(row) {
+    if (!row || typeof row !== "object") return false;
+    const rowSource = String(row.source || row.inclusion_source || "").toLowerCase();
+    const rowStatus = String(row.status || row.planned_balance_source || "").toLowerCase();
+    const fromCoverageDiagnostics = /balance[_\s-]?coverage/.test(rowSource);
+    const diagnosticOnly = rowStatus.includes("needs") || row.needs_verification === true;
+    const hasBalanceValue = [
+      firstDefined(row, OPENING_FIELDS),
+      firstDefined(row, CLOSING_FIELDS),
+      firstDefined(row, PLANNED_FIELDS),
+    ].some((value) => parseNumber(value) !== null);
+    return !(fromCoverageDiagnostics && diagnosticOnly && !hasBalanceValue);
   }
 
   function normalizeRemaindersRow(row) {
@@ -277,12 +289,13 @@
     title.textContent = "Остатки на выбранную дату";
     section.appendChild(title);
 
-    const meta = doc.createElement("div");
-    meta.className = "tab-note";
-    meta.textContent = `${snapshot.selected_date || "Дата не выбрана"} · ${snapshot.selected_date_source || "none"}`;
-    section.appendChild(meta);
-
     if (rows.length) {
+      if (snapshot.selected_date) {
+        const meta = doc.createElement("div");
+        meta.className = "tab-note";
+        meta.textContent = `Остатки сохранены на дату: ${snapshot.selected_date}`;
+        section.appendChild(meta);
+      }
       const wrap = doc.createElement("div");
       wrap.className = "table-wrap remainders-summary-table-wrap";
       const table = doc.createElement("table");
@@ -297,7 +310,7 @@
         tr.appendChild(renderCell(doc, row.date || snapshot.selected_date || "—"));
         tr.appendChild(renderCell(doc, row.channel || "—"));
         tr.appendChild(renderCell(doc, row.currency || "—"));
-        tr.appendChild(renderCell(doc, formatSnapshotAmount(row.amount), "numeric"));
+        tr.appendChild(renderCell(doc, formatSnapshotAmount(getSnapshotAmount(row)), "numeric"));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -322,6 +335,10 @@
     return String(Math.round(parsed * 10000) / 10000).replace(".", ",");
   }
 
+  function getSnapshotAmount(row) {
+    return firstDefined(row, SNAPSHOT_AMOUNT_FIELDS);
+  }
+
   function renderRemaindersSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = REMAINDERS_BLOCK_ID;
@@ -344,7 +361,7 @@
       block.parentNode?.replaceChild?.(loading, block);
       try {
         const result = await runBalanceReconcileWorkflow();
-        const nextSummary = buildRemaindersSummary(result.audit_snapshot || {});
+        const nextSummary = await buildLiveRemaindersSummary(result.audit_snapshot || {});
         const next = renderRemaindersSummaryBlock({ ...nextSummary, reconcileResult: result }, doc);
         loading.parentNode?.replaceChild?.(next, loading);
       } catch (error) {
@@ -531,6 +548,7 @@
     REMAINDERS_BLOCK_ID,
     buildRemaindersSummary,
     buildLiveRemaindersSummary,
+    getSnapshotAmount,
     runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
     renderReconcileResult,
