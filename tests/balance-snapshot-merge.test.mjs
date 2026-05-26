@@ -86,3 +86,25 @@ test("blank Revolut auto snapshot does not overwrite manual confirmed balance", 
   assert.equal(result.rows[0].source, "manual_fact");
   assert.equal(result.rows[0].sourceSheet, "Остатки");
 });
+
+test("derived auto rows are not promoted to manual facts by provenance comments", () => {
+  const result = mergeManualAndAutoBalances(
+    [],
+    [
+      {
+        date: "2026-05-20",
+        provider: "derived",
+        channel: "REVOLUT фунт",
+        currency: "GBP",
+        amount: "0",
+        source: "provider_auto",
+        sourceSheet: "Авто Остатки",
+        status: "derived_from_confirmed_balance",
+        comment: "Derived from confirmed manual_fact balance on 2026-05-01 plus Ledger amount_net movements.",
+      },
+    ]
+  );
+
+  assert.equal(result.rows[0].source, "derived_balance");
+  assert.equal(result.rows[0].fact_source, "derived_balance");
+});

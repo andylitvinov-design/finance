@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildRepairMayDailyBalanceSnapshotsReport,
   parseArgs,
+  writeAutoBalanceValuesWithAccessToken,
 } from "../scripts/repair-may-daily-balance-snapshots.mjs";
 
 const header = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
@@ -149,4 +150,24 @@ test("repair May daily balance snapshots parses dry-run arguments by default", (
     json: true,
     help: false,
   });
+});
+
+test("repair May daily balance snapshots clears the sheet before compacted rewrite", async () => {
+  const calls = [];
+  const result = await writeAutoBalanceValuesWithAccessToken([header, ["2026-05-26"]], {
+    accessToken: "token",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        json: async () => url.endsWith(":clear") ? { clearedRange: "Авто Остатки!A:L" } : { updatedRows: 2 },
+      };
+    },
+  });
+
+  assert.equal(result.updatedRows, 2);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.method, "POST");
+  assert.match(calls[0].url, /%D0%90%D0%B2%D1%82%D0%BE%20%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8.*:clear$/);
+  assert.equal(calls[1].options.method, "PUT");
 });

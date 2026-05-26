@@ -235,7 +235,23 @@ async function readAutoBalanceValues({ fetchImpl = fetch } = {}) {
 
 async function writeAutoBalanceValues(values, { fetchImpl = fetch } = {}) {
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  return writeAutoBalanceValuesWithAccessToken(values, { fetchImpl, accessToken });
+}
+
+export async function writeAutoBalanceValuesWithAccessToken(values, { fetchImpl = fetch, accessToken } = {}) {
+  if (!accessToken) throw new Error("Google Sheets access token is required.");
   const range = encodeURIComponent(`'${AUTO_BALANCE_SHEET_NAME}'!A:L`);
+  const clearResponse = await fetchImpl(
+    `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}:clear`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({}),
+    }
+  );
+  const clearPayload = await clearResponse.json().catch(() => ({}));
+  if (!clearResponse.ok) throw new Error(clearPayload?.error?.message || `Clear ${AUTO_BALANCE_SHEET_NAME} failed with HTTP ${clearResponse.status}`);
+
   const response = await fetchImpl(
     `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`,
     {

@@ -659,11 +659,11 @@ function normalizeDisplaySource(row = {}) {
     row.sourceSheet,
     row.status,
   ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
-  if (/manual[_ -]owner[_ -]confirmed|owner[_ -]confirmed|manual_fact|manual confirmed|manual balance|manual_confirmed_balance|paypal_manual_balance|paypal_manual_confirmed_balance/.test(text)) {
-    return "manual_fact";
-  }
   if (/derived_from_confirmed_balance|paypal_derived_balance|derived_from_confirmed_opening|derived from latest confirmed/.test(text)) {
     return "derived_balance";
+  }
+  if (/manual[_ -]owner[_ -]confirmed|owner[_ -]confirmed|manual_fact|manual confirmed|manual balance|manual_confirmed_balance|paypal_manual_balance|paypal_manual_confirmed_balance/.test(text)) {
+    return "manual_fact";
   }
   if (/provider_auto|auto snapshot|provider|wise|paypal|binance|monobank|privat|yoomoney|revolut|payoneer/.test(text)) {
     return "provider_auto";
