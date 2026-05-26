@@ -77,6 +77,38 @@ test("repair May daily balance snapshots prefers provider auto rows over derived
   assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "derived-provider");
 });
 
+test("repair May daily balance snapshots keeps provider row even when derived row has richer metadata", async () => {
+  const report = await buildRepairMayDailyBalanceSnapshotsReport({
+    from: "2026-05-17",
+    to: "2026-05-17",
+    readValues: async () => [
+      header,
+      ["2026-05-17", "wise", "трансервайз евро", "0", "EUR", "", "", "wise_auto", "2026-05-17T23:00:00.000Z", "wise-provider", "zero_balance", "auto daily provider snapshot"],
+      ["2026-05-17", "derived", "трансервайз евро", "0", "EUR", "1.09", "0", "provider_auto", "2026-05-18T00:00:00.000Z", "derived-provider", "derived_from_confirmed_balance", "derived from confirmed balance with richer metadata"],
+    ],
+  });
+
+  assert.equal(report.duplicate_groups_count, 1);
+  assert.equal(report.duplicate_groups[0].kept.raw_source_id, "wise-provider");
+  assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "derived-provider");
+});
+
+test("repair May daily balance snapshots keeps numeric derived row over status-only provider row", async () => {
+  const report = await buildRepairMayDailyBalanceSnapshotsReport({
+    from: "2026-05-26",
+    to: "2026-05-26",
+    readValues: async () => [
+      header,
+      ["2026-05-26", "binance", "Binance funding", "", "USDT", "", "", "binance_auto", "2026-05-26T19:15:43.330Z", "binance:Binance funding:USDT", "missing_provider_balance", "missing_provider_balance"],
+      ["2026-05-26", "derived", "Binance funding", "0", "USDT", "1", "0", "provider_auto", "2026-05-26T06:21:49.802Z", "derived-provider", "derived_from_confirmed_balance", "derived numeric zero"],
+    ],
+  });
+
+  assert.equal(report.duplicate_groups_count, 1);
+  assert.equal(report.duplicate_groups[0].kept.raw_source_id, "derived-provider");
+  assert.equal(report.duplicate_groups[0].removed[0].raw_source_id, "binance:Binance funding:USDT");
+});
+
 test("repair May daily balance snapshots refuses apply without confirmation", async () => {
   await assert.rejects(
     () => buildRepairMayDailyBalanceSnapshotsReport({
