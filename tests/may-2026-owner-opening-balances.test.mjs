@@ -71,6 +71,23 @@ test("Binance spot combined owner input is split into USDT and USDC without chan
   assert.equal(saveUsdt.amountUsd, 8519);
 });
 
+test("Revolut combined owner input is superseded by explicit currency openings", () => {
+  const combined = OWNER_MAY_OPENING_BALANCES.find((row) => row.inputChannel === "REVOLUT" && row.channel === "REVOLUT дол");
+  const usd = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "REVOLUT дол" && row.currency === "USD");
+  const eur = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "REVOLUT евро" && row.currency === "EUR");
+  const chf = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "REVOLUT франк" && row.currency === "CHF");
+  const gbp = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "REVOLUT фунт" && row.currency === "GBP");
+
+  assert.equal(combined, undefined);
+  assert.equal(usd.amount, 18.38);
+  assert.equal(eur.amount, 213.48);
+  assert.equal(chf.amount, 15);
+  assert.equal(gbp.amount, 0);
+  assert.equal(usd.supersededOwnerInput.amount, 378);
+  assert.equal(usd.adjustmentReason, "owner_revolut_currency_split_from_new_screenshot");
+  assert.equal(eur.confidence, "medium-high");
+});
+
 test("native UAH balances keep owner-provided USD equivalents", () => {
   const rows = buildOwnerMayOpeningBalanceRows();
   const privat = rows.find((row) => row.channel === "приват 24-грн");
@@ -311,6 +328,74 @@ test("PayPal planned openings are pending movement verification and expose sourc
   assert.equal(diagnostics.find((row) => row.source_row === 501).raw_source_id, "paypal-usd-501");
   assert.equal(diagnostics.find((row) => row.source_row === 501).direction, "outflow");
   assert.equal(diagnostics.find((row) => row.source_row === 777), undefined);
+});
+
+test("Revolut split openings are derived from current screenshots minus post-May-1 movements", () => {
+  const operations = [
+    {
+      date: "2026-05-05",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: {
+        date: "2026-05-05",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "100",
+        balance_amount: -100,
+        counterparty: "Nataliia Minakova",
+      },
+    },
+    {
+      date: "2026-05-20",
+      fromChannel: "REVOLUT евро",
+      currency: "EUR",
+      amountNet: "2.74",
+      balanceAmount: -2.74,
+      ledgerV2: {
+        date: "2026-05-20",
+        operation: "expense",
+        from_channel: "REVOLUT евро",
+        currency: "EUR",
+        amount_net: "2.74",
+        balance_amount: -2.74,
+        counterparty: "Dia",
+      },
+    },
+  ];
+  const originalOperations = structuredClone(operations);
+
+  const report = buildReconciliationAdjustedMayOpening({
+    balanceRows: [
+      { date: "2026-05-21", channel: "REVOLUT дол", currency: "USD", amount: "18.38", amount_usd: "18.38", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT франк", currency: "CHF", amount: "15", sourceSheet: "Остатки" },
+      { date: "2026-05-21", channel: "REVOLUT фунт", currency: "GBP", amount: "0", sourceSheet: "Остатки" },
+    ],
+    operations,
+    period: { from: "2026-05-01", to: "2026-05-31" },
+  });
+
+  const usd = report.rows.find((row) => row.channel === "REVOLUT дол" && row.currency === "USD");
+  const eur = report.rows.find((row) => row.channel === "REVOLUT евро" && row.currency === "EUR");
+  const chf = report.rows.find((row) => row.channel === "REVOLUT франк" && row.currency === "CHF");
+  const gbp = report.rows.find((row) => row.channel === "REVOLUT фунт" && row.currency === "GBP");
+
+  assert.equal(usd.adjusted_opening, 18.38);
+  assert.equal(usd.superseded_owner_input.amount, 378);
+  assert.equal(usd.reason, "owner_revolut_currency_split_from_new_screenshot");
+  assert.equal(usd.confidence, "high");
+  assert.equal(eur.adjusted_opening, 213.48);
+  assert.equal(eur.ledger_movement_from_2026_05_02_to_confirmed_date, -102.74);
+  assert.equal(eur.confidence, "medium-high");
+  assert.equal(chf.adjusted_opening, 15);
+  assert.equal(chf.confidence, "high");
+  assert.equal(gbp.adjusted_opening, 0);
+  assert.equal(gbp.confidence, "high");
+  assert.equal(report.needs_verification_rows.some((row) => row.channel.startsWith("REVOLUT")), false);
+  assert.deepEqual(operations, originalOperations);
 });
 
 test("May daily balance backfill uses reconciliation-adjusted opening when justified", async () => {

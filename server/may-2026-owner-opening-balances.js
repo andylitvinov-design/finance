@@ -12,7 +12,50 @@ export const OWNER_MAY_OPENING_BALANCES = [
   { inputChannel: "монобанк", channel: "монобанк грн", currency: "UAH", amount: 26670, amountUsd: 603 },
   { inputChannel: "трансервайз евро", channel: "трансервайз евро", currency: "EUR", amount: 0, amountUsd: 0 },
   { inputChannel: "трансервайз дол", channel: "трансервайз дол", currency: "USD", amount: 2639, amountUsd: 2639 },
-  { inputChannel: "REVOLUT", channel: "REVOLUT дол", currency: "USD", amount: 378, amountUsd: 378 },
+  {
+    inputChannel: "REVOLUT USD",
+    channel: "REVOLUT дол",
+    currency: "USD",
+    amount: 18.38,
+    amountUsd: 18.38,
+    adjustmentReason: "owner_revolut_currency_split_from_new_screenshot",
+    confidence: "high",
+    confidenceNote: "new Revolut screenshot shows USD 18.38; old combined REVOLUT 378 is superseded",
+    supersededOwnerInput: { inputChannel: "REVOLUT", amount: 378, amountUsd: 378 },
+  },
+  {
+    inputChannel: "REVOLUT EUR",
+    channel: "REVOLUT евро",
+    currency: "EUR",
+    amount: 213.48,
+    amountUsd: 344.62,
+    adjustmentReason: "owner_revolut_currency_split_from_new_screenshot",
+    confidence: "medium-high",
+    confidenceNote: "new Revolut screenshot shows EUR 110.74 after visible post-May-1 EUR transactions -100 and -2.74",
+    supersededOwnerInput: { inputChannel: "REVOLUT", amount: 378, amountUsd: 378 },
+  },
+  {
+    inputChannel: "REVOLUT CHF",
+    channel: "REVOLUT франк",
+    currency: "CHF",
+    amount: 15,
+    amountUsd: 15,
+    adjustmentReason: "owner_revolut_currency_split_from_new_screenshot",
+    confidence: "high",
+    confidenceNote: "new Revolut screenshot shows CHF 15",
+    supersededOwnerInput: { inputChannel: "REVOLUT", amount: 378, amountUsd: 378 },
+  },
+  {
+    inputChannel: "REVOLUT GBP",
+    channel: "REVOLUT фунт",
+    currency: "GBP",
+    amount: 0,
+    amountUsd: 0,
+    adjustmentReason: "owner_revolut_currency_split_from_new_screenshot",
+    confidence: "high",
+    confidenceNote: "new Revolut screenshot shows GBP 0",
+    supersededOwnerInput: { inputChannel: "REVOLUT", amount: 378, amountUsd: 378 },
+  },
   { inputChannel: "Payoneer - eur", channel: "Payoneer - eur", currency: "EUR", amount: "", amountUsd: 1284 },
   { inputChannel: "Payoneer - dol", channel: "Payoneer - dol", currency: "USD", amount: 3, amountUsd: 3 },
   {
@@ -99,6 +142,7 @@ export function buildOwnerMayOpeningBalanceRows(rows = OWNER_MAY_OPENING_BALANCE
     amountUsd: row.amountUsd,
     amount_usd: row.amountUsd,
     balance_usd: row.amountUsd,
+    superseded_owner_input: row.supersededOwnerInput || null,
     source: OWNER_MAY_OPENING_BALANCE_SOURCE,
     fact_source: OWNER_MAY_OPENING_BALANCE_SOURCE,
     balanceSource: "manual_fact",
@@ -219,10 +263,11 @@ export function buildReconciliationAdjustedMayOpening({
     let status = "not_adjusted";
     let plannedOpeningCandidate = null;
     let plannedOpeningCandidateUsd = null;
+    const preservesOwnerAdjustmentReason = Boolean(owner?.adjustmentReason);
 
     if (owner && fact && withinTolerance) {
-      reason = "rounding_or_fx";
-      confidence = "high";
+      reason = preservesOwnerAdjustmentReason ? owner.adjustmentReason : "rounding_or_fx";
+      confidence = owner?.confidence || "high";
       status = "adjusted";
       adjustedOpening = impliedOpening;
       adjustedOpeningUsd = impliedOpeningUsd ?? estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening });
@@ -263,6 +308,7 @@ export function buildReconciliationAdjustedMayOpening({
       adjustment_reason: reason,
       confidence,
       confidence_note: owner?.confidenceNote || null,
+      superseded_owner_input: owner?.supersededOwnerInput || null,
       status,
       planned_opening_candidate: plannedOpeningCandidate,
       planned_opening_candidate_usd: plannedOpeningCandidateUsd,
@@ -277,7 +323,7 @@ export function buildReconciliationAdjustedMayOpening({
 
   const ownerTotal = ownerMayOpeningTotalUsd(ownerRows);
   const adjustedTotal = round(rows.reduce((sum, row) => sum + Number(row.adjusted_opening_usd ?? row.owner_input_usd ?? 0), 0));
-  const adjustedRows = rows.filter((row) => row.reason === "rounding_or_fx" && Math.abs(Number(row.diff || 0)) > 0);
+  const adjustedRows = rows.filter((row) => row.status === "adjusted" && Math.abs(Number(row.diff || 0)) > 0);
   const needsVerificationRows = rows.filter((row) => row.reason === "needs_verification" || row.reason === "candidate_missing_opening");
   const pendingMovementVerificationRows = rows.filter((row) => row.status === "pending_movement_verification");
   const paypalMovementDiagnostics = buildPayPalMovementDiagnostics({ operations, rows });
