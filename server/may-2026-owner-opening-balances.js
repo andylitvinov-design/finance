@@ -421,7 +421,16 @@ function buildPayPalMovementDiagnostic(operation, paypalRowsByKey) {
 }
 
 function parseSourceRow(operation = {}) {
-  const parsed = Number(operation?.sourceRow ?? operation?.source_row ?? operation?.ledgerV2?.sourceRow ?? operation?.ledgerV2?.source_row);
+  const parsed = Number(
+    operation?.sourceRow
+    ?? operation?.source_row
+    ?? operation?.sheetRowNumber
+    ?? operation?.sheet_row_number
+    ?? operation?.ledgerV2?.sourceRow
+    ?? operation?.ledgerV2?.source_row
+    ?? operation?.ledgerV2?.sheetRowNumber
+    ?? operation?.ledgerV2?.sheet_row_number
+  );
   return Number.isFinite(parsed) ? parsed : null;
 }
 

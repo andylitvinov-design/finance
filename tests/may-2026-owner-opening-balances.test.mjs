@@ -17,7 +17,7 @@ function paypalOperation({ sourceRow, date, channel, currency, balanceAmount, gr
   return {
     date,
     source: "paypal",
-    sourceRow,
+    sheetRowNumber: sourceRow,
     currency,
     amountNet: net,
     gross,
