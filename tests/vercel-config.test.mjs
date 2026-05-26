@@ -25,3 +25,12 @@ test("reconcile balances workflow uses the consolidated api index function", () 
     popupSource.includes('./api/index?action=reconcileBalancesAndTransfers')
   );
 });
+
+test("daily balance backfill uses the consolidated api index function", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+
+  assert.ok(config.rewrites.some((rewrite) =>
+    rewrite.source === "/api/backfill-daily-balance-snapshots" &&
+    rewrite.destination === "/api/index?action=dailyBalanceBackfill"
+  ));
+});
