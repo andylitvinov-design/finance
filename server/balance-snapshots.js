@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadAutoBalanceRowsFromGoogleSheets } from "./auto-balance-repository.js";
-import { getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
+import { EXPECTED_PROVIDER_BALANCES, getProviderCurrentBalanceCapabilities } from "./auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
@@ -206,6 +206,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     selected_rows: buildSelectedRows(validMergedRows),
     selected_date: selectedDateSummary.selected_date,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
+    selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES),
     selected_date_source: selectedDateSummary.source,
     selected_date_diagnostics: selectedDateSummary.diagnostics,
     fact_balance_rows: factBalanceRows,
@@ -246,6 +247,7 @@ function emptyBalanceSnapshotsSummary() {
     selected_rows: [],
     selected_date: "",
     selected_date_rows: [],
+    selected_date_coverage: buildSelectedDateCoverage([], EXPECTED_PROVIDER_BALANCES),
     selected_date_source: "none",
     selected_date_diagnostics: [],
     input_rows: [],
@@ -581,6 +583,52 @@ function buildSelectedRows(rows) {
       };
     })
     .sort(compareDetailedRows);
+}
+
+function buildSelectedDateCoverage(rows = [], expectedPairs = []) {
+  const expected = normalizeExpectedPairs(expectedPairs);
+  const counts = new Map();
+  let numericRows = 0;
+  for (const row of rows || []) {
+    const key = makeKey(row.channel, row.currency);
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (parseNumber(row.amount) !== null) numericRows += 1;
+  }
+  const missingChannels = expected
+    .filter((pair) => !counts.has(makeKey(pair.channel, pair.currency)))
+    .map((pair) => makeKey(pair.channel, pair.currency));
+  const duplicates = Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([key, count]) => ({ key, count }))
+    .sort((left, right) => left.key.localeCompare(right.key));
+  const missingAmountRows = Math.max(0, (rows || []).length - numericRows);
+  const status = rows.length === 0
+    ? "missing"
+    : missingChannels.length || duplicates.length || missingAmountRows
+      ? "partial"
+      : "ok";
+  return {
+    expected_rows: expected.length,
+    total_rows: rows.length,
+    numeric_rows: numericRows,
+    missing_amount_rows: missingAmountRows,
+    unique_channel_currency_count: counts.size,
+    duplicate_channel_currency_count: duplicates.length,
+    duplicates,
+    missing_channels: missingChannels,
+    status,
+  };
+}
+
+function normalizeExpectedPairs(rows = []) {
+  const pairs = new Map();
+  for (const row of rows || []) {
+    const channel = String(row?.channel || "").trim();
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    if (!channel || !currency) continue;
+    pairs.set(makeKey(channel, currency), { channel, currency });
+  }
+  return Array.from(pairs.values()).sort(compareChannelCurrency);
 }
 
 function compareDetailedRows(left, right) {
