@@ -81,7 +81,10 @@ export async function buildAuditSnapshot(options = {}) {
   const manualBalanceRows = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(repository.autoBalances) ? repository.autoBalances : [];
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalanceRows, autoBalanceRows);
-  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
+  const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [], {
+    operations,
+    period,
+  });
   const balanceRows = ownerMayOpeningSeed.rows;
   const periodDailyBalanceResult = buildDailyCurrencyBalances(operations, balanceRows);
   const dailyBalanceResult = filterDailyBalanceResult(
@@ -165,6 +168,14 @@ export async function buildAuditSnapshot(options = {}) {
       merged_balance_rows: balanceRows.length,
       owner_confirmed_may_opening_balance_seed_applied: ownerMayOpeningSeed.applied,
       owner_confirmed_may_opening_total_usd: ownerMayOpeningSeed.applied ? ownerMayOpeningSeed.owner_total_usd : null,
+      ...(ownerMayOpeningSeed.applied ? {
+        owner_input_opening_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.owner_input_opening_total_usd ?? null,
+        reconciliation_adjusted_opening_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.reconciliation_adjusted_opening_total_usd ?? null,
+        diff_from_owner_input_total_usd: ownerMayOpeningSeed.reconciliation_adjusted_opening?.diff_from_owner_input_total_usd ?? null,
+        reconciliation_adjusted_opening: ownerMayOpeningSeed.reconciliation_adjusted_opening,
+        adjusted_rows: ownerMayOpeningSeed.reconciliation_adjusted_opening?.adjusted_rows || [],
+        needs_verification_rows: ownerMayOpeningSeed.reconciliation_adjusted_opening?.needs_verification_rows || [],
+      } : {}),
       auto_balance_rows_used_as_fallback: balanceSnapshotMerge.autoUsed ?? balanceSnapshotMerge.auto_balance_rows_used_as_fallback ?? null,
       auto_balance_rows_ignored_due_to_manual: balanceSnapshotMerge.autoIgnored ?? balanceSnapshotMerge.auto_balance_rows_ignored_due_to_manual ?? null,
       auto_balance_rows_ignored_as_stale_current: balanceSnapshotMerge.autoIgnoredStaleCurrent ?? balanceSnapshotMerge.auto_balance_rows_ignored_as_stale_current ?? null,

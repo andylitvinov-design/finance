@@ -1,3 +1,5 @@
+import { buildReconciliationAdjustedMayOpening } from "./may-2026-owner-opening-balances.js";
+
 const STATUS = {
   OK: "ok",
   MISMATCH: "mismatch",
@@ -50,7 +52,15 @@ export function buildPeriodBalanceReconciliation({
     .filter(Boolean)
     .sort(compareRows);
 
-  const reconciliationReport = buildReconciliationReport(rows, balanceIndex, { period: { from, to } });
+  const reconciliationReport = buildReconciliationReport(rows, balanceIndex, {
+    period: { from, to },
+    operations,
+    balanceRows: [
+      ...(balanceRows || []),
+      ...(autoBalanceRows || []),
+      ...(calculatedBalanceRows || []),
+    ],
+  });
   const byCurrency = buildCurrencyRows(rows);
   const missingAmountNetRows = rows.reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
   const summary = buildSummary(rows, {
@@ -810,7 +820,7 @@ function buildCurrencyRows(rows) {
     .sort((left, right) => left.currency.localeCompare(right.currency));
 }
 
-function buildReconciliationReport(rows = [], balanceIndex, { period = {} } = {}) {
+function buildReconciliationReport(rows = [], balanceIndex, { period = {}, operations = [], balanceRows = [] } = {}) {
   const reportRows = rows.map((row) => {
     const key = makeKey(row.channel, row.currency);
     const aliasCandidate = balanceIndex?.findAliasCandidate?.(key) || null;
@@ -858,11 +868,18 @@ function buildReconciliationReport(rows = [], balanceIndex, { period = {} } = {}
 
   const systemOpeningTotalUsd = round(reportRows.reduce((sum, row) => sum + Number(row.opening_2026_05_01_usd || 0), 0));
   const ownerConfirmedOpeningTotalUsd = getOwnerConfirmedOpeningTotalUsd(period);
+  const adjustedOpening = buildReconciliationAdjustedMayOpening({ operations, balanceRows, period });
   return {
     rows: reportRows,
     summary: {
       rows: reportRows.length,
       owner_confirmed_opening_2026_05_01_total_usd: ownerConfirmedOpeningTotalUsd,
+      owner_input_opening_total_usd: adjustedOpening.owner_input_opening_total_usd,
+      reconciliation_adjusted_opening_total_usd: adjustedOpening.reconciliation_adjusted_opening_total_usd,
+      diff_from_owner_input_total_usd: adjustedOpening.diff_from_owner_input_total_usd,
+      opening_adjustment_rows: adjustedOpening.rows,
+      adjusted_rows: adjustedOpening.adjusted_rows,
+      needs_verification_rows: adjustedOpening.needs_verification_rows,
       system_opening_2026_05_01_total_usd: systemOpeningTotalUsd,
       opening_total_diff_usd: ownerConfirmedOpeningTotalUsd === null ? null : round(systemOpeningTotalUsd - ownerConfirmedOpeningTotalUsd),
       status_counts: reportRows.reduce((counts, row) => {
