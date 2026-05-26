@@ -50,6 +50,7 @@ export function buildPeriodBalanceReconciliation({
     .filter(Boolean)
     .sort(compareRows);
 
+  const reconciliationReport = buildReconciliationReport(rows, balanceIndex);
   const byCurrency = buildCurrencyRows(rows);
   const missingAmountNetRows = rows.reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
   const summary = buildSummary(rows, {
@@ -72,6 +73,8 @@ export function buildPeriodBalanceReconciliation({
     summary,
     by_currency: byCurrency,
     by_channel_currency: rows,
+    reconciliation_report: reconciliationReport.rows,
+    reconciliation_report_summary: reconciliationReport.summary,
     actionable_rows: buildActionableRows(rows),
     warnings,
   };
@@ -96,6 +99,18 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const realInflow = round(real?.inflow || 0);
   const realOutflow = round(real?.outflow || 0);
   const realDelta = round(realInflow - realOutflow);
+  const incomeAmountNet = round(real?.income_amount_net || 0);
+  const expenseAmountNet = round(real?.expense_amount_net || 0);
+  const transferIn = round(real?.transfer_in || 0);
+  const transferOut = round(real?.transfer_out || 0);
+  const exchangeDelta = round(real?.exchange_delta || 0);
+  const providerAdjustments = round(real?.provider_adjustments || 0);
+  const incomeAmountUsd = round(real?.income_amount_usd || 0);
+  const expenseAmountUsd = round(real?.expense_amount_usd || 0);
+  const transferInUsd = round(real?.transfer_in_usd || 0);
+  const transferOutUsd = round(real?.transfer_out_usd || 0);
+  const exchangeDeltaUsd = round(real?.exchange_delta_usd || 0);
+  const providerAdjustmentsUsd = round(real?.provider_adjustments_usd || 0);
   const missingAmountNetRows = Number(real?.missing_amount_net_rows || 0);
 
   const calculatedClosing = opening === null ? null : round(opening + realDelta);
@@ -157,6 +172,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     currency,
     opening_fact_balance: roundedOpening,
     opening_balance: roundedOpening,
+    opening_amount_usd: openingSnapshot?.amount_usd ?? null,
     opening_balance_date: openingSnapshot?.date || null,
     opening_balance_source: openingSnapshot ? "exact" : "missing",
     planned_inflow: plannedInflow,
@@ -166,9 +182,26 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     real_inflow: realInflow,
     real_outflow: realOutflow,
     real_delta: realDelta,
+    income_amount_net: incomeAmountNet,
+    expense_amount_net: expenseAmountNet,
+    transfer_in: transferIn,
+    transfer_out: transferOut,
+    exchange_delta: exchangeDelta,
+    provider_adjustments: providerAdjustments,
+    income_amount_usd: incomeAmountUsd,
+    expense_amount_usd: expenseAmountUsd,
+    transfer_in_usd: transferInUsd,
+    transfer_out_usd: transferOutUsd,
+    exchange_delta_usd: exchangeDeltaUsd,
+    provider_adjustments_usd: providerAdjustmentsUsd,
     calculated_closing_balance: calculatedClosing,
+    calculated_closing_balance_usd: calculateExpectedUsdClosing({
+      openingUsd: openingSnapshot?.amount_usd,
+      real,
+    }),
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
+    manual_provider_closing_balance_usd: factBalance.amount_usd,
     manual_provider_closing_balance_date: factBalance.date,
     manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
     fact_balance: factBalance,
@@ -294,6 +327,7 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
   return {
     status: calculated ? STATUS.CALCULATED_FROM_PREVIOUS : (derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed")),
     amount: round(snapshot.amount),
+    amount_usd: snapshot.amount_usd ?? null,
     date: snapshot.date,
     sourceSheet: snapshot.sourceSheet || (calculated ? "Расчетные Остатки" : (auto || derived ? "Авто Остатки" : "Остатки")),
     sourceRow: snapshot.sourceRow || null,
@@ -364,8 +398,12 @@ function buildRealMovementIndex(operations, period) {
     }
     if (balanceAmount === null) continue;
 
-    if (balanceAmount >= 0) current.inflow += balanceAmount;
-    else current.outflow += Math.abs(balanceAmount);
+    const amountUsd = parseSignedUsdAmount(row, balanceAmount, currency);
+    addMovementBreakdown(current, row, {
+      balanceAmount,
+      amountUsd,
+      currency,
+    });
     current.rows += 1;
     current.movement_dates.push(date);
     byKey.set(key, current);
@@ -502,6 +540,7 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       channel,
       currency,
       amount,
+      amount_usd: resolveSnapshotUsdAmount(row, amount, currency),
       source: row?.source || row?.fact_source || row?.provider || "",
       balanceSource: getResolvedBalanceSource(row),
       provider: row?.provider || null,
@@ -573,6 +612,18 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       return Array.from(statusByKey.entries())
         .filter(([, rows]) => rows.some((row) => isInPeriod(row.date, period)))
         .map(([key]) => key);
+    },
+    findAliasCandidate(key) {
+      const [channel, currency] = splitKey(key);
+      const normalizedChannel = normalizeAliasText(channel);
+      if (!normalizedChannel || !currency) return null;
+      for (const candidateKey of byKey.keys()) {
+        const [candidateChannel, candidateCurrency] = splitKey(candidateKey);
+        if (candidateCurrency !== currency) continue;
+        if (candidateChannel === channel) continue;
+        if (normalizeAliasText(candidateChannel) === normalizedChannel) return candidateChannel;
+      }
+      return null;
     },
   };
 }
@@ -701,6 +752,178 @@ function buildCurrencyRows(rows) {
       status: resolveCurrencyStatus(row.status_counts),
     }))
     .sort((left, right) => left.currency.localeCompare(right.currency));
+}
+
+function buildReconciliationReport(rows = [], balanceIndex) {
+  const reportRows = rows.map((row) => {
+    const key = makeKey(row.channel, row.currency);
+    const aliasCandidate = balanceIndex?.findAliasCandidate?.(key) || null;
+    const expectedUsd = coalesceNumber(
+      row.calculated_closing_balance_usd,
+      isStableUsdCurrency(row.currency) ? row.computed_real_closing_balance : null
+    );
+    const confirmedUsd = coalesceNumber(
+      row.manual_provider_closing_balance_usd,
+      isStableUsdCurrency(row.currency) ? row.factual_closing_balance : null
+    );
+    return {
+      channel: row.channel,
+      currency: row.currency,
+      opening_2026_05_01: row.opening_balance,
+      opening_2026_05_01_usd: coalesceNumber(
+        row.opening_amount_usd,
+        isStableUsdCurrency(row.currency) ? row.opening_balance : null
+      ),
+      opening_balance_date: row.opening_balance_date,
+      income_amount_net: row.income_amount_net,
+      income_amount_usd: row.income_amount_usd,
+      expense_amount_net: row.expense_amount_net,
+      expense_amount_usd: row.expense_amount_usd,
+      transfer_in: row.transfer_in,
+      transfer_in_usd: row.transfer_in_usd,
+      transfer_out: row.transfer_out,
+      transfer_out_usd: row.transfer_out_usd,
+      exchange_delta: row.exchange_delta,
+      exchange_delta_usd: row.exchange_delta_usd,
+      provider_adjustments: row.provider_adjustments,
+      provider_adjustments_usd: row.provider_adjustments_usd,
+      expected_later_balance: row.computed_real_closing_balance,
+      expected_later_balance_usd: expectedUsd,
+      confirmed_later_balance: row.factual_closing_balance,
+      confirmed_later_balance_usd: confirmedUsd,
+      confirmed_later_balance_date: row.factual_closing_balance_date,
+      diff: row.real_difference,
+      diff_usd: expectedUsd !== null && confirmedUsd !== null ? round(confirmedUsd - expectedUsd) : null,
+      status: row.status,
+      suspected_cause: classifySuspectedCause(row, aliasCandidate),
+      ...(aliasCandidate ? { alias_candidate: aliasCandidate } : {}),
+    };
+  });
+
+  return {
+    rows: reportRows,
+    summary: {
+      rows: reportRows.length,
+      status_counts: reportRows.reduce((counts, row) => {
+        counts[row.status] = (counts[row.status] || 0) + 1;
+        return counts;
+      }, {}),
+      transfer_in: round(reportRows.reduce((sum, row) => sum + Number(row.transfer_in || 0), 0)),
+      transfer_out: round(reportRows.reduce((sum, row) => sum + Number(row.transfer_out || 0), 0)),
+      transfer_net: round(reportRows.reduce((sum, row) => sum + Number(row.transfer_in || 0) - Number(row.transfer_out || 0), 0)),
+      diff_usd: round(reportRows.reduce((sum, row) => sum + Number(row.diff_usd || 0), 0)),
+    },
+  };
+}
+
+function classifySuspectedCause(row, aliasCandidate) {
+  if (row.status === STATUS.OK || row.status === STATUS.CALCULATED_FROM_PREVIOUS || row.status === STATUS.NO_DATA) return "none";
+  if (row.status === STATUS.MISSING_AMOUNT_NET) return "missing_amount_net";
+  if (aliasCandidate) return "channel_alias_mismatch";
+  if (row.status === STATUS.MISSING_OPENING) return "missing_opening_balance";
+  if (row.status === STATUS.MISSING_PROVIDER) return "missing_confirmed_later_balance";
+  if (isProviderLimitationStatus(row.status)) return "provider_balance_unavailable";
+  if (row.status === STATUS.MISMATCH && Number(row.movement_rows || 0) > 0) return "missing_or_extra_ledger_movement";
+  if (row.status === STATUS.MISMATCH) return "confirmed_balance_conflict";
+  return "needs_verification";
+}
+
+function addMovementBreakdown(current, row, { balanceAmount, amountUsd, currency }) {
+  const operation = normalizeOperation(row);
+  const absAmount = Math.abs(balanceAmount);
+  const absUsd = amountUsd === null ? null : Math.abs(amountUsd);
+
+  if (balanceAmount >= 0) current.inflow += balanceAmount;
+  else current.outflow += absAmount;
+
+  if (amountUsd !== null) {
+    current.net_change_usd += amountUsd;
+    current.has_usd_change = true;
+  } else if (isStableUsdCurrency(currency)) {
+    current.net_change_usd += balanceAmount;
+    current.has_usd_change = true;
+  }
+
+  if (operation === "transfer") {
+    if (balanceAmount >= 0) {
+      current.transfer_in += absAmount;
+      if (absUsd !== null) current.transfer_in_usd += absUsd;
+    } else {
+      current.transfer_out += absAmount;
+      if (absUsd !== null) current.transfer_out_usd += absUsd;
+    }
+    return;
+  }
+
+  if (operation === "exchange") {
+    current.exchange_delta += balanceAmount;
+    if (amountUsd !== null) current.exchange_delta_usd += amountUsd;
+    return;
+  }
+
+  if (/adjustment|provider|balance/.test(operation)) {
+    current.provider_adjustments += balanceAmount;
+    if (amountUsd !== null) current.provider_adjustments_usd += amountUsd;
+    return;
+  }
+
+  if (operation === "expense" || balanceAmount < 0) {
+    current.expense_amount_net += absAmount;
+    if (absUsd !== null) current.expense_amount_usd += absUsd;
+  } else {
+    current.income_amount_net += absAmount;
+    if (absUsd !== null) current.income_amount_usd += absUsd;
+  }
+}
+
+function normalizeOperation(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const operation = String(ledger.operation || row.operation || row.type || "").trim().toLowerCase();
+  if (/transfer|перевод/.test(operation)) return "transfer";
+  if (/exchange|обмен/.test(operation)) return "exchange";
+  if (/expense|out|расход/.test(operation)) return "expense";
+  if (/income|in|доход|приход/.test(operation)) return "income";
+  return operation || "income";
+}
+
+function parseSignedUsdAmount(row, balanceAmount, currency) {
+  const ledger = row?.ledgerV2 || {};
+  const parsed = parseNumber(ledger.amount_usd ?? row?.amountUsd ?? row?.amount_usd ?? row?.usdAmount);
+  if (parsed !== null) {
+    const signed = Math.abs(parsed) * (balanceAmount < 0 ? -1 : 1);
+    return round(signed);
+  }
+  return isStableUsdCurrency(currency) ? round(balanceAmount) : null;
+}
+
+function calculateExpectedUsdClosing({ openingUsd, real } = {}) {
+  const parsedOpeningUsd = coalesceNumber(openingUsd);
+  if (parsedOpeningUsd === null) return null;
+  if (!real?.has_usd_change) return null;
+  return round(parsedOpeningUsd + Number(real.net_change_usd || 0));
+}
+
+function resolveSnapshotUsdAmount(row, amount, currency) {
+  const parsed = parseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? row?.balance_usd ?? row?.balanceUsd);
+  if (parsed !== null) return round(parsed);
+  return isStableUsdCurrency(currency) && amount !== null ? round(amount) : null;
+}
+
+function coalesceNumber(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return round(parsed);
+  }
+  return null;
+}
+
+function isStableUsdCurrency(currency = "") {
+  return ["USD", "USDT", "USDC"].includes(String(currency || "").trim().toUpperCase());
+}
+
+function normalizeAliasText(value) {
+  return normalizeText(value).replace(/\s+/g, "");
 }
 
 function buildSummary(rows, { missingAmountNetRows, plannedRows, plannedSourceStatus }) {
@@ -956,7 +1179,27 @@ function getMovementChannel(row, amount) {
 }
 
 function emptyMovement() {
-  return { inflow: 0, outflow: 0, rows: 0, missing_amount_net_rows: 0, movement_dates: [] };
+  return {
+    inflow: 0,
+    outflow: 0,
+    rows: 0,
+    missing_amount_net_rows: 0,
+    movement_dates: [],
+    income_amount_net: 0,
+    expense_amount_net: 0,
+    transfer_in: 0,
+    transfer_out: 0,
+    exchange_delta: 0,
+    provider_adjustments: 0,
+    income_amount_usd: 0,
+    expense_amount_usd: 0,
+    transfer_in_usd: 0,
+    transfer_out_usd: 0,
+    exchange_delta_usd: 0,
+    provider_adjustments_usd: 0,
+    net_change_usd: 0,
+    has_usd_change: false,
+  };
 }
 
 function makeKey(channel, currency) {
