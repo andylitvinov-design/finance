@@ -15,6 +15,7 @@
   const MOVEMENT_FIELDS = ["movement_usd", "movement_amount_usd", "movementUsd"];
   const PLANNED_FIELDS = ["planned_closing_amount_usd", "plannedClosingUsd", "planned_balance_usd"];
   const SNAPSHOT_AMOUNT_FIELDS = ["amount", "balance", "amount_usd", "balance_usd", "closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "closing_balance_usd"];
+  const PERIOD_MOVEMENT_FIELDS = ["real_delta", "movement", "movement_amount", "movementAmount", "balance_amount", "amount_net", "amountNet"];
 
   function getRootState() {
     if (typeof state !== "undefined") return state;
@@ -155,11 +156,20 @@
   function buildSelectedDateBalanceSnapshotsUrl() {
     const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
     const url = new URL("./api/balance-snapshots", base);
-    const selectedDate = getDateInputValue("endDate") || getDateInputValue("startDate");
-    if (selectedDate) {
-      url.searchParams.set("from", selectedDate);
-      url.searchParams.set("to", selectedDate);
-    }
+    const from = getDateInputValue("startDate");
+    const to = getDateInputValue("endDate") || from;
+    if (from) url.searchParams.set("from", from);
+    if (to) url.searchParams.set("to", to);
+    return url;
+  }
+
+  function buildPeriodBalanceReconciliationUrl() {
+    const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
+    const url = new URL("./api/period-balance-reconciliation", base);
+    const from = getDateInputValue("startDate");
+    const to = getDateInputValue("endDate");
+    if (from) url.searchParams.set("from", from);
+    if (to) url.searchParams.set("to", to);
     return url;
   }
 
@@ -180,7 +190,21 @@
     const response = await root.fetch(buildSelectedDateBalanceSnapshotsUrl().toString(), { cache: "no-store" });
     if (!response?.ok) throw new Error(`balance snapshots returned ${response?.status || "unknown status"}`);
     const payload = await response.json();
-    return payload?.balance_snapshots || null;
+    const snapshot = payload?.balance_snapshots || null;
+    if (!snapshot) return null;
+    return {
+      period_from: payload?.period?.from || getDateInputValue("startDate") || snapshot.period_from || null,
+      period_to: payload?.period?.to || getDateInputValue("endDate") || snapshot.selected_date || snapshot.period_to || null,
+      ...snapshot,
+    };
+  }
+
+  async function fetchPeriodBalanceReconciliation() {
+    if (typeof root.fetch !== "function") return null;
+    const response = await root.fetch(buildPeriodBalanceReconciliationUrl().toString(), { cache: "no-store" });
+    if (!response?.ok) throw new Error(`period balance reconciliation returned ${response?.status || "unknown status"}`);
+    const payload = await response.json();
+    return payload?.period_balance_reconciliation || null;
   }
 
   async function readJsonResponse(response, label) {
@@ -214,6 +238,8 @@
   async function buildLiveRemaindersSummary(input, options = {}) {
     const current = buildRemaindersSummary(input, options);
     const selectedDateSnapshot = await fetchSelectedDateBalanceSnapshot().catch((error) => ({
+      period_from: getDateInputValue("startDate") || null,
+      period_to: getDateInputValue("endDate") || null,
       selected_date_source: "none",
       selected_date_rows: [],
       selected_date_diagnostics: [
@@ -221,18 +247,21 @@
         `${NEEDS_VERIFICATION}: balance snapshots fetch failed (${String(error?.message || error)}).`,
       ],
     }));
+    const periodReconciliation = await fetchPeriodBalanceReconciliation().catch(() => null);
+    const periodMovementRows = periodReconciliation?.by_channel_currency || [];
     if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
-      return { ...current, selectedDateSnapshot };
+      return { ...current, selectedDateSnapshot, periodMovementRows };
     }
     try {
       const snapshot = await fetchAuditSnapshotRemainders();
-      if (!snapshot) return { ...current, selectedDateSnapshot };
+      if (!snapshot) return { ...current, selectedDateSnapshot, periodMovementRows };
       const fetched = buildRemaindersSummary(snapshot);
-      return { ...(fetched.source ? fetched : current), selectedDateSnapshot };
+      return { ...(fetched.source ? fetched : current), selectedDateSnapshot, periodMovementRows };
     } catch (error) {
       return {
         ...current,
         selectedDateSnapshot,
+        periodMovementRows,
         diagnostics: [
           ...(current.diagnostics || []),
           `${NEEDS_VERIFICATION}: audit snapshot fetch failed (${String(error?.message || error)}).`,
@@ -318,16 +347,23 @@
       const table = doc.createElement("table");
       const thead = doc.createElement("thead");
       const header = doc.createElement("tr");
-      ["Дата", "Канал", "Валюта", "Остаток"].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
+      ["Канал", "Валюта", "Остаток"].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
       thead.appendChild(header);
       table.appendChild(thead);
       const tbody = doc.createElement("tbody");
       rows.forEach((row) => {
         const tr = doc.createElement("tr");
-        tr.appendChild(renderCell(doc, row.date || snapshot.selected_date || "—"));
         tr.appendChild(renderCell(doc, row.channel || "—"));
         tr.appendChild(renderCell(doc, row.currency || "—"));
         tr.appendChild(renderCell(doc, formatSnapshotAmount(getSnapshotAmount(row)), "numeric"));
+        tbody.appendChild(tr);
+      });
+      buildSnapshotCurrencyTotals(rows).forEach((row) => {
+        const tr = doc.createElement("tr");
+        tr.className = "balance-income-channel-total";
+        tr.appendChild(renderCell(doc, `ИТОГО ${row.currency}`));
+        tr.appendChild(renderCell(doc, row.currency));
+        tr.appendChild(renderCell(doc, formatSnapshotAmount(row.amount), "numeric"));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -354,6 +390,157 @@
 
   function getSnapshotAmount(row) {
     return firstDefined(row, SNAPSHOT_AMOUNT_FIELDS);
+  }
+
+  function getRowKey(row) {
+    const channel = String(firstDefined(row, CHANNEL_FIELDS) || "").trim() || "Не указан";
+    const currency = String(firstDefined(row, CURRENCY_FIELDS) || "").trim().toUpperCase() || "N/A";
+    return `${channel}\u0000${currency}`;
+  }
+
+  function splitRowKey(key) {
+    const [channel, currency] = String(key || "").split("\u0000");
+    return { channel: channel || "Не указан", currency: currency || "N/A" };
+  }
+
+  function buildSnapshotCurrencyTotals(rows) {
+    const totals = new Map();
+    (rows || []).forEach((row) => {
+      const amount = parseNumber(getSnapshotAmount(row));
+      if (amount === null) return;
+      const currency = String(firstDefined(row, CURRENCY_FIELDS) || "").trim().toUpperCase() || "N/A";
+      totals.set(currency, (totals.get(currency) || 0) + amount);
+    });
+    return Array.from(totals, ([currency, amount]) => ({ currency, amount })).sort((a, b) => a.currency.localeCompare(b.currency));
+  }
+
+  function buildPeriodBalanceChangeRows(snapshot, movementRows = []) {
+    if (!snapshot) return [];
+    const periodFrom = snapshot.period_from || snapshot.from || getDateInputValue("startDate");
+    const periodTo = snapshot.period_to || snapshot.to || snapshot.selected_date || getDateInputValue("endDate") || periodFrom;
+    if (!periodFrom && !periodTo) return [];
+
+    const allSnapshotRows = [
+      ...(Array.isArray(snapshot.rows) ? snapshot.rows : []),
+      ...(Array.isArray(snapshot.selected_date_rows) ? snapshot.selected_date_rows : []),
+    ];
+    const opening = new Map();
+    const closing = new Map();
+    allSnapshotRows.forEach((row) => {
+      const date = String(row?.date || "").slice(0, 10);
+      const amount = parseNumber(getSnapshotAmount(row));
+      if (amount === null) return;
+      const key = getRowKey(row);
+      if (date === periodFrom && !opening.has(key)) opening.set(key, amount);
+      if (date === periodTo) closing.set(key, amount);
+    });
+
+    const movement = new Map();
+    (movementRows || []).forEach((row) => {
+      const value = parseNumber(firstDefined(row, PERIOD_MOVEMENT_FIELDS));
+      if (value === null) return;
+      const key = getRowKey(row);
+      movement.set(key, (movement.get(key) || 0) + value);
+    });
+
+    const keys = new Set([...opening.keys(), ...closing.keys(), ...movement.keys()]);
+    return Array.from(keys).map((key) => {
+      const { channel, currency } = splitRowKey(key);
+      const openingBalance = opening.has(key) ? opening.get(key) : 0;
+      const closingBalance = closing.has(key) ? closing.get(key) : 0;
+      const movementAmount = movement.has(key) ? movement.get(key) : 0;
+      const plannedBalance = openingBalance + movementAmount;
+      const change = closingBalance - openingBalance;
+      const diff = closingBalance - plannedBalance;
+      return {
+        channel,
+        currency,
+        openingBalance,
+        closingBalance,
+        change,
+        movementAmount,
+        plannedBalance,
+        factualBalance: closingBalance,
+        diff,
+      };
+    }).sort((a, b) => a.currency.localeCompare(b.currency) || a.channel.localeCompare(b.channel));
+  }
+
+  function buildPeriodBalanceChangeTotals(rows) {
+    const totals = new Map();
+    (rows || []).forEach((row) => {
+      const current = totals.get(row.currency) || {
+        channel: `ИТОГО ${row.currency}`,
+        currency: row.currency,
+        openingBalance: 0,
+        closingBalance: 0,
+        change: 0,
+        movementAmount: 0,
+        plannedBalance: 0,
+        factualBalance: 0,
+        diff: 0,
+      };
+      current.openingBalance += row.openingBalance;
+      current.closingBalance += row.closingBalance;
+      current.change += row.change;
+      current.movementAmount += row.movementAmount;
+      current.plannedBalance += row.plannedBalance;
+      current.factualBalance += row.factualBalance;
+      current.diff += row.diff;
+      totals.set(row.currency, current);
+    });
+    return Array.from(totals.values()).sort((a, b) => a.currency.localeCompare(b.currency));
+  }
+
+  function appendPeriodChangeRow(doc, tbody, row, className = "") {
+    const tr = doc.createElement("tr");
+    if (className) tr.className = className;
+    tr.appendChild(renderCell(doc, row.channel));
+    tr.appendChild(renderCell(doc, row.currency));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.openingBalance), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.closingBalance), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.change), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.movementAmount), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.plannedBalance), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.factualBalance), "numeric"));
+    tr.appendChild(renderCell(doc, formatSnapshotAmount(row.diff), "numeric"));
+    tbody.appendChild(tr);
+  }
+
+  function renderPeriodBalanceChangesBlock(snapshot, movementRows = [], doc = root.document) {
+    const rows = buildPeriodBalanceChangeRows(snapshot, movementRows);
+    if (!rows.length) return null;
+    const section = doc.createElement("section");
+    section.className = "period-balance-changes";
+    const title = doc.createElement("h4");
+    title.textContent = "Изменение за период";
+    section.appendChild(title);
+
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap remainders-summary-table-wrap";
+    const table = doc.createElement("table");
+    const thead = doc.createElement("thead");
+    const header = doc.createElement("tr");
+    [
+      "Канал",
+      "Валюта",
+      "Остаток на начало",
+      "Остаток на конец",
+      "Изменение",
+      "Движение средств",
+      "Остаток плановый",
+      "Остаток фактический",
+      "Расхождение",
+    ].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
+    thead.appendChild(header);
+    table.appendChild(thead);
+    const tbody = doc.createElement("tbody");
+    rows.forEach((row) => appendPeriodChangeRow(doc, tbody, row));
+    buildPeriodBalanceChangeTotals(rows).forEach((row) => appendPeriodChangeRow(doc, tbody, row, "balance-income-channel-total"));
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+    return section;
   }
 
   function renderRemaindersSummaryBlock(summary, doc = root.document) {
@@ -398,6 +585,8 @@
 
     const selectedDateBlock = renderSelectedDateSnapshotBlock(summary.selectedDateSnapshot, doc);
     if (selectedDateBlock) block.appendChild(selectedDateBlock);
+    const periodChangesBlock = renderPeriodBalanceChangesBlock(summary.selectedDateSnapshot, summary.periodMovementRows || [], doc);
+    if (periodChangesBlock) block.appendChild(periodChangesBlock);
 
     const details = doc.createElement("details");
     details.className = "remainders-diagnostics-details";
@@ -573,6 +762,7 @@
     REMAINDERS_BLOCK_ID,
     buildRemaindersSummary,
     buildLiveRemaindersSummary,
+    buildPeriodBalanceChangeRows,
     getSnapshotAmount,
     runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
