@@ -47,3 +47,13 @@ test("FX Rates ensure uses the consolidated api index function and scheduled cro
     cron.schedule === "15 23 * * *"
   ));
 });
+
+test("server JS routes do not statically import FX .mjs scripts for Vercel CJS bundling", () => {
+  const routeSources = [
+    fs.readFileSync(path.join(ROOT, "server", "ensure-fx-rates-route.js"), "utf8"),
+    fs.readFileSync(path.join(ROOT, "server", "reconcile-balances-and-transfers.js"), "utf8"),
+  ].join("\n");
+
+  assert.doesNotMatch(routeSources, /from\s+["']\.\.\/scripts\/fetch-fx-rates\.mjs["']/);
+  assert.match(routeSources, /import\(["']\.\.\/scripts\/fetch-fx-rates\.mjs["']\)/);
+});

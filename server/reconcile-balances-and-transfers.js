@@ -8,11 +8,6 @@ import { fetchBinanceStatementEntries, getBinanceProviderConfigFromEnv } from ".
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { runAutoBalanceSnapshots } from "./auto-balance-snapshots.js";
 import { DEFAULT_PROVIDER_FX_CURRENCIES, ensureFxRates } from "./fx-rates.js";
-import {
-  applyFxRateRows,
-  fetchFxRowsForDate,
-  readFxRateSheetValues,
-} from "../scripts/fetch-fx-rates.mjs";
 
 const PROVIDER_ORDER = ["wise", "monobank", "paypal", "privatbank", "yoomoney", "binance"];
 
@@ -51,6 +46,7 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
   const autoBalanceRunner = options.autoBalanceRunner || runAutoBalanceSnapshots;
   const auditSnapshotRunner = options.auditSnapshotRunner || buildAuditSnapshot;
   const providerTransferCollector = options.providerTransferCollector || collectProviderTransfers;
+  const fxRatePrimitives = options.fxRatePrimitives || await loadFxRateScriptPrimitives();
 
   const fxRatesEnsure = await runStep("ensure_fx_rates", () => ensureFxRatesRunner({
     from: from || currentDate,
@@ -58,9 +54,9 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
     currencies: options.fxCurrencies || DEFAULT_PROVIDER_FX_CURRENCIES,
     currentDate,
     fetchImpl,
-    readFxRateSheetValues,
-    fetchFxRowsForDate,
-    applyFxRateRows,
+    readFxRateSheetValues: fxRatePrimitives.readFxRateSheetValues,
+    fetchFxRowsForDate: fxRatePrimitives.fetchFxRowsForDate,
+    applyFxRateRows: fxRatePrimitives.applyFxRateRows,
   }));
   const balances = await runStep("auto_balance_snapshots", () => autoBalanceRunner({
     query: { date: balanceDate, currentDate, dryRun },
@@ -127,6 +123,15 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
         message: auditSnapshot?.error || "audit snapshot step returned ok=false",
       }] : []),
     ],
+  };
+}
+
+async function loadFxRateScriptPrimitives() {
+  const module = await import("../scripts/fetch-fx-rates.mjs");
+  return {
+    readFxRateSheetValues: module.readFxRateSheetValues,
+    fetchFxRowsForDate: module.fetchFxRowsForDate,
+    applyFxRateRows: module.applyFxRateRows,
   };
 }
 

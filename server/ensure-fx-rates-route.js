@@ -1,10 +1,4 @@
 import { DEFAULT_PROVIDER_FX_CURRENCIES, ensureFxRates } from "./fx-rates.js";
-import {
-  applyFxRateRows,
-  fetchFxRowsForDate,
-  parseCurrencyList,
-  readFxRateSheetValues,
-} from "../scripts/fetch-fx-rates.mjs";
 
 export default async function ensureFxRatesHandler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -19,6 +13,12 @@ export default async function ensureFxRatesHandler(request, response) {
   }
 
   const body = parseRequestBody(request.body);
+  const {
+    applyFxRateRows,
+    fetchFxRowsForDate,
+    parseCurrencyList,
+    readFxRateSheetValues,
+  } = await loadFxRateScriptPrimitives();
   const currentDate = normalizeIsoDate(body.currentDate || request.query?.currentDate) || todayUtcDate();
   const from = normalizeIsoDate(body.from || request.query?.from) || currentDate;
   const to = normalizeIsoDate(body.to || request.query?.to) || from;
@@ -39,6 +39,10 @@ export default async function ensureFxRatesHandler(request, response) {
     action: "ensure-fx-rates",
     target_sheet: "FX Rates",
   });
+}
+
+async function loadFxRateScriptPrimitives() {
+  return await import("../scripts/fetch-fx-rates.mjs");
 }
 
 function parseRequestBody(body) {
