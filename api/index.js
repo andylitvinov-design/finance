@@ -400,7 +400,9 @@ async function maybeOverlayFreshSourceData(data) {
     const enrichedMovement = applyRealIncomeToMovementTable(freshMovement, realIncome);
     const servicePaymentSummaryByChannel = summarizeMovementServicePaymentsByChannel(enrichedMovement.values);
     const servicePaymentSummaryTotals = getRealIncomeSummaryTotalsFromSummary(servicePaymentSummaryByChannel);
-    const servicePaymentGap = buildServicePaymentGapDiagnostics(enrichedMovement.values, servicePaymentSummaryByChannel);
+    const servicePaymentGap = buildServicePaymentGapDiagnostics(enrichedMovement.values, servicePaymentSummaryByChannel, {
+      providerEntries: realIncome?.candidateIncomeEntries || [],
+    });
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
     const hasServicePaymentSummary = Object.values(servicePaymentSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
     const nextRealIncome = realIncome || movementWarnings.length || hasServicePaymentSummary
@@ -517,6 +519,13 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
       })
     : (data.realIncome || null);
 
+  const nextRealIncomeWithServiceGaps = nextRealIncome
+    ? rebuildServicePaymentGapDiagnostics(nextRealIncome, data.tabs?.movement?.values || [], {
+        ledgerOperations: periodOperations,
+        period,
+      })
+    : null;
+
   return {
     ...data,
     period,
@@ -527,7 +536,7 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
       source_rows_in_period: periodOperations.length,
     },
     manual: nextManual,
-    ...(nextRealIncome ? { realIncome: nextRealIncome } : {})
+    ...(nextRealIncomeWithServiceGaps ? { realIncome: nextRealIncomeWithServiceGaps } : {})
   };
 }
 
@@ -1204,80 +1213,59 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
   }));
 }
 
-function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}) {
+function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [], options = {}) {
+  const servicePaymentSummaryByChannel =
+    realIncome?.servicePaymentSummaryByChannel ||
+    summarizeMovementServicePaymentsByChannel(movementValues);
+  const servicePaymentSummaryTotals =
+    realIncome?.servicePaymentSummaryTotals ||
+    getRealIncomeSummaryTotalsFromSummary(servicePaymentSummaryByChannel);
+  const servicePaymentGap = buildServicePaymentGapDiagnostics(movementValues, servicePaymentSummaryByChannel, {
+    providerEntries: realIncome?.candidateIncomeEntries || realIncome?.entries || [],
+    ledgerOperations: options.ledgerOperations || [],
+    period: options.period || {},
+  });
+  return {
+    ...realIncome,
+    servicePaymentSummaryByChannel,
+    servicePaymentSummaryTotals,
+    servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
+    servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
+  };
+}
+
+function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}, options = {}) {
   const diagnosticsByChannel = new Map();
   const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  const providerGroupTotals = buildServicePaymentProviderGroupTotals({
+    providerEntries: options.providerEntries || [],
+    ledgerOperations: options.ledgerOperations || [],
+    movementValues,
+    period: options.period || {},
+  });
+  const candidates = [];
 
   for (const row of dataRows) {
     if (isKovalevWiseBoleslavMovementRow({ client: row?.[2], paymentMethod: row?.[14] })) continue;
-    const expectedUsd = parseLooseNumber(row?.[9]) || 0;
-    const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
-    const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
-    const includedByCurrentSummary = isMovementServicePaymentRow(row);
-    const includedAmountUsd = includedByCurrentSummary
-      ? (providerNetUsd > 0 ? providerNetUsd : clientPaidUsd)
-      : 0;
-    const reason = getServicePaymentGapReason(row, {
-      expectedUsd,
-      clientPaidUsd,
-      providerNetUsd,
-      includedAmountUsd,
-      includedByCurrentSummary,
-    });
-    if (!reason && Math.abs(expectedUsd - includedAmountUsd) < 0.0001) continue;
-
-    const channel = getServicePaymentGapChannel(row);
-    const existing = diagnosticsByChannel.get(channel) || {
-      channel,
-      expectedUsd: 0,
-      includedUsd: 0,
-      missingUnsafeUsd: 0,
-      offsetUsd: 0,
-      netGapUsd: 0,
-      rows: [],
-    };
-    existing.expectedUsd = roundNumber(existing.expectedUsd + expectedUsd);
-    existing.includedUsd = roundNumber(existing.includedUsd + includedAmountUsd);
-    if (isUnsafeServicePaymentGapReason(reason)) {
-      existing.missingUnsafeUsd = roundNumber(existing.missingUnsafeUsd + expectedUsd);
-    }
-    if (includedAmountUsd > expectedUsd) {
-      existing.offsetUsd = roundNumber(existing.offsetUsd + (includedAmountUsd - expectedUsd));
-    }
-    existing.rows.push({
-      rowNumber: String(row?.[0] || "").trim(),
-      date: normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim(),
-      client: String(row?.[2] || "").trim(),
-      order: String(row?.[3] || "").trim(),
-      paymentMethod: String(row?.[14] || "").trim(),
-      channel,
-      accruedUsd: roundNumber(expectedUsd),
-      clientPaidUsd: roundNumber(clientPaidUsd),
-      providerNetUsd: roundNumber(providerNetUsd),
-      included: Boolean(includedAmountUsd > 0),
-      reason: reason || "duplicate/offset/overpaid",
-      status: String(row?.[23] || "").trim(),
-      reviewNote: String(row?.[24] || "").trim(),
-    });
-    diagnosticsByChannel.set(channel, existing);
+    candidates.push(buildServicePaymentGapCandidate(row));
   }
 
-  const summaryIncludedByChannel = new Map(
-    Object.entries(servicePaymentSummaryByChannel || {}).map(([channel, row]) => [channel, roundNumber(Number(row?.realNetUsd || 0))])
-  );
-  for (const [channel, includedUsd] of summaryIncludedByChannel.entries()) {
-    if (!includedUsd && !diagnosticsByChannel.has(channel)) continue;
-    const existing = diagnosticsByChannel.get(channel) || {
-      channel,
-      expectedUsd: 0,
-      includedUsd: 0,
-      missingUnsafeUsd: 0,
-      offsetUsd: 0,
-      netGapUsd: 0,
-      rows: [],
-    };
-    existing.includedUsd = includedUsd;
-    diagnosticsByChannel.set(channel, existing);
+  const allocatedRowNumbers = allocateGroupedServicePaymentDiagnostics(candidates, diagnosticsByChannel, providerGroupTotals);
+  for (const candidate of candidates) {
+    if (allocatedRowNumbers.has(candidate.rowNumber)) continue;
+    if (!candidate.reason && Math.abs(candidate.expectedUsd - candidate.includedAmountUsd) < 0.0001) continue;
+    addServicePaymentDiagnosticRow(diagnosticsByChannel, candidate.channel, {
+      expectedUsd: candidate.expectedUsd,
+      includedUsd: candidate.includedAmountUsd,
+      missingUnsafeUsd: isUnsafeServicePaymentGapReason(candidate.reason) ? candidate.expectedUsd : 0,
+      offsetUsd: candidate.includedAmountUsd > candidate.expectedUsd
+        ? roundNumber(candidate.includedAmountUsd - candidate.expectedUsd)
+        : 0,
+      row: buildServicePaymentGapSourceRow(candidate, {
+        included: Boolean(candidate.includedAmountUsd > 0),
+        reason: candidate.reason || "duplicate/offset/overpaid",
+      }),
+    });
   }
 
   const servicePaymentGapByChannel = Array.from(diagnosticsByChannel.values())
@@ -1316,8 +1304,181 @@ function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSu
   };
 }
 
+function buildServicePaymentGapCandidate(row = []) {
+  const expectedUsd = parseLooseNumber(row?.[9]) || 0;
+  const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
+  const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
+  const includedByCurrentSummary = isMovementServicePaymentRow(row);
+  const includedAmountUsd = includedByCurrentSummary
+    ? (providerNetUsd > 0 ? providerNetUsd : clientPaidUsd)
+    : 0;
+  const reason = getServicePaymentGapReason(row, {
+    expectedUsd,
+    clientPaidUsd,
+    providerNetUsd,
+    includedAmountUsd,
+    includedByCurrentSummary,
+  });
+  const channel = getServicePaymentGapChannel(row);
+  const date = normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim();
+  const client = String(row?.[2] || "").trim();
+  const paymentMethod = String(row?.[14] || "").trim();
+  const groupPaidUsd = providerNetUsd > 0 ? providerNetUsd : clientPaidUsd;
+  return {
+    row,
+    rowNumber: String(row?.[0] || "").trim(),
+    date,
+    client,
+    paymentMethod,
+    channel,
+    expectedUsd,
+    clientPaidUsd,
+    providerNetUsd,
+    includedAmountUsd,
+    groupPaidUsd,
+    includedByCurrentSummary,
+    reason,
+    groupKey: getServicePaymentDiagnosticGroupKey({ date, client, channel }),
+    providerGroupKey: getServicePaymentProviderGroupKey(date, channel),
+    needsProviderNet: requiresProviderNetVerification(paymentMethod) || /пейпал|paypal|wise|трансервайз/i.test(channel),
+  };
+}
+
+function allocateGroupedServicePaymentDiagnostics(candidates = [], diagnosticsByChannel, providerGroupTotals = new Map()) {
+  const allocatedRowNumbers = new Set();
+  const groups = new Map();
+  for (const candidate of candidates) {
+    if (!candidate.groupKey) continue;
+    const group = groups.get(candidate.groupKey) || [];
+    group.push(candidate);
+    groups.set(candidate.groupKey, group);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    const groupAccruedUsd = roundNumber(group.reduce((sum, row) => sum + row.expectedUsd, 0));
+    const rowPaidUsd = roundNumber(group.reduce((sum, row) => sum + row.groupPaidUsd, 0));
+    const providerPaidUsd = roundNumber(providerGroupTotals.get(group[0].providerGroupKey) || 0);
+    const useProviderPaid = providerPaidUsd > 0 && group.some((row) => row.needsProviderNet);
+    const groupPaidUsd = useProviderPaid ? providerPaidUsd : rowPaidUsd;
+    if (groupPaidUsd <= 0) continue;
+
+    const groupDiffUsd = roundNumber(groupAccruedUsd - groupPaidUsd);
+    group.forEach((row) => allocatedRowNumbers.add(row.rowNumber));
+    if (Math.abs(groupDiffUsd) <= 0.05) continue;
+
+    const rowNumbers = group.map((row) => row.rowNumber).sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
+    const reason = groupDiffUsd > 0 ? "group net underpaid" : "group net overpaid";
+    addServicePaymentDiagnosticRow(diagnosticsByChannel, group[0].channel, {
+      expectedUsd: groupAccruedUsd,
+      includedUsd: groupPaidUsd,
+      missingUnsafeUsd: groupDiffUsd > 0 ? groupDiffUsd : 0,
+      offsetUsd: groupDiffUsd < 0 ? Math.abs(groupDiffUsd) : 0,
+      row: {
+        rowNumber: `${rowNumbers[0]}-${rowNumbers.at(-1)}`,
+        date: group[0].date,
+        client: group[0].client,
+        order: `Grouped payment allocation (${group.length} rows)`,
+        paymentMethod: group[0].paymentMethod,
+        channel: group[0].channel,
+        accruedUsd: groupAccruedUsd,
+        clientPaidUsd: roundNumber(rowPaidUsd),
+        providerNetUsd: useProviderPaid ? groupPaidUsd : 0,
+        included: true,
+        reason,
+        status: "",
+        reviewNote: `grouped payment allocation: ${rowNumbers.join(", ")}`,
+      },
+    });
+  }
+  return allocatedRowNumbers;
+}
+
+function addServicePaymentDiagnosticRow(diagnosticsByChannel, channel, diagnostic) {
+  const existing = diagnosticsByChannel.get(channel) || {
+    channel,
+    expectedUsd: 0,
+    includedUsd: 0,
+    missingUnsafeUsd: 0,
+    offsetUsd: 0,
+    netGapUsd: 0,
+    rows: [],
+  };
+  existing.expectedUsd = roundNumber(existing.expectedUsd + Number(diagnostic.expectedUsd || 0));
+  existing.includedUsd = roundNumber(existing.includedUsd + Number(diagnostic.includedUsd || 0));
+  existing.missingUnsafeUsd = roundNumber(existing.missingUnsafeUsd + Number(diagnostic.missingUnsafeUsd || 0));
+  existing.offsetUsd = roundNumber(existing.offsetUsd + Number(diagnostic.offsetUsd || 0));
+  existing.rows.push(diagnostic.row);
+  diagnosticsByChannel.set(channel, existing);
+}
+
+function buildServicePaymentGapSourceRow(candidate, { included, reason } = {}) {
+  return {
+    rowNumber: candidate.rowNumber,
+    date: candidate.date,
+    client: candidate.client,
+    order: String(candidate.row?.[3] || "").trim(),
+    paymentMethod: candidate.paymentMethod,
+    channel: candidate.channel,
+    accruedUsd: roundNumber(candidate.expectedUsd),
+    clientPaidUsd: roundNumber(candidate.clientPaidUsd),
+    providerNetUsd: roundNumber(candidate.providerNetUsd),
+    included: Boolean(included),
+    reason,
+    status: String(candidate.row?.[23] || "").trim(),
+    reviewNote: String(candidate.row?.[24] || "").trim(),
+  };
+}
+
+function getServicePaymentDiagnosticGroupKey({ date, client, channel } = {}) {
+  const normalizedDate = normalizeIsoDate(date);
+  const normalizedClient = normalizeLookupText(client);
+  const normalizedChannel = normalizeLookupText(channel);
+  if (!normalizedDate || !normalizedClient || !normalizedChannel || channel === "Без канала") return "";
+  return `${normalizedDate}|${normalizedClient}|${normalizedChannel}`;
+}
+
+function getServicePaymentProviderGroupKey(date, channel) {
+  const normalizedDate = normalizeIsoDate(date);
+  const normalizedChannel = normalizeLookupText(channel);
+  if (!normalizedDate || !normalizedChannel || channel === "Без канала") return "";
+  return `${normalizedDate}|${normalizedChannel}`;
+}
+
+function buildServicePaymentProviderGroupTotals({ providerEntries = [], ledgerOperations = [], movementValues = [], period = {} } = {}) {
+  const totals = new Map();
+  for (const entry of providerEntries || []) {
+    if (entry?.needsVerification) continue;
+    addServicePaymentProviderGroupTotal(totals, {
+      date: entry?.date,
+      channel: entry?.channel,
+      amountUsd: entry?.realNetUsd,
+    });
+  }
+
+  const usdRateLookup = buildMovementUsdRateLookup(movementValues, period?.endDate || period?.startDate || "");
+  for (const row of ledgerOperations || []) {
+    if (!isLedgerProviderIncomeSource(row) || isLedgerProviderNonIncomeRow(row)) continue;
+    const operation = getNormalizedLedgerFactOperation(row);
+    if (!["income", "servicein", "ezoin"].includes(operation)) continue;
+    addServicePaymentProviderGroupTotal(totals, {
+      date: row?.date,
+      channel: getLedgerIncomeChannel(row),
+      amountUsd: getLedgerFactAmountUsd(row, usdRateLookup),
+    });
+  }
+  return totals;
+}
+
+function addServicePaymentProviderGroupTotal(totals, { date, channel, amountUsd } = {}) {
+  const key = getServicePaymentProviderGroupKey(date, channel);
+  const amount = Number(amountUsd || 0);
+  if (!key || amount <= 0) return;
+  totals.set(key, roundNumber((totals.get(key) || 0) + amount));
+}
+
 function getServicePaymentGapChannel(row = []) {
-  const channel = resolveMovementServicePaymentChannel(row) || resolveMovementRowChannel(row);
+  const channel = resolveMovementServicePaymentDiagnosticChannel(row);
   return channel || "Без канала";
 }
 
@@ -1399,6 +1560,20 @@ function resolveMovementServicePaymentChannel(row = []) {
   if (clientDefault && /(сайт|site|card|карта|дол|usd|плат|pay)/.test(paymentMethod)) return clientDefault;
   if (/(сайт|site).*(rub|руб|рубл)|(?:rub|руб|рубл).*(сайт|site)|^юмани$|^юmoney$|^yoomoney$/.test(paymentMethod)) return "Яндекс руб";
   if (/(карта андрей|андрей карта)/.test(paymentMethod) && /лозин|lozin/i.test(normalizeLookupText(client))) return "монобанк грн";
+  return "";
+}
+
+function resolveMovementServicePaymentDiagnosticChannel(row = []) {
+  const resolved = resolveMovementServicePaymentChannel(row) || resolveMovementRowChannel(row);
+  if (resolved) return resolved;
+
+  const paymentMethod = normalizeLookupText(row?.[14]);
+  const clientDefault = inferFallbackPaymentChannelFromClient(row?.[2]);
+  if (!clientDefault || !paymentMethod) return "";
+
+  if (clientDefault === "пейпал дол" && /paypal|п[еэ]йп/.test(paymentMethod)) return clientDefault;
+  if (clientDefault === "трансервайз дол" && /wise|transferwise|трансервайз/.test(paymentMethod)) return clientDefault;
+  if (clientDefault === "приват-фоп" && /privat|приват|фоп|fop/.test(paymentMethod)) return clientDefault;
   return "";
 }
 
