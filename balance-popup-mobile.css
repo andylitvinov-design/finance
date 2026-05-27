@@ -1,0 +1,108 @@
+@media (max-width: 680px) {
+  .balance-summary-block {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 12px;
+  }
+
+  .balance-summary-block h3,
+  .balance-summary-block h4,
+  .balance-summary-block .balance-summary-diagnostics,
+  .balance-summary-block li {
+    overflow-wrap: anywhere;
+  }
+
+  .balance-income-channel-distribution table,
+  .balance-coverage-by-channel table,
+  .balance-coverage-remaining-check table,
+  .balance-service-payment-gap-section table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .balance-income-channel-distribution tbody,
+  .balance-coverage-by-channel tbody,
+  .balance-coverage-remaining-check tbody,
+  .balance-service-payment-gap-section tbody,
+  .balance-income-channel-distribution tr,
+  .balance-coverage-by-channel tr,
+  .balance-coverage-remaining-check tr,
+  .balance-service-payment-gap-section tr,
+  .balance-income-channel-distribution td,
+  .balance-coverage-by-channel td,
+  .balance-coverage-remaining-check td,
+  .balance-service-payment-gap-section td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .balance-income-channel-distribution tr,
+  .balance-coverage-by-channel tr,
+  .balance-coverage-remaining-check tr,
+  .balance-service-payment-gap-section tr {
+    margin: 8px 0;
+    border: 1px solid #eee3d5;
+    border-radius: 10px;
+    background: #fffdf9;
+    overflow: hidden;
+  }
+
+  .balance-income-channel-distribution tr:first-child,
+  .balance-coverage-by-channel tr:first-child {
+    display: none;
+  }
+
+  .balance-income-channel-distribution td,
+  .balance-coverage-by-channel td,
+  .balance-coverage-remaining-check td,
+  .balance-service-payment-gap-section td {
+    padding: 7px 10px;
+    border-right: 0;
+    text-align: left !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  .balance-income-channel-distribution td:first-child,
+  .balance-coverage-by-channel td:first-child,
+  .balance-service-payment-gap-section td:first-child {
+    font-weight: 700;
+  }
+
+  .balance-income-channel-distribution td:nth-child(2)::before,
+  .balance-coverage-by-channel td:nth-child(2)::before {
+    content: "USD: ";
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .balance-income-channel-distribution td:nth-child(3)::before,
+  .balance-coverage-by-channel td:nth-child(3)::before {
+    content: "%: ";
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .balance-coverage-remaining-check td:nth-child(1)::before { content: "row: "; color: var(--muted); font-weight: 700; }
+  .balance-coverage-remaining-check td:nth-child(2)::before { content: "date: "; color: var(--muted); font-weight: 700; }
+  .balance-coverage-remaining-check td:nth-child(4)::before { content: "channel: "; color: var(--muted); font-weight: 700; }
+  .balance-coverage-remaining-check td:nth-child(5)::before { content: "осталось: "; color: var(--muted); font-weight: 700; }
+
+  .balance-service-payment-gap-section td:nth-child(2)::before { content: "gap: "; color: var(--muted); font-weight: 700; }
+  .balance-service-payment-gap-section td:nth-child(3)::before { content: "reason: "; color: var(--muted); font-weight: 700; }
+  .balance-service-payment-gap-section td:nth-child(4)::before { content: "source: "; color: var(--muted); font-weight: 700; }
+
+  .balance-service-payment-gap-detail td,
+  .balance-service-payment-gap-detail summary,
+  .balance-service-payment-gap-source-row.compact {
+    font-size: 13px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+}
