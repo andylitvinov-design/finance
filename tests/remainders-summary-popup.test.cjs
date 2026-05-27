@@ -97,6 +97,39 @@ function collectText(node) {
   return [node.textContent || "", ...(node.children || []).map(collectText)].filter(Boolean).join("\n");
 }
 
+function walk(node, visit) {
+  if (!node) return;
+  visit(node);
+  (node.children || []).forEach((child) => walk(child, visit));
+}
+
+function findAll(node, predicate) {
+  const found = [];
+  walk(node, (child) => {
+    if (predicate(child)) found.push(child);
+  });
+  return found;
+}
+
+function firstVisibleTable(block) {
+  return findAll(block, (node) => node.tag === "table" && !hasAncestor(node, "details"))[0] || null;
+}
+
+function hasAncestor(node, tag) {
+  let current = node.parentNode;
+  while (current) {
+    if (current.tag === tag) return true;
+    current = current.parentNode;
+  }
+  return false;
+}
+
+function tableRows(table) {
+  return findAll(table, (node) => node.tag === "tr").map((row) =>
+    (row.children || []).map((cell) => collectText(cell).trim())
+  );
+}
+
 function createDateDocument({ from = "2026-05-17", to = "2026-05-17" } = {}) {
   return {
     createElement(tag) {
@@ -347,39 +380,89 @@ test("buildLiveRemaindersSummary fetches selected-date balance snapshots for О�
   delete global.fetch;
 });
 
-test("remainders popup renders selected-date channel currency balances", () => {
-  const api = loadApi();
-  const block = api.renderRemaindersSummaryBlock({
-    ...api.buildRemaindersSummary({ balances: { remainders_rows: [] } }),
-    selectedDateSnapshot: {
-      selected_date: "2026-05-17",
-      selected_date_source: "merged",
-      selected_date_rows: [
-        { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 870.42 },
-      ],
-      selected_date_diagnostics: [],
-    },
-  }, makeMockDocument());
-  const text = collectText(block);
-
-  assert.match(text, /Остатки на выбранную дату/);
-  assert.match(text, /Остатки сохранены на дату: 2026-05-17/);
-  assert.doesNotMatch(text, /2026-05-17 · merged/);
-  assert.doesNotMatch(text, /merged/);
-  assert.match(text, /трансервайз дол/);
-  assert.match(text, /870,42/);
-  assert.match(text, /ИТОГО USD/);
-  assert.doesNotMatch(text, /Дата/);
-  resetRemaindersModule();
-});
-
-test("remainders popup renders period balance changes from saved snapshots and amount_net movement", () => {
+test("remainders popup renders one default USD table by channel", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
     ...api.buildRemaindersSummary({
       balances: {
         remainders_rows: [
-          { channel: "Diagnostic row", currency: "USD", closing_amount_usd: null },
+          {
+            channel: "Wise USD",
+            currency: "USD",
+            opening_amount_usd: 100,
+            closing_amount_usd: 125,
+            movement_usd: 20,
+          },
+          {
+            channel: "Wise EUR",
+            currency: "EUR",
+            opening_amount_usd: 200,
+            closing_amount_usd: 160,
+            movement_usd: -30,
+          },
+        ],
+      },
+    }),
+    selectedDateSnapshot: {
+      selected_date: "2026-05-17",
+      selected_date_source: "merged",
+      selected_date_rows: [
+        { date: "2026-05-17", channel: "трансервайз дол", currency: "USD", amount: 870.42 },
+        { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351 },
+      ],
+      selected_date_diagnostics: [],
+    },
+  }, makeMockDocument());
+  const table = firstVisibleTable(block);
+  const rows = tableRows(table);
+  const visibleText = collectText(table);
+
+  assert.equal(findAll(block, (node) => node.tag === "table" && !hasAncestor(node, "details")).length, 1);
+  assert.deepEqual(rows[0], [
+    "Канал",
+    "Остатки 1 USD",
+    "Остатки 2 USD",
+    "Изменение USD",
+    "Движение средств USD",
+    "Разница USD",
+  ]);
+  assert.deepEqual(rows.find((row) => row[0] === "Wise USD"), [
+    "Wise USD",
+    "100,0000",
+    "125,0000",
+    "25,0000",
+    "20,0000",
+    "5,0000",
+  ]);
+  assert.deepEqual(rows.find((row) => row[0] === "Wise EUR"), [
+    "Wise EUR",
+    "200,0000",
+    "160,0000",
+    "-40,0000",
+    "-30,0000",
+    "-10,0000",
+  ]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
+    "ВСЕГО USD",
+    "300,0000",
+    "285,0000",
+    "-15,0000",
+    "-10,0000",
+    "-5,0000",
+  ]);
+  assert.doesNotMatch(visibleText, /Валюта/);
+  assert.doesNotMatch(visibleText, /ИТОГО CAD|ИТОГО EUR|ИТОГО RUB|ИТОГО UAH|ИТОГО USDT/);
+  assert.doesNotMatch(visibleText, /7351/);
+  resetRemaindersModule();
+});
+
+test("remainders popup keeps native snapshot and period diagnostics collapsed", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({
+      balances: {
+        remainders_rows: [
+          { channel: "Diagnostic row", currency: "USD", opening_amount_usd: 100, closing_amount_usd: 125, movement_usd: 20 },
         ],
       },
     }),
@@ -404,26 +487,17 @@ test("remainders popup renders period balance changes from saved snapshots and a
       { channel: "Only movement", currency: "USD", real_delta: 7 },
     ],
   }, makeMockDocument());
-  const text = collectText(block);
+  const visibleText = collectText(firstVisibleTable(block));
   const diagnostics = block.children.find((child) => child.tag === "details");
+  const diagnosticsText = collectText(diagnostics);
 
-  assert.match(text, /Изменение за период/);
-  assert.match(text, /Остаток на начало/);
-  assert.match(text, /Остаток на конец/);
-  assert.match(text, /Движение средств/);
-  assert.match(text, /Остаток плановый/);
-  assert.match(text, /Остаток фактический/);
-  assert.match(text, /Расхождение/);
-  assert.match(text, /Wise USD/);
-  assert.match(text, /25/);
-  assert.match(text, /20/);
-  assert.match(text, /120/);
-  assert.match(text, /5/);
-  assert.match(text, /Only movement/);
-  assert.match(text, /ИТОГО USD/);
-  assert.match(text, /ИТОГО EUR/);
-  assert.doesNotMatch(collectText(diagnostics), /Изменение за период/);
-  assert.doesNotMatch(text.replace(collectText(diagnostics), ""), /needs verification/);
+  assert.match(diagnosticsText, /Остатки на выбранную дату/);
+  assert.match(diagnosticsText, /Изменение за период/);
+  assert.match(diagnosticsText, /ИТОГО USD/);
+  assert.match(diagnosticsText, /ИТОГО EUR/);
+  assert.doesNotMatch(visibleText, /Изменение за период/);
+  assert.doesNotMatch(visibleText, /ИТОГО USD|ИТОГО EUR/);
+  assert.doesNotMatch(visibleText, /needs verification/);
   resetRemaindersModule();
 });
 
@@ -578,6 +652,52 @@ test("actual remainders rows still render needs verification without inventing b
   assert.equal(summary.totals.openingUsd, 0);
   assert.equal(summary.totals.closingUsd, 0);
   assert.equal(summary.totals.deltaUsd, 0);
+  resetRemaindersModule();
+});
+
+test("remainders default USD table renders fx_missing and excludes missing rows from totals", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        {
+          channel: "Complete USD",
+          currency: "USD",
+          opening_amount_usd: 10,
+          closing_amount_usd: 15,
+          movement_usd: 3,
+        },
+        {
+          channel: "Missing FX",
+          currency: "CAD",
+          opening_amount_usd: null,
+          closing_amount_usd: 20,
+          movement_usd: 4,
+          fx_warnings: [{ type: "fx_missing" }],
+        },
+      ],
+    },
+  });
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  assert.deepEqual(rows.find((row) => row[0] === "Missing FX"), [
+    "Missing FX",
+    "fx_missing",
+    "20,0000",
+    "fx_missing",
+    "4,0000",
+    "fx_missing",
+  ]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
+    "ВСЕГО USD",
+    "10,0000",
+    "15,0000",
+    "5,0000",
+    "3,0000",
+    "2,0000",
+  ]);
+  assert.match(collectText(block), /fx_missing: 1 row\(s\) excluded from ВСЕГО USD/);
   resetRemaindersModule();
 });
 
@@ -895,7 +1015,9 @@ test("collapsed remainders diagnostics table keeps horizontal scroll controls", 
   }), makeMockDocument());
   const diagnostics = block.children.find((child) => child.tag === "details");
   const controls = diagnostics.children.find((child) => child.className === "remainders-scroll-controls");
-  const wrap = block.querySelector(".remainders-summary-table-wrap");
+  const wrap = findAll(diagnostics, (child) =>
+    child.className.split(/\s+/).includes("remainders-summary-table-wrap")
+  )[0];
 
   assert.ok(diagnostics);
   assert.equal(diagnostics.open, false);
