@@ -1234,7 +1234,7 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
   };
 }
 
-function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}, options = {}) {
+export function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}, options = {}) {
   const diagnosticsByChannel = new Map();
   const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
   const providerGroupTotals = buildServicePaymentProviderGroupTotals({
@@ -1340,7 +1340,7 @@ function buildServicePaymentGapCandidate(row = []) {
     reason,
     groupKey: getServicePaymentDiagnosticGroupKey({ date, client, channel }),
     providerGroupKey: getServicePaymentProviderGroupKey(date, channel),
-    needsProviderNet: requiresProviderNetVerification(paymentMethod) || /пейпал|paypal|wise|трансервайз/i.test(channel),
+    needsProviderNet: /paypal|п(?:ей|эй)п(?:е|э)л|пейпал/i.test(`${paymentMethod} ${channel}`),
   };
 }
 
