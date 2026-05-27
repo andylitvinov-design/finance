@@ -90,6 +90,7 @@ test("period balance reconciliation API snapshot exposes planned and real period
 });
 
 test("period balance reconciliation API passes FX Rates into balance conversion", async () => {
+  let liveFxFetches = 0;
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-01", to: "2026-05-27" },
     repositoryLoader: async () => ({
@@ -109,6 +110,10 @@ test("period balance reconciliation API passes FX Rates into balance conversion"
       warnings: [],
     }),
     autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    fetchImpl: async (url) => {
+      if (String(url).includes("frankfurter")) liveFxFetches += 1;
+      throw new Error(`unexpected live fetch in report path: ${url}`);
+    },
     yooMoneyProviderEvidenceLoader: async () => ({ source: "not_connected", rows: [], warning: null }),
   });
 
@@ -118,6 +123,7 @@ test("period balance reconciliation API passes FX Rates into balance conversion"
   assert.equal(row.opening_fx_source, "fx_rates");
   assert.equal(row.manual_provider_closing_balance_fx_source, "fx_rates");
   assert.equal(row.needs_fx_rate, false);
+  assert.equal(liveFxFetches, 0);
 });
 
 test("period reconciliation exposes complete daily balance coverage diagnostics and optional rows", async () => {

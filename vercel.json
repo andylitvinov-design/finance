@@ -5,6 +5,10 @@
     {
       "path": "/api/auto-balance-snapshots",
       "schedule": "1 23 * * *"
+    },
+    {
+      "path": "/api/ensure-fx-rates",
+      "schedule": "15 23 * * *"
     }
   ],
   "rewrites": [
@@ -27,6 +31,10 @@
     {
       "source": "/api/repair-may-daily-balance-snapshots",
       "destination": "/api/index?action=mayDailyBalanceSnapshotRepair"
+    },
+    {
+      "source": "/api/ensure-fx-rates",
+      "destination": "/api/index?action=ensureFxRates"
     },
     {
       "source": "/api/binance-transactions",

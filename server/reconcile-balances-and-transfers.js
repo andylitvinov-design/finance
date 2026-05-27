@@ -7,6 +7,12 @@ import { fetchYooMoneyStatementEntries } from "../api/yoomoney-transactions.js";
 import { fetchBinanceStatementEntries, getBinanceProviderConfigFromEnv } from "./binance-transactions.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { runAutoBalanceSnapshots } from "./auto-balance-snapshots.js";
+import { DEFAULT_PROVIDER_FX_CURRENCIES, ensureFxRates } from "./fx-rates.js";
+import {
+  applyFxRateRows,
+  fetchFxRowsForDate,
+  readFxRateSheetValues,
+} from "../scripts/fetch-fx-rates.mjs";
 
 const PROVIDER_ORDER = ["wise", "monobank", "paypal", "privatbank", "yoomoney", "binance"];
 
@@ -38,17 +44,31 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const from = normalizeIsoDate(options.from);
   const to = normalizeIsoDate(options.to);
-  const currentDate = todayUtcDate();
+  const currentDate = normalizeIsoDate(options.currentDate) || todayUtcDate();
   const balanceDate = currentDate;
   const dryRun = Boolean(options.dryRun);
+  const ensureFxRatesRunner = options.ensureFxRatesRunner || ensureFxRates;
+  const autoBalanceRunner = options.autoBalanceRunner || runAutoBalanceSnapshots;
+  const auditSnapshotRunner = options.auditSnapshotRunner || buildAuditSnapshot;
+  const providerTransferCollector = options.providerTransferCollector || collectProviderTransfers;
 
-  const balances = await runStep("auto_balance_snapshots", () => runAutoBalanceSnapshots({
+  const fxRatesEnsure = await runStep("ensure_fx_rates", () => ensureFxRatesRunner({
+    from: from || currentDate,
+    to: to || from || currentDate,
+    currencies: options.fxCurrencies || DEFAULT_PROVIDER_FX_CURRENCIES,
+    currentDate,
+    fetchImpl,
+    readFxRateSheetValues,
+    fetchFxRowsForDate,
+    applyFxRateRows,
+  }));
+  const balances = await runStep("auto_balance_snapshots", () => autoBalanceRunner({
     query: { date: balanceDate, currentDate, dryRun },
     env,
     fetchImpl,
   }));
-  const transfers = await collectProviderTransfers({ from, to, env, fetchImpl });
-  const audit = await runStep("audit_snapshot", () => buildAuditSnapshot({
+  const transfers = await providerTransferCollector({ from, to, env, fetchImpl });
+  const audit = await runStep("audit_snapshot", () => auditSnapshotRunner({
     query: { from, to },
     repositoryLoader: loadManualRepositoryFromGoogleSheets,
   }));
@@ -59,9 +79,10 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
     .map(buildNeedsVerificationReason);
   const balanceStepOk = Boolean(balances.ok && balances.result?.ok !== false);
   const auditStepOk = Boolean(audit.ok && auditSnapshot?.ok !== false);
+  const fxRatesStepOk = Boolean(fxRatesEnsure.ok && fxRatesEnsure.result?.ok !== false);
 
   return {
-    ok: Boolean(balanceStepOk && auditStepOk),
+    ok: Boolean(fxRatesStepOk && balanceStepOk && auditStepOk),
     action: "reconcile-balances-and-transfers",
     period: { from, to },
     mode: dryRun ? "dry_run" : "write_auto_balances_and_read_provider_movements",
@@ -71,6 +92,7 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
       "Provider movement fetches are read-only; Ledger save is not called.",
     ],
     providers_checked: PROVIDER_ORDER,
+    fx_rates_ensure: summarizeFxRatesEnsureStep(fxRatesEnsure),
     balances_pulled: Number(balances.result?.saved_rows || 0),
     balance_snapshot: summarizeBalanceStep(balances),
     transfers_imported: transfers.reduce((sum, result) => sum + Number(result.entries || 0), 0),
@@ -84,11 +106,16 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
     ],
     audit_snapshot: auditSnapshot,
     errors: [
-      ...[balances, audit].filter((step) => !step.ok).map((step) => ({
+      ...[fxRatesEnsure, balances, audit].filter((step) => !step.ok).map((step) => ({
         step: step.step,
         code: step.code,
         message: step.error,
       })),
+      ...(!fxRatesStepOk && fxRatesEnsure.ok ? [{
+        step: fxRatesEnsure.step,
+        code: "step_failed",
+        message: (fxRatesEnsure.result?.errors || []).map((error) => error.message).filter(Boolean).join("; ") || "ensure FX Rates returned ok=false",
+      }] : []),
       ...(!balanceStepOk && balances.ok ? [{
         step: balances.step,
         code: "step_failed",
@@ -100,6 +127,23 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
         message: auditSnapshot?.error || "audit snapshot step returned ok=false",
       }] : []),
     ],
+  };
+}
+
+function summarizeFxRatesEnsureStep(step) {
+  const result = step.result || {};
+  return {
+    ok: Boolean(step.ok && result.ok),
+    checked: Number(result.checked || 0),
+    already_present: Number(result.already_present || 0),
+    missing_before_ensure: Number(result.missing_before_ensure || 0),
+    fetched_rows: Number(result.fetched_rows || 0),
+    fallback_rows: Number(result.fallback_rows || 0),
+    missing_after_ensure: Number(result.missing_after_ensure || 0),
+    currencies: result.currencies || [],
+    warnings: result.warnings || [],
+    errors: result.errors || (step.ok ? [] : [{ message: step.error }]),
+    apply_result: result.apply_result || null,
   };
 }
 

@@ -8,10 +8,10 @@ import {
   SHEETS_API_BASE_URL,
   getManualGoogleSheetsAccessToken,
 } from "../server/manual-google-sheets.js";
-import { isStableUsdCurrency } from "../server/fx-rates.js";
+import { DEFAULT_PROVIDER_FX_CURRENCIES, isStableUsdCurrency } from "../server/fx-rates.js";
 
 const DEFAULT_SOURCE = "frankfurter";
-const DEFAULT_CURRENCIES = ["EUR", "CAD", "UAH", "RUB", "CHF", "GBP", "THB"];
+const DEFAULT_CURRENCIES = DEFAULT_PROVIDER_FX_CURRENCIES;
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 if (isCliEntrypoint()) {
@@ -158,6 +158,12 @@ export async function applyFxRateRows(rows = [], { fetchImpl = fetch } = {}) {
     rows_written: Math.max(0, mergedValues.length - 1),
     updated_range: payload.updatedRange || null,
   };
+}
+
+export async function readFxRateSheetValues({ fetchImpl = fetch } = {}) {
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  await ensureFxRatesSheet({ accessToken, fetchImpl });
+  return await readFxRatesSheetValues({ accessToken, fetchImpl });
 }
 
 export function parseCurrencyList(value) {
