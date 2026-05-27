@@ -556,16 +556,68 @@ test("expense analysis UI keeps refresh action and scrollable tables", () => {
   assert.match(uiJs, /analysis-table-wrap/);
   assert.match(uiJs, /renderPlainTable\(rows\)/);
   assert.match(uiJs, /renderMissingPaymentsBlock\(getMissingPaymentsAuditSummary\(\)\)/);
+  assert.match(uiJs, /renderOrderPaymentCoverageBlock\(getOrderPaymentCoverageSummary\(\)\)/);
   assert.ok(
     uiJs.indexOf("renderExpenseAnalysisChannelBlock(channelReconciliation)") <
       uiJs.indexOf("renderMissingPaymentsBlock(getMissingPaymentsAuditSummary())")
   );
   assert.ok(
     uiJs.indexOf("renderMissingPaymentsBlock(getMissingPaymentsAuditSummary())") <
+      uiJs.indexOf("renderOrderPaymentCoverageBlock(getOrderPaymentCoverageSummary())")
+  );
+  assert.ok(
+    uiJs.indexOf("renderOrderPaymentCoverageBlock(getOrderPaymentCoverageSummary())") <
       uiJs.indexOf("renderBalanceReconciliationBlock(getBalanceReconciliationSummary())")
   );
   assert.doesNotMatch(uiJs, /renderResponsiveDataView\(rows, \{ mobileTableColumnCount: 2 \}\)/);
   assert.match(styleCss, /\.analysis-table-wrap table \{ min-width: 640px; \}/);
+});
+
+test("order payment coverage UI renders only actionable rows", () => {
+  const context = {
+    document: { createElement: createElementStub },
+    formatSheetNumber(value) {
+      return String(value);
+    },
+    renderExpenseSummaryCard(label, value) {
+      return { label, value };
+    },
+    renderPlainTable(rows) {
+      return { rows };
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${extractFunction(uiJs, "getOrderPaymentCoverageActionableRows")}\n` +
+    `${extractFunction(uiJs, "renderOrderPaymentCoverageDetailsTable")}\n` +
+    `${extractFunction(uiJs, "renderOrderPaymentCoverageBlock")}\n` +
+    "this.getOrderPaymentCoverageActionableRows = getOrderPaymentCoverageActionableRows;\n" +
+    "this.renderOrderPaymentCoverageDetailsTable = renderOrderPaymentCoverageDetailsTable;\n" +
+    "this.renderOrderPaymentCoverageBlock = renderOrderPaymentCoverageBlock;",
+    context
+  );
+
+  const coverage = {
+    summary: {
+      totalAccruedOrdersUsd: 2634.8,
+      totalAllocatedToOrdersUsd: 2609.05,
+      totalRemainingOrderUsd: 25.75,
+      totalOverpaidOffsetUsd: 39.56,
+      totalExcludedNonServiceUsd: 103,
+      totalUnexplainedUsd: 0,
+    },
+    rows: [
+      { rowNumber: "18149", remainingUsd: 0, status: "covered" },
+      { rowNumber: "18170", date: "2026-05-20", client: "Вилл", service: "Повтор", accruedPlus3Usd: 25.75, paymentMethod: "wise", channel: "трансервайз дол", allocatedPaidUsd: 0, allocationSource: "none", remainingUsd: 25.75, status: "needs verification" },
+      { rowNumber: "18171", remainingUsd: 0, status: "covered" },
+    ],
+  };
+
+  assert.deepEqual(plain(context.getOrderPaymentCoverageActionableRows(coverage).map((row) => row.rowNumber)), ["18170"]);
+  const table = context.renderOrderPaymentCoverageDetailsTable(coverage);
+  assert.deepEqual(plain(table.rows.map((row) => row[0])), ["row", "18170"]);
+  const block = context.renderOrderPaymentCoverageBlock(coverage);
+  assert.equal(block.children[0].textContent, "Покрытие заказов оплатами");
 });
 
 test("expense analysis mobile tables pin the first column despite generic scroll rules", () => {
@@ -3098,6 +3150,8 @@ test("expense financial analysis profit uses owner order share instead of provid
     renderExpenseAnalysisChannelBlock: () => createElementStub("section"),
     getMissingPaymentsAuditSummary: () => ({}),
     renderMissingPaymentsBlock: () => createElementStub("section"),
+    getOrderPaymentCoverageSummary: () => ({}),
+    renderOrderPaymentCoverageBlock: () => createElementStub("section"),
     getBalanceReconciliationSummary: () => ({ rows: [] }),
     renderBalanceReconciliationBlock: () => createElementStub("section"),
     getActivePayPalSummary: () => null,
