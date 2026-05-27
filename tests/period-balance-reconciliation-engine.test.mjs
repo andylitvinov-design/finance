@@ -481,6 +481,47 @@ test("FX Rates table provides frozen USD equivalents for exact balance dates", (
   assert.deepEqual(missing.fx_warnings, ["opening_usd_fx_missing", "planned_end_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
 });
 
+test("owner opening evidence uses frozen FX Rates instead of staying fx_missing", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-10",
+        fromChannel: "пейпал евр",
+        currency: "EUR",
+        amountNet: "422.55",
+        amountUsd: "490.158",
+        balanceAmount: -422.55,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "expense",
+          from_channel: "пейпал евр",
+          currency: "EUR",
+          amount_net: "422.55",
+          amount_usd: "490.158",
+          balance_amount: -422.55,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0" },
+      { date: "2026-05-27", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0" },
+    ],
+    fxRates: [
+      { date: "2026-05-01", currency: "EUR", base_currency: "USD", rate_to_usd: 1.1, source: "frankfurter", status: "ok" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "пейпал евр");
+  assert.equal(row.opening_native, 175.25);
+  assert.equal(row.opening_usd, 192.775);
+  assert.equal(row.opening_fx_source, "fx_rates");
+  assert.equal(row.opening_fx_rate_to_usd, 1.1);
+  assert.equal(row.opening_fx_status, "ok");
+  assert.equal(row.needs_fx_rate, false);
+  assert.deepEqual(row.fx_warnings, []);
+});
+
 test("planned and real deltas are shown separately", () => {
   const result = buildPeriodBalanceReconciliation({
     period,
