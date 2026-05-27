@@ -249,6 +249,46 @@ test("May owner evidence feeds PayPal screenshot openings and keeps Binance Save
   assert.equal(save.diff_native, -3107.3722);
 });
 
+test("May owner evidence keeps zero PayPal local closing balances as frozen USD zero", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-12",
+        fromChannel: "пейпал евр",
+        currency: "EUR",
+        amountNet: "422.55",
+        balanceAmount: -422.55,
+        ledgerV2: { date: "2026-05-12", operation: "expense", from_channel: "пейпал евр", currency: "EUR", amount_net: "422.55", balance_amount: -422.55 },
+      },
+      {
+        date: "2026-05-13",
+        fromChannel: "пейпал сad",
+        currency: "CAD",
+        amountNet: "19.50",
+        balanceAmount: -19.5,
+        ledgerV2: { date: "2026-05-13", operation: "expense", from_channel: "пейпал сad", currency: "CAD", amount_net: "19.50", balance_amount: -19.5 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "пейпал сad", currency: "CAD", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "пейпал евр", currency: "EUR", amount: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "пейпал сad", currency: "CAD", amount: "0", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const eur = result.by_channel_currency.find((row) => row.channel === "пейпал евр" && row.currency === "EUR");
+  const cad = result.by_channel_currency.find((row) => row.channel === "пейпал сad" && row.currency === "CAD");
+
+  assert.equal(eur.confirmed_end_native, 0);
+  assert.equal(eur.confirmed_end_usd, 0);
+  assert.equal(cad.confirmed_end_native, 0);
+  assert.equal(cad.confirmed_end_usd, 0);
+  assert.equal(eur.fx_warnings.includes("confirmed_end_usd_fx_missing"), false);
+  assert.equal(cad.fx_warnings.includes("confirmed_end_usd_fx_missing"), false);
+});
+
 test("total USD row sums only available frozen USD equivalents", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-27" },
