@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import handler from "../api/index.js";
+import handler, { buildServicePaymentGapDiagnostics } from "../api/index.js";
 
 function createResponseRecorder() {
   return {
@@ -2562,6 +2562,63 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
   }
 });
 
+test("service payment diagnostics keep Wise grouped rows on movement same-date client channel totals", () => {
+  const makeMovementRow = ({ number, date, client, expectedUsd, paymentMethod, clientPaidUsd = "", providerNetUsd = "" }) => {
+    const row = new Array(25).fill("");
+    row[0] = number;
+    row[1] = date;
+    row[2] = client;
+    row[9] = String(expectedUsd);
+    row[14] = paymentMethod;
+    row[18] = String(clientPaidUsd);
+    row[20] = String(providerNetUsd);
+    return row;
+  };
+
+  const movementValues = [
+    ["header"],
+    [""],
+    ["NUMBER", "DATE", "CLIENT"],
+    makeMovementRow({
+      number: "18170",
+      date: "2026-05-20",
+      client: "Вилл",
+      expectedUsd: 206,
+      paymentMethod: "wise",
+    }),
+    makeMovementRow({
+      number: "18171",
+      date: "2026-05-22",
+      client: "Вилл",
+      expectedUsd: 206,
+      paymentMethod: "wise",
+    }),
+    makeMovementRow({
+      number: "18172",
+      date: "2026-05-22",
+      client: "Вилл",
+      expectedUsd: 25.75,
+      paymentMethod: "wise",
+      clientPaidUsd: 231.75,
+    }),
+  ];
+
+  const diagnostics = buildServicePaymentGapDiagnostics(movementValues, {}, {
+    providerEntries: [{
+      date: "2026-05-22",
+      channel: "трансервайз дол",
+      realNetUsd: 437.75,
+    }],
+  });
+  const wiseGap = diagnostics.servicePaymentGapByChannel.find((row) => row.channel === "трансервайз дол");
+
+  assert.deepEqual(wiseGap?.rows?.map((row) => row.rowNumber), ["18170"]);
+  assert.equal(
+    diagnostics.servicePaymentGapByChannel.some((row) => row.rows?.some((sourceRow) => sourceRow.rowNumber === "18171-18172")),
+    false
+  );
+});
+
 test("GET getDashboardData adds channel-level service payment gap diagnostics without changing service payment totals", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
@@ -2863,7 +2920,6 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
       }
       if (value.includes("/sapi/v1/capital/withdraw/history")) return { ok: true, status: 200, async text() { return "[]"; } };
       if (value.includes("/sapi/v1/pay/transactions")) return { ok: true, status: 200, async text() { return JSON.stringify({ data: [] }); } };
-
       throw new Error(`Unexpected fetch URL: ${value}`);
     };
 
