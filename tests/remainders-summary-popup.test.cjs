@@ -701,6 +701,56 @@ test("remainders default USD table renders fx_missing and excludes missing rows 
   resetRemaindersModule();
 });
 
+test("remainders default USD table prefers period reconciliation FX totals when available", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        {
+          channel: "Legacy Missing FX",
+          currency: "CAD",
+          opening_amount_usd: null,
+          closing_amount_usd: 20,
+          movement_usd: 4,
+        },
+      ],
+    },
+  });
+  summary.periodReconciliation = {
+    by_channel_currency: [
+      {
+        channel: "Wise EUR",
+        currency: "EUR",
+        opening_usd: 110,
+        confirmed_end_usd: 144,
+        movement_usd: 13,
+        fx_warnings: [],
+      },
+    ],
+    total_usd_row: {
+      opening_usd: 110,
+      confirmed_end_usd: 144,
+      change_usd: 34,
+      movement_usd: 13,
+      diff_usd: 21,
+      excluded_fx_missing_rows: 0,
+    },
+  };
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  assert.deepEqual(rows.find((row) => row[0] === "Wise EUR EUR"), [
+    "Wise EUR EUR",
+    "110,0000",
+    "144,0000",
+    "34,0000",
+    "13,0000",
+    "21,0000",
+  ]);
+  assert.doesNotMatch(collectText(block), /fx_missing: .*excluded from ВСЕГО USD/);
+  resetRemaindersModule();
+});
+
 test("remainders popup renders reconcile button", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({

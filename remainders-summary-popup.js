@@ -65,13 +65,15 @@
       changeUsd,
       movementUsd: row.movementUsd,
       diffUsd,
-      fxMissing: ![
-        row.openingUsd,
-        row.closingUsd,
-        changeUsd,
-        row.movementUsd,
-        diffUsd,
-      ].every(Number.isFinite),
+      fxMissing: typeof row.fxMissing === "boolean"
+        ? row.fxMissing
+        : ![
+          row.openingUsd,
+          row.closingUsd,
+          changeUsd,
+          row.movementUsd,
+          diffUsd,
+        ].every(Number.isFinite),
     };
   }
 
@@ -96,6 +98,31 @@
       diffUsd: 0,
       fxMissingCount: 0,
     });
+  }
+
+  function buildVisibleUsdRowsFromPeriodReconciliation(reconciliation) {
+    return (reconciliation?.by_channel_currency || [])
+      .filter((row) => row?.channel && row.channel !== "ВСЕГО USD")
+      .map((row) => ({
+        channel: `${row.channel || ""}${row.currency ? ` ${row.currency}` : ""}`.trim(),
+        openingUsd: parseNumber(row.opening_usd),
+        closingUsd: parseNumber(row.confirmed_end_usd),
+        movementUsd: parseNumber(row.movement_usd),
+        fxMissing: Array.isArray(row.fx_warnings) && row.fx_warnings.length > 0,
+      }));
+  }
+
+  function buildVisibleUsdTotalFromPeriodReconciliation(reconciliation) {
+    const row = reconciliation?.total_usd_row || null;
+    if (!row) return null;
+    return {
+      openingUsd: parseNumber(row.opening_usd) || 0,
+      closingUsd: parseNumber(row.confirmed_end_usd) || 0,
+      changeUsd: parseNumber(row.change_usd) || 0,
+      movementUsd: parseNumber(row.movement_usd) || 0,
+      diffUsd: parseNumber(row.diff_usd) || 0,
+      fxMissingCount: Number(row.excluded_fx_missing_rows || 0),
+    };
   }
 
   function asRows(source) {
@@ -301,17 +328,18 @@
     const periodReconciliation = await fetchPeriodBalanceReconciliation().catch(() => null);
     const periodMovementRows = periodReconciliation?.by_channel_currency || [];
     if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
-      return { ...current, selectedDateSnapshot, periodMovementRows };
+      return { ...current, selectedDateSnapshot, periodReconciliation, periodMovementRows };
     }
     try {
       const snapshot = await fetchAuditSnapshotRemainders();
-      if (!snapshot) return { ...current, selectedDateSnapshot, periodMovementRows };
+      if (!snapshot) return { ...current, selectedDateSnapshot, periodReconciliation, periodMovementRows };
       const fetched = buildRemaindersSummary(snapshot);
-      return { ...(fetched.source ? fetched : current), selectedDateSnapshot, periodMovementRows };
+      return { ...(fetched.source ? fetched : current), selectedDateSnapshot, periodReconciliation, periodMovementRows };
     } catch (error) {
       return {
         ...current,
         selectedDateSnapshot,
+        periodReconciliation,
         periodMovementRows,
         diagnostics: [
           ...(current.diagnostics || []),
@@ -595,6 +623,9 @@
   }
 
   function renderDefaultUsdBalancesTable(summary, doc = root.document) {
+    const periodRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
+    const rows = periodRows.length ? periodRows : (summary.rows || []);
+    const totals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation) || buildVisibleUsdTotals(rows);
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
     const title = doc.createElement("h4");
@@ -619,7 +650,7 @@
     table.appendChild(thead);
 
     const tbody = doc.createElement("tbody");
-    (summary.rows || []).forEach((row) => {
+    rows.forEach((row) => {
       const visible = computeVisibleUsdRow(row);
       const tr = doc.createElement("tr");
       if (visible.fxMissing) tr.className = "needs-verification";
@@ -632,7 +663,6 @@
       tbody.appendChild(tr);
     });
 
-    const totals = buildVisibleUsdTotals(summary.rows || []);
     const total = doc.createElement("tr");
     total.className = "balance-income-channel-total";
     total.appendChild(renderCell(doc, "ВСЕГО USD"));
