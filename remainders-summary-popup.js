@@ -47,6 +47,57 @@
     return Number.isFinite(value) ? value.toFixed(4).replace(".", ",") : NEEDS_VERIFICATION;
   }
 
+  function formatUsdCell(value) {
+    return Number.isFinite(value) ? formatMoney(value) : "fx_missing";
+  }
+
+  function computeVisibleUsdRow(row) {
+    const changeUsd = Number.isFinite(row.openingUsd) && Number.isFinite(row.closingUsd)
+      ? row.closingUsd - row.openingUsd
+      : null;
+    const diffUsd = Number.isFinite(changeUsd) && Number.isFinite(row.movementUsd)
+      ? changeUsd - row.movementUsd
+      : null;
+    return {
+      channel: row.channel,
+      openingUsd: row.openingUsd,
+      closingUsd: row.closingUsd,
+      changeUsd,
+      movementUsd: row.movementUsd,
+      diffUsd,
+      fxMissing: ![
+        row.openingUsd,
+        row.closingUsd,
+        changeUsd,
+        row.movementUsd,
+        diffUsd,
+      ].every(Number.isFinite),
+    };
+  }
+
+  function buildVisibleUsdTotals(rows) {
+    return (rows || []).reduce((totals, row) => {
+      const visible = computeVisibleUsdRow(row);
+      if (visible.fxMissing) {
+        totals.fxMissingCount += 1;
+        return totals;
+      }
+      totals.openingUsd += visible.openingUsd;
+      totals.closingUsd += visible.closingUsd;
+      totals.changeUsd += visible.changeUsd;
+      totals.movementUsd += visible.movementUsd;
+      totals.diffUsd += visible.diffUsd;
+      return totals;
+    }, {
+      openingUsd: 0,
+      closingUsd: 0,
+      changeUsd: 0,
+      movementUsd: 0,
+      diffUsd: 0,
+      fxMissingCount: 0,
+    });
+  }
+
   function asRows(source) {
     if (Array.isArray(source)) return source;
     if (Array.isArray(source?.rows)) return source.rows;
@@ -543,6 +594,67 @@
     return section;
   }
 
+  function renderDefaultUsdBalancesTable(summary, doc = root.document) {
+    const section = doc.createElement("section");
+    section.className = "remainders-usd-balances";
+    const title = doc.createElement("h4");
+    title.textContent = "Остатки по каналам оплаты";
+    section.appendChild(title);
+
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap remainders-summary-table-wrap";
+    wrap.appendChild(renderRemaindersScrollControls(wrap, doc));
+    const table = doc.createElement("table");
+    const thead = doc.createElement("thead");
+    const header = doc.createElement("tr");
+    [
+      "Канал",
+      "Остатки 1 USD",
+      "Остатки 2 USD",
+      "Изменение USD",
+      "Движение средств USD",
+      "Разница USD",
+    ].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
+    thead.appendChild(header);
+    table.appendChild(thead);
+
+    const tbody = doc.createElement("tbody");
+    (summary.rows || []).forEach((row) => {
+      const visible = computeVisibleUsdRow(row);
+      const tr = doc.createElement("tr");
+      if (visible.fxMissing) tr.className = "needs-verification";
+      tr.appendChild(renderCell(doc, visible.channel));
+      tr.appendChild(renderCell(doc, formatUsdCell(visible.openingUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCell(visible.closingUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCell(visible.changeUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCell(visible.movementUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCell(visible.diffUsd), "numeric"));
+      tbody.appendChild(tr);
+    });
+
+    const totals = buildVisibleUsdTotals(summary.rows || []);
+    const total = doc.createElement("tr");
+    total.className = "balance-income-channel-total";
+    total.appendChild(renderCell(doc, "ВСЕГО USD"));
+    total.appendChild(renderCell(doc, formatMoney(totals.openingUsd), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(totals.closingUsd), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(totals.changeUsd), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(totals.movementUsd), "numeric"));
+    total.appendChild(renderCell(doc, formatMoney(totals.diffUsd), "numeric"));
+    tbody.appendChild(total);
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+
+    if (totals.fxMissingCount) {
+      const note = doc.createElement("div");
+      note.className = "balance-summary-diagnostics";
+      note.textContent = `fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`;
+      section.appendChild(note);
+    }
+    return section;
+  }
+
   function renderRemaindersSummaryBlock(summary, doc = root.document) {
     const block = doc.createElement("div");
     block.id = REMAINDERS_BLOCK_ID;
@@ -583,10 +695,7 @@
       block.appendChild(renderReconcileResult(summary.reconcileResult, doc));
     }
 
-    const selectedDateBlock = renderSelectedDateSnapshotBlock(summary.selectedDateSnapshot, doc);
-    if (selectedDateBlock) block.appendChild(selectedDateBlock);
-    const periodChangesBlock = renderPeriodBalanceChangesBlock(summary.selectedDateSnapshot, summary.periodMovementRows || [], doc);
-    if (periodChangesBlock) block.appendChild(periodChangesBlock);
+    block.appendChild(renderDefaultUsdBalancesTable(summary, doc));
 
     const details = doc.createElement("details");
     details.className = "remainders-diagnostics-details";
@@ -595,6 +704,11 @@
     detailsSummary.textContent = "Диагностика сверки";
     details.appendChild(detailsSummary);
     block.appendChild(details);
+
+    const selectedDateBlock = renderSelectedDateSnapshotBlock(summary.selectedDateSnapshot, doc);
+    if (selectedDateBlock) details.appendChild(selectedDateBlock);
+    const periodChangesBlock = renderPeriodBalanceChangesBlock(summary.selectedDateSnapshot, summary.periodMovementRows || [], doc);
+    if (periodChangesBlock) details.appendChild(periodChangesBlock);
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
