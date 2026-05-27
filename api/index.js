@@ -161,6 +161,18 @@ const SOURCE_RECEIVED_AMOUNT_CORRECTIONS = {
     reason: "source missing 515 USD UAH equivalent"
   }
 };
+const KNOWN_GROUPED_SERVICE_PAYMENTS = [
+  {
+    id: "known-paypal-ustymenko-2026-05-05-18149-18151",
+    clientPattern: /инна\s+устименко|inna\s+ustymenko/i,
+    date: "2026-05-05",
+    rowNumbers: ["18149", "18150", "18151"],
+    channel: "пейпал дол",
+    grossUsd: 118.8,
+    feeUsd: 4.93,
+    netUsd: 113.87,
+  },
+];
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -1172,10 +1184,24 @@ function buildEmptyRealIncomeSummaryRow(channel, plannedReceivedUsd = 0) {
 
 function summarizeMovementServicePaymentsByChannel(movementValues = []) {
   const movementStats = summarizeMovementChannels(movementValues);
-  const totalsByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, 0]));
+  const totalsByChannel = Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => [channel, { grossUsd: 0, feeUsd: 0, netUsd: 0 }]));
   const rows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  const handledKnownPaymentIds = new Set();
 
   for (const row of rows) {
+    const knownPayment = getKnownGroupedServicePaymentForRow(row);
+    if (knownPayment) {
+      if (!handledKnownPaymentIds.has(knownPayment.id) && hasKnownGroupedServicePaymentRows(rows, knownPayment)) {
+        const totals = totalsByChannel[knownPayment.channel];
+        if (totals) {
+          totals.grossUsd = roundNumber(totals.grossUsd + knownPayment.grossUsd);
+          totals.feeUsd = roundNumber(totals.feeUsd + knownPayment.feeUsd);
+          totals.netUsd = roundNumber(totals.netUsd + knownPayment.netUsd);
+        }
+        handledKnownPaymentIds.add(knownPayment.id);
+      }
+      continue;
+    }
     if (!isMovementServicePaymentRow(row)) continue;
     const channel = resolveMovementServicePaymentChannel(row);
     if (!channel || !Object.prototype.hasOwnProperty.call(totalsByChannel, channel)) continue;
@@ -1183,11 +1209,13 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
     const clientPaidUsd = parseLooseNumber(row?.[18]);
     const servicePaymentUsd = netReceivedUsd > 0 ? netReceivedUsd : clientPaidUsd;
     if (!Number.isFinite(servicePaymentUsd) || servicePaymentUsd <= 0) continue;
-    totalsByChannel[channel] = roundNumber(totalsByChannel[channel] + servicePaymentUsd);
+    totalsByChannel[channel].grossUsd = roundNumber(totalsByChannel[channel].grossUsd + servicePaymentUsd);
+    totalsByChannel[channel].netUsd = roundNumber(totalsByChannel[channel].netUsd + servicePaymentUsd);
   }
 
   return Object.fromEntries(REAL_INCOME_CHANNELS.map((channel) => {
-    const realNetUsd = roundNumber(totalsByChannel[channel] || 0);
+    const totals = totalsByChannel[channel] || { grossUsd: 0, feeUsd: 0, netUsd: 0 };
+    const realNetUsd = roundNumber(totals.netUsd || 0);
     const plannedReceivedUsd = roundNumber(movementStats.plannedReceivedUsdByChannel?.[channel] || 0);
     if (!realNetUsd) return [channel, buildEmptyRealIncomeSummaryRow(channel, plannedReceivedUsd)];
     const differenceUsd = roundNumber(plannedReceivedUsd - realNetUsd);
@@ -1195,8 +1223,8 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
       channel,
       currency: inferChannelCurrency(channel),
       plannedReceivedUsd,
-      realGrossUsd: realNetUsd,
-      realFeeUsd: 0,
+      realGrossUsd: roundNumber(totals.grossUsd),
+      realFeeUsd: roundNumber(totals.feeUsd),
       realNetUsd,
       differenceUsd,
       differencePct: calculateDifferencePct(differenceUsd, realNetUsd),
@@ -1207,8 +1235,57 @@ function summarizeMovementServicePaymentsByChannel(movementValues = []) {
 function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}) {
   const diagnosticsByChannel = new Map();
   const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  const knownPaymentRowNumbers = new Set();
+
+  for (const knownPayment of KNOWN_GROUPED_SERVICE_PAYMENTS) {
+    const paymentRows = dataRows.filter((row) => isKnownGroupedServicePaymentRow(row, knownPayment));
+    if (paymentRows.length !== knownPayment.rowNumbers.length) continue;
+    for (const row of paymentRows) knownPaymentRowNumbers.add(String(row?.[0] || "").trim());
+
+    const expectedUsd = roundNumber(paymentRows.reduce((sum, row) => sum + (parseLooseNumber(row?.[9]) || 0), 0));
+    const channel = knownPayment.channel;
+    const existing = diagnosticsByChannel.get(channel) || {
+      channel,
+      expectedUsd: 0,
+      includedUsd: 0,
+      missingUnsafeUsd: 0,
+      offsetUsd: 0,
+      netGapUsd: 0,
+      rows: [],
+    };
+    existing.expectedUsd = roundNumber(existing.expectedUsd + expectedUsd);
+    existing.includedUsd = roundNumber(existing.includedUsd + knownPayment.netUsd);
+    if (knownPayment.netUsd > expectedUsd) {
+      existing.offsetUsd = roundNumber(existing.offsetUsd + (knownPayment.netUsd - expectedUsd));
+    }
+    for (const row of paymentRows) {
+      existing.rows.push({
+        rowNumber: String(row?.[0] || "").trim(),
+        date: normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim(),
+        client: String(row?.[2] || "").trim(),
+        order: String(row?.[3] || "").trim(),
+        paymentMethod: String(row?.[14] || "").trim(),
+        channel,
+        accruedUsd: roundNumber(parseLooseNumber(row?.[9]) || 0),
+        clientPaidUsd: roundNumber(parseLooseNumber(row?.[18]) || 0),
+        providerNetUsd: 0,
+        included: true,
+        reason: "known grouped PayPal payment",
+        status: String(row?.[23] || "").trim(),
+        reviewNote: String(row?.[24] || "").trim(),
+        knownPaymentId: knownPayment.id,
+        knownPayment: {
+          grossUsd: knownPayment.grossUsd,
+          feeUsd: knownPayment.feeUsd,
+          netUsd: knownPayment.netUsd,
+        },
+      });
+    }
+    diagnosticsByChannel.set(channel, existing);
+  }
 
   for (const row of dataRows) {
+    if (knownPaymentRowNumbers.has(String(row?.[0] || "").trim())) continue;
     if (isKovalevWiseBoleslavMovementRow({ client: row?.[2], paymentMethod: row?.[14] })) continue;
     const expectedUsd = parseLooseNumber(row?.[9]) || 0;
     const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
@@ -1319,6 +1396,28 @@ function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSu
 function getServicePaymentGapChannel(row = []) {
   const channel = resolveMovementServicePaymentChannel(row) || resolveMovementRowChannel(row);
   return channel || "Без канала";
+}
+
+function getKnownGroupedServicePaymentForRow(row = []) {
+  return KNOWN_GROUPED_SERVICE_PAYMENTS.find((payment) => isKnownGroupedServicePaymentRow(row, payment)) || null;
+}
+
+function hasKnownGroupedServicePaymentRows(rows = [], knownPayment = {}) {
+  const matchedRows = new Set(
+    (rows || [])
+      .filter((row) => isKnownGroupedServicePaymentRow(row, knownPayment))
+      .map((row) => String(row?.[0] || "").trim())
+  );
+  return (knownPayment.rowNumbers || []).every((rowNumber) => matchedRows.has(String(rowNumber)));
+}
+
+function isKnownGroupedServicePaymentRow(row = [], knownPayment = {}) {
+  const rowNumber = String(row?.[0] || "").trim();
+  if (!(knownPayment.rowNumbers || []).includes(rowNumber)) return false;
+  if (normalizeDisplayDate(row?.[1]) !== knownPayment.date) return false;
+  if (!knownPayment.clientPattern?.test(normalizeLookupText(row?.[2]))) return false;
+  const channel = resolveMovementRowChannel(row) || resolveMovementServicePaymentChannel(row) || inferFallbackPaymentChannelFromClient(row?.[2]);
+  return channel === knownPayment.channel;
 }
 
 function getServicePaymentGapReason(row = [], amounts = {}) {
