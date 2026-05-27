@@ -56,9 +56,19 @@
     if (!doc || !container) return;
     try {
       const snapshot = await fetchPeriodBalanceReconciliation(globalRoot);
-      container.replaceWith(renderPeriodBalanceBlock(doc, snapshot));
+      container.replaceWith(renderPeriodBalanceBlock(doc, snapshot, { showDiagnostics: shouldShowDiagnostics(globalRoot) }));
     } catch (error) {
       container.replaceWith(renderError(doc, error));
+    }
+  }
+
+  function shouldShowDiagnostics(globalRoot = root) {
+    const search = String(globalRoot?.location?.search || globalRoot?.window?.location?.search || "");
+    if (/[?&]debugPeriodBalance=1\b/.test(search)) return true;
+    try {
+      return String(globalRoot?.localStorage?.getItem?.("debugPeriodBalance") || "") === "1";
+    } catch (error) {
+      return false;
     }
   }
 
@@ -105,7 +115,7 @@
     return section;
   }
 
-  function renderPeriodBalanceBlock(doc, snapshot) {
+  function renderPeriodBalanceBlock(doc, snapshot, options = {}) {
     const section = createSection(doc);
     const reconciliation = snapshot?.period_balance_reconciliation;
     if (!reconciliation) {
@@ -124,6 +134,10 @@
       section.appendChild(renderBinanceWalletDiagnostics(doc, reconciliation.binance_wallet_diagnostics));
     }
     section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}, reconciliation.total_usd_row || reconciliation.reconciliation_report_summary?.total_usd_row || null));
+    if (options.showDiagnostics) {
+      section.appendChild(renderDiagnosticPositionTable(doc, meaningfulRows, reconciliation.summary || {}, reconciliation.total_usd_row || reconciliation.reconciliation_report_summary?.total_usd_row || null));
+      section.appendChild(renderTopTotals(doc, reconciliation || {}));
+    }
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
     const requiredManualFactRows = reconciliation.required_manual_fact_rows || [];
@@ -148,8 +162,6 @@
         ])
       ));
     }
-
-    section.appendChild(renderTopTotals(doc, reconciliation || {}));
 
     const warnings = snapshot?.warnings || reconciliation.warnings || [];
     if (warnings.length) {
@@ -339,6 +351,79 @@
 
   function renderPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
     const tableRows = [
+      ...rows.map((row) => buildUsdTableRow(row)),
+      ...(totalUsdRow ? [buildVisibleTotalUsdTableRow(totalUsdRow)] : []),
+    ];
+    const fxMissingCount = Number(totalUsdRow?.excluded_fx_missing_rows || 0);
+    const block = renderSubsection(
+      doc,
+      "Остатки по каналам оплаты",
+      ["Канал", "Остатки 1 USD", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"],
+      tableRows
+    );
+    if (fxMissingCount) {
+      const note = doc.createElement("div");
+      note.className = "config-note";
+      note.textContent = `fx_missing: ${fxMissingCount} row(s) excluded from ВСЕГО USD where unavailable.`;
+      block.appendChild(note);
+    }
+    return block;
+  }
+
+  function buildUsdTableRow(row) {
+    const start = parseNumeric(row?.opening_usd);
+    const end = parseNumeric(row?.confirmed_end_usd);
+    const movement = parseNumeric(row?.movement_usd);
+    const change = start !== null && end !== null ? roundDisplayNumber(end - start) : null;
+    const diff = change !== null && movement !== null ? roundDisplayNumber(change - movement) : null;
+    return [
+      row?.channel || "—",
+      formatUsdCell(row, "opening_usd", start),
+      formatUsdCell(row, "confirmed_end_usd", end),
+      formatDerivedUsdCell(row, ["opening_usd", "confirmed_end_usd"], change),
+      formatUsdCell(row, "movement_usd", movement),
+      formatDerivedUsdCell(row, ["opening_usd", "confirmed_end_usd", "movement_usd", "diff_usd"], diff),
+    ];
+  }
+
+  function buildVisibleTotalUsdTableRow(row) {
+    const start = parseNumeric(row?.opening_usd);
+    const end = parseNumeric(row?.confirmed_end_usd);
+    const movement = parseNumeric(row?.movement_usd);
+    const change = start !== null && end !== null ? roundDisplayNumber(end - start) : null;
+    const diff = change !== null && movement !== null ? roundDisplayNumber(change - movement) : null;
+    return [
+      row?.label || "ВСЕГО USD",
+      formatNumber(start),
+      formatNumber(end),
+      formatNumber(change),
+      formatNumber(movement),
+      formatNumber(diff),
+    ];
+  }
+
+  function formatUsdCell(row, field, value) {
+    if (value !== null) return formatNumber(value);
+    return hasFxWarning(row, field) ? "fx_missing" : "—";
+  }
+
+  function formatDerivedUsdCell(row, fields, value) {
+    if (value !== null) return formatNumber(value);
+    return fields.some((field) => hasFxWarning(row, field)) ? "fx_missing" : "—";
+  }
+
+  function hasFxWarning(row, field) {
+    return (row?.fx_warnings || []).some((warning) => String(warning || "").includes(field));
+  }
+
+  function roundDisplayNumber(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.round(numeric * 10000) / 10000;
+  }
+
+  function renderDiagnosticPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
+    const tableRows = [
       ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
@@ -363,7 +448,7 @@
     ];
     return renderSubsection(
       doc,
-      "Остатки по каналам оплаты",
+      "Остатки по каналам оплаты (debug native)",
       ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
