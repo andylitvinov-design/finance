@@ -2862,3 +2862,167 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     else process.env.BINANCE_API_SECRET = previousBinanceApiSecret;
   }
 });
+
+test("GET getDashboardData applies known grouped PayPal payment only to Ustymenko rows 18149-18151", async () => {
+  const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+  const previousFetch = global.fetch;
+  const previousPayPalClientId = process.env.PAYPAL_CLIENT_ID;
+  const previousPayPalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  process.env.EZOHATA_V2_APPS_SCRIPT_URL = "https://script.google.com/macros/s/example/exec";
+  process.env.PAYPAL_CLIENT_ID = "client";
+  process.env.PAYPAL_CLIENT_SECRET = "secret";
+
+  const makeSourceRow = ({ number, date, client, service, priceBase, accruedPlus, paymentMethod, receivedUsd }) => {
+    const row = new Array(51).fill("");
+    row[1] = number;
+    row[2] = date;
+    row[3] = client;
+    row[4] = service;
+    row[6] = String(priceBase);
+    row[9] = String(priceBase);
+    row[10] = String(accruedPlus);
+    row[24] = paymentMethod;
+    if (receivedUsd !== undefined) row[30] = String(receivedUsd);
+    return row;
+  };
+
+  try {
+    global.fetch = async (url) => {
+      const value = String(url);
+      if (value.includes("script.google.com")) {
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              ok: true,
+              action: "calculatePeriod",
+              data: {
+                period: { startDate: "2026-05-01", endDate: "2026-05-31", timeZone: "Europe/Kiev" },
+                tabs: {
+                  movement: {
+                    sheetName: "движение средства",
+                    values: [
+                      ["дата 1", "01.05.2026", "дата 2", "31.05.2026"],
+                      [""],
+                      ["NUMBER", "DATE", "CLIENT", "SERVICE", "COMMENT", "PRICE BASE", "ACTION", "QTY", "ACCRUED", "ACCRUED +3%", "70% OF ACCRUED", "70% OF +3%", "RUB RATE", "UAH RATE", "PAYMENT METHOD", "ПОЛУЧЕНО В ДОЛЛАРАХ", "ПОЛУЧЕНО В РУБЛЯХ", "ПОЛУЧЕНО В ГРИВНАХ", "ПОЛУЧЕНО В ДОЛЛАРАХ ИТОГО (СВОДНЫЙ)", "BALANCE", "STATUS", "REVIEW NOTE"],
+                    ],
+                  },
+                  orders: { sheetName: "список моих заказы", values: [["NUMBER", "DATE", "CLIENT", "SERVICE"]] },
+                },
+              },
+            });
+          },
+        };
+      }
+
+      if (value.includes("docs.google.com") && value.includes("export?format=csv")) {
+        const rows = [
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          new Array(51).fill(""),
+          makeSourceRow({
+            number: "18149",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "Сексуальный Центр Захвата - Активизация связей",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "пейпал",
+          }),
+          makeSourceRow({
+            number: "18150",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "Обновление диагностики карты программ",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "пейпал",
+          }),
+          makeSourceRow({
+            number: "18151",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "Обновление диагностики карты ВЫсшего Я",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "пейпал",
+            receivedUsd: 115.5,
+          }),
+          makeSourceRow({
+            number: "18201",
+            date: "2026-05-06",
+            client: "Other PayPal",
+            service: "Unrelated PayPal row",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "пейпал дол",
+            receivedUsd: 103,
+          }),
+        ];
+        return { ok: true, status: 200, async text() { return rows.map((row) => row.join(",")).join("\n"); } };
+      }
+
+      if (value.endsWith("/v1/oauth2/token")) return { ok: true, status: 200, async json() { return { access_token: "paypal-token" }; } };
+      if (value.includes("/v1/reporting/transactions")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              total_pages: 1,
+              transaction_details: [{
+                transaction_info: {
+                  transaction_id: "KNOWN-PAYPAL-USTYMENKO-2026-05-05",
+                  transaction_initiation_date: "2026-05-05T10:00:00Z",
+                  transaction_amount: { value: "118.80", currency_code: "USD" },
+                  fee_amount: { value: "-4.93", currency_code: "USD" },
+                },
+                payer_info: { payer_name: { alternate_full_name: "Inna Ustymenko" } },
+              }],
+            };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected fetch URL: ${value}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: { action: "getDashboardData", startDate: "2026-05-01", endDate: "2026-05-31" } }, response);
+
+    assert.equal(response.statusCode, 200);
+    const realIncome = response.body?.data?.realIncome;
+    const missingChannelGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "Без канала");
+    assert.equal(
+      Boolean(missingChannelGap?.rows?.some((row) => ["18149", "18150"].includes(row.rowNumber))),
+      false
+    );
+
+    const paypalSummary = realIncome?.servicePaymentSummaryByChannel?.["пейпал дол"];
+    assert.equal(paypalSummary?.realGrossUsd, 221.8);
+    assert.equal(paypalSummary?.realFeeUsd, 4.93);
+    assert.equal(paypalSummary?.realNetUsd, 216.87);
+
+    const paypalGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "пейпал дол");
+    assert.equal(paypalGap?.expectedUsd, 216.3);
+    assert.equal(paypalGap?.includedUsd, 216.87);
+    assert.equal(paypalGap?.offsetUsd, 0.57);
+    assert.equal(paypalGap?.netGapUsd, -0.57);
+    assert.deepEqual(paypalGap?.rows?.filter((row) => row.knownPaymentId)?.map((row) => row.rowNumber), ["18149", "18150", "18151"]);
+    assert.deepEqual(paypalGap?.rows?.find((row) => row.rowNumber === "18149")?.knownPayment, {
+      grossUsd: 118.8,
+      feeUsd: 4.93,
+      netUsd: 113.87,
+    });
+    assert.equal(paypalGap?.rows?.find((row) => row.rowNumber === "18201")?.reason, "PayPal missing client-paid/provider net");
+  } finally {
+    global.fetch = previousFetch;
+    if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;
+    else process.env.EZOHATA_V2_APPS_SCRIPT_URL = previousUpstream;
+    if (previousPayPalClientId === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = previousPayPalClientId;
+    if (previousPayPalClientSecret === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = previousPayPalClientSecret;
+  }
+});
