@@ -290,6 +290,98 @@ test("total USD row sums only available frozen USD equivalents", () => {
   assert.deepEqual(result.reconciliation_report_summary.total_usd_row, result.total_usd_row);
 });
 
+test("balance snapshot rates provide frozen USD equivalents without recalculating movement USD", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-10",
+        toChannel: "wise eur",
+        currency: "EUR",
+        amountNet: "10",
+        amountUsd: "13",
+        balanceAmount: 10,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "income",
+          to_channel: "wise eur",
+          currency: "EUR",
+          amount_net: "10",
+          amount_usd: "13",
+          balance_amount: 10,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise eur", currency: "EUR", amount: "100", rate: "1.10" },
+      { date: "2026-05-27", channel: "wise eur", currency: "EUR", amount: "120", rate: "1.20" },
+      { date: "2026-05-01", channel: "cash cad", currency: "CAD", amount: "50", rate: "0.70" },
+      { date: "2026-05-27", channel: "cash cad", currency: "CAD", amount: "50", rate: "0.75" },
+      { date: "2026-05-01", channel: "mono uah", currency: "UAH", amount: "4300", rate: "0.025" },
+      { date: "2026-05-27", channel: "mono uah", currency: "UAH", amount: "4300", rate: "0.026" },
+      { date: "2026-05-01", channel: "yandex rub", currency: "RUB", amount: "10000", rate: "0.011" },
+      { date: "2026-05-27", channel: "yandex rub", currency: "RUB", amount: "10000", rate: "0.012" },
+      { date: "2026-05-01", channel: "revolut chf", currency: "CHF", amount: "20", rate: "1.25" },
+      { date: "2026-05-27", channel: "revolut chf", currency: "CHF", amount: "20", rate: "1.30" },
+      { date: "2026-05-01", channel: "explicit eur", currency: "EUR", amount: "10", rate: "9", amount_usd: "11" },
+      { date: "2026-05-27", channel: "explicit eur", currency: "EUR", amount: "10", rate: "9", amount_usd: "12" },
+      { date: "2026-05-01", channel: "missing eur", currency: "EUR", amount: "7" },
+      { date: "2026-05-27", channel: "missing eur", currency: "EUR", amount: "7" },
+      { date: "2026-05-01", channel: "stable usdt", currency: "USDT", amount: "3" },
+      { date: "2026-05-27", channel: "stable usdt", currency: "USDT", amount: "3" },
+    ],
+  });
+
+  const eur = result.by_channel_currency.find((row) => row.channel === "wise eur");
+  assert.equal(eur.opening_usd, 110);
+  assert.equal(eur.opening_fx_rate_to_usd, 1.1);
+  assert.equal(eur.opening_fx_source, "snapshot_rate");
+  assert.equal(eur.movement_usd, 13);
+  assert.equal(eur.planned_end_usd, 123);
+  assert.equal(eur.confirmed_end_usd, 144);
+  assert.equal(eur.manual_provider_closing_balance_fx_rate_to_usd, 1.2);
+  assert.equal(eur.manual_provider_closing_balance_fx_source, "snapshot_rate");
+  assert.equal(eur.diff_usd, 21);
+  assert.deepEqual(eur.fx_warnings, []);
+
+  const cad = result.by_channel_currency.find((row) => row.channel === "cash cad");
+  assert.equal(cad.opening_usd, 35);
+  assert.equal(cad.confirmed_end_usd, 37.5);
+  assert.deepEqual(cad.fx_warnings, []);
+
+  const uah = result.by_channel_currency.find((row) => row.channel === "mono uah");
+  assert.equal(uah.opening_usd, 107.5);
+  assert.equal(uah.confirmed_end_usd, 111.8);
+
+  const rub = result.by_channel_currency.find((row) => row.channel === "yandex rub");
+  assert.equal(rub.opening_usd, 110);
+  assert.equal(rub.confirmed_end_usd, 120);
+
+  const chf = result.by_channel_currency.find((row) => row.channel === "revolut chf");
+  assert.equal(chf.opening_usd, 25);
+  assert.equal(chf.confirmed_end_usd, 26);
+
+  const explicit = result.by_channel_currency.find((row) => row.channel === "explicit eur");
+  assert.equal(explicit.opening_usd, 11);
+  assert.equal(explicit.opening_fx_source, "explicit_snapshot_usd");
+  assert.equal(explicit.confirmed_end_usd, 12);
+  assert.equal(explicit.manual_provider_closing_balance_fx_source, "explicit_snapshot_usd");
+
+  const missing = result.by_channel_currency.find((row) => row.channel === "missing eur");
+  assert.equal(missing.opening_usd, null);
+  assert.equal(missing.confirmed_end_usd, null);
+  assert.deepEqual(missing.fx_warnings, ["opening_usd_fx_missing", "planned_end_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
+
+  const stable = result.by_channel_currency.find((row) => row.channel === "stable usdt");
+  assert.equal(stable.opening_usd, 3);
+  assert.equal(stable.confirmed_end_usd, 3);
+
+  assert.equal(result.total_usd_row.excluded_fx_missing_rows, 1);
+  assert.equal(result.total_usd_row.fx_missing_start_rows, 1);
+  assert.equal(result.total_usd_row.fx_missing_end_rows, 1);
+  assert.equal(result.total_usd_row.movement_usd, 13);
+});
+
 test("planned and real deltas are shown separately", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

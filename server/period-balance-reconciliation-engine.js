@@ -245,6 +245,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     opening_fact_balance: roundedOpening,
     opening_balance: roundedOpening,
     opening_amount_usd: openingAmountUsd,
+    opening_fx_rate_to_usd: openingSnapshot?.fx_rate_to_usd ?? null,
+    opening_fx_source: openingSnapshot?.fx_source || null,
     opening_balance_date: openingBalanceDate,
     opening_balance_source: openingBalanceSource,
     planned_inflow: plannedInflow,
@@ -274,6 +276,8 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
     manual_provider_closing_balance_usd: factBalance.amount_usd,
+    manual_provider_closing_balance_fx_rate_to_usd: factBalance.fx_rate_to_usd ?? null,
+    manual_provider_closing_balance_fx_source: factBalance.fx_source || null,
     manual_provider_closing_balance_date: factBalance.date,
     manual_provider_fact_lookup_key: makeLookupKey({ date: to, channel, currency }),
     fact_balance: factBalance,
@@ -400,6 +404,8 @@ export function resolveFactBalance({ channel, currency, targetDate, balanceIndex
     status: calculated ? STATUS.CALCULATED_FROM_PREVIOUS : (derived ? "derived_pending" : (auto ? "auto_pending" : "confirmed")),
     amount: round(snapshot.amount),
     amount_usd: snapshot.amount_usd ?? null,
+    fx_rate_to_usd: snapshot.fx_rate_to_usd ?? null,
+    fx_source: snapshot.fx_source || null,
     date: snapshot.date,
     sourceSheet: snapshot.sourceSheet || (calculated ? "Расчетные Остатки" : (auto || derived ? "Авто Остатки" : "Остатки")),
     sourceRow: snapshot.sourceRow || null,
@@ -662,13 +668,16 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       statusByKey.set(key, statusRows);
     }
     if (!date || !channel || !currency || amount === null) continue;
+    const snapshotUsd = resolveSnapshotUsd(row, amount, currency);
     const rows = byKey.get(key) || [];
     rows.push({
       date,
       channel,
       currency,
       amount,
-      amount_usd: resolveSnapshotUsdAmount(row, amount, currency),
+      amount_usd: snapshotUsd.amount_usd,
+      fx_rate_to_usd: snapshotUsd.fx_rate_to_usd,
+      fx_source: snapshotUsd.fx_source,
       source: row?.source || row?.fact_source || row?.provider || "",
       balanceSource: getResolvedBalanceSource(row),
       provider: row?.provider || null,
@@ -1116,9 +1125,38 @@ function calculateExpectedUsdClosing({ openingUsd, real } = {}) {
 }
 
 function resolveSnapshotUsdAmount(row, amount, currency) {
-  const parsed = parseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? row?.balance_usd ?? row?.balanceUsd);
-  if (parsed !== null) return round(parsed);
-  return isStableUsdCurrency(currency) && amount !== null ? round(amount) : null;
+  return resolveSnapshotUsd(row, amount, currency).amount_usd;
+}
+
+function resolveSnapshotUsd(row, amount, currency) {
+  const explicitUsd = parseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? row?.balance_usd ?? row?.balanceUsd);
+  if (explicitUsd !== null) {
+    return {
+      amount_usd: round(explicitUsd),
+      fx_rate_to_usd: amount ? round(explicitUsd / amount) : null,
+      fx_source: "explicit_snapshot_usd",
+    };
+  }
+  if (isStableUsdCurrency(currency) && amount !== null) {
+    return {
+      amount_usd: round(amount),
+      fx_rate_to_usd: 1,
+      fx_source: "stable_usd_currency",
+    };
+  }
+  const rate = parseNumber(row?.fx_rate_to_usd ?? row?.rate_to_usd ?? row?.rate ?? row?.fxRateToUsd);
+  if (rate !== null && rate > 0 && amount !== null) {
+    return {
+      amount_usd: round(amount * rate),
+      fx_rate_to_usd: round(rate),
+      fx_source: "snapshot_rate",
+    };
+  }
+  return {
+    amount_usd: null,
+    fx_rate_to_usd: null,
+    fx_source: "fx_missing",
+  };
 }
 
 function coalesceNumber(...values) {
