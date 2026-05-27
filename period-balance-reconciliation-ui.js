@@ -123,7 +123,7 @@
     if (reconciliation.binance_wallet_diagnostics) {
       section.appendChild(renderBinanceWalletDiagnostics(doc, reconciliation.binance_wallet_diagnostics));
     }
-    section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}));
+    section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}, reconciliation.total_usd_row || reconciliation.reconciliation_report_summary?.total_usd_row || null));
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
     const requiredManualFactRows = reconciliation.required_manual_fact_rows || [];
@@ -337,34 +337,80 @@
     return result;
   }
 
-  function renderPositionTable(doc, rows, summary = {}) {
+  function renderPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
     const tableRows = [
       ...rows.map((row) => [
         row.channel || "—",
         row.currency || "—",
-        formatOpeningBalance(row),
-        formatPlannedNumber(row.planned_delta, row, summary),
-        formatPlannedNumber(row.planned_closing_balance, row, summary),
-        formatNumber(row.real_delta),
-        formatComputedBalance(row),
-        formatFactBalance(row),
+        formatCanonicalNative(row, "opening_native", row.opening_fact_balance ?? row.opening_balance),
+        formatCanonicalNative(row, "movement_native", row.real_delta),
+        formatCanonicalNative(row, "planned_end_native", row.calculated_closing_balance ?? row.computed_real_closing_balance),
+        formatCanonicalNative(row, "confirmed_end_native", row.manual_provider_closing_balance ?? row.factual_closing_balance),
+        formatCanonicalNative(row, "diff_native", row.real_difference),
+        formatCanonicalUsd(row, "opening_usd"),
+        formatCanonicalUsd(row, "movement_usd"),
+        formatCanonicalUsd(row, "planned_end_usd"),
+        formatCanonicalUsd(row, "confirmed_end_usd"),
+        formatCanonicalUsd(row, "diff_usd"),
         formatFactDate(row),
         getFactSourceLabel(row),
         getFactSourceRowLabel(row),
-        formatNumber(getCarriedForwardComparisonFact(row)),
-        formatNumber(row.real_difference),
-        formatPlanVsRealDelta(row, summary),
         getStatusLabel(row.status),
         getFactDiagnosis(row),
       ]),
       ...buildChannelCurrencyTotalRows(rows, summary),
+      ...(totalUsdRow ? [buildTotalUsdTableRow(totalUsdRow)] : []),
     ];
     return renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["КАНАЛ", "ВАЛЮТА", "ОСТАТОК НА КОНЕЦ ДНЯ 23:59", "ПЛАН ИЗМЕНЕНИЕ", "ПЛАНОВЫЙ EOD BALANCE", "РЕАЛ ИЗМЕНЕНИЕ", "РЕАЛ РАСЧЕТНЫЙ EOD", "ФАКТ НА КОНЕЦ ПЕРИОДА 23:59 EOD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "ФАКТ ПЕРЕНОС/ДЛЯ СРАВНЕНИЯ", "РАЗНИЦА ФАКТ-РЕАЛ", "ПЛАН-РЕАЛ", "СТАТУС", "ПРИЧИНА"],
+      ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"],
       tableRows
     );
+  }
+
+  function formatCanonicalNative(row, field, fallback) {
+    const value = row?.[field] ?? fallback;
+    if (hasNumber(value)) return formatNumber(value);
+    if (field === "opening_native" && String(row?.computedStatus || row?.computed_status || row?.status || "").trim() === "missing_opening_balance") {
+      return "missing_opening_balance";
+    }
+    if (field === "confirmed_end_native" && (
+      String(row?.factStatus || row?.fact_status || "").trim() === "missing"
+      || String(row?.balanceSource || row?.balance_source || "").trim() === "missing"
+      || String(row?.status || "").trim() === "missing_provider_balance"
+    )) {
+      return "missing fact";
+    }
+    return "—";
+  }
+
+  function formatCanonicalUsd(row, field) {
+    if (hasNumber(row?.[field])) return formatNumber(row[field]);
+    if ((row?.fx_warnings || []).some((warning) => String(warning || "").includes(field))) return "fx_missing";
+    return "—";
+  }
+
+  function buildTotalUsdTableRow(row) {
+    return [
+      row.label || "ВСЕГО USD",
+      row.currency || "USD",
+      "—",
+      "—",
+      "—",
+      "—",
+      "—",
+      formatNumber(row.opening_usd),
+      formatNumber(row.movement_usd),
+      formatNumber(row.planned_end_usd),
+      formatNumber(row.confirmed_end_usd),
+      formatNumber(row.diff_usd),
+      "—",
+      "—",
+      "—",
+      "Итого USD",
+      `FX missing rows: ${Number(row.excluded_fx_missing_rows || 0)}`,
+    ];
   }
 
   function formatOpeningBalance(row) {
@@ -452,6 +498,16 @@
       || hasPositiveNumber(row.movement_rows)
       || hasPositiveNumber(row.missing_amount_net_rows);
     const hasMajorValue = hasNumber(row.opening_fact_balance ?? row.opening_balance)
+      || hasNumber(row.opening_native)
+      || hasNumber(row.movement_native)
+      || hasNumber(row.planned_end_native)
+      || hasNumber(row.confirmed_end_native)
+      || hasNumber(row.diff_native)
+      || hasNumber(row.opening_usd)
+      || hasNumber(row.movement_usd)
+      || hasNumber(row.planned_end_usd)
+      || hasNumber(row.confirmed_end_usd)
+      || hasNumber(row.diff_usd)
       || hasNumber(row.planned_delta)
       || hasNumber(row.real_delta)
       || hasNumber(row.calculated_closing_balance ?? row.computed_real_closing_balance)
@@ -467,6 +523,16 @@
   function hasNonZeroMajorValue(row) {
     return [
       row.opening_fact_balance ?? row.opening_balance,
+      row.opening_native,
+      row.movement_native,
+      row.planned_end_native,
+      row.confirmed_end_native,
+      row.diff_native,
+      row.opening_usd,
+      row.movement_usd,
+      row.planned_end_usd,
+      row.confirmed_end_usd,
+      row.diff_usd,
       row.planned_delta,
       row.real_delta,
       row.calculated_closing_balance ?? row.computed_real_closing_balance,
@@ -533,49 +599,48 @@
       if (!currency) return;
       if (!totalsByCurrency.has(currency)) {
         totalsByCurrency.set(currency, {
-          opening_balance: createTotalBucket(),
-          planned_delta: createTotalBucket(),
-          planned_closing_balance: createTotalBucket(),
-          real_delta: createTotalBucket(),
-          calculated_closing_balance: createTotalBucket(),
-          manual_provider_closing_balance: createTotalBucket(),
-          carried_forward_comparison_fact: createTotalBucket(),
-          real_difference: createTotalBucket(),
-          plan_vs_real_delta: createTotalBucket(),
+          opening_native: createTotalBucket(),
+          movement_native: createTotalBucket(),
+          planned_end_native: createTotalBucket(),
+          confirmed_end_native: createTotalBucket(),
+          diff_native: createTotalBucket(),
+          opening_usd: createTotalBucket(),
+          movement_usd: createTotalBucket(),
+          planned_end_usd: createTotalBucket(),
+          confirmed_end_usd: createTotalBucket(),
+          diff_usd: createTotalBucket(),
         });
       }
       const totals = totalsByCurrency.get(currency);
-      addNumeric(totals, "opening_balance", row.opening_fact_balance ?? row.opening_balance);
-      if (shouldShowPlannedValues(row, summary)) {
-        addNumeric(totals, "planned_delta", row.planned_delta);
-        addNumeric(totals, "planned_closing_balance", row.planned_closing_balance);
-      }
-      addNumeric(totals, "real_delta", row.real_delta);
-      addNumeric(totals, "calculated_closing_balance", row.calculated_closing_balance ?? row.computed_real_closing_balance);
-      addNumeric(totals, "manual_provider_closing_balance", row.manual_provider_closing_balance);
-      addNumeric(totals, "carried_forward_comparison_fact", getCarriedForwardComparisonFact(row));
-      addNumeric(totals, "real_difference", row.real_difference);
-      if (shouldShowPlannedValues(row, summary)) {
-        addNumeric(totals, "plan_vs_real_delta", row.plan_vs_real_delta);
-      }
+      addNumeric(totals, "opening_native", row.opening_native ?? row.opening_fact_balance ?? row.opening_balance);
+      addNumeric(totals, "movement_native", row.movement_native ?? row.real_delta);
+      addNumeric(totals, "planned_end_native", row.planned_end_native ?? row.calculated_closing_balance ?? row.computed_real_closing_balance);
+      addNumeric(totals, "confirmed_end_native", row.confirmed_end_native ?? row.manual_provider_closing_balance ?? row.factual_closing_balance);
+      addNumeric(totals, "diff_native", row.diff_native ?? row.real_difference);
+      addNumeric(totals, "opening_usd", row.opening_usd);
+      addNumeric(totals, "movement_usd", row.movement_usd);
+      addNumeric(totals, "planned_end_usd", row.planned_end_usd);
+      addNumeric(totals, "confirmed_end_usd", row.confirmed_end_usd);
+      addNumeric(totals, "diff_usd", row.diff_usd);
     });
     return Array.from(totalsByCurrency.entries())
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([currency, totals]) => [
         `ИТОГО ${currency}`,
         currency,
-        formatTotalBucket(totals.opening_balance),
-        formatTotalBucket(totals.planned_delta),
-        formatTotalBucket(totals.planned_closing_balance),
-        formatTotalBucket(totals.real_delta),
-        formatTotalBucket(totals.calculated_closing_balance),
-        formatTotalBucket(totals.manual_provider_closing_balance),
+        formatTotalBucket(totals.opening_native),
+        formatTotalBucket(totals.movement_native),
+        formatTotalBucket(totals.planned_end_native),
+        formatTotalBucket(totals.confirmed_end_native),
+        formatTotalBucket(totals.diff_native),
+        formatTotalBucket(totals.opening_usd),
+        formatTotalBucket(totals.movement_usd),
+        formatTotalBucket(totals.planned_end_usd),
+        formatTotalBucket(totals.confirmed_end_usd),
+        formatTotalBucket(totals.diff_usd),
         "—",
         "—",
         "—",
-        formatTotalBucket(totals.carried_forward_comparison_fact),
-        formatTotalBucket(totals.real_difference),
-        formatTotalBucket(totals.plan_vs_real_delta),
         "Итого по валюте",
         "—",
       ]);

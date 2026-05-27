@@ -330,6 +330,37 @@ test("PayPal planned openings are pending movement verification and expose sourc
   assert.equal(diagnostics.find((row) => row.source_row === 777), undefined);
 });
 
+test("PayPal screenshot evidence is preserved as report-layer owner evidence", () => {
+  const report = buildReconciliationAdjustedMayOpening({
+    balanceRows: [
+      { date: "2026-05-27", channel: "пейпал дол", currency: "USD", amount: "12.07", amount_usd: "12.07", sourceSheet: "Owner Screenshot" },
+      { date: "2026-05-27", channel: "пейпал евр", currency: "EUR", amount: "0", sourceSheet: "Owner Screenshot" },
+      { date: "2026-05-27", channel: "пейпал сad", currency: "CAD", amount: "0", sourceSheet: "Owner Screenshot" },
+    ],
+    operations: [],
+    period: { from: "2026-05-01", to: "2026-05-27" },
+  });
+
+  const usd = report.rows.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
+  const eur = report.rows.find((row) => row.channel === "пейпал евр" && row.currency === "EUR");
+  const cad = report.rows.find((row) => row.channel === "пейпал сad" && row.currency === "CAD");
+
+  assert.equal(report.owner_input_opening_total_usd, 24993);
+  assert.equal(usd.adjusted_opening, 202.97);
+  assert.equal(usd.adjusted_opening_usd, 202.97);
+  assert.equal(usd.later_confirmed_balance, 12.07);
+  assert.equal(usd.reason, "owner_paypal_screenshot_opening");
+  assert.equal(usd.superseded_owner_input.amount, 435);
+  assert.equal(eur.adjusted_opening, 175.25);
+  assert.equal(eur.adjusted_opening_usd, null);
+  assert.equal(eur.later_confirmed_balance, 0);
+  assert.equal(eur.reason, "owner_paypal_screenshot_opening");
+  assert.equal(cad.adjusted_opening, 19.5);
+  assert.equal(cad.adjusted_opening_usd, null);
+  assert.equal(cad.later_confirmed_balance, 0);
+  assert.equal(cad.reason, "owner_paypal_screenshot_opening");
+});
+
 test("Revolut split openings are derived from current screenshots minus post-May-1 movements", () => {
   const operations = [
     {
