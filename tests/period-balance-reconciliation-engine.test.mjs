@@ -227,13 +227,16 @@ test("May owner evidence feeds PayPal screenshot openings and keeps Binance Save
       { date: "2026-05-27", channel: "пейпал евр", currency: "EUR", amount: "0", sourceSheet: "Остатки" },
       { date: "2026-05-27", channel: "пейпал сad", currency: "CAD", amount: "0", sourceSheet: "Остатки" },
       { date: "2026-05-27", channel: "binance save", currency: "USDT", amount: "5411.6278", amount_usd: "5411.6278", sourceSheet: "Авто Остатки" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722", sourceSheet: "Авто Остатки" },
     ],
   });
 
   const usd = result.by_channel_currency.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
   const eur = result.by_channel_currency.find((row) => row.channel === "пейпал евр" && row.currency === "EUR");
   const cad = result.by_channel_currency.find((row) => row.channel === "пейпал сad" && row.currency === "CAD");
-  const save = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDT");
+  const saveUsdt = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDT");
+  const saveUsdc = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDC");
 
   assert.equal(usd.opening_native, 202.97);
   assert.equal(usd.confirmed_end_native, 12.07);
@@ -243,10 +246,14 @@ test("May owner evidence feeds PayPal screenshot openings and keeps Binance Save
   assert.equal(eur.planned_end_native, 0);
   assert.equal(cad.opening_native, 19.5);
   assert.equal(cad.confirmed_end_native, 0);
-  assert.equal(save.opening_native, 8519);
-  assert.equal(save.confirmed_end_native, 5411.6278);
-  assert.equal(save.status, "needs_verification");
-  assert.equal(save.diff_native, -3107.3722);
+  assert.equal(saveUsdt.opening_native, 5411.6278);
+  assert.equal(saveUsdt.confirmed_end_native, 5411.6278);
+  assert.equal(saveUsdc.opening_native, 3107.3722);
+  assert.equal(saveUsdc.confirmed_end_native, 3107.3722);
+  assert.equal(saveUsdc.confirmed_end_usd, 3107.3722);
+  assert.equal(saveUsdc.fx_warnings.includes("confirmed_end_usd_fx_missing"), false);
+  assert.equal(Number.isFinite(saveUsdc.confirmed_end_usd), true);
+  assert.equal(saveUsdt.opening_native + saveUsdc.opening_native, 8519);
 });
 
 test("May owner evidence keeps zero PayPal local closing balances as frozen USD zero", () => {
