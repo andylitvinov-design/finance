@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import handler, { buildOrderPaymentCoverageReport, buildServicePaymentGapDiagnostics } from "../api/index.js";
+import handler, { buildActualPaymentSummaryByChannel, buildCoverageSummaryByChannel, buildOrderPaymentCoverageReport, buildServicePaymentGapDiagnostics } from "../api/index.js";
 
 function createResponseRecorder() {
   return {
@@ -2775,6 +2775,17 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
   assert.equal(coverage.summary.totalOverpaidOffsetUsd, 2.57);
   assert.equal(coverage.summary.totalExcludedNonServiceUsd, 103);
   assert.equal(coverage.summary.totalUnexplainedUsd, 0);
+
+  const actualPayments = buildActualPaymentSummaryByChannel(coverage.rows);
+  assert.equal(actualPayments.summaryByChannel?.["трансервайз дол"]?.actualPaidUsd, 231.75);
+  assert.equal(actualPayments.summaryByChannel?.["пейпал дол"]?.actualPaidUsd, 113.87);
+  assert.equal(actualPayments.summaryByChannel?.["Бинанс spot"]?.rows.includes("18204"), false);
+  assert.equal(actualPayments.totals.actualPaidUsd, 448.62);
+
+  const coverageByChannel = buildCoverageSummaryByChannel(coverage.rows);
+  assert.equal(coverageByChannel.summaryByChannel?.["пейпал дол"]?.coveredUsd, 113.3);
+  assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.remainingUsd, 25.75);
+  assert.deepEqual(coverageByChannel.actionableRows.map((row) => row.rowNumber), ["18170"]);
 });
 
 test("GET getDashboardData adds channel-level service payment gap diagnostics without changing service payment totals", async () => {
@@ -3094,6 +3105,12 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realGrossUsd, 118.8);
     assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realFeeUsd, 4.93);
     assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realNetUsd, 113.87);
+    assert.equal(realIncome?.actualPaymentSummaryByChannel?.["пейпал дол"]?.actualPaidUsd, 113.87);
+    assert.equal(realIncome?.actualPaymentSummaryByChannel?.["трансервайз дол"]?.actualPaidUsd, 231.75);
+    assert.equal(realIncome?.actualPaymentSummaryByChannel?.["приват-фоп"]?.actualPaidUsd, 216.3);
+    assert.equal(realIncome?.actualPaymentSummaryByChannel?.["монобанк грн"]?.actualPaidUsd, 60);
+    assert.equal(realIncome?.actualPaymentSummaryByChannel?.["Бинанс spot"], undefined);
+    assert.equal(realIncome?.actualPaymentSummaryTotals?.actualPaidUsd, 621.92);
 
     const paypalGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "пейпал дол");
     assert.equal(paypalGap?.expectedUsd, 216.3);
@@ -3197,6 +3214,11 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(coverageByRow["18171"]?.remainingUsd, 0);
     assert.equal(coverageByRow["18171"]?.allocationSource, "grouped same-date");
     assert.equal(coverageByRow["18204"]?.status, "excluded");
+    assert.equal(coverage?.summaryByChannel?.["пейпал дол"]?.coveredUsd, 113.3);
+    assert.equal(coverage?.summaryByChannel?.["пейпал дол"]?.allocatedPaidUsd, 113.87);
+    assert.equal(coverage?.summaryByChannel?.["трансервайз дол"]?.coveredUsd, 231.75);
+    assert.equal(coverage?.summaryByChannel?.["приват-фоп"]?.coveredUsd, 216.3);
+    assert.equal(coverage?.actionableRows?.map((row) => row.rowNumber).includes("18170"), false);
     assert.equal(actionableCoverageRows.includes("18149"), false);
     assert.equal(actionableCoverageRows.includes("18171"), false);
   } finally {
