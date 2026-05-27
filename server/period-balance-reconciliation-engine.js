@@ -883,14 +883,22 @@ function buildCurrencyRows(rows) {
 }
 
 function buildTotalUsdRow(rows = []) {
-  const fields = ["opening_usd", "movement_usd", "planned_end_usd", "confirmed_end_usd", "diff_usd"];
+  const fields = ["opening_usd", "movement_usd", "planned_end_usd", "confirmed_end_usd", "change_usd", "diff_usd"];
   const totals = Object.fromEntries(fields.map((field) => [field, 0]));
+  const finiteCounts = Object.fromEntries(fields.map((field) => [field, 0]));
+  const fxMissingCounts = Object.fromEntries(fields.map((field) => [field, 0]));
   let excludedFxMissingRows = 0;
   for (const row of rows || []) {
-    if ((row.fx_warnings || []).length) excludedFxMissingRows += 1;
+    const warnings = row.fx_warnings || [];
+    if (warnings.length) excludedFxMissingRows += 1;
     for (const field of fields) {
-      const value = coalesceNumber(row?.[field]);
-      if (value !== null) totals[field] = round(totals[field] + value);
+      const value = field === "change_usd" ? getRowChangeUsd(row) : coalesceNumber(row?.[field]);
+      if (value !== null) {
+        totals[field] = round(totals[field] + value);
+        finiteCounts[field] += 1;
+      } else if (hasUsdFxWarning(row, field)) {
+        fxMissingCounts[field] += 1;
+      }
     }
   }
   return {
@@ -899,8 +907,34 @@ function buildTotalUsdRow(rows = []) {
     currency: "USD",
     ...totals,
     excluded_fx_missing_rows: excludedFxMissingRows,
+    fx_missing_start_rows: fxMissingCounts.opening_usd,
+    fx_missing_end_rows: fxMissingCounts.confirmed_end_usd,
+    fx_missing_change_rows: fxMissingCounts.change_usd,
+    fx_missing_movement_rows: fxMissingCounts.movement_usd,
+    fx_missing_diff_rows: fxMissingCounts.diff_usd,
+    finite_start_rows: finiteCounts.opening_usd,
+    finite_end_rows: finiteCounts.confirmed_end_usd,
+    finite_change_rows: finiteCounts.change_usd,
+    finite_movement_rows: finiteCounts.movement_usd,
+    finite_diff_rows: finiteCounts.diff_usd,
     status: excludedFxMissingRows ? "fx_missing" : STATUS.OK,
   };
+}
+
+function getRowChangeUsd(row) {
+  const explicit = coalesceNumber(row?.change_usd);
+  if (explicit !== null) return explicit;
+  const start = coalesceNumber(row?.opening_usd);
+  const end = coalesceNumber(row?.confirmed_end_usd);
+  return start !== null && end !== null ? round(end - start) : null;
+}
+
+function hasUsdFxWarning(row, field) {
+  const warnings = row?.fx_warnings || [];
+  if (field === "change_usd") {
+    return warnings.some((warning) => String(warning || "").includes("opening_usd") || String(warning || "").includes("confirmed_end_usd"));
+  }
+  return warnings.some((warning) => String(warning || "").includes(field));
 }
 
 function buildReconciliationReport(rows = [], balanceIndex, { period = {}, operations = [], balanceRows = [] } = {}) {
@@ -1182,6 +1216,9 @@ function buildCanonicalReconciliationValues({
     ? round(resolvedConfirmedUsd - plannedEndUsd)
     : null;
   if (diffNative !== null && diffUsd === null) fxWarnings.push("diff_usd_fx_missing");
+  const changeUsd = resolvedOpeningUsd !== null && resolvedConfirmedUsd !== null
+    ? round(resolvedConfirmedUsd - resolvedOpeningUsd)
+    : null;
 
   return {
     opening_native: openingNative,
@@ -1193,6 +1230,7 @@ function buildCanonicalReconciliationValues({
     movement_usd: movementUsd,
     planned_end_usd: plannedEndUsd,
     confirmed_end_usd: resolvedConfirmedUsd,
+    change_usd: changeUsd,
     diff_usd: diffUsd,
     fx_warnings: Array.from(new Set(fxWarnings)),
   };
