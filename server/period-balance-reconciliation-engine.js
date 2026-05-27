@@ -61,6 +61,7 @@ export function buildPeriodBalanceReconciliation({
       operations,
       planned: planned.byKey.get(key),
       balanceIndex,
+      fxRateLookup,
       from,
       to,
     }))
@@ -113,7 +114,7 @@ export function buildPeriodBalanceReconciliation({
   };
 }
 
-function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
+function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup = new Map(), from, to }) {
   const [channel, currency] = splitKey(key);
   if (!channel || !currency) return null;
 
@@ -131,7 +132,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
   const realInflow = round(real?.inflow || 0);
   const realOutflow = round(real?.outflow || 0);
   const realDelta = round(realInflow - realOutflow);
-  const ownerEvidence = getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta });
+  const ownerEvidence = getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta, fxRateLookup });
   let opening = ownerEvidence?.opening ?? openingSnapshot?.amount ?? null;
   let openingAmountUsd = ownerEvidence && Object.prototype.hasOwnProperty.call(ownerEvidence, "openingUsd")
     ? ownerEvidence.openingUsd
@@ -252,10 +253,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, from, to }) {
     opening_fact_balance: roundedOpening,
     opening_balance: roundedOpening,
     opening_amount_usd: openingAmountUsd,
-    opening_fx_rate_to_usd: openingSnapshot?.fx_rate_to_usd ?? null,
-    opening_fx_source: openingSnapshot?.fx_source || null,
-    opening_fx_rate_date: openingSnapshot?.fx_rate_date || null,
-    opening_fx_status: openingSnapshot?.fx_status || null,
+    opening_fx_rate_to_usd: ownerEvidence?.fx?.rate_to_usd ?? openingSnapshot?.fx_rate_to_usd ?? null,
+    opening_fx_source: ownerEvidence?.fx?.source || openingSnapshot?.fx_source || null,
+    opening_fx_rate_date: ownerEvidence?.fx?.date || openingSnapshot?.fx_rate_date || null,
+    opening_fx_status: ownerEvidence?.fx?.status || openingSnapshot?.fx_status || null,
     opening_balance_date: openingBalanceDate,
     opening_balance_source: openingBalanceSource,
     planned_inflow: plannedInflow,
@@ -1206,7 +1207,7 @@ function coalesceNumber(...values) {
   return null;
 }
 
-function getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta } = {}) {
+function getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta, fxRateLookup = new Map() } = {}) {
   if (from !== "2026-05-01") return null;
   const key = makeKey(String(channel || "").trim(), String(currency || "").trim().toUpperCase());
   const openingAmount = coalesceNumber(openingSnapshot?.amount);
@@ -1235,16 +1236,33 @@ function getReportOwnerEvidence({ channel, currency, from, openingSnapshot, real
   };
   const matched = evidence[key] || null;
   if (!matched) return null;
+  const resolved = resolveOwnerEvidenceUsd(matched, { date: from, currency, fxRateLookup });
   if (key === makeKey("пейпал дол", "USD")) {
-    return openingAmount !== null && Math.abs(openingAmount - 435) <= 0.0001 ? matched : null;
+    return openingAmount !== null && Math.abs(openingAmount - 435) <= 0.0001 ? resolved : null;
   }
   if (key === makeKey("пейпал евр", "EUR")) {
-    return openingAmount !== null && Math.abs(openingAmount) <= 0.0001 && Math.abs(Number(realDelta || 0) + 422.55) <= 0.01 ? matched : null;
+    return openingAmount !== null && Math.abs(openingAmount) <= 0.0001 && Math.abs(Number(realDelta || 0) + 422.55) <= 0.01 ? resolved : null;
   }
   if (key === makeKey("пейпал сad", "CAD")) {
-    return openingAmount !== null && Math.abs(openingAmount) <= 0.0001 && Math.abs(Number(realDelta || 0) + 19.5) <= 0.01 ? matched : null;
+    return openingAmount !== null && Math.abs(openingAmount) <= 0.0001 && Math.abs(Number(realDelta || 0) + 19.5) <= 0.01 ? resolved : null;
   }
   return null;
+}
+
+function resolveOwnerEvidenceUsd(evidence, { date, currency, fxRateLookup } = {}) {
+  if (!evidence || evidence.openingUsd !== null || evidence.opening === null || evidence.opening === undefined) return evidence;
+  const rate = resolveFrozenFxRate(fxRateLookup, { date, currency });
+  if (!rate.ok) return evidence;
+  return {
+    ...evidence,
+    openingUsd: round(Number(evidence.opening) * rate.rate_to_usd),
+    fx: {
+      rate_to_usd: rate.rate_to_usd,
+      source: "fx_rates",
+      date: rate.date,
+      status: "ok",
+    },
+  };
 }
 
 function buildCanonicalReconciliationValues({
