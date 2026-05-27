@@ -406,6 +406,7 @@ async function maybeOverlayFreshSourceData(data) {
     const orderPaymentCoverage = buildOrderPaymentCoverageReport(enrichedMovement.values, {
       providerEntries: realIncome?.candidateIncomeEntries || [],
     });
+    const actualPayments = buildActualPaymentSummaryByChannel(orderPaymentCoverage.rows, { realIncome });
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
     const hasServicePaymentSummary = Object.values(servicePaymentSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
     const nextRealIncome = realIncome || movementWarnings.length || hasServicePaymentSummary
@@ -423,6 +424,8 @@ async function maybeOverlayFreshSourceData(data) {
           servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
           servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
           orderPaymentCoverage,
+          actualPaymentSummaryByChannel: actualPayments.summaryByChannel,
+          actualPaymentSummaryTotals: actualPayments.totals,
           serviceOrderSummaryByChannel: realIncome?.serviceOrderSummaryByChannel || {},
           serviceOrderSummaryTotals: realIncome?.serviceOrderSummaryTotals || null,
           summaryByChannel: realIncome?.summaryByChannel || {},
@@ -1234,6 +1237,7 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
     ledgerOperations: options.ledgerOperations || [],
     period: options.period || {},
   });
+  const actualPayments = buildActualPaymentSummaryByChannel(orderPaymentCoverage.rows, { realIncome });
   return {
     ...realIncome,
     servicePaymentSummaryByChannel,
@@ -1241,6 +1245,8 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
     servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
     servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
     orderPaymentCoverage,
+    actualPaymentSummaryByChannel: realIncome?.actualPaymentSummaryByChannel || actualPayments.summaryByChannel,
+    actualPaymentSummaryTotals: realIncome?.actualPaymentSummaryTotals || actualPayments.totals,
   };
 }
 
@@ -1277,7 +1283,132 @@ export function buildOrderPaymentCoverageReport(movementValues = [], options = {
     totalExcludedNonServiceUsd: 0,
     totalUnexplainedUsd: 0,
   });
-  return { rows, summary };
+  const channelCoverage = buildCoverageSummaryByChannel(rows);
+  return {
+    rows,
+    summary,
+    summaryByChannel: channelCoverage.summaryByChannel,
+    summaryTotals: channelCoverage.totals,
+    actionableRows: channelCoverage.actionableRows,
+  };
+}
+
+export function buildActualPaymentSummaryByChannel(coverageRows = [], options = {}) {
+  const summaryByChannel = {};
+  for (const row of coverageRows || []) {
+    if (!isIncludedOrderPaymentCoverageRow(row)) continue;
+    const actualPaidUsd = roundNumber(row?.allocatedPaidUsd || 0);
+    if (actualPaidUsd <= 0) continue;
+    const channel = row.channel || "Без канала";
+    const existing = summaryByChannel[channel] || {
+      channel,
+      actualPaidUsd: 0,
+      rowCount: 0,
+      rows: [],
+    };
+    existing.actualPaidUsd = roundNumber(existing.actualPaidUsd + actualPaidUsd);
+    existing.rowCount += 1;
+    existing.rows.push(row.rowNumber);
+    summaryByChannel[channel] = existing;
+  }
+  applyProviderNetActualOverrides(summaryByChannel, options.realIncome);
+  const total = roundNumber(Object.values(summaryByChannel).reduce((sum, row) => sum + Number(row.actualPaidUsd || 0), 0));
+  for (const row of Object.values(summaryByChannel)) {
+    row.percent = total > 0 ? roundNumber((row.actualPaidUsd / total) * 100) : 0;
+  }
+  return {
+    summaryByChannel,
+    totals: {
+      actualPaidUsd: total,
+    },
+  };
+}
+
+function applyProviderNetActualOverrides(summaryByChannel = {}, realIncome = {}) {
+  const summaries = [
+    realIncome?.summaryByChannel,
+    realIncome?.allSummaryByChannel,
+  ].filter(Boolean);
+  for (const [channel, row] of Object.entries(summaryByChannel)) {
+    if (!isProviderNetRequiredActualChannel(channel)) continue;
+    const providerNetUsd = summaries
+      .map((summary) => Number(summary?.[channel]?.realNetUsd || 0))
+      .find((amount) => Number.isFinite(amount) && amount > 0);
+    if (!providerNetUsd) continue;
+    row.actualPaidUsd = roundNumber(providerNetUsd);
+    row.source = "provider net";
+  }
+}
+
+function isProviderNetRequiredActualChannel(channel = "") {
+  return /paypal|п(?:ей|эй)п|пейпал/i.test(String(channel || ""));
+}
+
+export function buildCoverageSummaryByChannel(coverageRows = []) {
+  const summaryByChannel = {};
+  const actionableRows = [];
+  for (const row of coverageRows || []) {
+    if (isActionableOrderPaymentCoverageRow(row)) {
+      actionableRows.push({
+        rowNumber: row.rowNumber,
+        date: row.date,
+        client: row.client,
+        channel: row.channel || "Без канала",
+        remainingUsd: roundNumber(row.remainingUsd || 0),
+        status: row.status,
+      });
+    }
+    if (!isIncludedOrderPaymentCoverageRow(row)) continue;
+    const channel = row.channel || "Без канала";
+    const coveredUsd = roundNumber(Math.min(Number(row.allocatedPaidUsd || 0), Number(row.accruedPlus3Usd || 0)));
+    const allocatedPaidUsd = roundNumber(row.allocatedPaidUsd || 0);
+    const remainingUsd = roundNumber(Math.max(0, row.remainingUsd || 0));
+    const existing = summaryByChannel[channel] || {
+      channel,
+      coveredUsd: 0,
+      allocatedPaidUsd: 0,
+      remainingUsd: 0,
+      rowCount: 0,
+      rows: [],
+    };
+    existing.coveredUsd = roundNumber(existing.coveredUsd + coveredUsd);
+    existing.allocatedPaidUsd = roundNumber(existing.allocatedPaidUsd + allocatedPaidUsd);
+    existing.remainingUsd = roundNumber(existing.remainingUsd + remainingUsd);
+    existing.rowCount += 1;
+    existing.rows.push(row.rowNumber);
+    summaryByChannel[channel] = existing;
+  }
+  const totalCoveredUsd = roundNumber(Object.values(summaryByChannel).reduce((sum, row) => sum + Number(row.coveredUsd || 0), 0));
+  const totalAllocatedPaidUsd = roundNumber(Object.values(summaryByChannel).reduce((sum, row) => sum + Number(row.allocatedPaidUsd || 0), 0));
+  const totalRemainingUsd = roundNumber(Object.values(summaryByChannel).reduce((sum, row) => sum + Number(row.remainingUsd || 0), 0));
+  for (const row of Object.values(summaryByChannel)) {
+    row.percent = totalCoveredUsd > 0 ? roundNumber((row.coveredUsd / totalCoveredUsd) * 100) : 0;
+  }
+  return {
+    summaryByChannel,
+    totals: {
+      coveredUsd: totalCoveredUsd,
+      allocatedPaidUsd: totalAllocatedPaidUsd,
+      remainingUsd: totalRemainingUsd,
+    },
+    actionableRows,
+  };
+}
+
+function isIncludedOrderPaymentCoverageRow(row = {}) {
+  if (row.status === "excluded") return false;
+  const text = normalizeLookupText([
+    row.service,
+    row.paymentMethod,
+    row.reviewNote,
+    row.status,
+  ].filter(Boolean).join(" "));
+  return !isExcludedServicePaymentText(text);
+}
+
+function isActionableOrderPaymentCoverageRow(row = {}) {
+  return Number(row.remainingUsd || 0) > 0.01 ||
+    ["needs verification", "no payment", "underpaid"].includes(String(row.status || "").trim().toLowerCase());
 }
 
 function buildOrderPaymentCoverageCandidate(row = []) {

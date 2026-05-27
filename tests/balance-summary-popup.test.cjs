@@ -410,6 +410,32 @@ test("income distribution uses service payment summary before provider matched s
   resetBalanceModule();
 });
 
+test("income distribution uses actual payment summary before legacy service payment summary", () => {
+  const api = loadApi();
+  const distribution = api.buildIncomeChannelDistribution({
+    data: {
+      realIncome: {
+        actualPaymentSummaryByChannel: {
+          "трансервайз дол": { actualPaidUsd: 231.75 },
+          "пейпал дол": { actualPaidUsd: 113.87 },
+          "Бинанс spot": { actualPaidUsd: 0 },
+        },
+        servicePaymentSummaryByChannel: {
+          "трансервайз дол": { realNetUsd: 334.75 },
+          "пейпал дол": { realNetUsd: 0 },
+        },
+      },
+    },
+  });
+
+  assert.equal(distribution.title, "Факт оплат по каналам");
+  assert.equal(distribution.source, "realIncome.actualPaymentSummaryByChannel");
+  assert.equal(distribution.total, 345.62);
+  assert.deepEqual(distribution.channels.map((row) => row.channel), ["трансервайз дол", "пейпал дол"]);
+  assert.equal(Number(distribution.channels.find((row) => row.channel === "пейпал дол").percent.toFixed(4)), 32.9466);
+  resetBalanceModule();
+});
+
 test("income distribution does not use planned received fallback from realIncome summary", () => {
   const api = loadApi();
   const distribution = api.buildIncomeChannelDistribution({
@@ -805,6 +831,57 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
   assert.match(text, /1234,0000/);
   assert.doesNotMatch(text, /Яндекс руб/);
   assert.deepEqual(gapRows, originalGapRows);
+  resetBalanceModule();
+});
+
+test("balance summary renders actual payment, coverage, and remaining check sections", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    incomeChannelDistribution: {
+      title: "Факт оплат по каналам",
+      note: "Факт оплат заказов/услуг по данным покрытия заказов.",
+      source: "realIncome.actualPaymentSummaryByChannel",
+      total: 345.62,
+      channels: [
+        { channel: "трансервайз дол", amount: 231.75, percent: 67.054 },
+        { channel: "пейпал дол", amount: 113.87, percent: 32.946 },
+      ],
+      diagnostics: [],
+    },
+    orderPaymentCoverage: {
+      summaryByChannel: {
+        "трансервайз дол": { channel: "трансервайз дол", coveredUsd: 231.75, percent: 67.1581 },
+        "пейпал дол": { channel: "пейпал дол", coveredUsd: 113.3, percent: 32.8419 },
+      },
+      actionableRows: [{
+        rowNumber: "18170",
+        date: "2026-05-20",
+        client: "Вилл",
+        channel: "трансервайз дол",
+        remainingUsd: 25.75,
+        status: "needs verification",
+      }],
+    },
+  }, makeMockDocument());
+
+  const text = collectText(block);
+  assert.match(text, /Факт оплат по каналам/);
+  assert.match(text, /фактически оплачено USD/);
+  assert.match(text, /Покрытие заказов по каналам/);
+  assert.match(text, /Осталось проверить/);
+  assert.match(text, /18170/);
+  assert.match(text, /2026-05-20/);
+  assert.match(text, /Вилл/);
+  assert.match(text, /25,7500/);
   resetBalanceModule();
 });
 

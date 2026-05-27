@@ -6,7 +6,11 @@
   const FALLBACK_PERCENT_RATE = 0.03;
   const FALLBACK_PERCENT_RATE_DISPLAY = 3;
   const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
+  const ACTUAL_PAYMENTS_TITLE = "Факт оплат по каналам";
+  const ACTUAL_PAYMENTS_NOTE = "Факт оплат заказов/услуг по данным покрытия заказов.";
   const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
+  const COVERAGE_BY_CHANNEL_TITLE = "Покрытие заказов по каналам";
+  const REMAINING_CHECK_TITLE = "Осталось проверить";
   const SERVICE_PAYMENT_GAP_TITLE = "Диагностика оплат по каналам";
 
   function parseNumber(value) {
@@ -196,6 +200,19 @@
   }
 
   function buildIncomeChannelDistributionFromRealIncome(realIncome = {}) {
+    if (realIncome?.actualPaymentSummaryByChannel && Object.keys(realIncome.actualPaymentSummaryByChannel).length) {
+      const channels = new Map();
+      Object.entries(realIncome.actualPaymentSummaryByChannel || {}).forEach(([channel, row]) => {
+        const actualPaidUsd = finiteOrNull(row?.actualPaidUsd);
+        if (actualPaidUsd && actualPaidUsd > 0) {
+          addIncomeChannelAmount(channels, row?.channel || channel, actualPaidUsd, "actualPaidUsd", []);
+        }
+      });
+      return finalizeIncomeChannelDistribution(Array.from(channels.values()), [], "realIncome.actualPaymentSummaryByChannel", {
+        title: ACTUAL_PAYMENTS_TITLE,
+        note: ACTUAL_PAYMENTS_NOTE,
+      });
+    }
     const source = realIncome?.servicePaymentSummaryByChannel
       ? "realIncome.servicePaymentSummaryByChannel"
       : "realIncome.serviceOrderSummaryByChannel";
@@ -264,7 +281,7 @@
     return finalizeIncomeChannelDistribution(Array.from(channels.values()), [], "movement table");
   }
 
-  function finalizeIncomeChannelDistribution(rows, diagnostics = [], source = "") {
+  function finalizeIncomeChannelDistribution(rows, diagnostics = [], source = "", options = {}) {
     const channels = (rows || [])
       .filter((row) => Number(row?.amount || 0) > 0)
       .sort((left, right) => right.amount - left.amount);
@@ -273,8 +290,8 @@
       ? channels.map((row) => ({ ...row, percent: (row.amount / total) * 100 }))
       : [];
     return {
-      title: INCOME_DISTRIBUTION_TITLE,
-      note: INCOME_DISTRIBUTION_NOTE,
+      title: options.title || INCOME_DISTRIBUTION_TITLE,
+      note: options.note || INCOME_DISTRIBUTION_NOTE,
       source,
       total,
       channels: withPercent,
@@ -285,8 +302,8 @@
   function buildIncomeChannelDistribution(input = {}, options = {}) {
     const appState = getState(input, options);
     const realIncome = appState?.data?.realIncome || appState?.realIncome || null;
-    const servicePaymentSummary = realIncome?.servicePaymentSummaryByChannel || realIncome?.serviceOrderSummaryByChannel || null;
-    if (servicePaymentSummary && Object.keys(servicePaymentSummary).length) {
+    const paymentSummary = realIncome?.actualPaymentSummaryByChannel || realIncome?.servicePaymentSummaryByChannel || realIncome?.serviceOrderSummaryByChannel || null;
+    if (paymentSummary && Object.keys(paymentSummary).length) {
       return buildIncomeChannelDistributionFromRealIncome(realIncome);
     }
     const period = options.period || getSelectedPeriod(options);
@@ -427,6 +444,7 @@
       remainingToPay,
       payableFormula: canonical.payableFormula,
       incomeChannelDistribution: buildIncomeChannelDistribution(metricsOrState, { ...options, state: appState, period }),
+      orderPaymentCoverage: appState?.data?.realIncome?.orderPaymentCoverage || appState?.realIncome?.orderPaymentCoverage || metricsOrState.orderPaymentCoverage || null,
       servicePaymentGapByChannel: appState?.data?.realIncome?.servicePaymentGapByChannel || appState?.realIncome?.servicePaymentGapByChannel || metricsOrState.servicePaymentGapByChannel || [],
       servicePaymentGapTotals: appState?.data?.realIncome?.servicePaymentGapTotals || appState?.realIncome?.servicePaymentGapTotals || metricsOrState.servicePaymentGapTotals || null,
       diagnostics,
@@ -458,6 +476,10 @@
     return `${rate.toFixed(1)}%`;
   }
 
+  function getDistributionAmountHeader(distribution = {}) {
+    return distribution.title === ACTUAL_PAYMENTS_TITLE ? "фактически оплачено USD" : "сумма USD";
+  }
+
   function renderIncomeChannelDistribution(distribution, doc = root.document) {
     const section = doc.createElement("div");
     section.className = "balance-income-channel-distribution";
@@ -482,6 +504,13 @@
 
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
+    const header = doc.createElement("tr");
+    ["channel", getDistributionAmountHeader(distribution), "%"].forEach((value) => {
+      const th = doc.createElement("th");
+      th.textContent = value;
+      header.appendChild(th);
+    });
+    tbody.appendChild(header);
     distribution.channels.forEach((row) => {
       const tr = doc.createElement("tr");
       [row.channel, formatMoney(row.amount), formatSharePercent(row.percent)].forEach((value) => {
@@ -508,6 +537,112 @@
       diagnostics.textContent = distribution.diagnostics.join(" ");
       section.appendChild(diagnostics);
     }
+    return section;
+  }
+
+  function buildCoverageChannelRows(orderPaymentCoverage = {}) {
+    const sourceRows = Object.values(orderPaymentCoverage.summaryByChannel || {});
+    const rows = sourceRows.length ? sourceRows : buildCoverageRowsFromRawRows(orderPaymentCoverage.rows || []);
+    const total = rows.reduce((sum, row) => sum + Number(row.coveredUsd || 0), 0);
+    return rows
+      .filter((row) => Number(row.coveredUsd || 0) > 0)
+      .map((row) => ({
+        channel: row.channel || "Без канала",
+        amount: Number(row.coveredUsd || 0),
+        percent: Number.isFinite(Number(row.percent)) ? Number(row.percent) : (total > 0 ? (Number(row.coveredUsd || 0) / total) * 100 : 0),
+      }))
+      .sort((left, right) => right.amount - left.amount);
+  }
+
+  function buildCoverageRowsFromRawRows(rows = []) {
+    const byChannel = new Map();
+    (rows || []).forEach((row) => {
+      if (row?.status === "excluded") return;
+      const coveredUsd = Math.min(Number(row?.allocatedPaidUsd || 0), Number(row?.accruedPlus3Usd || 0));
+      if (coveredUsd <= 0) return;
+      const channel = row.channel || "Без канала";
+      const existing = byChannel.get(channel) || { channel, coveredUsd: 0 };
+      existing.coveredUsd += coveredUsd;
+      byChannel.set(channel, existing);
+    });
+    return Array.from(byChannel.values());
+  }
+
+  function getCoverageActionableRows(orderPaymentCoverage = {}) {
+    if (Array.isArray(orderPaymentCoverage.actionableRows)) return orderPaymentCoverage.actionableRows;
+    return (orderPaymentCoverage.rows || []).filter((row) => (
+      Number(row?.remainingUsd || 0) > 0.01 ||
+      ["needs verification", "no payment", "underpaid"].includes(String(row?.status || "").trim().toLowerCase())
+    ));
+  }
+
+  function renderCoverageByChannel(orderPaymentCoverage, doc = root.document) {
+    if (!orderPaymentCoverage) return null;
+    const rows = buildCoverageChannelRows(orderPaymentCoverage);
+    const actionableRows = getCoverageActionableRows(orderPaymentCoverage);
+    if (!rows.length && !actionableRows.length) return null;
+
+    const section = doc.createElement("div");
+    section.className = "balance-coverage-by-channel";
+    const title = doc.createElement("h3");
+    title.textContent = COVERAGE_BY_CHANNEL_TITLE;
+    section.appendChild(title);
+
+    if (rows.length) {
+      const table = doc.createElement("table");
+      const tbody = doc.createElement("tbody");
+      const header = doc.createElement("tr");
+      ["channel", "покрыто USD", "%"].forEach((value) => {
+        const th = doc.createElement("th");
+        th.textContent = value;
+        header.appendChild(th);
+      });
+      tbody.appendChild(header);
+      rows.forEach((row) => {
+        const tr = doc.createElement("tr");
+        [row.channel, formatMoney(row.amount), formatSharePercent(row.percent)].forEach((value) => {
+          const td = doc.createElement("td");
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      section.appendChild(table);
+    }
+
+    if (actionableRows.length) {
+      section.appendChild(renderRemainingCheckRows(actionableRows, doc));
+    }
+    return section;
+  }
+
+  function renderRemainingCheckRows(rows = [], doc = root.document) {
+    const section = doc.createElement("div");
+    section.className = "balance-coverage-remaining-check";
+    const title = doc.createElement("h4");
+    title.textContent = REMAINING_CHECK_TITLE;
+    section.appendChild(title);
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = doc.createElement("tr");
+      [
+        row.rowNumber || "-",
+        row.date || "-",
+        row.client || "-",
+        row.channel || "Без канала",
+        formatMoney(Number(row.remainingUsd || 0)),
+        row.status || "-",
+      ].forEach((value) => {
+        const td = doc.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    section.appendChild(table);
     return section;
   }
 
@@ -683,6 +818,8 @@
       summary.incomeChannelDistribution || buildIncomeChannelDistribution(summary),
       doc
     ));
+    const coverageByChannel = renderCoverageByChannel(summary.orderPaymentCoverage, doc);
+    if (coverageByChannel) block.appendChild(coverageByChannel);
     const servicePaymentGap = renderServicePaymentGapDiagnostics(summary, doc);
     if (servicePaymentGap) block.appendChild(servicePaymentGap);
     if (summary.diagnostics?.length) {
