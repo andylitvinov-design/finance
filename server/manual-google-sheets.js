@@ -14,6 +14,7 @@ import {
   countMissingAmountNetRows,
   isExchangeMissingAmountUsdRow,
 } from "./ledger-audit-helpers.js";
+import { FX_RATES_HEADERS as PARSED_FX_RATES_HEADERS, parseFxRateRows } from "./fx-rates.js";
 
 export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -28,6 +29,8 @@ export const SHEETS_API_BASE_URL = SHEETS_API_BASE;
 const BALANCE_SHEET_NAME = "Остатки";
 export const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
 export const AUTO_BALANCE_HEADERS = ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"];
+export const FX_RATES_SHEET_NAME = "FX Rates";
+export const FX_RATES_HEADERS = PARSED_FX_RATES_HEADERS;
 const PLAN_SHEET_NAME = "План";
 const TRANSFER_SHEET_NAME = "Переводы";
 const COMMISSION_SHEET_NAME = "Комиссии";
@@ -171,6 +174,8 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       accessToken,
       fetchImpl,
     });
+    const fxRatesRead = await readOptionalFxRatesSheet({ accessToken, fetchImpl });
+    const parsedFxRates = parseFxRateRows(fxRatesRead.values);
     const transferValues = valuesBySheet[TRANSFER_SHEET_NAME] || [];
     const transfers = parseTransferRows(transferValues);
     const transferWarnings = buildTransferRowsWarnings(transferValues, transfers);
@@ -193,12 +198,18 @@ export async function loadManualRepositoryFromGoogleSheets({ fetchImpl = fetch }
       legacyExpenseRows: legacyRepository.expenseRows || [],
       balances: parseBalanceRows(valuesBySheet[BALANCE_SHEET_NAME] || []),
       autoBalances: parseAutoBalanceRows(valuesBySheet[AUTO_BALANCE_SHEET_NAME] || []),
+      fxRates: parsedFxRates.rates,
+      fxRateDiagnostics: {
+        ...parsedFxRates.diagnostics,
+        source_sheet: FX_RATES_SHEET_NAME,
+        read_ok: fxRatesRead.ok,
+      },
       monthlyPlanRows,
       plannedRows: buildPlannedRowsFromMonthlyPlan(monthlyPlanRows),
       plannedSourceStatus: planValues.length ? "available" : "needs_verification",
       transfers,
       commissionRows: parseCommissionRows(valuesBySheet[COMMISSION_SHEET_NAME] || []),
-      warnings: [...(ledgerRepository.warnings || []), ...warnings],
+      warnings: [...(ledgerRepository.warnings || []), ...warnings, ...(fxRatesRead.warning ? [fxRatesRead.warning] : [])],
       fallbackSchema: null,
     };
   } catch (error) {
@@ -464,6 +475,39 @@ async function batchGetSheetValues({ spreadsheetId, sheetNames, accessToken, fet
     output[title] = range.values || [];
   });
   return output;
+}
+
+async function readOptionalFxRatesSheet({ accessToken, fetchImpl }) {
+  const escaped = FX_RATES_SHEET_NAME.replace(/'/g, "''");
+  const range = encodeURIComponent(`'${escaped}'!A:I`);
+  try {
+    const response = await fetchImpl(`${SHEETS_API_BASE}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        values: [],
+        warning: `FX Rates sheet unavailable: ${toSafeGoogleError(payload?.error?.message || `HTTP ${response.status}`)}`,
+      };
+    }
+    return {
+      ok: true,
+      values: payload.values || [],
+      warning: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      values: [],
+      warning: `FX Rates sheet unavailable: ${toSafeGoogleError(error)}`,
+    };
+  }
 }
 
 async function readSheetProbeRow({ spreadsheetId, accessToken, fetchImpl }) {

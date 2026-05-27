@@ -89,6 +89,37 @@ test("period balance reconciliation API snapshot exposes planned and real period
   assert.doesNotMatch(snapshot.warnings.join("\n"), /planned.*source.*unavailable|planned income\/expense source is not connected/i);
 });
 
+test("period balance reconciliation API passes FX Rates into balance conversion", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-05-01", to: "2026-05-27" },
+    repositoryLoader: async () => ({
+      ok: true,
+      schema: "ledger-v2-compatible",
+      operations: [],
+      balances: [
+        { date: "2026-05-01", channel: "wise eur", currency: "EUR", amount: "100" },
+        { date: "2026-05-27", channel: "wise eur", currency: "EUR", amount: "120" },
+      ],
+      fxRates: [
+        { date: "2026-05-01", currency: "EUR", base_currency: "USD", rate_to_usd: 1.1, source: "frankfurter", status: "ok" },
+        { date: "2026-05-27", currency: "EUR", base_currency: "USD", rate_to_usd: 1.2, source: "frankfurter", status: "ok" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    yooMoneyProviderEvidenceLoader: async () => ({ source: "not_connected", rows: [], warning: null }),
+  });
+
+  const row = snapshot.period_balance_reconciliation.by_channel_currency[0];
+  assert.equal(row.opening_usd, 110);
+  assert.equal(row.confirmed_end_usd, 144);
+  assert.equal(row.opening_fx_source, "fx_rates");
+  assert.equal(row.manual_provider_closing_balance_fx_source, "fx_rates");
+  assert.equal(row.needs_fx_rate, false);
+});
+
 test("period reconciliation exposes complete daily balance coverage diagnostics and optional rows", async () => {
   const repositoryLoader = async () => ({
     ok: true,

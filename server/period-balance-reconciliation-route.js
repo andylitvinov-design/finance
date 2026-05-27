@@ -61,6 +61,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
       operations: [],
       balanceRows,
       calculatedBalanceRows: [],
+      fxRates: Array.isArray(repository.fxRates) ? repository.fxRates : [],
       plannedRows: [],
       plannedSourceStatus: "needs_verification",
       period,
@@ -103,6 +104,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     operations: repository.operations || [],
     balanceRows,
     calculatedBalanceRows,
+    fxRates: Array.isArray(repository.fxRates) ? repository.fxRates : [],
     plannedRows,
     plannedSourceStatus,
     period,
@@ -126,6 +128,8 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     auto_balance_status_counts: countAutoBalanceStatuses(autoStatusRows),
     balance_snapshot_rows_loaded: balanceRows.length,
     calculated_balance_rows_built: calculatedBalanceRows.length,
+    fx_rates_rows_loaded: Array.isArray(repository.fxRates) ? repository.fxRates.length : 0,
+    fx_rates_status_counts: repository.fxRateDiagnostics?.status_counts || {},
     analytics_fact_rows_rendered: (reconciliation.by_channel_currency || [])
       .filter((row) => row.factual_closing_balance !== null && row.factual_closing_balance !== undefined).length,
   };
