@@ -515,6 +515,56 @@
     return [...new Set((rows || []).map((row) => String(row?.reason || "").trim()).filter(Boolean))].slice(0, 3).join(", ");
   }
 
+  function uniqueGapValues(rows = [], key) {
+    return [...new Set((rows || []).map((row) => String(row?.[key] || "").trim()).filter(Boolean))];
+  }
+
+  function summarizeGapSourceRows(rows = []) {
+    if (!Array.isArray(rows) || !rows.length) return "source rows missing from API — needs verification";
+    const parts = [];
+    const rowNumbers = uniqueGapValues(rows, "rowNumber");
+    const dates = uniqueGapValues(rows, "date");
+    const clients = uniqueGapValues(rows, "client");
+    if (rowNumbers.length) parts.push(`rows: ${rowNumbers.join(", ")}`);
+    if (dates.length) parts.push(`dates: ${dates.join(", ")}`);
+    if (clients.length === 1) parts.push(`client: ${clients[0]}`);
+    return parts.join("; ") || "source rows missing from API — needs verification";
+  }
+
+  function formatGapAmount(value) {
+    return Number.isFinite(Number(value)) ? formatMoney(Number(value)) : "-";
+  }
+
+  function formatServicePaymentGapSourceRow(row = {}) {
+    const statusParts = [
+      String(row.status || "").trim(),
+      String(row.reviewNote || "").trim(),
+    ].filter(Boolean).join("; ");
+    const parts = [
+      `row/order ${row.rowNumber || "-"}`,
+      `date ${row.date || "-"}`,
+      `client ${row.client || "-"}`,
+      `order/service ${row.order || row.service || row.orderNumber || "-"}`,
+      `paymentMethod ${row.paymentMethod || "-"}`,
+      `accrued ${formatGapAmount(row.accruedUsd)}`,
+      `client paid ${formatGapAmount(row.clientPaidUsd)}`,
+      `provider net ${formatGapAmount(row.providerNetUsd)}`,
+      `included ${row.included ? "yes" : "no"}`,
+      `reason ${row.reason || "-"}`,
+      `status/reviewNote ${statusParts || "-"}`,
+    ];
+    if (String(row.reason || "").toLowerCase().includes("payment channel missing")) {
+      parts.push("Не найден payment channel — проверь PAYMENT METHOD / канал оплаты в строке.");
+    }
+    return parts.join("; ");
+  }
+
+  function getServicePaymentGapSectionNote(title = "") {
+    if (title === "Переплаты / offset") return "Это offset/переплата, не сумма к оплате.";
+    if (title === "Исключено из оплат") return "Это исключено из оплат заказов/услуг: депозит, перевод, обмен или non-service.";
+    return "";
+  }
+
   function hasExcludedGapReason(row) {
     const text = (row?.rows || []).map((item) => String(item?.reason || "")).join(" ").toLowerCase();
     return /excluded|исключ|deposit|non-service|refund|возврат|exchange|обмен|transfer|перевод/.test(text);
@@ -544,6 +594,14 @@
     title.textContent = sectionData.title;
     section.appendChild(title);
 
+    const sectionNote = getServicePaymentGapSectionNote(sectionData.title);
+    if (sectionNote) {
+      const note = doc.createElement("div");
+      note.className = "balance-service-payment-gap-note";
+      note.textContent = sectionNote;
+      section.appendChild(note);
+    }
+
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
     sectionData.rows.forEach((row) => {
@@ -552,12 +610,29 @@
         row.channel || "Без канала",
         formatMoney(Number(row.netGapUsd || 0)),
         summarizeGapReasons(row.rows),
+        summarizeGapSourceRows(row.rows),
       ].forEach((value) => {
         const td = doc.createElement("td");
         td.textContent = value;
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
+      const detail = doc.createElement("tr");
+      detail.className = "balance-service-payment-gap-detail";
+      const detailCell = doc.createElement("td");
+      detailCell.setAttribute("colspan", "4");
+      if (Array.isArray(row.rows) && row.rows.length) {
+        row.rows.forEach((sourceRow) => {
+          const detailLine = doc.createElement("div");
+          detailLine.className = "balance-service-payment-gap-source-row";
+          detailLine.textContent = formatServicePaymentGapSourceRow(sourceRow);
+          detailCell.appendChild(detailLine);
+        });
+      } else {
+        detailCell.textContent = "source rows missing from API — needs verification";
+      }
+      detail.appendChild(detailCell);
+      tbody.appendChild(detail);
     });
     table.appendChild(tbody);
     section.appendChild(table);
