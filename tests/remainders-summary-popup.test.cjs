@@ -113,7 +113,7 @@ function createDateDocument({ from = "2026-05-17", to = "2026-05-17" } = {}) {
 test("index contains remainders launcher after balance launcher", () => {
   assert.match(indexHtml, /id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
   assert.match(indexHtml, /id="balanceLauncherButton"[^>]*>Баланс<\/button>\s*<button id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
-  assert.match(indexHtml, /balance-summary-popup\.js"><\/script>\s*<script src="\.\/remainders-summary-popup\.js"><\/script>/);
+  assert.match(indexHtml, /balance-summary-popup\.js"><\/script>\s*<script src="\.\/balance-payment-gap-compact\.js"><\/script>\s*<script src="\.\/remainders-summary-popup\.js"><\/script>/);
 });
 
 test("missing remainders launcher is created after balance launcher", () => {

@@ -56,15 +56,17 @@
     const date = extractField(text, "date") || "-";
     const accrued = extractField(text, "accrued") || "-";
     const paid = extractField(text, "client paid") || "-";
-    const included = extractField(text, "included") || "-";
+    const providerNet = extractField(text, "provider net");
+    const included = extractField(text, "included");
     const reason = extractField(text, "reason") || "-";
     const status = extractStatus(text);
+    const netOrIncluded = providerNet ? `provider net ${providerNet}` : `included ${included || "-"}`;
     return [
       row,
       date,
       `accrued ${accrued}`,
       `paid ${paid}`,
-      `included ${included}`,
+      netOrIncluded,
       status || reason,
     ].filter(Boolean).join(" · ");
   }
