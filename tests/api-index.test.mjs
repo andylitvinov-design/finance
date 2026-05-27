@@ -2575,7 +2575,7 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
   process.env.BINANCE_API_KEY = "binance-key";
   process.env.BINANCE_API_SECRET = "binance-secret";
 
-  const makeSourceRow = ({ number, date, client, service, comment = "", priceBase, accruedPlus, paymentMethod, receivedUsd }) => {
+  const makeSourceRow = ({ number, date, client, service, comment = "", priceBase, accruedPlus, paymentMethod, receivedUsd, receivedUah, uahRate }) => {
     const row = new Array(51).fill("");
     row[1] = number;
     row[2] = date;
@@ -2585,8 +2585,10 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     row[6] = String(priceBase);
     row[9] = String(priceBase);
     row[10] = String(accruedPlus);
+    if (uahRate !== undefined) row[18] = String(uahRate);
     row[24] = paymentMethod;
     if (receivedUsd !== undefined) row[30] = String(receivedUsd);
+    if (receivedUah !== undefined) row[33] = String(receivedUah);
     return row;
   };
 
@@ -2676,6 +2678,104 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
             paymentMethod: "приват-фоп",
           }),
           makeSourceRow({
+            number: "18152",
+            date: "2026-05-06",
+            client: "Сергей Ковалев",
+            service: "ФОП grouped first order",
+            priceBase: 50,
+            accruedPlus: 51.5,
+            paymentMethod: "ФОП приват",
+          }),
+          makeSourceRow({
+            number: "18153",
+            date: "2026-05-06",
+            client: "Сергей Ковалев",
+            service: "ФОП grouped paid order",
+            priceBase: 50,
+            accruedPlus: 51.5,
+            paymentMethod: "ФОП приват",
+            receivedUah: 4537.15,
+            uahRate: 44.05,
+          }),
+          makeSourceRow({
+            number: "18165",
+            date: "2026-05-14",
+            client: "Сергей Ковалев",
+            service: "ФОП grouped UAH payment",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "приват ФОП",
+            receivedUah: 4815.25,
+            uahRate: 42.5,
+          }),
+          makeSourceRow({
+            number: "18166",
+            date: "2026-05-14",
+            client: "Сергей Ковалев",
+            service: "ФОП grouped child order 1",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "приват ФОП",
+            uahRate: 42.5,
+          }),
+          makeSourceRow({
+            number: "18167",
+            date: "2026-05-14",
+            client: "Сергей Ковалев",
+            service: "ФОП grouped child order 2",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "приват ФОП",
+            uahRate: 42.5,
+          }),
+          makeSourceRow({
+            number: "18171",
+            date: "2026-05-22",
+            client: "Вилл",
+            service: "Wise grouped first order",
+            priceBase: 200,
+            accruedPlus: 206,
+            paymentMethod: "wise",
+          }),
+          makeSourceRow({
+            number: "18172",
+            date: "2026-05-22",
+            client: "Вилл",
+            service: "Wise grouped paid order",
+            priceBase: 25,
+            accruedPlus: 25.75,
+            paymentMethod: "wise",
+            receivedUsd: 231.75,
+          }),
+          makeSourceRow({
+            number: "18149",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "PayPal grouped first order",
+            priceBase: 100,
+            accruedPlus: 103,
+            paymentMethod: "пейпал",
+          }),
+          makeSourceRow({
+            number: "18150",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "PayPal grouped child order 1",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "пейпал",
+          }),
+          makeSourceRow({
+            number: "18151",
+            date: "2026-05-05",
+            client: "Инна Устименко",
+            service: "PayPal grouped paid order",
+            priceBase: 5,
+            accruedPlus: 5.15,
+            paymentMethod: "пейпал",
+            receivedUsd: 115.5,
+          }),
+          makeSourceRow({
             number: "18175",
             date: "2026-05-24",
             client: "Сергей Ковалев",
@@ -2739,6 +2839,13 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
                   transaction_initiation_date: "2026-05-02T10:00:00Z",
                   transaction_amount: { value: "103", currency_code: "USD" },
                 },
+              }, {
+                transaction_info: {
+                  transaction_id: "PAYPAL-INNA-GROUP",
+                  transaction_initiation_date: "2026-05-05T10:00:00Z",
+                  transaction_amount: { value: "118.80", currency_code: "USD" },
+                  fee_amount: { value: "-4.93", currency_code: "USD" },
+                },
               }],
             };
           },
@@ -2767,15 +2874,22 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     const realIncome = response.body?.data?.realIncome;
     assert.equal(realIncome?.servicePaymentSummaryByChannel?.["пейпал дол"]?.realNetUsd, 103);
     assert.equal(realIncome?.servicePaymentSummaryByChannel?.["монобанк грн"]?.realNetUsd, 60);
+    assert.equal(realIncome?.servicePaymentSummaryByChannel?.["приват-фоп"]?.realNetUsd, 216.3);
     assert.equal(realIncome?.servicePaymentSummaryByChannel?.["Бинанс spot"]?.realNetUsd, 0);
-    assert.equal(realIncome?.servicePaymentSummaryTotals?.realNetUsd, 163);
+    assert.equal(realIncome?.servicePaymentSummaryTotals?.realNetUsd, 379.3);
+    assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realGrossUsd, 118.8);
+    assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realFeeUsd, 4.93);
+    assert.equal(realIncome?.allSummaryByChannel?.["пейпал дол"]?.realNetUsd, 113.87);
 
     const paypalGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "пейпал дол");
-    assert.equal(paypalGap?.expectedUsd, 103);
-    assert.equal(paypalGap?.includedUsd, 103);
+    assert.equal(paypalGap?.expectedUsd, 216.3);
+    assert.equal(paypalGap?.includedUsd, 216.87);
     assert.equal(paypalGap?.missingUnsafeUsd, 103);
-    assert.equal(paypalGap?.netGapUsd, 0);
-    assert.match(paypalGap?.rows?.[0]?.reason || "", /PayPal missing client-paid\/provider net|no safe amount/);
+    assert.equal(paypalGap?.offsetUsd, 0.57);
+    assert.equal(paypalGap?.netGapUsd, -0.57);
+    assert.match(paypalGap?.rows?.find((row) => row.rowNumber === "18201")?.reason || "", /PayPal missing client-paid\/provider net|no safe amount/);
+    assert.deepEqual(paypalGap?.rows?.map((row) => row.rowNumber).sort(), ["18149-18151", "18201"]);
+    assert.match(paypalGap?.rows?.find((row) => row.rowNumber === "18149-18151")?.reason || "", /group net overpaid/);
 
     const missingChannelGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "Без канала");
     assert.equal(missingChannelGap?.expectedUsd, 206);
@@ -2784,6 +2898,10 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.match(missingChannelGap?.rows?.[0]?.reason || "", /payment channel missing/);
     assert.equal(
       realIncome?.servicePaymentGapByChannel?.some((row) => row.rows?.some((sourceRow) => sourceRow.rowNumber === "18179")),
+      false
+    );
+    assert.equal(
+      realIncome?.servicePaymentGapByChannel?.some((row) => row.rows?.some((sourceRow) => ["18171", "18172"].includes(sourceRow.rowNumber))),
       false
     );
     assert.equal(realIncome?.servicePaymentSummaryByChannel?.["трансервайз дол"]?.realNetUsd, 0);
@@ -2828,6 +2946,10 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
       ["18177", false, "no safe amount"],
       ["18178", false, "no safe amount"],
     ]);
+    assert.equal(
+      realIncome?.servicePaymentGapByChannel?.some((row) => row.rows?.some((sourceRow) => ["18152", "18153", "18165", "18166", "18167"].includes(sourceRow.rowNumber))),
+      false
+    );
 
     const monoGap = realIncome?.servicePaymentGapByChannel?.find((row) => row.channel === "монобанк грн");
     assert.equal(monoGap?.expectedUsd, 51.5);
@@ -2842,11 +2964,11 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.match(binanceGap?.rows?.[0]?.reason || "", /excluded deposit\/non-service/);
 
     assert.deepEqual(realIncome?.servicePaymentGapTotals, {
-      expectedUsd: 1007.4,
-      includedUsd: 163,
+      expectedUsd: 1120.7,
+      includedUsd: 276.87,
       missingUnsafeUsd: 955.9,
-      offsetUsd: 8.5,
-      netGapUsd: 844.4,
+      offsetUsd: 9.07,
+      netGapUsd: 843.83,
     });
   } finally {
     global.fetch = previousFetch;
