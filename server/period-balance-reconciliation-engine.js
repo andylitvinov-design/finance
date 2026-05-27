@@ -1188,14 +1188,14 @@ function getReportOwnerEvidence({ channel, currency, from, openingSnapshot, real
       opening: 175.25,
       openingUsd: null,
       confirmed: 0,
-      confirmedUsd: null,
+      confirmedUsd: 0,
       reason: "owner_paypal_screenshot_opening",
     },
     [makeKey("пейпал сad", "CAD")]: {
       opening: 19.5,
       openingUsd: null,
       confirmed: 0,
-      confirmedUsd: null,
+      confirmedUsd: 0,
       reason: "owner_paypal_screenshot_opening",
     },
   };
