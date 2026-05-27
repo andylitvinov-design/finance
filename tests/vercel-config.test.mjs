@@ -34,3 +34,16 @@ test("daily balance backfill uses the consolidated api index function", () => {
     rewrite.destination === "/api/index?action=dailyBalanceBackfill"
   ));
 });
+
+test("FX Rates ensure uses the consolidated api index function and scheduled cron", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+
+  assert.ok(config.rewrites.some((rewrite) =>
+    rewrite.source === "/api/ensure-fx-rates" &&
+    rewrite.destination === "/api/index?action=ensureFxRates"
+  ));
+  assert.ok(config.crons.some((cron) =>
+    cron.path === "/api/ensure-fx-rates" &&
+    cron.schedule === "15 23 * * *"
+  ));
+});
