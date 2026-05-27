@@ -61,6 +61,186 @@ test("real period balance reconciles when fact equals opening plus real delta", 
   assert.equal(reportRow.suspected_cause, "none");
 });
 
+test("canonical report fields use opening plus Ledger movement as planned end", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-21",
+        fromChannel: "пейпал сad",
+        currency: "CAD",
+        amountNet: "19.50",
+        balanceAmount: -19.5,
+        ledgerV2: {
+          date: "2026-05-21",
+          operation: "expense",
+          from_channel: "пейпал сad",
+          currency: "CAD",
+          amount_net: "19.50",
+          balance_amount: -19.5,
+        },
+      },
+      {
+        date: "2026-05-10",
+        toChannel: "Бинанс spot",
+        currency: "USDC",
+        amountNet: "0.54",
+        amountUsd: "0.54",
+        balanceAmount: 0.54,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "income",
+          to_channel: "Бинанс spot",
+          currency: "USDC",
+          amount_net: "0.54",
+          amount_usd: "0.54",
+          balance_amount: 0.54,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "пейпал сad", currency: "CAD", amount: "19.50", sourceSheet: "Owner Evidence" },
+      { date: "2026-05-27", channel: "пейпал сad", currency: "CAD", amount: "0", sourceSheet: "Owner Evidence" },
+      { date: "2026-05-01", channel: "REVOLUT франк", currency: "CHF", amount: "15", amount_usd: "15", sourceSheet: "Owner Evidence" },
+      { date: "2026-05-27", channel: "REVOLUT франк", currency: "CHF", amount: "15", sourceSheet: "Owner Evidence" },
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USDC", amount: "2.3777", amount_usd: "2.3777", sourceSheet: "Owner Evidence" },
+      { date: "2026-05-27", channel: "Бинанс spot", currency: "USDC", amount: "2.9177", amount_usd: "2.9177", sourceSheet: "Owner Evidence" },
+    ],
+  });
+
+  const cad = result.by_channel_currency.find((row) => row.channel === "пейпал сad");
+  const chf = result.by_channel_currency.find((row) => row.channel === "REVOLUT франк");
+  const usdc = result.by_channel_currency.find((row) => row.channel === "Бинанс spot");
+
+  assert.equal(cad.opening_native, 19.5);
+  assert.equal(cad.movement_native, -19.5);
+  assert.equal(cad.planned_end_native, 0);
+  assert.equal(cad.confirmed_end_native, 0);
+  assert.equal(cad.diff_native, 0);
+  assert.equal(cad.opening_usd, null);
+  assert.equal(cad.movement_usd, null);
+  assert.equal(cad.planned_end_usd, null);
+  assert.equal(cad.confirmed_end_usd, null);
+  assert.equal(cad.diff_usd, null);
+  assert.deepEqual(cad.fx_warnings, ["opening_usd_fx_missing", "movement_usd_fx_missing", "planned_end_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
+
+  assert.equal(chf.opening_native, 15);
+  assert.equal(chf.movement_native, 0);
+  assert.equal(chf.planned_end_native, 15);
+  assert.equal(chf.confirmed_end_native, 15);
+  assert.equal(chf.diff_native, 0);
+
+  assert.equal(usdc.opening_native, 2.3777);
+  assert.equal(usdc.movement_native, 0.54);
+  assert.equal(usdc.planned_end_native, 2.9177);
+  assert.equal(usdc.confirmed_end_native, 2.9177);
+  assert.equal(usdc.diff_native, 0);
+  assert.equal(usdc.opening_usd, 2.3777);
+  assert.equal(usdc.movement_usd, 0.54);
+  assert.equal(usdc.planned_end_usd, 2.9177);
+  assert.equal(usdc.confirmed_end_usd, 2.9177);
+  assert.equal(usdc.diff_usd, 0);
+});
+
+test("May owner evidence feeds PayPal screenshot openings and keeps Binance Save unresolved", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-05",
+        fromChannel: "пейпал дол",
+        currency: "USD",
+        amountNet: "190.90",
+        amountUsd: "190.90",
+        balanceAmount: -190.9,
+        ledgerV2: { date: "2026-05-05", operation: "expense", from_channel: "пейпал дол", currency: "USD", amount_net: "190.90", amount_usd: "190.90", balance_amount: -190.9 },
+      },
+      {
+        date: "2026-05-08",
+        fromChannel: "пейпал евр",
+        currency: "EUR",
+        amountNet: "175.25",
+        balanceAmount: -175.25,
+        ledgerV2: { date: "2026-05-08", operation: "expense", from_channel: "пейпал евр", currency: "EUR", amount_net: "175.25", balance_amount: -175.25 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "435", amount_usd: "435", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "пейпал евр", currency: "EUR", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "пейпал сad", currency: "CAD", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "8519", amount_usd: "8519", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", amount_usd: "254", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "26670", amount_usd: "603", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", amount_usd: "7351", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "145614", amount_usd: "1722", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount: "1107", amount_usd: "1284", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "35.30", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "пейпал евр", currency: "EUR", amount: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "пейпал сad", currency: "CAD", amount: "0", sourceSheet: "Остатки" },
+      { date: "2026-05-27", channel: "binance save", currency: "USDT", amount: "5411.6278", amount_usd: "5411.6278", sourceSheet: "Авто Остатки" },
+    ],
+  });
+
+  const usd = result.by_channel_currency.find((row) => row.channel === "пейпал дол" && row.currency === "USD");
+  const eur = result.by_channel_currency.find((row) => row.channel === "пейпал евр" && row.currency === "EUR");
+  const cad = result.by_channel_currency.find((row) => row.channel === "пейпал сad" && row.currency === "CAD");
+  const save = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDT");
+
+  assert.equal(usd.opening_native, 202.97);
+  assert.equal(usd.confirmed_end_native, 12.07);
+  assert.equal(usd.planned_end_native, 12.07);
+  assert.equal(eur.opening_native, 175.25);
+  assert.equal(eur.confirmed_end_native, 0);
+  assert.equal(eur.planned_end_native, 0);
+  assert.equal(cad.opening_native, 19.5);
+  assert.equal(cad.confirmed_end_native, 0);
+  assert.equal(save.opening_native, 8519);
+  assert.equal(save.confirmed_end_native, 5411.6278);
+  assert.equal(save.status, "needs_verification");
+  assert.equal(save.diff_native, -3107.3722);
+});
+
+test("total USD row sums only available frozen USD equivalents", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-02",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "25",
+        amountUsd: "25",
+        balanceAmount: 25,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "wise usd", currency: "USD", amount_net: "25", amount_usd: "25", balance_amount: 25 },
+      },
+      {
+        date: "2026-05-02",
+        toChannel: "cash cad",
+        currency: "CAD",
+        amountNet: "10",
+        balanceAmount: 10,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "cash cad", currency: "CAD", amount_net: "10", balance_amount: 10 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100", amount_usd: "100" },
+      { date: "2026-05-27", channel: "wise usd", currency: "USD", amount: "125", amount_usd: "125" },
+      { date: "2026-05-01", channel: "cash cad", currency: "CAD", amount: "50" },
+      { date: "2026-05-27", channel: "cash cad", currency: "CAD", amount: "60" },
+    ],
+  });
+
+  assert.equal(result.total_usd_row.label, "ВСЕГО USD");
+  assert.equal(result.total_usd_row.opening_usd, 100);
+  assert.equal(result.total_usd_row.movement_usd, 25);
+  assert.equal(result.total_usd_row.planned_end_usd, 125);
+  assert.equal(result.total_usd_row.confirmed_end_usd, 125);
+  assert.equal(result.total_usd_row.diff_usd, 0);
+  assert.equal(result.total_usd_row.excluded_fx_missing_rows, 1);
+  assert.match(result.warnings.join("\n"), /fx_missing/);
+  assert.deepEqual(result.reconciliation_report_summary.total_usd_row, result.total_usd_row);
+});
+
 test("planned and real deltas are shown separately", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

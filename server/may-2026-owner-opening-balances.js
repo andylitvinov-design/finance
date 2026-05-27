@@ -81,7 +81,7 @@ export const OWNER_MAY_OPENING_BALANCES = [
   { inputChannel: "binance save", channel: "binance save", currency: "USDT", amount: 8519, amountUsd: 8519 },
   { inputChannel: "Нал-я-евр", channel: "Налично -я-евр", currency: "EUR", amount: "", amountUsd: 91 },
   { inputChannel: "местная валюты", channel: "местная валюты", currency: "LOCAL", amount: 0, amountUsd: 0 },
-  { inputChannel: "БАНК КАНАДА", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "", amountUsd: 7351 },
+  { inputChannel: "БАНК КАНАДА", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351, amountUsd: 7351 },
   { inputChannel: "ФОП - мамо", channel: "приват-фоп", currency: "UAH", amount: 0, amountUsd: 0 },
   { inputChannel: "24-евро", channel: "приват 24-евро", currency: "EUR", amount: "", amountUsd: 1 },
   { inputChannel: "карта тай", channel: "карта тай", currency: "THB", amount: 0, amountUsd: 0 },
@@ -95,6 +95,30 @@ const PAYPAL_PLANNED_OPENING_KEYS = new Set([
   balanceKey("пейпал дол", "USD"),
   balanceKey("пейпал евр", "EUR"),
   balanceKey("пейпал сad", "CAD"),
+]);
+const PAYPAL_SCREENSHOT_OPENING_REASON = "owner_paypal_screenshot_opening";
+const PAYPAL_SCREENSHOT_OPENINGS = new Map([
+  [balanceKey("пейпал дол", "USD"), {
+    opening: 202.97,
+    openingUsd: 202.97,
+    confirmed: 12.07,
+    confirmedUsd: 12.07,
+    screenshotMovement: -190.9,
+  }],
+  [balanceKey("пейпал евр", "EUR"), {
+    opening: 175.25,
+    openingUsd: null,
+    confirmed: 0,
+    confirmedUsd: null,
+    screenshotMovement: -175.25,
+  }],
+  [balanceKey("пейпал сad", "CAD"), {
+    opening: 19.5,
+    openingUsd: null,
+    confirmed: 0,
+    confirmedUsd: null,
+    screenshotMovement: -19.5,
+  }],
 ]);
 
 const PAYPAL_MOVEMENT_DIAGNOSTIC_SOURCE_ROW_ORDER = [501, 504, 502, 503];
@@ -250,7 +274,7 @@ export function buildReconciliationAdjustedMayOpening({
     const ownerInput = parseNumber(owner?.amount);
     const ownerInputUsd = parseNumber(owner?.amountUsd);
     const impliedOpening = fact ? round(fact.amount - movement.native) : null;
-    const impliedOpeningUsd = fact && fact.amount_usd !== null
+    let impliedOpeningUsd = fact && fact.amount_usd !== null
       ? round(fact.amount_usd - (movement.hasUsd ? movement.usd : 0))
       : estimateAdjustedUsd({ ownerInput, ownerInputUsd, adjustedOpening: impliedOpening });
     const diff = ownerInput !== null && impliedOpening !== null ? round(impliedOpening - ownerInput) : null;
@@ -289,7 +313,23 @@ export function buildReconciliationAdjustedMayOpening({
       adjustedOpeningUsd = null;
     }
 
-    if (owner && fact && PAYPAL_PLANNED_OPENING_KEYS.has(key)) {
+    const paypalScreenshot = PAYPAL_SCREENSHOT_OPENINGS.get(key) || null;
+    const hasMatchingPayPalScreenshotFact = Boolean(
+      owner
+      && fact
+      && paypalScreenshot
+      && fact.date === "2026-05-27"
+      && Math.abs(round(Number(fact.amount) - Number(paypalScreenshot.confirmed))) <= 0.0001
+    );
+
+    if (hasMatchingPayPalScreenshotFact) {
+      reason = PAYPAL_SCREENSHOT_OPENING_REASON;
+      confidence = "high";
+      status = "adjusted";
+      adjustedOpening = paypalScreenshot.opening;
+      adjustedOpeningUsd = paypalScreenshot.openingUsd;
+      impliedOpeningUsd = paypalScreenshot.openingUsd;
+    } else if (owner && fact && PAYPAL_PLANNED_OPENING_KEYS.has(key)) {
       reason = "planned_from_confirmed_balance_minus_ledger_movements";
       confidence = "medium";
       status = "pending_movement_verification";
@@ -315,12 +355,20 @@ export function buildReconciliationAdjustedMayOpening({
       adjustment_reason: reason,
       confidence,
       confidence_note: owner?.confidenceNote || null,
-      superseded_owner_input: owner?.supersededOwnerInput || null,
+      superseded_owner_input: hasMatchingPayPalScreenshotFact
+        ? { inputChannel: owner.inputChannel, amount: ownerInput, amountUsd: ownerInputUsd }
+        : owner?.supersededOwnerInput || null,
       status,
       planned_opening_candidate: plannedOpeningCandidate,
       planned_opening_candidate_usd: plannedOpeningCandidateUsd,
+      screenshot_movement: hasMatchingPayPalScreenshotFact ? paypalScreenshot.screenshotMovement : null,
+      ledger_vs_screenshot_movement_diff: hasMatchingPayPalScreenshotFact && fact
+        ? round(movement.native - paypalScreenshot.screenshotMovement)
+        : null,
       later_confirmed_balance: fact?.amount ?? null,
-      later_confirmed_balance_usd: fact?.amount_usd ?? null,
+      later_confirmed_balance_usd: hasMatchingPayPalScreenshotFact
+        ? paypalScreenshot.confirmedUsd
+        : fact?.amount_usd ?? null,
       later_confirmed_balance_date: fact?.date || null,
       ledger_movement_from_2026_05_02_to_confirmed_date: fact ? movement.native : null,
       ledger_movement_usd_from_2026_05_02_to_confirmed_date: fact && movement.hasUsd ? movement.usd : null,
@@ -368,7 +416,7 @@ function buildAdjustedOwnerRows(ownerRows, report) {
   const rowsByKey = new Map((report?.rows || []).map((row) => [balanceKey(row.channel, row.currency), row]));
   return (ownerRows || []).map((row) => {
     const adjustment = rowsByKey.get(balanceKey(row.channel, row.currency));
-    if (!adjustment || adjustment.reason !== "rounding_or_fx") return row;
+    if (!adjustment || !["rounding_or_fx", PAYPAL_SCREENSHOT_OPENING_REASON].includes(adjustment.reason)) return row;
     return {
       ...row,
       amount: adjustment.adjusted_opening ?? row.amount,
