@@ -319,7 +319,7 @@ test("loadManualRepositoryFromGoogleSheets ignores legacy Расходы as an o
     assert.deepEqual(repository.expenseRows, []);
     assert.equal(repository.fallbackSchema, null);
     assert.deepEqual(repository.warnings, ["legacy Расходы ignored: Ledger is the only operations source."]);
-    assert.equal(fetchCalls.length, 2);
+    assert.equal(fetchCalls.length, 3);
   } finally {
     if (previousEmail === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
@@ -607,6 +607,46 @@ test("loadManualRepositoryFromGoogleSheets parses normalized operation rows and 
     else process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
     if (previousKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
     else process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
+  }
+});
+
+test("loadManualRepositoryFromGoogleSheets parses FX Rates and warns when the optional sheet is absent", async () => {
+  const requests = [];
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).includes("oauth2.googleapis.com")) {
+      return jsonResponse({ access_token: "token" });
+    }
+    if (String(url).includes("values:batchGet")) {
+      return jsonResponse({
+        valueRanges: [
+          { range: "'Ledger'!A1:V1", values: [["date", "operation", "from_channel", "to_channel", "amount", "currency", "amount_usd", "category"]] },
+          { range: "'Остатки'!A1:G1", values: [["date", "channel", "amount", "currency", "rate", "amount_usd", "comment"]] },
+          { range: "'Авто Остатки'!A1:L1", values: [["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"]] },
+          { range: "'План'!A1:A1", values: [["date"]] },
+          { range: "'Переводы'!A1:A1", values: [["date"]] },
+          { range: "'Комиссии'!A1:A1", values: [["date"]] },
+        ],
+      });
+    }
+    if (String(url).includes("FX%20Rates")) {
+      return jsonResponse({ error: { message: "Unable to parse range: 'FX Rates'!A:I" } }, { status: 400, ok: false });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  const previousEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const previousKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = "service@example.test";
+  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  try {
+    const repository = await loadManualRepositoryFromGoogleSheets({ fetchImpl });
+    assert.equal(repository.ok, true);
+    assert.deepEqual(repository.fxRates, []);
+    assert.match(repository.warnings.join("\n"), /FX Rates sheet unavailable/);
+  } finally {
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = previousEmail;
+    process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = previousKey;
   }
 });
 

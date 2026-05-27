@@ -422,6 +422,65 @@ test("balance snapshot rates provide frozen USD equivalents without recalculatin
   assert.equal(result.total_usd_row.movement_usd, 13);
 });
 
+test("FX Rates table provides frozen USD equivalents for exact balance dates", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-10",
+        toChannel: "wise eur",
+        currency: "EUR",
+        amountNet: "10",
+        amountUsd: "13",
+        balanceAmount: 10,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "income",
+          to_channel: "wise eur",
+          currency: "EUR",
+          amount_net: "10",
+          amount_usd: "13",
+          balance_amount: 10,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise eur", currency: "EUR", amount: "100" },
+      { date: "2026-05-27", channel: "wise eur", currency: "EUR", amount: "120" },
+      { date: "2026-05-01", channel: "missing cad", currency: "CAD", amount: "50" },
+      { date: "2026-05-27", channel: "missing cad", currency: "CAD", amount: "50" },
+    ],
+    fxRates: [
+      { date: "2026-05-01", currency: "EUR", base_currency: "USD", rate_to_usd: 1.1, source: "frankfurter", status: "ok" },
+      { date: "2026-05-27", currency: "EUR", base_currency: "USD", rate_to_usd: 1.2, source: "frankfurter", status: "ok" },
+      { date: "2026-05-26", currency: "CAD", base_currency: "USD", rate_to_usd: 0.72, source: "frankfurter", status: "ok" },
+    ],
+  });
+
+  const eur = result.by_channel_currency.find((row) => row.channel === "wise eur");
+  assert.equal(eur.opening_usd, 110);
+  assert.equal(eur.movement_usd, 13);
+  assert.equal(eur.planned_end_usd, 123);
+  assert.equal(eur.confirmed_end_usd, 144);
+  assert.equal(eur.diff_usd, 21);
+  assert.equal(eur.opening_fx_source, "fx_rates");
+  assert.equal(eur.opening_fx_rate_to_usd, 1.1);
+  assert.equal(eur.opening_fx_rate_date, "2026-05-01");
+  assert.equal(eur.manual_provider_closing_balance_fx_source, "fx_rates");
+  assert.equal(eur.manual_provider_closing_balance_fx_rate_to_usd, 1.2);
+  assert.equal(eur.manual_provider_closing_balance_fx_rate_date, "2026-05-27");
+  assert.equal(eur.needs_fx_rate, false);
+  assert.deepEqual(eur.fx_warnings, []);
+
+  const missing = result.by_channel_currency.find((row) => row.channel === "missing cad");
+  assert.equal(missing.opening_usd, null);
+  assert.equal(missing.confirmed_end_usd, null);
+  assert.equal(missing.needs_fx_rate, true);
+  assert.equal(missing.opening_fx_status, "needs_fx_rate");
+  assert.equal(missing.manual_provider_closing_balance_fx_status, "needs_fx_rate");
+  assert.deepEqual(missing.fx_warnings, ["opening_usd_fx_missing", "planned_end_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
+});
+
 test("planned and real deltas are shown separately", () => {
   const result = buildPeriodBalanceReconciliation({
     period,

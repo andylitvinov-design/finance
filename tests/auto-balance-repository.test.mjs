@@ -23,3 +23,14 @@ test("auto balance parser keeps explicit zero, ok, and status-only rows", () => 
   assert.equal(rows[2].isStatusOnly, true);
   assert.equal(rows[2].balanceAmount, "");
 });
+
+test("auto balance parser does not synthesize amount_usd from fallback rates", () => {
+  const rows = parseAutoBalanceRows([
+    ["date", "provider", "channel", "amount", "currency", "rate", "amount_usd", "source", "fetched_at", "raw_source_id", "status", "comment"],
+    ["2026-05-27", "wise", "трансервайз евро", "120", "EUR", "", "", "wise_auto", "2026-05-27T00:00:00Z", "wise-eur", "ok", "no frozen usd"],
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].amount, "120");
+  assert.equal(rows[0].usdAmount, "");
+});

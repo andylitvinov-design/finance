@@ -6,16 +6,6 @@ import {
 import { AUTO_BALANCE_SHEET_NAME } from "./auto-balance-snapshots.js";
 
 const SHEETS_READ_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
-const FALLBACK_USD_RATES = {
-  USD: 1,
-  EUR: 1.16,
-  CAD: 0.74,
-  UAH: 1 / 43.86,
-  RUB: 1 / 84.5563,
-  USDT: 1,
-  USDC: 1,
-  LOCAL: 1 / 18,
-};
 
 export async function loadAutoBalanceRowsFromGoogleSheets({ fetchImpl = fetch } = {}) {
   try {
@@ -85,7 +75,7 @@ export function parseAutoBalanceRows(values = []) {
         balanceAmount: hasNumericAmount ? amount : "",
         currency,
         rate: indexes.rate === -1 ? "" : String(row[indexes.rate] ?? "").trim(),
-        usdAmount: hasNumericAmount ? (amountUsd || formatUsdAmount(numericAmount, currency)) : "",
+        usdAmount: hasNumericAmount ? amountUsd : "",
         source: normalizeAutoBalanceSource(row[indexes.source]),
         fact_source: normalizeAutoBalanceSource(row[indexes.source]) === "paypal_derived_balance" ? "derived_balance" : "provider_auto",
         provider: indexes.provider === -1 ? inferProvider(channel) : String(row[indexes.provider] || inferProvider(channel)).trim().toLowerCase(),
@@ -145,12 +135,6 @@ function parseNumber(value) {
   if (!raw) return NaN;
   const numeric = Number(raw.replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(numeric) ? numeric : NaN;
-}
-
-function formatUsdAmount(amount, currency) {
-  const rate = FALLBACK_USD_RATES[currency] || 0;
-  if (!rate) return "";
-  return String(Math.round(amount * rate * 10000) / 10000).replace(".", ",");
 }
 
 function inferProvider(channel) {
