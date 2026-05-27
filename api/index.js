@@ -1251,8 +1251,8 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
     servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
     servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
     orderPaymentCoverage,
-    actualPaymentSummaryByChannel: realIncome?.actualPaymentSummaryByChannel || actualPayments.summaryByChannel,
-    actualPaymentSummaryTotals: realIncome?.actualPaymentSummaryTotals || actualPayments.totals,
+    actualPaymentSummaryByChannel: actualPayments.summaryByChannel,
+    actualPaymentSummaryTotals: actualPayments.totals,
   };
 }
 
