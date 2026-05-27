@@ -1,6 +1,7 @@
 (function initRemaindersSummaryPopup(root) {
   "use strict";
 
+  const channelDisplayOrder = root.EzohataChannelDisplayOrder || (typeof require === "function" ? require("./channel-display-order.js") : {});
   const BALANCE_BUTTON_ID = "balanceLauncherButton";
   const REMAINDERS_BUTTON_ID = "remaindersLauncherButton";
   const REMAINDERS_BLOCK_ID = "remaindersSummaryBlock";
@@ -101,9 +102,10 @@
   }
 
   function buildVisibleUsdRowsFromPeriodReconciliation(reconciliation) {
-    return (reconciliation?.by_channel_currency || [])
+    return sortDisplayRows(reconciliation?.by_channel_currency || [])
       .filter((row) => row?.channel && row.channel !== "ВСЕГО USD")
       .map((row) => ({
+        sort_channel: row.channel || "",
         channel: `${row.channel || ""}${row.currency ? ` ${row.currency}` : ""}`.trim(),
         openingUsd: parseNumber(row.opening_usd),
         closingUsd: parseNumber(row.confirmed_end_usd),
@@ -187,7 +189,7 @@
 
   function buildRemaindersSummary(input, options = {}) {
     const { source, rows } = resolveRemaindersRows(input, options);
-    const normalizedRows = rows.map(normalizeRemaindersRow);
+    const normalizedRows = sortDisplayRows(rows.map(normalizeRemaindersRow));
     const completeRows = normalizedRows.filter((row) => !row.needsVerification);
     const plannedRows = normalizedRows.filter((row) => row.plannedClosingUsd !== null);
     const totals = completeRows.reduce((sum, row) => ({
@@ -390,7 +392,7 @@
 
   function renderSelectedDateSnapshotBlock(snapshot, doc = root.document) {
     if (!snapshot) return null;
-    const rows = Array.isArray(snapshot.selected_date_rows) ? snapshot.selected_date_rows : [];
+    const rows = sortDisplayRows(Array.isArray(snapshot.selected_date_rows) ? snapshot.selected_date_rows : []);
     const section = doc.createElement("section");
     section.className = "selected-date-balance-snapshots";
     const title = doc.createElement("h4");
@@ -542,7 +544,7 @@
         factualBalance: closingBalance,
         diff,
       };
-    }).sort((a, b) => a.currency.localeCompare(b.currency) || a.channel.localeCompare(b.channel));
+    }).sort(compareDisplayRows);
   }
 
   function buildPeriodBalanceChangeTotals(rows) {
@@ -624,7 +626,7 @@
 
   function renderDefaultUsdBalancesTable(summary, doc = root.document) {
     const periodRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
-    const rows = periodRows.length ? periodRows : (summary.rows || []);
+    const rows = sortDisplayRows(periodRows.length ? periodRows : (summary.rows || []));
     const totals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation) || buildVisibleUsdTotals(rows);
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
@@ -899,6 +901,18 @@
   function startRemaindersSummary() {
     bindRemaindersLauncherButton();
     patchRenderMetrics();
+  }
+
+  function compareDisplayRows(left, right) {
+    if (typeof channelDisplayOrder.compareChannelDisplayRows === "function") {
+      return channelDisplayOrder.compareChannelDisplayRows(left, right);
+    }
+    if (left.currency !== right.currency) return String(left.currency || "").localeCompare(String(right.currency || ""));
+    return String(left.channel || "").localeCompare(String(right.channel || ""));
+  }
+
+  function sortDisplayRows(rows) {
+    return [...(rows || [])].sort(compareDisplayRows);
   }
 
   const api = {

@@ -311,16 +311,110 @@ test("period balance renders one USD-only default channel table", () => {
   const channelRows = getTableTextRows(findTag(subsections[0], "TABLE")[0]);
   assert.equal(channelRows.length, 5);
   assert.deepEqual(channelRows[0], USD_TABLE_HEADER);
-  assert.equal(channelRows[1][0], "wise usd");
-  assert.deepEqual(channelRows[1], ["wise usd", "1000", "1125", "125", "125", "0"]);
-  assert.equal(channelRows[2][0], "paypal eur");
-  assert.equal(channelRows[3][0], "mono uah");
+  assert.equal(channelRows[1][0], "paypal eur");
+  assert.equal(channelRows[2][0], "mono uah");
+  assert.deepEqual(channelRows[3], ["wise usd", "1000", "1125", "125", "125", "0"]);
   assert.deepEqual(channelRows.at(-1), ["ВСЕГО USD", "1300", "1450", "150", "140", "10"]);
   assert.doesNotMatch(block.textContent, /ИТОГО CAD|ИТОГО EUR|ИТОГО RUB|ИТОГО UAH|ИТОГО USD|ИТОГО USDT/);
   assert.doesNotMatch(block.textContent, /OPENING NATIVE|MOVEMENT NATIVE|CONFIRMED END NATIVE/);
   assert.doesNotMatch(block.textContent, /Сводка по валютам, справочно/);
   assert.doesNotMatch(block.textContent, /Итоги по валютам/);
   assert.doesNotMatch(block.textContent, /Итоги по всем каналам/);
+});
+
+test("period balance UI uses canonical order across main, debug, manual fact, and action tables", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "БАНК КАНАДА cad",
+        currency: "CAD",
+        opening_usd: 10,
+        confirmed_end_usd: 10,
+        movement_usd: 0,
+        diff_usd: 0,
+        status: "ok",
+      },
+      {
+        channel: "пейпал евр",
+        currency: "EUR",
+        opening_usd: 20,
+        confirmed_end_usd: 21,
+        movement_usd: 1,
+        diff_usd: 0,
+        balanceSource: "missing",
+        status: "missing_provider_balance",
+      },
+      {
+        channel: "Яндекс руб",
+        currency: "RUB",
+        opening_usd: 30,
+        confirmed_end_usd: 35,
+        movement_usd: 5,
+        diff_usd: 0,
+        balanceSource: "missing",
+        status: "missing_provider_balance",
+      },
+      {
+        channel: "пейпал дол",
+        currency: "USD",
+        opening_usd: 40,
+        confirmed_end_usd: 41,
+        movement_usd: 1,
+        diff_usd: 0,
+        status: "ok",
+      },
+      {
+        channel: "unknown wallet",
+        currency: "USD",
+        opening_usd: 50,
+        confirmed_end_usd: 51,
+        movement_usd: 1,
+        diff_usd: 0,
+        status: "ok",
+      },
+    ],
+    required_manual_fact_rows: [
+      { date: "2026-05-31", channel: "пейпал евр", currency: "EUR", status: "missing_provider_balance" },
+      { date: "2026-05-31", channel: "Яндекс руб", currency: "RUB", status: "missing_provider_balance" },
+    ],
+    actionable_rows: [
+      { channel: "unknown wallet", currency: "USD", status: "mismatch", diagnosis: "Unknown", fix_action: "Review" },
+      { channel: "пейпал евр", currency: "EUR", status: "mismatch", diagnosis: "PayPal", fix_action: "Review" },
+      { channel: "Яндекс руб", currency: "RUB", status: "mismatch", diagnosis: "Yandex", fix_action: "Review" },
+    ],
+  }), { showDiagnostics: true });
+
+  const mainRows = getSubsectionRowsByTitle(block, "Остатки по каналам оплаты");
+  const debugRows = getSubsectionRowsByTitle(block, "Остатки по каналам оплаты (debug native)");
+  const manualRows = getSubsectionRowsByTitle(block, "Что добавить в Остатки");
+  const actionRows = getSubsectionRowsByTitle(block, "Где исправить");
+
+  assert.deepEqual(mainRows.map((row) => row[0]), [
+    "Канал",
+    "Яндекс руб",
+    "пейпал дол",
+    "пейпал евр",
+    "БАНК КАНАДА cad",
+    "unknown wallet",
+    "ВСЕГО USD",
+  ]);
+  assert.deepEqual(debugRows.slice(1, 6).map((row) => row[0]), [
+    "Яндекс руб",
+    "пейпал дол",
+    "пейпал евр",
+    "БАНК КАНАДА cad",
+    "unknown wallet",
+  ]);
+  assert.deepEqual(manualRows.slice(1).map((row) => row[1]), [
+    "Яндекс руб",
+    "пейпал евр",
+  ]);
+  assert.deepEqual(actionRows.slice(1).map((row) => row[0]), [
+    "Яндекс руб",
+    "пейпал евр",
+    "unknown wallet",
+  ]);
 });
 
 test("period balance UI renders explicit fx_missing cells and final total USD row", () => {
@@ -749,11 +843,13 @@ test("period balance diagnostic mode keeps existing factual values visible when 
   }), { showDiagnostics: true });
 
   const positionRows = getSubsectionRowsByTitle(block, "Остатки по каналам оплаты (debug native)");
-  assert.equal(positionRows[1][5], "1070.48");
-  assert.equal(positionRows[1][12], "—");
-  assert.equal(positionRows[1][13], "manual fact");
-  assert.equal(positionRows[1][6], "-5.77");
-  assert.equal(positionRows[2][5], "missing fact");
+  const factualRow = positionRows.find((row) => row[0] === "трансервайз дол");
+  const missingRow = positionRows.find((row) => row[0] === "монобанк грн");
+  assert.equal(factualRow[5], "1070.48");
+  assert.equal(factualRow[12], "—");
+  assert.equal(factualRow[13], "manual fact");
+  assert.equal(factualRow[6], "-5.77");
+  assert.equal(missingRow[5], "missing fact");
 });
 
 test("period balance diagnostic mode separates manual, carried-forward, and missing fact values", () => {

@@ -6,6 +6,7 @@
     if (typeof root.document !== "undefined") api.installPeriodBalanceReconciliationUi(root);
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function createPeriodBalanceReconciliationUi(root) {
+  const channelDisplayOrder = root.EzohataChannelDisplayOrder || (typeof require === "function" ? require("./channel-display-order.js") : {});
   const BLOCK_TITLE = "Сверка баланса за период";
 
   function installPeriodBalanceReconciliationUi(globalRoot = root) {
@@ -127,8 +128,8 @@
     }
 
     const positionRows = reconciliation.by_channel_currency || [];
-    const meaningfulRows = positionRows.filter(isMeaningfulReconciliationRow);
-    const emptyRows = positionRows.filter((row) => !isMeaningfulReconciliationRow(row));
+    const meaningfulRows = sortDisplayRows(positionRows.filter(isMeaningfulReconciliationRow));
+    const emptyRows = sortDisplayRows(positionRows.filter((row) => !isMeaningfulReconciliationRow(row)));
     section.appendChild(renderSummary(doc, reconciliation.summary || {}, reconciliation.period || {}, positionRows));
     if (reconciliation.binance_wallet_diagnostics) {
       section.appendChild(renderBinanceWalletDiagnostics(doc, reconciliation.binance_wallet_diagnostics));
@@ -140,12 +141,12 @@
     }
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
 
-    const requiredManualFactRows = reconciliation.required_manual_fact_rows || [];
+    const requiredManualFactRows = sortDisplayRows(reconciliation.required_manual_fact_rows || []);
     if (requiredManualFactRows.length) {
       section.appendChild(renderRequiredManualFactRows(doc, requiredManualFactRows));
     }
 
-    const actions = reconciliation.actionable_rows || [];
+    const actions = sortDisplayRows(reconciliation.actionable_rows || []);
     if (actions.length) {
       section.appendChild(renderSubsection(
         doc,
@@ -351,7 +352,7 @@
 
   function renderPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
     const tableRows = [
-      ...rows.map((row) => buildUsdTableRow(row)),
+      ...sortDisplayRows(rows).map((row) => buildUsdTableRow(row)),
       ...(totalUsdRow ? [buildVisibleTotalUsdTableRow(totalUsdRow)] : []),
     ];
     const fxMissingText = formatFxMissingTotals(totalUsdRow);
@@ -451,7 +452,7 @@
 
   function renderDiagnosticPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
     const tableRows = [
-      ...rows.map((row) => [
+      ...sortDisplayRows(rows).map((row) => [
         row.channel || "—",
         row.currency || "—",
         formatCanonicalNative(row, "opening_native", row.opening_fact_balance ?? row.opening_balance),
@@ -566,7 +567,7 @@
       doc,
       "Что добавить в Остатки",
       ["Дата", "Канал", "Валюта", "Сумма", "Источник сейчас", "Статус", "Что сделать"],
-      (rows || []).map((row) => [
+      sortDisplayRows(rows).map((row) => [
         row.date || "—",
         row.channel || "—",
         row.currency || "—",
@@ -592,7 +593,7 @@
     wrap.className = "table-wrap period-balance-table-wrap";
     wrap.appendChild(renderTable(doc, [
       ["КАНАЛ", "ВАЛЮТА", "СТАТУС", "ПРИЧИНА"],
-      ...rows.map((row) => [
+      ...sortDisplayRows(rows).map((row) => [
         row.channel || "—",
         row.currency || "—",
         getStatusLabel(row.status),
@@ -846,6 +847,18 @@
     if (value === null || value === undefined || value === "") return null;
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function compareDisplayRows(left, right) {
+    if (typeof channelDisplayOrder.compareChannelDisplayRows === "function") {
+      return channelDisplayOrder.compareChannelDisplayRows(left, right);
+    }
+    if (left.currency !== right.currency) return String(left.currency || "").localeCompare(String(right.currency || ""));
+    return String(left.channel || "").localeCompare(String(right.channel || ""));
+  }
+
+  function sortDisplayRows(rows) {
+    return [...(rows || [])].sort(compareDisplayRows);
   }
 
   function escapeHtml(value) {
