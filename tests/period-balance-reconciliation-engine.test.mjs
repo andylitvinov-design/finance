@@ -142,6 +142,55 @@ test("canonical report fields use opening plus Ledger movement as planned end", 
   assert.equal(usdc.diff_usd, 0);
 });
 
+test("total USD row sums finite cells column-wise and counts fx_missing per column", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-27" },
+    operations: [
+      {
+        date: "2026-05-10",
+        toChannel: "wise usd",
+        currency: "USD",
+        amountNet: "20",
+        amountUsd: "20",
+        balanceAmount: 20,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "income",
+          to_channel: "wise usd",
+          currency: "USD",
+          amount_net: "20",
+          amount_usd: "20",
+          balance_amount: 20,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", amount_usd: "7351" },
+      { date: "2026-05-27", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100" },
+      { date: "2026-05-27", channel: "wise usd", currency: "USD", amount: "120" },
+    ],
+  });
+
+  const bankCanada = result.by_channel_currency.find((row) => row.channel === "БАНК КАНАДА cad");
+  assert.equal(bankCanada.opening_usd, 7351);
+  assert.equal(bankCanada.confirmed_end_usd, null);
+  assert.equal(bankCanada.movement_usd, 0);
+  assert.equal(bankCanada.diff_usd, null);
+  assert.deepEqual(bankCanada.fx_warnings, ["confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
+
+  assert.equal(result.total_usd_row.opening_usd, 7451);
+  assert.equal(result.total_usd_row.confirmed_end_usd, 120);
+  assert.equal(result.total_usd_row.change_usd, 20);
+  assert.equal(result.total_usd_row.movement_usd, 20);
+  assert.equal(result.total_usd_row.diff_usd, 0);
+  assert.equal(result.total_usd_row.fx_missing_start_rows, 0);
+  assert.equal(result.total_usd_row.fx_missing_end_rows, 1);
+  assert.equal(result.total_usd_row.fx_missing_change_rows, 1);
+  assert.equal(result.total_usd_row.fx_missing_movement_rows, 0);
+  assert.equal(result.total_usd_row.fx_missing_diff_rows, 1);
+});
+
 test("May owner evidence feeds PayPal screenshot openings and keeps Binance Save unresolved", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-27" },

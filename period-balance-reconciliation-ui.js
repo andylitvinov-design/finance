@@ -354,17 +354,17 @@
       ...rows.map((row) => buildUsdTableRow(row)),
       ...(totalUsdRow ? [buildVisibleTotalUsdTableRow(totalUsdRow)] : []),
     ];
-    const fxMissingCount = Number(totalUsdRow?.excluded_fx_missing_rows || 0);
+    const fxMissingText = formatFxMissingTotals(totalUsdRow);
     const block = renderSubsection(
       doc,
       "Остатки по каналам оплаты",
       ["Канал", "Остатки 1 USD", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"],
       tableRows
     );
-    if (fxMissingCount) {
+    if (fxMissingText) {
       const note = doc.createElement("div");
       note.className = "config-note";
-      note.textContent = `fx_missing: ${fxMissingCount} row(s) excluded from ВСЕГО USD where unavailable.`;
+      note.textContent = fxMissingText;
       block.appendChild(note);
     }
     return block;
@@ -374,8 +374,8 @@
     const start = parseNumeric(row?.opening_usd);
     const end = parseNumeric(row?.confirmed_end_usd);
     const movement = parseNumeric(row?.movement_usd);
-    const change = start !== null && end !== null ? roundDisplayNumber(end - start) : null;
-    const diff = change !== null && movement !== null ? roundDisplayNumber(change - movement) : null;
+    const change = getChangeUsd(row, start, end);
+    const diff = getDiffUsd(row, change, movement);
     return [
       row?.channel || "—",
       formatUsdCell(row, "opening_usd", start),
@@ -390,8 +390,8 @@
     const start = parseNumeric(row?.opening_usd);
     const end = parseNumeric(row?.confirmed_end_usd);
     const movement = parseNumeric(row?.movement_usd);
-    const change = start !== null && end !== null ? roundDisplayNumber(end - start) : null;
-    const diff = change !== null && movement !== null ? roundDisplayNumber(change - movement) : null;
+    const change = getChangeUsd(row, start, end);
+    const diff = getDiffUsd(row, change, movement);
     return [
       row?.label || "ВСЕГО USD",
       formatNumber(start),
@@ -414,6 +414,33 @@
 
   function hasFxWarning(row, field) {
     return (row?.fx_warnings || []).some((warning) => String(warning || "").includes(field));
+  }
+
+  function getChangeUsd(row, start, end) {
+    const explicit = parseNumeric(row?.change_usd);
+    if (explicit !== null) return explicit;
+    return start !== null && end !== null ? roundDisplayNumber(end - start) : null;
+  }
+
+  function getDiffUsd(row, change, movement) {
+    const explicit = parseNumeric(row?.diff_usd);
+    if (explicit !== null) return explicit;
+    return change !== null && movement !== null ? roundDisplayNumber(change - movement) : null;
+  }
+
+  function formatFxMissingTotals(row) {
+    const entries = [
+      ["start", row?.fx_missing_start_rows],
+      ["end", row?.fx_missing_end_rows],
+      ["change", row?.fx_missing_change_rows],
+      ["movement", row?.fx_missing_movement_rows],
+      ["diff", row?.fx_missing_diff_rows],
+    ]
+      .map(([label, value]) => [label, Number(value || 0)])
+      .filter(([, value]) => value > 0);
+    if (entries.length) return `fx_missing: ${entries.map(([label, value]) => `${label}=${value}`).join(", ")}.`;
+    const rowCount = Number(row?.excluded_fx_missing_rows || 0);
+    return rowCount ? `fx_missing: ${rowCount} row(s) excluded from ВСЕГО USD where unavailable.` : "";
   }
 
   function roundDisplayNumber(value) {

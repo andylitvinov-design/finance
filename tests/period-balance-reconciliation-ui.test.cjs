@@ -385,6 +385,51 @@ test("period balance UI renders explicit fx_missing cells and final total USD ro
   assert.match(block.textContent, /fx_missing: 1 row/);
 });
 
+test("period balance total USD row displays column-wise change and diff from API totals", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "БАНК КАНАДА cad",
+        currency: "CAD",
+        opening_usd: 7351,
+        confirmed_end_usd: null,
+        movement_usd: 0,
+        diff_usd: null,
+        fx_warnings: ["confirmed_end_usd_fx_missing", "diff_usd_fx_missing"],
+        status: "ok",
+      },
+      {
+        channel: "wise usd",
+        currency: "USD",
+        opening_usd: 100,
+        confirmed_end_usd: 120,
+        movement_usd: 15,
+        diff_usd: 5,
+        status: "ok",
+      },
+    ],
+    total_usd_row: {
+      label: "ВСЕГО USD",
+      currency: "USD",
+      opening_usd: 7451,
+      confirmed_end_usd: 120,
+      change_usd: 20,
+      movement_usd: 15,
+      diff_usd: 5,
+      excluded_fx_missing_rows: 1,
+      fx_missing_end_rows: 1,
+      fx_missing_diff_rows: 1,
+    },
+    actionable_rows: [],
+  }));
+
+  const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad"), ["БАНК КАНАДА cad", "7351", "fx_missing", "fx_missing", "0", "fx_missing"]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), ["ВСЕГО USD", "7451", "120", "20", "15", "5"]);
+  assert.match(block.textContent, /fx_missing: end=1, diff=1/);
+});
+
 test("period balance main table uses payment channel rows and preserves mismatch statuses", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
