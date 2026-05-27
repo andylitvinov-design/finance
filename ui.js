@@ -1126,6 +1126,7 @@ function renderExpenseFinancialAnalysis() {
   const channelReconciliation = getExpenseAnalysisChannelSummary();
   block.appendChild(renderExpenseAnalysisChannelBlock(channelReconciliation));
   block.appendChild(renderMissingPaymentsBlock(getMissingPaymentsAuditSummary()));
+  block.appendChild(renderOrderPaymentCoverageBlock(getOrderPaymentCoverageSummary()));
   block.appendChild(renderBalanceReconciliationBlock(getBalanceReconciliationSummary()));
   const paypalSummary = getActivePayPalSummary();
   if (hasProviderSummaryData(paypalSummary)) {
@@ -1299,6 +1300,82 @@ function renderMissingPaymentsDetailsTable(rows) {
       formatSheetNumber(row.providerNet || 0),
       formatSheetNumber(row.balance || 0),
       row.reason || ""
+    ]);
+  });
+  return renderPlainTable(values);
+}
+
+function getOrderPaymentCoverageSummary() {
+  return state.data?.realIncome?.orderPaymentCoverage || { rows: [], summary: {} };
+}
+
+function getOrderPaymentCoverageActionableRows(coverage) {
+  return (coverage?.rows || []).filter((row) => (
+    Number(row?.remainingUsd || 0) > 0.01 ||
+    String(row?.status || "").trim().toLowerCase() === "needs verification"
+  ));
+}
+
+function renderOrderPaymentCoverageBlock(coverage) {
+  const block = document.createElement("div");
+  block.className = "analytics-section";
+  const title = document.createElement("div");
+  title.className = "tab-note";
+  title.style.marginBottom = "10px";
+  title.style.fontWeight = "700";
+  title.textContent = "Покрытие заказов оплатами";
+  block.appendChild(title);
+
+  const summary = coverage?.summary || {};
+  const cards = document.createElement("div");
+  cards.className = "expense-summary-grid";
+  [
+    ["заказы +%", summary.totalAccruedOrdersUsd],
+    ["распределено", summary.totalAllocatedToOrdersUsd],
+    ["остаток", summary.totalRemainingOrderUsd],
+    ["переплата", summary.totalOverpaidOffsetUsd],
+  ].forEach(([label, value]) => cards.appendChild(renderExpenseSummaryCard(label, `${formatSheetNumber(value || 0)} USD`)));
+  block.appendChild(cards);
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap analysis-table-wrap";
+  wrap.appendChild(renderOrderPaymentCoverageDetailsTable(coverage));
+  block.appendChild(wrap);
+  return block;
+}
+
+function renderOrderPaymentCoverageDetailsTable(coverage) {
+  const values = [[
+    "row",
+    "date",
+    "client",
+    "service",
+    "channel",
+    "order +3%",
+    "allocated",
+    "remaining",
+    "source",
+    "status",
+    "note"
+  ]];
+  const rows = getOrderPaymentCoverageActionableRows(coverage);
+  if (!rows.length) {
+    values.push(["", "", "", "Все заказы покрыты или объяснены групповой оплатой", "", "", "", "", "", "", ""]);
+    return renderPlainTable(values);
+  }
+  rows.forEach((row) => {
+    values.push([
+      row.rowNumber || "",
+      row.date || "",
+      row.client || "",
+      row.service || "",
+      row.channel || row.paymentMethod || "",
+      formatSheetNumber(row.accruedPlus3Usd || 0),
+      formatSheetNumber(row.allocatedPaidUsd || 0),
+      formatSheetNumber(row.remainingUsd || 0),
+      row.allocationSource || "",
+      row.status || "",
+      row.reviewNote || ""
     ]);
   });
   return renderPlainTable(values);

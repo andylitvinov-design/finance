@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import handler, { buildServicePaymentGapDiagnostics } from "../api/index.js";
+import handler, { buildOrderPaymentCoverageReport, buildServicePaymentGapDiagnostics } from "../api/index.js";
 
 function createResponseRecorder() {
   return {
@@ -2619,6 +2619,164 @@ test("service payment diagnostics keep Wise grouped rows on movement same-date c
   );
 });
 
+test("order payment coverage allocates grouped payments and leaves only unsafe rows actionable", () => {
+  const makeMovementRow = ({
+    number,
+    date,
+    client,
+    service = `Service ${number}`,
+    expectedUsd,
+    paymentMethod,
+    clientPaidUsd = "",
+    providerNetUsd = "",
+    status = "",
+    reviewNote = "",
+  }) => {
+    const row = new Array(25).fill("");
+    row[0] = number;
+    row[1] = date;
+    row[2] = client;
+    row[3] = service;
+    row[9] = String(expectedUsd);
+    row[14] = paymentMethod;
+    row[18] = String(clientPaidUsd);
+    row[20] = String(providerNetUsd);
+    row[23] = status;
+    row[24] = reviewNote;
+    return row;
+  };
+  const movementValues = [
+    ["header"],
+    [""],
+    ["NUMBER", "DATE", "CLIENT"],
+    makeMovementRow({
+      number: "18170",
+      date: "2026-05-20",
+      client: "Вилл",
+      service: "Повтор посвящения Тиферет",
+      expectedUsd: 25.75,
+      paymentMethod: "wise",
+      clientPaidUsd: 25.75,
+      status: "NEEDS VERIFICATION",
+      reviewNote: "provider fee/net missing",
+    }),
+    makeMovementRow({
+      number: "18171",
+      date: "2026-05-22",
+      client: "Вилл",
+      service: "Маска Профессионала",
+      expectedUsd: 206,
+      paymentMethod: "wise",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18172",
+      date: "2026-05-22",
+      client: "Вилл",
+      service: "посвящение смерти повтор",
+      expectedUsd: 25.75,
+      paymentMethod: "wise",
+      clientPaidUsd: 231.75,
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18149",
+      date: "2026-05-05",
+      client: "Инна Устименко",
+      expectedUsd: 103,
+      paymentMethod: "пейпал",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18150",
+      date: "2026-05-05",
+      client: "Инна Устименко",
+      expectedUsd: 5.15,
+      paymentMethod: "пейпал",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18151",
+      date: "2026-05-05",
+      client: "Инна Устименко",
+      expectedUsd: 5.15,
+      paymentMethod: "пейпал",
+      clientPaidUsd: 115.5,
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18161",
+      date: "2026-05-14",
+      client: "Ярослав Архипов",
+      expectedUsd: 25.25,
+      paymentMethod: "крипта",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18162",
+      date: "2026-05-14",
+      client: "Ярослав Архипов",
+      expectedUsd: 25.25,
+      paymentMethod: "крипта",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18163",
+      date: "2026-05-14",
+      client: "Ярослав Архипов",
+      expectedUsd: 25.25,
+      paymentMethod: "крипта",
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18164",
+      date: "2026-05-14",
+      client: "Ярослав Архипов",
+      expectedUsd: 25.25,
+      paymentMethod: "крипта",
+      clientPaidUsd: 103,
+      status: "NEEDS VERIFICATION",
+    }),
+    makeMovementRow({
+      number: "18204",
+      date: "2026-05-05",
+      client: "Crypto Topup",
+      service: "Binance deposit top-up",
+      expectedUsd: 103,
+      paymentMethod: "Бинанс spot",
+      clientPaidUsd: 103,
+    }),
+  ];
+
+  const coverage = buildOrderPaymentCoverageReport(movementValues, {
+    providerEntries: [{
+      date: "2026-05-05",
+      channel: "пейпал дол",
+      realNetUsd: 113.87,
+    }],
+  });
+  const byRow = Object.fromEntries(coverage.rows.map((row) => [row.rowNumber, row]));
+  const actionable = coverage.rows.filter((row) => row.remainingUsd > 0.01 || row.status === "needs verification");
+
+  assert.equal(byRow["18171"].remainingUsd, 0);
+  assert.equal(byRow["18171"].allocationSource, "grouped same-date");
+  assert.equal(byRow["18172"].remainingUsd, 0);
+  assert.equal(byRow["18149"].allocatedPaidUsd, 103);
+  assert.equal(byRow["18149"].allocationSource, "provider net");
+  assert.equal(byRow["18150"].remainingUsd, 0);
+  assert.equal(byRow["18151"].status, "overpaid");
+  assert.equal(byRow["18170"].remainingUsd, 25.75);
+  assert.equal(byRow["18170"].status, "needs verification");
+  assert.equal(byRow["18204"].status, "excluded");
+  assert.deepEqual(actionable.map((row) => row.rowNumber), ["18170"]);
+  assert.equal(coverage.summary.totalAccruedOrdersUsd, 471.8);
+  assert.equal(coverage.summary.totalAllocatedToOrdersUsd, 448.62);
+  assert.equal(coverage.summary.totalRemainingOrderUsd, 25.75);
+  assert.equal(coverage.summary.totalOverpaidOffsetUsd, 2.57);
+  assert.equal(coverage.summary.totalExcludedNonServiceUsd, 103);
+  assert.equal(coverage.summary.totalUnexplainedUsd, 0);
+});
+
 test("GET getDashboardData adds channel-level service payment gap diagnostics without changing service payment totals", async () => {
   const previousUpstream = process.env.EZOHATA_V2_APPS_SCRIPT_URL;
   const previousFetch = global.fetch;
@@ -3026,6 +3184,21 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
       offsetUsd: 9.07,
       netGapUsd: 843.83,
     });
+    const coverage = realIncome?.orderPaymentCoverage;
+    const coverageByRow = Object.fromEntries((coverage?.rows || []).map((row) => [row.rowNumber, row]));
+    const actionableCoverageRows = (coverage?.rows || [])
+      .filter((row) => row.remainingUsd > 0.01 || row.status === "needs verification")
+      .map((row) => row.rowNumber);
+
+    assert.equal(coverage?.summary?.totalAccruedOrdersUsd, 1519.25);
+    assert.equal(coverage?.summary?.totalExcludedNonServiceUsd, 101);
+    assert.equal(coverageByRow["18149"]?.remainingUsd, 0);
+    assert.equal(coverageByRow["18149"]?.allocationSource, "provider net");
+    assert.equal(coverageByRow["18171"]?.remainingUsd, 0);
+    assert.equal(coverageByRow["18171"]?.allocationSource, "grouped same-date");
+    assert.equal(coverageByRow["18204"]?.status, "excluded");
+    assert.equal(actionableCoverageRows.includes("18149"), false);
+    assert.equal(actionableCoverageRows.includes("18171"), false);
   } finally {
     global.fetch = previousFetch;
     if (previousUpstream === undefined) delete process.env.EZOHATA_V2_APPS_SCRIPT_URL;

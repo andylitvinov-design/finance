@@ -403,6 +403,9 @@ async function maybeOverlayFreshSourceData(data) {
     const servicePaymentGap = buildServicePaymentGapDiagnostics(enrichedMovement.values, servicePaymentSummaryByChannel, {
       providerEntries: realIncome?.candidateIncomeEntries || [],
     });
+    const orderPaymentCoverage = buildOrderPaymentCoverageReport(enrichedMovement.values, {
+      providerEntries: realIncome?.candidateIncomeEntries || [],
+    });
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
     const hasServicePaymentSummary = Object.values(servicePaymentSummaryByChannel || {}).some((row) => Number(row?.realNetUsd || 0) > 0);
     const nextRealIncome = realIncome || movementWarnings.length || hasServicePaymentSummary
@@ -419,6 +422,7 @@ async function maybeOverlayFreshSourceData(data) {
           servicePaymentSummaryTotals,
           servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
           servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
+          orderPaymentCoverage,
           serviceOrderSummaryByChannel: realIncome?.serviceOrderSummaryByChannel || {},
           serviceOrderSummaryTotals: realIncome?.serviceOrderSummaryTotals || null,
           summaryByChannel: realIncome?.summaryByChannel || {},
@@ -1225,13 +1229,213 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
     ledgerOperations: options.ledgerOperations || [],
     period: options.period || {},
   });
+  const orderPaymentCoverage = realIncome?.orderPaymentCoverage || buildOrderPaymentCoverageReport(movementValues, {
+    providerEntries: realIncome?.candidateIncomeEntries || realIncome?.entries || [],
+    ledgerOperations: options.ledgerOperations || [],
+    period: options.period || {},
+  });
   return {
     ...realIncome,
     servicePaymentSummaryByChannel,
     servicePaymentSummaryTotals,
     servicePaymentGapByChannel: servicePaymentGap.servicePaymentGapByChannel,
     servicePaymentGapTotals: servicePaymentGap.servicePaymentGapTotals,
+    orderPaymentCoverage,
   };
+}
+
+export function buildOrderPaymentCoverageReport(movementValues = [], options = {}) {
+  const dataRows = (movementValues || [])
+    .slice(3)
+    .filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
+  const providerGroupTotals = buildServicePaymentProviderGroupTotals({
+    providerEntries: options.providerEntries || [],
+    ledgerOperations: options.ledgerOperations || [],
+    movementValues,
+    period: options.period || {},
+  });
+  const candidates = dataRows
+    .map((row) => buildOrderPaymentCoverageCandidate(row))
+    .filter((row) => row.accruedPlus3Usd > 0);
+  const allocationByRowNumber = allocateOrderPaymentCoverageRows(candidates, providerGroupTotals);
+  const rows = candidates.map((candidate) => buildOrderPaymentCoverageRow(candidate, allocationByRowNumber.get(candidate.rowNumber)));
+  const summary = rows.reduce((totals, row) => {
+    const excluded = row.status === "excluded";
+    return {
+      totalAccruedOrdersUsd: roundNumber(totals.totalAccruedOrdersUsd + (excluded ? 0 : row.accruedPlus3Usd)),
+      totalAllocatedToOrdersUsd: roundNumber(totals.totalAllocatedToOrdersUsd + (excluded ? 0 : row.allocatedPaidUsd)),
+      totalRemainingOrderUsd: roundNumber(totals.totalRemainingOrderUsd + (excluded ? 0 : Math.max(0, row.remainingUsd))),
+      totalOverpaidOffsetUsd: roundNumber(totals.totalOverpaidOffsetUsd + Math.max(0, row.allocatedPaidUsd - row.accruedPlus3Usd)),
+      totalExcludedNonServiceUsd: roundNumber(totals.totalExcludedNonServiceUsd + (excluded ? row.accruedPlus3Usd : 0)),
+      totalUnexplainedUsd: roundNumber(totals.totalUnexplainedUsd),
+    };
+  }, {
+    totalAccruedOrdersUsd: 0,
+    totalAllocatedToOrdersUsd: 0,
+    totalRemainingOrderUsd: 0,
+    totalOverpaidOffsetUsd: 0,
+    totalExcludedNonServiceUsd: 0,
+    totalUnexplainedUsd: 0,
+  });
+  return { rows, summary };
+}
+
+function buildOrderPaymentCoverageCandidate(row = []) {
+  const accruedPlus3Usd = parseLooseNumber(row?.[9]) || 0;
+  const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
+  const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
+  const paymentMethod = String(row?.[14] || "").trim();
+  const date = normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim();
+  const channel = getOrderPaymentCoverageChannel(row);
+  const safeDirectAmountUsd = getOrderPaymentCoverageDirectAmount(row, {
+    clientPaidUsd,
+    providerNetUsd,
+    paymentMethod,
+  });
+  const reason = getServicePaymentGapReason(row, {
+    expectedUsd: accruedPlus3Usd,
+    clientPaidUsd,
+    providerNetUsd,
+    includedAmountUsd: safeDirectAmountUsd,
+    includedByCurrentSummary: safeDirectAmountUsd > 0,
+  });
+  return {
+    row,
+    rowNumber: String(row?.[0] || "").trim(),
+    date,
+    client: String(row?.[2] || "").trim(),
+    service: String(row?.[3] || "").trim(),
+    accruedPlus3Usd,
+    paymentMethod,
+    channel,
+    clientPaidUsd,
+    providerNetUsd,
+    safeDirectAmountUsd,
+    reason,
+    statusText: String(row?.[23] || "").trim(),
+    reviewNote: String(row?.[24] || "").trim(),
+    needsProviderNet: /paypal|п(?:ей|эй)п|пейпал/i.test(`${paymentMethod} ${channel}`),
+    groupKey: getOrderPaymentCoverageGroupKey({ date, client: row?.[2], paymentMethod, channel }),
+    providerGroupKey: getServicePaymentProviderGroupKey(date, channel),
+  };
+}
+
+function allocateOrderPaymentCoverageRows(candidates = [], providerGroupTotals = new Map()) {
+  const output = new Map();
+  const groups = new Map();
+  for (const candidate of candidates) {
+    if (!candidate.groupKey) {
+      output.set(candidate.rowNumber, buildOrderPaymentDirectAllocation(candidate));
+      continue;
+    }
+    const group = groups.get(candidate.groupKey) || [];
+    group.push(candidate);
+    groups.set(candidate.groupKey, group);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length <= 1) {
+      output.set(group[0].rowNumber, buildOrderPaymentDirectAllocation(group[0]));
+      continue;
+    }
+    const rowPaidUsd = roundNumber(group.reduce((sum, row) => sum + Math.max(row.providerNetUsd || 0, row.clientPaidUsd || 0), 0));
+    const providerPaidUsd = roundNumber(providerGroupTotals.get(group[0].providerGroupKey) || 0);
+    const useProviderPaid = providerPaidUsd > 0 && group.some((row) => row.needsProviderNet);
+    const groupPaidUsd = useProviderPaid ? providerPaidUsd : rowPaidUsd;
+    const allocationSource = useProviderPaid ? "provider net" : "grouped same-date";
+    let remainingGroupPaidUsd = groupPaidUsd;
+    for (const candidate of group.slice().sort(compareOrderPaymentCoverageCandidates)) {
+      const allocatedPaidUsd = roundNumber(Math.min(candidate.accruedPlus3Usd, Math.max(0, remainingGroupPaidUsd)));
+      remainingGroupPaidUsd = roundNumber(remainingGroupPaidUsd - allocatedPaidUsd);
+      output.set(candidate.rowNumber, {
+        allocatedPaidUsd,
+        allocationSource: allocatedPaidUsd > 0 ? allocationSource : "none",
+      });
+    }
+    if (remainingGroupPaidUsd > 0) {
+      const last = group.slice().sort(compareOrderPaymentCoverageCandidates).at(-1);
+      const current = output.get(last.rowNumber) || { allocatedPaidUsd: 0, allocationSource };
+      output.set(last.rowNumber, {
+        ...current,
+        allocatedPaidUsd: roundNumber(current.allocatedPaidUsd + remainingGroupPaidUsd),
+      });
+    }
+  }
+  return output;
+}
+
+function buildOrderPaymentDirectAllocation(candidate) {
+  if (candidate.reason === "excluded deposit/non-service") {
+    return { allocatedPaidUsd: 0, allocationSource: "excluded" };
+  }
+  if (candidate.safeDirectAmountUsd <= 0) {
+    return { allocatedPaidUsd: 0, allocationSource: "none" };
+  }
+  return {
+    allocatedPaidUsd: candidate.safeDirectAmountUsd,
+    allocationSource: candidate.providerNetUsd > 0 ? "provider net" : "direct row",
+  };
+}
+
+function buildOrderPaymentCoverageRow(candidate, allocation = {}) {
+  const allocatedPaidUsd = roundNumber(allocation.allocatedPaidUsd || 0);
+  const remainingUsd = candidate.reason === "excluded deposit/non-service"
+    ? 0
+    : roundNumber(Math.max(0, candidate.accruedPlus3Usd - allocatedPaidUsd));
+  const status = getOrderPaymentCoverageStatus(candidate, { allocatedPaidUsd, remainingUsd });
+  return {
+    rowNumber: candidate.rowNumber,
+    date: candidate.date,
+    client: candidate.client,
+    service: candidate.service,
+    accruedPlus3Usd: roundNumber(candidate.accruedPlus3Usd),
+    paymentMethod: candidate.paymentMethod,
+    channel: candidate.channel || "Без канала",
+    allocatedPaidUsd,
+    allocationSource: allocation.allocationSource || "none",
+    remainingUsd,
+    status,
+    reviewNote: candidate.reviewNote || candidate.reason || "",
+  };
+}
+
+function getOrderPaymentCoverageStatus(candidate, { allocatedPaidUsd = 0, remainingUsd = 0 } = {}) {
+  if (candidate.reason === "excluded deposit/non-service") return "excluded";
+  if (remainingUsd > 0.01 && isUnsafeServicePaymentGapReason(candidate.reason)) return "needs verification";
+  if (remainingUsd > 0.01 && allocatedPaidUsd <= 0) return "no payment";
+  if (remainingUsd > 0.01) return "underpaid";
+  if (allocatedPaidUsd - candidate.accruedPlus3Usd > 0.01) return "overpaid";
+  return "covered";
+}
+
+function getOrderPaymentCoverageDirectAmount(row = [], { clientPaidUsd = 0, providerNetUsd = 0, paymentMethod = "" } = {}) {
+  if (providerNetUsd > 0) return providerNetUsd;
+  if (isExplicitNoFeeDirectPayment(paymentMethod)) return clientPaidUsd;
+  if (isMovementServicePaymentRow(row) && clientPaidUsd > 0 && !/paypal|п(?:ей|эй)п|пейпал/i.test(paymentMethod)) return clientPaidUsd;
+  return 0;
+}
+
+function getOrderPaymentCoverageChannel(row = []) {
+  const resolved = resolveMovementServicePaymentDiagnosticChannel(row) || resolveMovementRowChannel(row);
+  if (resolved) return resolved;
+  const paymentMethod = normalizeLookupText(row?.[14]);
+  if (/wise|transferwise|трансервайз/.test(paymentMethod)) return "трансервайз дол";
+  if (/paypal|п[еэ]йп/.test(paymentMethod)) return "пейпал дол";
+  if (/privat|приват|фоп|fop/.test(paymentMethod)) return "приват-фоп";
+  return "";
+}
+
+function getOrderPaymentCoverageGroupKey({ date, client, paymentMethod, channel } = {}) {
+  const normalizedDate = normalizeIsoDate(date);
+  const normalizedClient = normalizeLookupText(client);
+  const normalizedPayment = normalizeLookupText(paymentMethod);
+  const normalizedChannel = normalizeLookupText(channel);
+  if (!normalizedDate || !normalizedClient || (!normalizedPayment && !normalizedChannel)) return "";
+  return `${normalizedDate}|${normalizedClient}|${normalizedPayment || normalizedChannel}|${normalizedChannel}`;
+}
+
+function compareOrderPaymentCoverageCandidates(left, right) {
+  return left.rowNumber.localeCompare(right.rowNumber, "en", { numeric: true });
 }
 
 export function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}, options = {}) {
