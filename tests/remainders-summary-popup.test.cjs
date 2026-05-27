@@ -751,6 +751,102 @@ test("remainders default USD table prefers period reconciliation FX totals when 
   resetRemaindersModule();
 });
 
+test("remainders period reconciliation USD table uses canonical channel order and keeps total last", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "Fallback", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 1 },
+      ],
+    },
+  });
+  summary.periodReconciliation = {
+    by_channel_currency: [
+      { channel: "БАНК КАНАДА cad", currency: "CAD", opening_usd: 10, confirmed_end_usd: 10, movement_usd: 0 },
+      { channel: "пейпал евр", currency: "EUR", opening_usd: 20, confirmed_end_usd: 21, movement_usd: 1 },
+      { channel: "Яндекс руб", currency: "RUB", opening_usd: 30, confirmed_end_usd: 35, movement_usd: 5 },
+      { channel: "пейпал дол", currency: "USD", opening_usd: 40, confirmed_end_usd: 41, movement_usd: 1 },
+      { channel: "unknown wallet", currency: "USD", opening_usd: 50, confirmed_end_usd: 51, movement_usd: 1 },
+      { channel: "деп24-дол", currency: "USD", opening_usd: 60, confirmed_end_usd: 60, movement_usd: 0 },
+    ],
+    total_usd_row: {
+      opening_usd: 210,
+      confirmed_end_usd: 218,
+      change_usd: 8,
+      movement_usd: 8,
+      diff_usd: 0,
+      excluded_fx_missing_rows: 0,
+    },
+  };
+
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  assert.deepEqual(rows.map((row) => row[0]), [
+    "Канал",
+    "Яндекс руб RUB",
+    "пейпал дол USD",
+    "пейпал евр EUR",
+    "деп24-дол USD",
+    "БАНК КАНАДА cad CAD",
+    "unknown wallet USD",
+    "ВСЕГО USD",
+  ]);
+  resetRemaindersModule();
+});
+
+test("remainders collapsed native diagnostics use canonical channel order", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    ...api.buildRemaindersSummary({
+      balances: {
+        remainders_rows: [
+          { channel: "Diagnostic row", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 2 },
+        ],
+      },
+    }),
+    selectedDateSnapshot: {
+      period_from: "2026-05-01",
+      period_to: "2026-05-17",
+      selected_date: "2026-05-17",
+      selected_date_rows: [
+        { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351 },
+        { date: "2026-05-17", channel: "пейпал евр", currency: "EUR", amount: 40 },
+        { date: "2026-05-17", channel: "Яндекс руб", currency: "RUB", amount: 125 },
+      ],
+      rows: [
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7300 },
+        { date: "2026-05-01", channel: "пейпал евр", currency: "EUR", amount: 50 },
+        { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: 100 },
+        { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351 },
+        { date: "2026-05-17", channel: "пейпал евр", currency: "EUR", amount: 40 },
+        { date: "2026-05-17", channel: "Яндекс руб", currency: "RUB", amount: 125 },
+      ],
+    },
+    periodMovementRows: [
+      { channel: "БАНК КАНАДА cad", currency: "CAD", real_delta: 51 },
+      { channel: "пейпал евр", currency: "EUR", real_delta: -10 },
+      { channel: "Яндекс руб", currency: "RUB", real_delta: 25 },
+    ],
+  }, makeMockDocument());
+  const diagnostics = block.children.find((child) => child.tag === "details");
+  const diagnosticTables = findAll(diagnostics, (node) => node.tag === "table");
+  const selectedDateRows = tableRows(diagnosticTables[0]);
+  const periodChangeRows = tableRows(diagnosticTables[1]);
+
+  assert.deepEqual(selectedDateRows.slice(1, 4).map((row) => row[0]), [
+    "Яндекс руб",
+    "пейпал евр",
+    "БАНК КАНАДА cad",
+  ]);
+  assert.deepEqual(periodChangeRows.slice(1, 4).map((row) => row[0]), [
+    "Яндекс руб",
+    "пейпал евр",
+    "БАНК КАНАДА cad",
+  ]);
+  resetRemaindersModule();
+});
+
 test("remainders popup renders reconcile button", () => {
   const api = loadApi();
   const summary = api.buildRemaindersSummary({
@@ -1007,8 +1103,8 @@ test("remainders popup renders currency column and same channel currencies disti
   assert.match(text, /USDT/);
   assert.match(text, /USDC/);
   assert.deepEqual(summary.rows.map((row) => `${row.channel}/${row.currency}`), [
-    "binance save/USDT",
     "binance save/USDC",
+    "binance save/USDT",
   ]);
   resetRemaindersModule();
 });
