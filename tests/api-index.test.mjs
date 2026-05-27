@@ -2792,6 +2792,35 @@ test("GET getDashboardData adds channel-level service payment gap diagnostics wi
     assert.equal(privateFopGap?.expectedUsd, 545.9);
     assert.equal(privateFopGap?.includedUsd, 0);
     assert.equal(privateFopGap?.netGapUsd, 545.9);
+    assert.deepEqual(Object.keys(privateFopGap?.rows?.[0] || {}).filter((key) => [
+      "rowNumber",
+      "date",
+      "client",
+      "order",
+      "paymentMethod",
+      "channel",
+      "accruedUsd",
+      "clientPaidUsd",
+      "providerNetUsd",
+      "included",
+      "reason",
+      "status",
+      "reviewNote",
+    ].includes(key)), [
+      "rowNumber",
+      "date",
+      "client",
+      "order",
+      "paymentMethod",
+      "channel",
+      "accruedUsd",
+      "clientPaidUsd",
+      "providerNetUsd",
+      "included",
+      "reason",
+      "status",
+      "reviewNote",
+    ]);
     assert.deepEqual(privateFopGap?.rows?.map((row) => [row.rowNumber, row.included, row.reason]), [
       ["18174", false, "no safe amount"],
       ["18175", false, "no safe amount"],

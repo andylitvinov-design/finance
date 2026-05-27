@@ -671,19 +671,71 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
       channel: "Без канала",
       netGapUsd: 103,
       rows: [
-        { reason: "PayPal missing client-paid/provider net" },
-        { reason: "no safe amount" },
+        {
+          rowNumber: "18156",
+          date: "2026-05-08",
+          client: "Надежда Юзова",
+          order: "Повтор посвящения через Смерть-Сефира Йесод.",
+          paymentMethod: "",
+          accruedUsd: 25.75,
+          clientPaidUsd: 0,
+          providerNetUsd: 0,
+          included: false,
+          reason: "payment channel missing",
+          status: "NEEDS VERIFICATION",
+          reviewNote: "payment channel missing",
+        },
+        {
+          rowNumber: "18161",
+          date: "2026-05-14",
+          client: "Ярослав Архипов",
+          order: "Чистка комплексов по Маслоу 1",
+          paymentMethod: "",
+          accruedUsd: 25.75,
+          clientPaidUsd: 0,
+          providerNetUsd: 0,
+          included: false,
+          reason: "payment channel missing",
+          status: "NEEDS VERIFICATION",
+          reviewNote: "payment channel missing",
+        },
       ],
     },
     {
       channel: "трансервайз дол",
       netGapUsd: -334.75,
-      rows: [{ reason: "duplicate/offset/overpaid transfer" }],
+      rows: [{
+        rowNumber: "18171",
+        date: "2026-05-22",
+        client: "Вилл",
+        order: "Маска Профессионала",
+        paymentMethod: "Wise @bolieslavn",
+        accruedUsd: 206,
+        clientPaidUsd: 0,
+        providerNetUsd: 0,
+        included: false,
+        reason: "duplicate/offset/overpaid transfer",
+        status: "OVERPAID",
+        reviewNote: "overpaid",
+      }],
     },
     {
       channel: "Binance spot",
       netGapUsd: 500,
-      rows: [{ reason: "excluded deposit/non-service" }],
+      rows: [{
+        rowNumber: "18164",
+        date: "2026-05-14",
+        client: "Ярослав Архипов",
+        order: "Чистка комплексов по Маслоу 4",
+        paymentMethod: "Binance spot",
+        accruedUsd: 25.25,
+        clientPaidUsd: 103,
+        providerNetUsd: 0,
+        included: false,
+        reason: "excluded deposit/non-service",
+        status: "NEEDS VERIFICATION",
+        reviewNote: "deposit/non-service",
+      }],
     },
     {
       channel: "Яндекс руб",
@@ -721,17 +773,30 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
   assert.match(requiresCheckText, /Не распределено \/ требует проверки/);
   assert.match(requiresCheckText, /Без канала/);
   assert.match(requiresCheckText, /103,0000/);
-  assert.match(text, /PayPal missing client-paid\/provider net, no safe amount/);
+  assert.match(requiresCheckText, /rows: 18156, 18161/);
+  assert.match(requiresCheckText, /dates: 2026-05-08, 2026-05-14/);
+  assert.match(requiresCheckText, /row\/order 18156/);
+  assert.match(requiresCheckText, /order\/service Повтор посвящения через Смерть-Сефира Йесод\./);
+  assert.match(requiresCheckText, /included no/);
+  assert.match(requiresCheckText, /Не найден payment channel — проверь PAYMENT METHOD \/ канал оплаты в строке\./);
 
   const offsetText = collectText(gapSections[1]);
   assert.match(offsetText, /Переплаты \/ offset/);
+  assert.match(offsetText, /Это offset\/переплата, не сумма к оплате\./);
   assert.match(offsetText, /трансервайз дол/);
   assert.match(offsetText, /-334,7500/);
+  assert.match(offsetText, /rows: 18171/);
+  assert.match(offsetText, /dates: 2026-05-22/);
+  assert.match(offsetText, /client: Вилл/);
+  assert.match(offsetText, /paymentMethod Wise @bolieslavn/);
   assert.match(offsetText, /duplicate\/offset\/overpaid transfer/);
 
   const excludedText = collectText(gapSections[2]);
   assert.match(excludedText, /Исключено из оплат/);
+  assert.match(excludedText, /Это исключено из оплат заказов\/услуг: депозит, перевод, обмен или non-service\./);
   assert.match(excludedText, /Binance spot/);
+  assert.match(excludedText, /rows: 18164/);
+  assert.match(excludedText, /dates: 2026-05-14/);
   assert.match(excludedText, /excluded deposit\/non-service/);
   assert.doesNotMatch(requiresCheckText, /Binance spot/);
   assert.doesNotMatch(offsetText, /Binance spot/);
@@ -740,5 +805,28 @@ test("balance summary splits service payment gap diagnostics by sign and exclude
   assert.match(text, /1234,0000/);
   assert.doesNotMatch(text, /Яндекс руб/);
   assert.deepEqual(gapRows, originalGapRows);
+  resetBalanceModule();
+});
+
+test("balance summary flags service payment gaps when API source rows are missing", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    servicePaymentGapByChannel: [{
+      channel: "приват-фоп",
+      netGapUsd: 438.2345,
+      rows: [],
+    }],
+  }, makeMockDocument());
+
+  assert.match(collectText(block), /source rows missing from API — needs verification/);
   resetBalanceModule();
 });
