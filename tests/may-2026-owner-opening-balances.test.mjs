@@ -53,10 +53,11 @@ test("owner-confirmed 2026-05-01 opening balances total exactly 24993 USD", () =
   assert.equal(validateOwnerMayOpeningBalances().ok, true);
 });
 
-test("Binance spot combined owner input is split into USDT and USDC without changing Binance save", () => {
+test("Binance spot combined owner input is split into USDT and USDC while Binance save is split by currency", () => {
   const spotUsdt = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "Бинанс spot" && row.currency === "USDT");
   const spotUsdc = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "Бинанс spot" && row.currency === "USDC");
   const saveUsdt = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "binance save" && row.currency === "USDT");
+  const saveUsdc = OWNER_MAY_OPENING_BALANCES.find((row) => row.channel === "binance save" && row.currency === "USDC");
 
   assert.equal(spotUsdt.amount, 1087.6223);
   assert.equal(spotUsdt.amountUsd, 1087.6223);
@@ -67,8 +68,13 @@ test("Binance spot combined owner input is split into USDT and USDC without chan
   assert.equal(spotUsdc.adjustmentReason, "owner_combined_usdt_usdc_split");
   assert.equal(spotUsdt.confidence, "medium");
   assert.equal(spotUsdc.confidence, "medium");
-  assert.equal(saveUsdt.amount, 8519);
-  assert.equal(saveUsdt.amountUsd, 8519);
+  assert.equal(saveUsdt.amount, 5411.6278);
+  assert.equal(saveUsdc.amount, 3107.3722);
+  assert.equal(saveUsdt.amount + saveUsdc.amount, 8519);
+  assert.equal(saveUsdt.adjustmentReason, "owner_combined_usdt_usdc_split");
+  assert.equal(saveUsdc.adjustmentReason, "owner_combined_usdt_usdc_split");
+  assert.equal(saveUsdt.amountUsd, 5411.6278);
+  assert.equal(saveUsdc.amountUsd, 3107.3722);
 });
 
 test("Revolut combined owner input is superseded by explicit currency openings", () => {
@@ -125,11 +131,17 @@ test("owner seed replaces stale May opening anchors and preserves exact owner to
 
   const mayRows = seed.rows.filter((row) => row.date === "2026-05-01");
   const total = mayRows.reduce((sum, row) => sum + Number(row.amount_usd ?? row.amountUsd ?? 0), 0);
+  const saveRows = mayRows.filter((row) => row.channel === "binance save");
+  const saveUsdt = saveRows.find((row) => row.currency === "USDT");
+  const saveUsdc = saveRows.find((row) => row.currency === "USDC");
 
   assert.equal(seed.applied, true);
   assert.equal(Math.round(total * 10000) / 10000, 24993);
   assert.equal(mayRows.some((row) => row.channel === "legacy_combined_binance_spot_funding"), false);
-  assert.equal(mayRows.find((row) => row.channel === "binance save").amount_usd, 8519);
+  assert.equal(saveRows.length, 2);
+  assert.equal(saveUsdt?.amount_usd ?? null, 5411.6278);
+  assert.equal(saveUsdc?.amount_usd ?? null, 3107.3722);
+  assert.equal(saveRows.reduce((sum, row) => sum + Number(row.amount_usd ?? 0), 0), 8519);
   assert.equal(mayRows.find((row) => row.channel === "приват 24-грн").amount, 11239);
   assert.equal(mayRows.find((row) => row.channel === "приват 24-грн").amount_usd, 254);
 });
@@ -224,7 +236,7 @@ test("May daily balance backfill uses 2026-05-01 opening snapshot, not ledger-on
 
   const row = report.planned_rows.find((entry) => entry.date === "2026-05-02" && entry.channel === "binance save" && entry.currency === "USDT");
   assert.equal(report.merge_summary.owner_confirmed_may_opening_balance_seed_applied, true);
-  assert.equal(row.amount, 8529);
+  assert.equal(row.amount, 5421.6278);
   assert.equal(row.comment.includes("2026-05-01"), true);
 });
 
