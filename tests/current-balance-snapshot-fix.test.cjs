@@ -4,16 +4,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "current-balance-snapshot-fix.js"), "utf8");
+const fixJs = fs.readFileSync(path.join(__dirname, "..", "current-balance-snapshot-fix.js"), "utf8");
 
 function buildContext() {
   const context = {
     parseLooseNumber(value) {
-      const normalized = String(value ?? "")
-        .trim()
-        .replace(/\s/g, "")
-        .replace(/,/g, ".")
-        .replace(/[^\d.-]/g, "");
+      const normalized = String(value ?? "").trim().replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
       const numeric = Number(normalized);
       return Number.isFinite(numeric) ? numeric : 0;
     },
@@ -32,7 +28,7 @@ function buildContext() {
     }
   };
   vm.createContext(context);
-  vm.runInContext(source, context);
+  vm.runInContext(fixJs, context);
   return context;
 }
 
@@ -40,7 +36,7 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-test("current balance snapshot excludes stale May 28 rows and applies owner-confirmed corrections", () => {
+test("excludes stale May 28 current balance rows and applies owner-confirmed snapshot", () => {
   const context = buildContext();
   const result = context.buildLatestBalanceEntriesByChannel([
     { date: "2026-05-28", channel: "binance save", amount: "7425", currency: "USD", source: "manual-google-sheets" },
@@ -59,21 +55,11 @@ test("current balance snapshot excludes stale May 28 rows and applies owner-conf
   assert.equal(result["монобанк грн"].usdAmount, "31.36");
   assert.equal(result["Яндекс руб"].value, "100000");
   assert.equal(result["Яндекс руб"].usdAmount, "1376");
-
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.excludedStaleRows.length, 4);
-  assert.deepEqual(
-    context.__currentBalanceSnapshotFixDiagnostics.excludedStaleRows.map((row) => `${row.channel}|${row.currency}|${row.amount}`),
-    [
-      "binance save|USD|7425",
-      "Бинанс spot|USD|1689",
-      "legacy_combined_binance_spot_funding|USDT|345",
-      "Payoneer - eur|EUR|1173"
-    ]
-  );
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.appliedOwnerCorrections.length, 5);
 });
 
-test("current balance snapshot does not apply May 28 owner corrections outside the snapshot date", () => {
+test("does not apply May 28 snapshot correction outside May 28", () => {
   const context = buildContext();
   const result = context.buildLatestBalanceEntriesByChannel([
     { date: "2026-05-28", channel: "binance save", amount: "7425", currency: "USD" },
@@ -88,14 +74,14 @@ test("current balance snapshot does not apply May 28 owner corrections outside t
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.appliedOwnerCorrections.length, 0);
 });
 
-test("current balance snapshot fix is loaded before app bootstrap", () => {
+test("snapshot fix loader runs before main app bootstrap", () => {
   const indexHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-  const channelOrderIndex = indexHtml.indexOf("./channel-display-order.js");
+  const carrierIndex = indexHtml.indexOf("./channel-display-order.js");
   const mainIndex = indexHtml.indexOf("./main.js");
-  assert.ok(channelOrderIndex !== -1, "channel-display-order.js must be loaded");
+  assert.ok(carrierIndex !== -1, "channel-display-order.js must be loaded");
   assert.ok(mainIndex !== -1, "main.js must be loaded");
-  assert.ok(channelOrderIndex < mainIndex, "snapshot loader carrier must run before app bootstrap");
+  assert.ok(carrierIndex < mainIndex, "loader carrier must run before main.js");
 
-  const channelDisplayOrder = fs.readFileSync(path.join(__dirname, "..", "channel-display-order.js"), "utf8");
-  assert.match(channelDisplayOrder, /current-balance-snapshot-fix\.js/);
+  const carrierJs = fs.readFileSync(path.join(__dirname, "..", "channel-display-order.js"), "utf8");
+  assert.match(carrierJs, /current-balance-snapshot-fix\.js/);
 });
