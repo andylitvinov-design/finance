@@ -1,6 +1,12 @@
-import { appendManualOstatkiRows } from "../server/manual-google-sheets.js";
+import {
+  MANUAL_SPREADSHEET_ID,
+  SHEETS_API_BASE_URL,
+  getManualGoogleSheetsAccessToken,
+} from "../server/manual-google-sheets.js";
 
 const TARGET_SHEET = "Остатки";
+const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const HEADER = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -23,6 +29,8 @@ export default async function handler(request, response) {
             channel: "БАНК КАНАДА cad",
             amount: 10538,
             currency: "CAD",
+            rate: 0.74,
+            usdAmount: 7798.12,
             comment: "owner_confirmed",
           },
         ],
@@ -48,6 +56,8 @@ export default async function handler(request, response) {
       });
     }
 
+    const plan = await buildOstatkiUpsertPlan({ rows });
+
     if (dryRun) {
       return response.status(200).json({
         ok: true,
@@ -55,21 +65,24 @@ export default async function handler(request, response) {
         action: "saveBalanceSnapshot",
         target_sheet: TARGET_SHEET,
         rowCount: rows.length,
+        inserted: plan.inserted.length,
+        updated: plan.updated.length,
+        deduped: plan.deduped,
         rows,
       });
     }
 
-    const result = await appendManualOstatkiRows({ rows });
+    const save = await writeOstatkiRows(plan.outputRows);
     return response.status(200).json({
       ok: true,
       dryRun: false,
       action: "saveBalanceSnapshot",
       target_sheet: TARGET_SHEET,
       rowCount: rows.length,
-      inserted: result.appended?.length || 0,
-      updated: result.updated?.length || 0,
-      skipped: result.skipped?.length || 0,
-      save: result,
+      inserted: plan.inserted.length,
+      updated: plan.updated.length,
+      deduped: plan.deduped,
+      updatedRange: save.updatedRange || null,
     });
   } catch (error) {
     return response.status(400).json({
@@ -106,28 +119,192 @@ export function extractSnapshotRows(payload = {}) {
   return single ? [single] : [];
 }
 
+export async function buildOstatkiUpsertPlan({ rows = [], fetchImpl = fetch } = {}) {
+  const existingValues = await readOstatkiValues({ fetchImpl });
+  const existingRows = parseOstatkiValues(existingValues);
+  const outputByKey = new Map();
+  let deduped = 0;
+
+  for (const row of existingRows) {
+    const key = buildOstatkiKey(row);
+    const current = outputByKey.get(key);
+    if (!current || rowPriority(row) >= rowPriority(current)) {
+      if (current) deduped += 1;
+      outputByKey.set(key, row);
+    } else {
+      deduped += 1;
+    }
+  }
+
+  const inserted = [];
+  const updated = [];
+  for (const row of rows.map((entry) => normalizeSnapshotRow(entry)).filter(Boolean)) {
+    const key = buildOstatkiKey(row);
+    const existing = outputByKey.get(key);
+    const merged = {
+      ...(existing || {}),
+      ...row,
+      comment: row.comment || existing?.comment || "owner_confirmed",
+      source: "owner_confirmed",
+    };
+    outputByKey.set(key, merged);
+    if (existing) updated.push(merged);
+    else inserted.push(merged);
+  }
+
+  const outputRows = Array.from(outputByKey.values()).sort(compareOstatkiRows);
+  return { outputRows, inserted, updated, deduped };
+}
+
+export function parseOstatkiValues(values = []) {
+  const rows = Array.isArray(values) ? values : [];
+  const [header = [], ...body] = rows;
+  const headerMap = buildHeaderMap(header);
+  return body
+    .map((row) => normalizeSnapshotRow({
+      date: row[headerMap.date ?? 0],
+      channel: row[headerMap.channel ?? 1],
+      amount: row[headerMap.amount ?? 2],
+      currency: row[headerMap.currency ?? 3],
+      rate: row[headerMap.rate ?? 4],
+      usdAmount: row[headerMap.usdAmount ?? 5],
+      comment: row[headerMap.comment ?? 6],
+    }))
+    .filter(Boolean);
+}
+
+async function readOstatkiValues({ fetchImpl = fetch } = {}) {
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: WRITE_SCOPE, fetchImpl });
+  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:G`);
+  const response = await fetchImpl(
+    `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Sheets Остатки read failed with HTTP ${response.status}`);
+  }
+  return payload.values || [];
+}
+
+async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: WRITE_SCOPE, fetchImpl });
+  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:G`);
+  const response = await fetchImpl(
+    `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values: buildOstatkiValues(rows) }),
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Sheets Остатки update failed with HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 function normalizeSnapshotRow(row = {}, payload = {}) {
   const date = normalizeDate(row.date || row.snapshotDate || payload.date || payload.snapshotDate);
   const channel = String(row.channel || row.accountName || row.account || row.provider || "").trim();
-  const currency = String(row.currency || row.nativeCurrency || row.balanceCurrency || "").trim().toUpperCase();
+  const currency = normalizeCurrency(row.currency || row.nativeCurrency || row.balanceCurrency);
   const amount = row.amount ?? row.balanceAmount ?? row.nativeAmount ?? row.value;
   if (!date || !channel || !currency || amount === undefined || amount === null || amount === "") return null;
   return {
     date,
     channel,
     currency,
-    amount,
+    amount: normalizeNumberText(amount),
+    rate: normalizeNumberText(row.rate ?? row.fxRate ?? ""),
+    usdAmount: normalizeNumberText(row.usdAmount ?? row.amount_usd ?? row.amountUsd ?? ""),
     comment: String(row.comment || row.status || row.source || payload.comment || "owner_confirmed").trim() || "owner_confirmed",
   };
+}
+
+function buildOstatkiValues(rows = []) {
+  return [HEADER, ...rows.map((row) => [
+    row.date || "",
+    row.channel || "",
+    row.amount || "",
+    row.currency || "",
+    row.rate || "",
+    row.usdAmount || "",
+    row.comment || "",
+  ])];
+}
+
+function buildHeaderMap(header = []) {
+  const normalized = header.map((cell) => normalizeLookupText(cell));
+  const find = (names) => normalized.findIndex((cell) => names.includes(cell));
+  return {
+    date: find(["дата", "date"]),
+    channel: find(["канал", "channel", "account"]),
+    amount: find(["сумма", "amount"]),
+    currency: find(["валюта", "currency"]),
+    rate: find(["курс", "rate"]),
+    usdAmount: find(["сумма usd", "сумма_usd", "amount usd", "amount_usd", "usdamount"]),
+    comment: find(["комментарий", "comment", "status", "source"]),
+  };
+}
+
+function buildOstatkiKey(row) {
+  return [row.date, normalizeLookupText(row.channel), normalizeCurrency(row.currency)].join("|");
+}
+
+function rowPriority(row) {
+  const text = normalizeLookupText(`${row.comment || ""} ${row.source || ""}`);
+  if (/owner confirmed|owner_confirmed|manual fact|manual_fact/.test(text)) return 50;
+  if (/manual google sheets|manual-google-sheets|остатки/.test(text)) return 40;
+  if (/provider auto|provider_auto/.test(text)) return 20;
+  if (/derived/.test(text)) return 10;
+  if (/missing/.test(text)) return 0;
+  return 30;
+}
+
+function compareOstatkiRows(left, right) {
+  return `${left.date}|${left.channel}|${left.currency}`.localeCompare(`${right.date}|${right.channel}|${right.currency}`, "ru");
 }
 
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/) || raw.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
-  if (!match) return raw.slice(0, 10);
-  if (match[1].length === 4) return `${match[1]}-${match[2]}-${match[3]}`;
-  return `${match[3]}-${match[2]}-${match[1]}`;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dotted = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  if (dotted) return `${dotted[3]}-${dotted[2]}-${dotted[1]}`;
+  return raw.slice(0, 10);
+}
+
+function normalizeCurrency(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeNumberText(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  return raw.replace(/\s+/g, "").replace(".", ",");
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[_]+/g, " ")
+    .replace(/[^0-9a-zа-я]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isTruthy(value) {
