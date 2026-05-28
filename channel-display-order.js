@@ -105,3 +105,9 @@
     sortChannelDisplayRows,
   };
 });
+
+(function loadCurrentBalanceSnapshotFix() {
+  if (typeof document === "undefined") return;
+  if (document.querySelector('script[src$="current-balance-snapshot-fix.js"]')) return;
+  document.write('<script src="./current-balance-snapshot-fix.js"><\/script>');
+})();
