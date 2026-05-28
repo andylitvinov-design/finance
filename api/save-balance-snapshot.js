@@ -82,6 +82,7 @@ export default async function handler(request, response) {
       inserted: plan.inserted.length,
       updated: plan.updated.length,
       deduped: plan.deduped,
+      clearedRange: save.clearedRange || null,
       updatedRange: save.updatedRange || null,
     });
   } catch (error) {
@@ -162,13 +163,13 @@ export function parseOstatkiValues(values = []) {
   const headerMap = buildHeaderMap(header);
   return body
     .map((row) => normalizeSnapshotRow({
-      date: row[headerMap.date ?? 0],
-      channel: row[headerMap.channel ?? 1],
-      amount: row[headerMap.amount ?? 2],
-      currency: row[headerMap.currency ?? 3],
-      rate: row[headerMap.rate ?? 4],
-      usdAmount: row[headerMap.usdAmount ?? 5],
-      comment: row[headerMap.comment ?? 6],
+      date: row[headerMap.date >= 0 ? headerMap.date : 0],
+      channel: row[headerMap.channel >= 0 ? headerMap.channel : 1],
+      amount: row[headerMap.amount >= 0 ? headerMap.amount : 2],
+      currency: row[headerMap.currency >= 0 ? headerMap.currency : 3],
+      rate: row[headerMap.rate >= 0 ? headerMap.rate : 4],
+      usdAmount: row[headerMap.usdAmount >= 0 ? headerMap.usdAmount : 5],
+      comment: row[headerMap.comment >= 0 ? headerMap.comment : 6],
     }))
     .filter(Boolean);
 }
@@ -196,7 +197,24 @@ async function readOstatkiValues({ fetchImpl = fetch } = {}) {
 async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: WRITE_SCOPE, fetchImpl });
   const range = encodeURIComponent(`'${TARGET_SHEET}'!A:G`);
-  const response = await fetchImpl(
+  const clearResponse = await fetchImpl(
+    `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}:clear`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }
+  );
+  const clearPayload = await clearResponse.json().catch(() => ({}));
+  if (!clearResponse.ok) {
+    throw new Error(clearPayload?.error?.message || `Sheets Остатки clear failed with HTTP ${clearResponse.status}`);
+  }
+
+  const updateResponse = await fetchImpl(
     `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}?valueInputOption=USER_ENTERED`,
     {
       method: "PUT",
@@ -208,11 +226,14 @@ async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
       body: JSON.stringify({ values: buildOstatkiValues(rows) }),
     }
   );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Sheets Остатки update failed with HTTP ${response.status}`);
+  const updatePayload = await updateResponse.json().catch(() => ({}));
+  if (!updateResponse.ok) {
+    throw new Error(updatePayload?.error?.message || `Sheets Остатки update failed with HTTP ${updateResponse.status}`);
   }
-  return payload;
+  return {
+    clearedRange: clearPayload.clearedRange || null,
+    updatedRange: updatePayload.updatedRange || null,
+  };
 }
 
 function normalizeSnapshotRow(row = {}, payload = {}) {
