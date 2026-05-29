@@ -562,7 +562,7 @@ function isBinanceLikeChannel(channel = "") {
 }
 
 function normalizeBinanceTransferText(value = "") {
-  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[_-]+/g, " ").replace(/s+/g, " ");
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 }
 
 function hasOppositeTransferLeg(row, { date, currency, amount, operations }) {
