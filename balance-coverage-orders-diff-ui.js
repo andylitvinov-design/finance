@@ -41,9 +41,33 @@
     return String(row?.channel || "").trim() || "Без канала";
   }
 
+  function getCoverageOrdersUsd(source = {}) {
+    return parseNumber(
+      source.ordersUsd ??
+      source.accruedOrdersUsd ??
+      source.accruedPlus3Usd ??
+      source.totalAccruedOrdersUsd ??
+      source.accruedUsd ??
+      source.orderAccruedUsd ??
+      source.clientAccruedUsd ??
+      source.expectedUsd
+    );
+  }
+
+  function getCoverageCoveredUsd(source = {}) {
+    return parseNumber(
+      source.allocatedPaidUsd ??
+      source.coveredUsd ??
+      source.clientPaidUsd ??
+      source.actualPaidUsd ??
+      source.providerNetUsd ??
+      source.amount
+    );
+  }
+
   function addCoverageRow(target, source = {}) {
-    const ordersUsd = parseNumber(source.ordersUsd ?? source.accruedOrdersUsd ?? source.accruedPlus3Usd ?? source.totalAccruedOrdersUsd);
-    const coveredUsd = parseNumber(source.allocatedPaidUsd ?? source.coveredUsd ?? source.amount);
+    const ordersUsd = getCoverageOrdersUsd(source);
+    const coveredUsd = getCoverageCoveredUsd(source);
     const cappedCoveredUsd = parseNumber(source.coveredUsd);
     if (ordersUsd === null || coveredUsd === null) return false;
     target.ordersUsd = roundNumber((target.ordersUsd || 0) + ordersUsd);
@@ -69,8 +93,8 @@
     return (summaryRows || []).map((summaryRow) => {
       const channel = getCoverageChannel(summaryRow);
       const raw = rawByChannel.get(channel);
-      const ordersUsd = parseNumber(summaryRow.ordersUsd ?? summaryRow.accruedOrdersUsd ?? summaryRow.totalAccruedOrdersUsd);
-      const coveredUsd = parseNumber(summaryRow.allocatedPaidUsd ?? summaryRow.coveredUsd ?? summaryRow.amount);
+      const ordersUsd = getCoverageOrdersUsd(summaryRow);
+      const coveredUsd = getCoverageCoveredUsd(summaryRow);
       return {
         channel,
         ordersUsd: ordersUsd ?? raw?.ordersUsd ?? null,
