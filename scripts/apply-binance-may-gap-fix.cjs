@@ -69,6 +69,7 @@ function normalizeBinanceTransferText(value = "") {
 
 function hasOppositeTransferLeg(row, { date, currency, amount, operations }) {`
   );
+  write(p, s);
   changed = true;
 }
 
