@@ -60,7 +60,7 @@
     }
     const token = normalizeToken(value).replace(/\s+/g, "_");
     if (token) return token;
-    return normalizeCategory(category) === "servicein" ? "income" : "";
+    return ["servicein", "ezoin"].includes(normalizeCategory(category)) ? "income" : "";
   }
 
   function normalizeDirection(value, operation = "") {
@@ -98,11 +98,13 @@
     return String(raw || "").trim();
   }
 
-  function getServiceIncomeUsd(row) {
+  function getRowUsd(row) {
     return Math.abs(parseNumber(
       getValue(row, "amount_usd", "amountUsd") ||
       getValue(row, "amount_net", "amountNet") ||
-      getValue(row, "amount")
+      getValue(row, "amount") ||
+      getValue(row, "usdAmount") ||
+      getValue(row, "localAmount")
     ));
   }
 
@@ -110,11 +112,36 @@
     return (rows || []).reduce((lookup, row) => {
       if (!isServicesMeRow(row)) return lookup;
       const channel = getRowChannel(row) || "unknown";
-      const amountUsd = getServiceIncomeUsd(row);
+      const amountUsd = getRowUsd(row);
       lookup.byChannel[channel] = (lookup.byChannel[channel] || 0) + amountUsd;
       lookup.total += amountUsd;
       return lookup;
     }, { byChannel: {}, total: 0 });
+  }
+
+  function isIncomingRow(row) {
+    const category = normalizeCategory(getValue(row, "category"));
+    const operation = normalizeOperation(getValue(row, "operation") || getValue(row, "direction"), category);
+    const direction = normalizeDirection(getValue(row, "direction"), operation);
+    return direction === "in" && (operation === "income" || ["servicein", "ezoin"].includes(category));
+  }
+
+  function isTransferOrExchangeRow(row) {
+    const operation = normalizeToken(getValue(row, "operation") || getValue(row, "direction")).replace(/\s+/g, "_");
+    const category = normalizeCategory(getValue(row, "category"));
+    return operation.includes("exchange") || operation.includes("transfer") || ["exchange", "partner"].includes(category);
+  }
+
+  function buildOrderCoverageCandidateSummary(rows = []) {
+    const totalIncomingUsd = (rows || []).reduce((sum, row) => isIncomingRow(row) ? sum + getRowUsd(row) : sum, 0);
+    const serviceinUsd = buildServiceInIncomeLookup(rows).total;
+    const transferOrExchangeUsd = (rows || []).reduce((sum, row) => isTransferOrExchangeRow(row) ? sum + getRowUsd(row) : sum, 0);
+    return {
+      totalIncomingUsd,
+      serviceinUsd,
+      transferOrExchangeUsd,
+      orderCandidateIncomingUsd: totalIncomingUsd - serviceinUsd - transferOrExchangeUsd
+    };
   }
 
   function collectLedgerRows() {
@@ -147,11 +174,13 @@
     contract.isServiceInRow = contract.isServiceInRow || isServiceInRow;
     contract.isServicesMeRow = contract.isServicesMeRow || isServicesMeRow;
     contract.buildServiceInIncomeLookup = contract.buildServiceInIncomeLookup || buildServiceInIncomeLookup;
+    contract.buildOrderCoverageCandidateSummary = contract.buildOrderCoverageCandidateSummary || buildOrderCoverageCandidateSummary;
     window.EzohataManualLedgerContract = contract;
     window.EzohataServiceInLayer = {
       isServiceInRow,
       isServicesMeRow,
       buildServiceInIncomeLookup,
+      buildOrderCoverageCandidateSummary,
       collectLedgerRows
     };
   }
@@ -178,33 +207,31 @@
     }
   }
 
+  function isServicesMeEntry(entry) {
+    if (!entry || entry.direction !== "income") return false;
+    const token = normalizeToken(entry.receivedType || entry.received_type || entry.category || entry.subcategory || "").replace(/\s+/g, "_");
+    return token === SERVICE_TYPE || token === "услуги_мне";
+  }
+
   function patchLedgerRowBuilder() {
     if (typeof window.buildLedgerRowsFromAccountingEntries !== "function" || window.buildLedgerRowsFromAccountingEntries.__servicesMePatched) return;
     const original = window.buildLedgerRowsFromAccountingEntries;
     window.buildLedgerRowsFromAccountingEntries = function buildLedgerRowsFromAccountingEntriesWithServicesMe(entries = []) {
-      const servicesIndexes = new Set();
-      const normalizedEntries = (entries || []).map((entry, index) => {
-        const receivedType = normalizeToken(entry?.receivedType || entry?.received_type || entry?.category || "").replace(/\s+/g, "_");
-        if (entry?.direction === "income" && (receivedType === SERVICE_TYPE || receivedType === "услуги_мне")) {
-          servicesIndexes.add(index);
-          return {
-            ...entry,
-            category: "servicein",
-            subcategory: SERVICE_TYPE,
-            direction: "income"
-          };
-        }
-        return entry;
-      });
-      const rows = original.call(this, normalizedEntries);
-      let serviceCursor = 0;
-      return (rows || []).map((row) => {
-        if (!isServiceInRow(row)) return row;
-        const rowSource = String(getValue(row, "raw_source_id", "rawSourceId") || getValue(row, "external_id", "externalId") || "");
-        const shouldMark = row.subcategory === SERVICE_TYPE || row.subcategory === "services_me" || servicesIndexes.has(serviceCursor);
-        serviceCursor += 1;
-        if (!shouldMark && rowSource) return row;
-        return { ...row, category: "servicein", subcategory: SERVICE_TYPE, direction: "in" };
+      const normalizedEntries = (entries || []).map((entry) => isServicesMeEntry(entry)
+        ? { ...entry, category: "servicein", subcategory: SERVICE_TYPE, direction: "income" }
+        : entry
+      );
+      const rows = original.call(this, normalizedEntries) || [];
+      return rows.map((row, index) => {
+        const sourceEntry = normalizedEntries[index];
+        if (!isServicesMeEntry(sourceEntry)) return row;
+        return {
+          ...row,
+          operation: "income",
+          category: "servicein",
+          subcategory: SERVICE_TYPE,
+          direction: "in"
+        };
       });
     };
     window.buildLedgerRowsFromAccountingEntries.__servicesMePatched = true;
@@ -273,10 +300,15 @@
     const activePanel = document.querySelector(".tab-panel.active");
     if (!activePanel || activePanel.querySelector(".services-me-reconciliation-card")) return;
     if (!/анализ финансов|сверка|покрыт|баланс/i.test(activePanel.textContent || "")) return;
-    const lookup = buildServiceInIncomeLookup(collectLedgerRows());
+    const summary = buildOrderCoverageCandidateSummary(collectLedgerRows());
     const card = document.createElement("div");
     card.className = "expense-summary-card services-me-reconciliation-card";
-    card.innerHTML = `<div class="expense-summary-label">${SERVICE_LABEL} / servicein</div><div class="expense-summary-value">${formatNumber(lookup.total)} USD</div><div class="config-note">Входит в общий баланс, но вычитается из дохода-кандидата для покрытия заказов Ezohata.</div>`;
+    card.innerHTML = `
+      <div class="expense-summary-label">${SERVICE_LABEL} / servicein</div>
+      <div class="expense-summary-value">${formatNumber(summary.serviceinUsd)} USD</div>
+      <div class="config-note">total incoming: ${formatNumber(summary.totalIncomingUsd)} USD · transfer/exchange: ${formatNumber(summary.transferOrExchangeUsd)} USD · order candidate: ${formatNumber(summary.orderCandidateIncomingUsd)} USD</div>
+      <div class="config-note">Формула: orderCandidateIncomingUsd = totalIncomingUsd - serviceinUsd - transferOrExchangeUsd.</div>
+    `;
     const target = activePanel.querySelector(".expense-summary-grid, .metrics, .tab-header") || activePanel;
     if (target === activePanel) target.prepend(card);
     else target.appendChild(card);
