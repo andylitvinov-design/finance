@@ -1636,3 +1636,44 @@ test("May period reconciliation uses owner Revolut split opening instead of stal
   assert.equal(row.real_difference, 0);
   assert.equal(row.status, "ok");
 });
+
+test("does not synthesize Binance internal wallet transfers", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-06-01", to: "2026-06-30" },
+    operations: [{
+      date: "2026-06-10",
+      fromChannel: "Binance funding",
+      toChannel: "binance save",
+      currency: "USDT",
+      amountNet: "500",
+      balanceAmount: -500,
+      comment: "funding transfer simple earn redemption",
+      ledgerV2: { date: "2026-06-10", operation: "transfer", from_channel: "Binance funding", to_channel: "binance save", currency: "USDT", amount_net: "500", balance_amount: -500, comment: "funding transfer simple earn redemption" },
+    }],
+    balanceRows: [
+      { date: "2026-06-01", channel: "Binance funding", currency: "USDT", amount: 500, amount_usd: 500 },
+      { date: "2026-06-30", channel: "Binance funding", currency: "USDT", amount: 0, amount_usd: 0 },
+      { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: 1000, amount_usd: 1000 },
+      { date: "2026-06-30", channel: "binance save", currency: "USDT", amount: 1000, amount_usd: 1000 },
+    ],
+  });
+  const save = result.by_channel_currency.find((row) => row.channel === "binance save" && row.currency === "USDT");
+  assert.equal(save.transfer_in, 0);
+});
+
+test("total USD excludes legacy combined Binance row when split rows exist", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-06-01", to: "2026-06-30" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-06-01", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: 345, amount_usd: 345, source: "legacy_combined_binance_spot_funding" },
+      { date: "2026-06-30", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: 345, amount_usd: 345, source: "legacy_combined_binance_spot_funding" },
+      { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: 7432, amount_usd: 7432 },
+      { date: "2026-06-30", channel: "binance save", currency: "USDT", amount: 5412, amount_usd: 5412 },
+      { date: "2026-06-30", channel: "binance save", currency: "USDC", amount: 2020, amount_usd: 2020 },
+      { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: 1093, amount_usd: 1093 },
+      { date: "2026-06-30", channel: "Бинанс spot", currency: "USDT", amount: 1162, amount_usd: 1162 },
+    ],
+  });
+  assert.equal(result.total_usd_row.confirmed_end_usd, 8594);
+});

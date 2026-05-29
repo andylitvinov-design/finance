@@ -91,8 +91,8 @@ export const EXPECTED_PROVIDER_BALANCES = [
     channel: "binance save",
     currency: "USDC",
     source: "binance_auto",
-    active: false,
-    inactive_reason: "Binance Earn USDC current-balance row is status-only missing_provider_balance; no trusted numeric anchor exists",
+    active_from: "2026-05-28",
+    inactive_reason: "Binance Earn USDC numeric current-balance anchor starts on 2026-05-28 from owner/provider-confirmed snapshot.",
   },
   {
     provider: "tdbank",

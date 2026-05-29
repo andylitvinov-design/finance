@@ -842,3 +842,10 @@ function restoreEnv(name, value) {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
+
+test("binance save USDC expected balance is active from 2026-05-28", () => {
+  const usdc = EXPECTED_PROVIDER_BALANCES.find((row) => row.provider === "binance" && row.channel === "binance save" && row.currency === "USDC");
+  assert.ok(usdc);
+  assert.equal(usdc.active, undefined);
+  assert.equal(usdc.active_from, "2026-05-28");
+});

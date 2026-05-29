@@ -539,12 +539,30 @@ function buildSyntheticTransferIn(row, { date, currency, balanceAmount, amountUs
   const toChannel = String(ledger.to_channel || row?.toChannel || "").trim();
   const fromChannel = String(ledger.from_channel || row?.fromChannel || "").trim();
   if (!toChannel || !fromChannel) return null;
+  if (isBinanceInternalTransfer(row)) return null;
   if (hasOppositeTransferLeg(row, { date, currency, amount: Math.abs(balanceAmount), operations })) return null;
   return {
     channel: toChannel,
     balanceAmount: Math.abs(balanceAmount),
     amountUsd: amountUsd === null ? null : Math.abs(amountUsd),
   };
+}
+
+function isBinanceInternalTransfer(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const fromChannel = normalizeBinanceTransferText(ledger.from_channel || row?.fromChannel || "");
+  const toChannel = normalizeBinanceTransferText(ledger.to_channel || row?.toChannel || "");
+  const comment = normalizeBinanceTransferText(String(ledger.comment || row?.comment || "") + " " + String(ledger.raw_source_id || row?.rawSourceId || row?.raw_source_id || ""));
+  const looksInternal = /funding transfer|simple earn|earn redemption|redeem|redemption|subscription|spot funding|funding spot|save|earn/.test(comment);
+  return isBinanceLikeChannel(fromChannel) && isBinanceLikeChannel(toChannel) && looksInternal;
+}
+
+function isBinanceLikeChannel(channel = "") {
+  return /binance|бинанс|spot|funding|save|earn/.test(normalizeBinanceTransferText(channel));
+}
+
+function normalizeBinanceTransferText(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 }
 
 function hasOppositeTransferLeg(row, { date, currency, amount, operations }) {
@@ -918,7 +936,7 @@ function buildTotalUsdRow(rows = []) {
   const finiteCounts = Object.fromEntries(fields.map((field) => [field, 0]));
   const fxMissingCounts = Object.fromEntries(fields.map((field) => [field, 0]));
   let excludedFxMissingRows = 0;
-  for (const row of rows || []) {
+  for (const row of excludeLegacyBinanceRowsWhenSplitRowsExist(rows) || []) {
     const warnings = row.fx_warnings || [];
     if (warnings.length) excludedFxMissingRows += 1;
     for (const field of fields) {
@@ -949,6 +967,24 @@ function buildTotalUsdRow(rows = []) {
     finite_diff_rows: finiteCounts.diff_usd,
     status: excludedFxMissingRows ? "fx_missing" : STATUS.OK,
   };
+}
+
+
+function excludeLegacyBinanceRowsWhenSplitRowsExist(rows = []) {
+  const hasSplitBinanceRows = rows.some((row) => {
+    const channel = normalizeBinanceTransferText(row?.channel);
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    return ["USD", "USDT", "USDC"].includes(currency) && (
+      channel.includes("binance save") ||
+      channel.includes("бинанс spot") ||
+      channel.includes("binance spot")
+    );
+  });
+  if (!hasSplitBinanceRows) return rows;
+  return rows.filter((row) => {
+    const text = normalizeBinanceTransferText(String(row?.channel || "") + " " + String(row?.source || "") + " " + String(row?.sourceComment || "") + " " + String(row?.source_comment || "") + " " + String(row?.fact_source || "") + " " + String(row?.comment || ""));
+    return !(text.includes("legacy combined binance spot funding") || text.includes("legacy_combined_binance_spot_funding"));
+  });
 }
 
 function getRowChangeUsd(row) {

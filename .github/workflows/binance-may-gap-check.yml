@@ -1,0 +1,19 @@
+name: Binance May Gap Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check scripts/apply-binance-may-gap-fix.cjs
+      - run: node scripts/apply-binance-may-gap-fix.cjs
+      - run: node --test tests/auto-balance-snapshots.test.mjs tests/period-balance-reconciliation-engine.test.mjs
+      - run: git diff -- server/auto-balance-snapshots.js server/period-balance-reconciliation-engine.js tests/auto-balance-snapshots.test.mjs tests/period-balance-reconciliation-engine.test.mjs
