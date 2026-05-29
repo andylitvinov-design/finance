@@ -69,6 +69,7 @@ function makeDocument() {
     body,
     createElement: (tag) => new Element(tag),
     querySelectorAll: (selector) => body.querySelectorAll(selector),
+    querySelector: (selector) => body.querySelector(selector),
   };
 }
 
@@ -131,4 +132,14 @@ test("compact payment gap script hides verbose source rows behind closed details
   const aggregateText = collectText(aggregateRow);
   assert.match(aggregateText, /rows: 18156, 18161, 18164, 18171, 18172, 18173, 18174, 18175… \(\+1\)/);
   assert.match(aggregateText, /dates: 2026-05-08, 2026-05-14, 2026-05-15, 2026-05-16, 2026-05-17… \(\+1\)/);
+});
+
+test("compact payment gap script loads coverage orders diff enhancer", () => {
+  const doc = makeDocument();
+  loadCompactScript(doc);
+
+  const scripts = doc.body.querySelectorAll("script");
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, "./balance-coverage-orders-diff-ui.js");
+  assert.equal(scripts[0].defer, true);
 });

@@ -123,8 +123,17 @@
     });
   }
 
+  function loadCoverageOrdersDiffEnhancer(doc = root.document) {
+    if (!doc?.createElement || doc.querySelector?.('script[src="./balance-coverage-orders-diff-ui.js"]')) return;
+    const script = doc.createElement("script");
+    script.src = "./balance-coverage-orders-diff-ui.js";
+    script.defer = true;
+    (doc.head || doc.body)?.appendChild?.(script);
+  }
+
   function start() {
     const doc = root.document;
+    loadCoverageOrdersDiffEnhancer(doc);
     compactPaymentGapBlock(doc);
     if (!doc?.body || typeof root.MutationObserver !== "function") return;
     const observer = new root.MutationObserver(() => compactPaymentGapBlock(doc));
