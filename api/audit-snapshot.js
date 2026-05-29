@@ -96,6 +96,7 @@ export async function buildAuditSnapshot(options = {}) {
   const paypal = buildPayPalSummary(operations);
   const exchange = buildExchangeSummary(operations);
   const sources = buildSourcesSummary(operations);
+  const diagnostics = buildAuditDiagnostics(operations);
   const balanceFixes = buildBalanceFixes(operations, balanceCoverage);
   const weeklyBalanceSummary = buildWeeklyBalanceSummary({
     period,
@@ -202,6 +203,7 @@ export async function buildAuditSnapshot(options = {}) {
     paypal,
     exchange: omitInternalWarnings(exchange),
     sources,
+    diagnostics,
     warnings: unique(warnings),
     audit_checks: auditChecks,
   };
@@ -244,6 +246,7 @@ export function compactAuditSnapshotForHandoff(snapshot = {}) {
     paypal: snapshot.paypal,
     exchange: snapshot.exchange,
     sources: snapshot.sources,
+    diagnostics: snapshot.diagnostics,
     warnings: warnings.slice(0, 20),
     audit_checks: snapshot.audit_checks,
     audit_handoff: {
@@ -404,6 +407,9 @@ function emptySnapshot({ generatedAt, period, warnings, auditChecks }) {
       compatibility_mode: true,
     },
     sources: Object.fromEntries(SOURCE_KEYS.map((key) => [key, 0])),
+    diagnostics: {
+      unknown_source_row_samples: [],
+    },
     warnings: unique(warnings),
     audit_checks: auditChecks,
   };
@@ -744,7 +750,7 @@ function buildRemaindersLedgerMovementRows(operations = []) {
         factual_provider_balance: false,
       };
       existing.date = [existing.date, movement.date].filter(Boolean).sort()[0] || "";
-      existing.movement_usd += movement.movement_usd;
+      existing.movement_usd += Number(movement.movement_usd);
       grouped.set(key, existing);
     }
   }
@@ -1285,6 +1291,34 @@ function buildSourcesSummary(operations) {
     sources[source] = (sources[source] || 0) + 1;
   }
   return sources;
+}
+
+function buildAuditDiagnostics(operations) {
+  return {
+    unknown_source_row_samples: buildUnknownSourceRowSamples(operations),
+  };
+}
+
+function buildUnknownSourceRowSamples(operations, limit = 20) {
+  return (operations || [])
+    .filter((row) => normalizeSource(row) === "unknown")
+    .slice(0, limit)
+    .map((row) => {
+      const ledger = row?.ledgerV2 || {};
+      return {
+        date: normalizeDate(ledger.date || row.date),
+        operation: getV2Operation(row),
+        category: String(ledger.category || row.category || "").trim(),
+        from_channel: String(ledger.from_channel || row.fromChannel || row.from_channel || "").trim(),
+        to_channel: String(ledger.to_channel || row.toChannel || row.to_channel || "").trim(),
+        currency: String(ledger.currency || row.currency || "").trim().toUpperCase(),
+        amount_net_present: String(ledger.amount_net ?? row.amountNet ?? row.amount_net ?? "").trim() !== "",
+        amount_usd_present: String(ledger.amount_usd ?? row.amountUsd ?? row.amount_usd ?? "").trim() !== "",
+        raw_source: String(row.source || "").trim(),
+        ledger_source: String(ledger.source || "").trim(),
+        classification: "unknown",
+      };
+    });
 }
 
 function buildSourceWarnings(sources, totalRows) {
