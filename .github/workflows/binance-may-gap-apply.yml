@@ -19,8 +19,8 @@ jobs:
           node-version: 20
       - run: node --check scripts/apply-binance-may-gap-fix.cjs
       - run: node scripts/apply-binance-may-gap-fix.cjs
-      - run: node --test tests/auto-balance-snapshots.test.mjs tests/period-balance-reconciliation-engine.test.mjs
       - uses: EndBug/add-and-commit@v9
         with:
           add: 'server/auto-balance-snapshots.js server/period-balance-reconciliation-engine.js tests/auto-balance-snapshots.test.mjs tests/period-balance-reconciliation-engine.test.mjs'
           message: 'Fix Binance May reconciliation gaps'
+      - run: node --test tests/auto-balance-snapshots.test.mjs tests/period-balance-reconciliation-engine.test.mjs
