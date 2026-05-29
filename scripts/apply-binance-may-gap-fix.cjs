@@ -54,7 +54,7 @@ if (!s.includes('function isBinanceInternalTransfer')) {
   const ledger = row?.ledgerV2 || {};
   const fromChannel = normalizeBinanceTransferText(ledger.from_channel || row?.fromChannel || "");
   const toChannel = normalizeBinanceTransferText(ledger.to_channel || row?.toChannel || "");
-  const comment = normalizeBinanceTransferText(`${ledger.comment || row?.comment || ""} ${ledger.raw_source_id || row?.rawSourceId || row?.raw_source_id || ""}`);
+  const comment = normalizeBinanceTransferText(String(ledger.comment || row?.comment || "") + " " + String(ledger.raw_source_id || row?.rawSourceId || row?.raw_source_id || ""));
   const looksInternal = /funding transfer|simple earn|earn redemption|redeem|redemption|subscription|spot funding|funding spot|save|earn/.test(comment);
   return isBinanceLikeChannel(fromChannel) && isBinanceLikeChannel(toChannel) && looksInternal;
 }
@@ -92,7 +92,7 @@ function excludeLegacyBinanceRowsWhenSplitRowsExist(rows = []) {
   });
   if (!hasSplitBinanceRows) return rows;
   return rows.filter((row) => {
-    const text = normalizeBinanceTransferText(`${row?.channel || ""} ${row?.source || ""} ${row?.sourceComment || ""} ${row?.source_comment || ""} ${row?.fact_source || ""} ${row?.comment || ""}`);
+    const text = normalizeBinanceTransferText(String(row?.channel || "") + " " + String(row?.source || "") + " " + String(row?.sourceComment || "") + " " + String(row?.source_comment || "") + " " + String(row?.fact_source || "") + " " + String(row?.comment || ""));
     return !(text.includes("legacy combined binance spot funding") || text.includes("legacy_combined_binance_spot_funding"));
   });
 }
