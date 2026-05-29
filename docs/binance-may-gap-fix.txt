@@ -14,4 +14,4 @@ Patch target files:
 
 Do not change PayPal gross/net/fee semantics, amount_net formulas, secrets, env, or architecture.
 
-Workflow trigger marker: apply patch.
+Workflow trigger marker: apply regex patch.
