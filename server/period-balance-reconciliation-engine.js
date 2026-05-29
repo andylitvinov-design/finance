@@ -539,12 +539,30 @@ function buildSyntheticTransferIn(row, { date, currency, balanceAmount, amountUs
   const toChannel = String(ledger.to_channel || row?.toChannel || "").trim();
   const fromChannel = String(ledger.from_channel || row?.fromChannel || "").trim();
   if (!toChannel || !fromChannel) return null;
+  if (isBinanceInternalTransfer(row)) return null;
   if (hasOppositeTransferLeg(row, { date, currency, amount: Math.abs(balanceAmount), operations })) return null;
   return {
     channel: toChannel,
     balanceAmount: Math.abs(balanceAmount),
     amountUsd: amountUsd === null ? null : Math.abs(amountUsd),
   };
+}
+
+function isBinanceInternalTransfer(row = {}) {
+  const ledger = row?.ledgerV2 || {};
+  const fromChannel = normalizeBinanceTransferText(ledger.from_channel || row?.fromChannel || "");
+  const toChannel = normalizeBinanceTransferText(ledger.to_channel || row?.toChannel || "");
+  const comment = normalizeBinanceTransferText(String(ledger.comment || row?.comment || "") + " " + String(ledger.raw_source_id || row?.rawSourceId || row?.raw_source_id || ""));
+  const looksInternal = /funding transfer|simple earn|earn redemption|redeem|redemption|subscription|spot funding|funding spot|save|earn/.test(comment);
+  return isBinanceLikeChannel(fromChannel) && isBinanceLikeChannel(toChannel) && looksInternal;
+}
+
+function isBinanceLikeChannel(channel = "") {
+  return /binance|бинанс|spot|funding|save|earn/.test(normalizeBinanceTransferText(channel));
+}
+
+function normalizeBinanceTransferText(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е").replace(/[_-]+/g, " ").replace(/s+/g, " ");
 }
 
 function hasOppositeTransferLeg(row, { date, currency, amount, operations }) {
