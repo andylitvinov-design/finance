@@ -5,6 +5,7 @@
 (function patchTopMetricPayableShare() {
   const BADGE_ID = "metricPersonalOrdersAfterDiscount";
   const DEFAULT_PERCENT_RATE = 3;
+  const PAYABLE_ORDER_SHARE_RATE = 0.7;
 
   function parseMetricNumber(value) {
     if (typeof parseLooseNumber === "function") {
@@ -36,10 +37,6 @@
     );
   }
 
-  function hasOwn(object, key) {
-    return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
-  }
-
   function buildOrdersPaymentSummary(summary = {}) {
     const ordersAccruedWithPercent = parseMetricNumber(
       summary.ordersAccruedWithPercent ??
@@ -49,13 +46,14 @@
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
     const myOrdersGross = getPersonalOrdersGross(summary);
-    const totalAccrued = hasOwn(summary, "totalAccrued")
-      ? parseMetricNumber(summary.totalAccrued)
-      : ordersAccruedWithPercent + myOrdersDiscounted;
+    const ordersPayableShare = ordersAccruedWithPercent * PAYABLE_ORDER_SHARE_RATE;
+    const totalAccrued = ordersPayableShare + myOrdersDiscounted;
     const remainingToPay = totalAccrued - totalPaid;
     const percentRate = parseMetricNumber(summary.percentRate || DEFAULT_PERCENT_RATE);
     return {
       ordersAccruedWithPercent,
+      ordersPayableShare,
+      payableOrderShareRate: PAYABLE_ORDER_SHARE_RATE,
       percentRate,
       myOrdersGross,
       myOrdersDiscounted,
@@ -63,7 +61,7 @@
       totalPaid,
       remainingToPay,
       payable: remainingToPay,
-      payableFormula: "totalAccrued - abs(totalPaid)"
+      payableFormula: "ordersAccruedWithPercent * 0.7 + myOrdersDiscounted - abs(totalPaid)"
     };
   }
 
@@ -108,12 +106,15 @@
         ...summary,
         ordersPaymentSummary: canonical,
         ordersAccruedWithPercent: canonical.ordersAccruedWithPercent,
-        // The top "Итоговая сумма заказов" card must show only order accrued + 3%,
-        // not the total accrued including personal orders.
+        ordersPayableShare: canonical.ordersPayableShare,
+        payableOrderShareRate: canonical.payableOrderShareRate,
+        // The top "Итоговая сумма заказов" card must show the full order accrued + 3% value.
+        // The top "Оплатить" card uses only 70% of that order value, plus personal orders, minus paid.
         totalOrders: canonical.ordersAccruedWithPercent,
         percentRate: canonical.percentRate,
         personalOrdersGross: canonical.myOrdersGross,
         personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
+        totalAccrued: canonical.totalAccrued,
         total: canonical.remainingToPay,
         payable: canonical.remainingToPay,
         payableShare: canonical.remainingToPay,
@@ -138,6 +139,7 @@
   if (typeof window !== "undefined") {
     window.EzohataTopMetricPayableShareFix = {
       DEFAULT_PERCENT_RATE,
+      PAYABLE_ORDER_SHARE_RATE,
       buildOrdersPaymentSummary,
       calculateTopMetricPayable,
       getPersonalOrdersAfterDiscount,
