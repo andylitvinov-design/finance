@@ -108,6 +108,7 @@
 
 (function loadCurrentBalanceSnapshotFix() {
   if (typeof document === "undefined") return;
+  if (typeof document.querySelector !== "function" || typeof document.write !== "function") return;
   if (document.querySelector('script[src$="current-balance-snapshot-fix.js"]')) return;
   document.write('<script src="./current-balance-snapshot-fix.js"><\/script>');
 })();
