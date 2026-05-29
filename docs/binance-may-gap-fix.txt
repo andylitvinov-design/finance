@@ -1,1 +1,15 @@
 Binance May gap fix branch.
+
+Root cause proven:
+- live deploy/source is stale/diverged from main.
+- main still has binance save / USDC disabled in server/auto-balance-snapshots.js.
+- main still lacks Binance internal move guard in buildSyntheticTransferIn.
+- main still lacks legacy combined Binance exclusion in total USD when split rows exist.
+
+Patch target files:
+- server/auto-balance-snapshots.js
+- server/period-balance-reconciliation-engine.js
+- tests/auto-balance-snapshots.test.mjs
+- tests/period-balance-reconciliation-engine.test.mjs
+
+Do not change PayPal gross/net/fee semantics, amount_net formulas, secrets, env, or architecture.
