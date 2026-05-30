@@ -24,6 +24,24 @@ Workflow:
 .github/workflows/deploy-production.yml
 ```
 
+## Live version self-check
+
+Before and after fallback deploy, agents must check the current live version themselves.
+
+Local protocol:
+
+```text
+docs/deploy-version-check.md
+```
+
+For this project, the primary source of truth is:
+
+```text
+GET https://ezohata-incoming-ledger.vercel.app/api/status
+```
+
+Agents must compare the live `commitSha` from `/api/status` with the expected commit SHA. Do not ask Andrey to check the current live version manually.
+
 ## When to use
 
 Use fallback deploy when:
@@ -87,7 +105,8 @@ Before fallback deploy:
 3. Identify expected commit SHA.
 4. Confirm changes are committed and pushed.
 5. Check production URL and /api/status.
-6. If production is stale, trigger deploy-production.yml.
+6. Compare live commitSha with expected SHA.
+7. If production is stale, trigger deploy-production.yml.
 ```
 
 After fallback deploy:
@@ -109,6 +128,8 @@ production verification third
 
 Never ask the user to run `vercel --prod` locally until this fallback workflow has been attempted and diagnosed.
 
+Never ask the user to check the current live version manually when `/api/status` is available.
+
 Never run fallback deploy until the target commit is committed, pushed and identified.
 
 Never claim production is updated without checking production after deploy.
@@ -128,6 +149,19 @@ Live commit/build:
 Remaining issue:
 ```
 
+Every deploy-related report must also include:
+
+```text
+Live version check:
+- Production URL:
+- Status/version URL:
+- Expected SHA:
+- Live SHA/build marker:
+- Match: yes/no/unknown
+- Evidence source:
+- If unknown, why:
+```
+
 ## Source standard
 
 Cross-project standard lives in:
@@ -142,4 +176,5 @@ Relevant docs:
 docs/github-actions-vercel-deploy-fallback-plan.md
 docs/deploy-fallback-agent-autodeploy-protocol.md
 docs/deploy-fallback-branch-propagation-policy.md
+docs/deploy-version-check-protocol.md
 ```
