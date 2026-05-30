@@ -212,6 +212,60 @@ If this fails, first check production source-of-truth. Then patch the final move
 - Vercel deploys the root app after `main` is updated. Manual production deploys must be run only from this repository root.
 - Never deploy from `data/` or from a stale `reconcile-v2/` checkout.
 
+## GitHub Actions Deploy Fallback
+
+This repo has a production fallback workflow:
+
+```text
+.github/workflows/deploy-production.yml
+```
+
+Use it when Vercel auto-deploy does not trigger, production remains stale after push/merge, `/api/status` shows an old commit, or the user reports that live does not show completed changes.
+
+Do not ask Andrey to run a local terminal deploy until this fallback path has been attempted and diagnosed.
+
+Before fallback deploy, always prove:
+
+```text
+Repo: andylitvinov-design/finance
+Target ref: normally main
+Expected SHA: known commit SHA
+Changes: committed and pushed/merged
+Production URL: https://ezohata-incoming-ledger.vercel.app/
+Status URL: https://ezohata-incoming-ledger.vercel.app/api/status
+```
+
+Default command:
+
+```bash
+gh workflow run deploy-production.yml \
+  --ref main \
+  -f ref=main \
+  -f expected_sha=<expected_commit_sha> \
+  -f reason="fallback deploy after stale production"
+```
+
+Hard order:
+
+```text
+commit / push / merge first
+fallback deploy second
+production verification third
+```
+
+Never deploy uncommitted or unpushed changes. Never deploy an unknown ref. Never claim production is updated without checking production after deploy.
+
+After workflow completion, verify:
+
+```bash
+npm run verify:production -- <expected_commit_sha>
+```
+
+Also check `/api/status` and report the live commit/build metadata when available.
+
+Full local protocol: `docs/deploy-fallback.md`.
+Cross-project standard: `andylitvinov-design/active-projects-ops` docs.
+
 ## Verification Commands
 
 Run available checks and report exact results:
