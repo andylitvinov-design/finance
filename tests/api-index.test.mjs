@@ -2563,6 +2563,12 @@ test("GET getDashboardData marks PayPal rows as needs verification when provider
 });
 
 test("service payment diagnostics keep Wise grouped rows on movement same-date client channel totals", () => {
+  const movementHeader = new Array(25).fill("");
+  movementHeader[0] = "NUMBER";
+  movementHeader[1] = "DATE";
+  movementHeader[2] = "CLIENT";
+  movementHeader[20] = "ДОШЛО ДО НАС USD";
+  movementHeader[21] = "ДОШЛО ФАКТ / PROVIDER NET";
   const makeMovementRow = ({ number, date, client, expectedUsd, paymentMethod, clientPaidUsd = "", providerNetUsd = "" }) => {
     const row = new Array(25).fill("");
     row[0] = number;
@@ -2571,14 +2577,14 @@ test("service payment diagnostics keep Wise grouped rows on movement same-date c
     row[9] = String(expectedUsd);
     row[14] = paymentMethod;
     row[18] = String(clientPaidUsd);
-    row[20] = String(providerNetUsd);
+    row[21] = String(providerNetUsd);
     return row;
   };
 
   const movementValues = [
     ["header"],
     [""],
-    ["NUMBER", "DATE", "CLIENT"],
+    movementHeader,
     makeMovementRow({
       number: "18170",
       date: "2026-05-20",
@@ -2620,6 +2626,12 @@ test("service payment diagnostics keep Wise grouped rows on movement same-date c
 });
 
 test("order payment coverage allocates grouped payments and leaves only unsafe rows actionable", () => {
+  const movementHeader = new Array(25).fill("");
+  movementHeader[0] = "NUMBER";
+  movementHeader[1] = "DATE";
+  movementHeader[2] = "CLIENT";
+  movementHeader[20] = "ДОШЛО ДО НАС USD";
+  movementHeader[21] = "ДОШЛО ФАКТ / PROVIDER NET";
   const makeMovementRow = ({
     number,
     date,
@@ -2628,6 +2640,7 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
     expectedUsd,
     paymentMethod,
     clientPaidUsd = "",
+    netReceivedUsd = "",
     providerNetUsd = "",
     status = "",
     reviewNote = "",
@@ -2640,7 +2653,8 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
     row[9] = String(expectedUsd);
     row[14] = paymentMethod;
     row[18] = String(clientPaidUsd);
-    row[20] = String(providerNetUsd);
+    row[20] = String(netReceivedUsd);
+    row[21] = String(providerNetUsd);
     row[23] = status;
     row[24] = reviewNote;
     return row;
@@ -2648,7 +2662,7 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
   const movementValues = [
     ["header"],
     [""],
-    ["NUMBER", "DATE", "CLIENT"],
+    movementHeader,
     makeMovementRow({
       number: "18170",
       date: "2026-05-20",
@@ -2786,6 +2800,55 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
   assert.equal(coverageByChannel.summaryByChannel?.["пейпал дол"]?.coveredUsd, 113.3);
   assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.remainingUsd, 25.75);
   assert.deepEqual(coverageByChannel.actionableRows.map((row) => row.rowNumber), ["18170"]);
+});
+
+test("order payment coverage reads provider net from movement header alias, not net received column", () => {
+  const movementHeader = new Array(25).fill("");
+  movementHeader[0] = "NUMBER";
+  movementHeader[1] = "DATE";
+  movementHeader[2] = "CLIENT";
+  movementHeader[3] = "SERVICE";
+  movementHeader[9] = "ACCRUED +3%";
+  movementHeader[14] = "PAYMENT METHOD";
+  movementHeader[18] = "ОПЛАЧЕНО КЛИЕНТОМ USD";
+  movementHeader[20] = "ДОШЛО ДО НАС USD";
+  movementHeader[21] = "ДОШЛО ФАКТ / PROVIDER NET";
+
+  const row = new Array(25).fill("");
+  row[0] = "19001";
+  row[1] = "2026-05-05";
+  row[2] = "PayPal Client";
+  row[3] = "Order";
+  row[9] = "169.5";
+  row[14] = "пейпал дол";
+  row[20] = "169.5";
+  row[21] = "113.87";
+
+  const coverage = buildOrderPaymentCoverageReport([
+    ["header"],
+    [""],
+    movementHeader,
+    row,
+  ]);
+  const paypalRow = coverage.rows.find((candidate) => candidate.rowNumber === "19001");
+
+  assert.equal(movementHeader[20], "ДОШЛО ДО НАС USD");
+  assert.equal(movementHeader[21], "ДОШЛО ФАКТ / PROVIDER NET");
+  assert.equal(paypalRow?.providerNetUsd, 113.87);
+  assert.equal(paypalRow?.netReceivedUsd, 169.5);
+  assert.equal(paypalRow?.allocatedPaidUsd, 169.5);
+  assert.equal(coverage.summary.totalAllocatedToOrdersUsd, 169.5);
+  assert.equal(coverage.summaryByChannel?.["пейпал дол"]?.allocatedPaidUsd, 169.5);
+  assert.equal(coverage.summaryByChannel?.["пейпал дол"]?.coveredUsd, 169.5);
+
+  const actualPayments = buildActualPaymentSummaryByChannel(coverage.rows, {
+    realIncome: {
+      summaryByChannel: {
+        "пейпал дол": { realNetUsd: 113.87 },
+      },
+    },
+  });
+  assert.equal(actualPayments.summaryByChannel?.["пейпал дол"]?.actualPaidUsd, 113.87);
 });
 
 test("GET getDashboardData adds channel-level service payment gap diagnostics without changing service payment totals", async () => {
