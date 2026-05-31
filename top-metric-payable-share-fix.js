@@ -180,26 +180,32 @@
     }, 0);
   }
 
+  function firstNonZeroCandidate(candidates = []) {
+    for (const candidate of candidates) {
+      if (candidate === null || candidate === undefined || candidate === "") continue;
+      const total = parseMetricNumber(candidate);
+      if (Number.isFinite(total) && total !== 0) return total;
+    }
+    return null;
+  }
+
   function extractRemaindersClosingUsd(summary = {}) {
-    const candidates = [
-      summary?.totals?.closingUsd,
-      summary?.visibleUsdTotals?.closingUsd,
+    const canonicalTotal = firstNonZeroCandidate([
       summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd,
       summary?.periodReconciliation?.total_usd_row?.closing_usd,
       summary?.periodReconciliation?.total_usd_row?.end_usd,
       summary?.selectedDateSnapshot?.total_usd,
       summary?.selectedDateSnapshot?.closing_usd,
       summary?.selectedDateSnapshot?.confirmed_end_usd,
-    ];
-    for (const candidate of candidates) {
-      if (candidate === null || candidate === undefined || candidate === "") continue;
-      const total = parseMetricNumber(candidate);
-      if (Number.isFinite(total) && total !== 0) return total;
-    }
+      summary?.visibleUsdTotals?.closingUsd,
+    ]);
+    if (canonicalTotal !== null) return canonicalTotal;
+
     const selectedDateRowsTotal = sumSelectedDateSnapshotUsdRows(summary?.selectedDateSnapshot || {});
     if (Number.isFinite(selectedDateRowsTotal) && selectedDateRowsTotal !== 0) return selectedDateRowsTotal;
-    const fallback = parseMetricNumber(summary?.totals?.closingUsd ?? 0);
-    return Number.isFinite(fallback) ? fallback : 0;
+
+    const fallback = firstNonZeroCandidate([summary?.totals?.closingUsd]);
+    return fallback !== null ? fallback : 0;
   }
 
   function shouldFetchLiveRemainders(node) {
@@ -220,7 +226,7 @@
       .then((summary) => {
         if (requestId !== latestLiveRemaindersRequestId) return;
         const total = extractRemaindersClosingUsd(summary);
-        applyRemaindersTopCardTotal(node, total, "remaindersSummary.live.totals.closingUsd");
+        applyRemaindersTopCardTotal(node, total, "remaindersSummary.live.canonicalUsdClosing");
       })
       .catch((error) => {
         node.dataset.remaindersLiveError = String(error?.message || error).slice(0, 300);
@@ -243,7 +249,7 @@
       const summary = api.buildRemaindersSummary(root.state || {});
       const total = extractRemaindersClosingUsd(summary);
       if (Number.isFinite(total) && (total !== 0 || (summary?.rows || []).length > 0)) {
-        updated = applyRemaindersTopCardTotal(node, total, "remaindersSummary.local.totals.closingUsd") || updated;
+        updated = applyRemaindersTopCardTotal(node, total, "remaindersSummary.local.canonicalUsdClosing") || updated;
       }
     }
 
@@ -342,6 +348,7 @@
     applyRemaindersTopCardTotal,
     pickFirstNumber,
     sumSelectedDateSnapshotUsdRows,
+    firstNonZeroCandidate,
     extractRemaindersClosingUsd,
     refreshRemaindersTopCardFromLive,
     syncPayableTopCardFromDom,
