@@ -1,6 +1,6 @@
 // config.js — все настройки проекта в одном месте
 
-const APP_BUILD_VERSION = "2026.04.30.1";
+const APP_BUILD_VERSION = "2026.05.31.1";
 const FILE_PROTOCOL_DASHBOARD_ORIGIN = "https://ezohata-incoming-ledger.vercel.app";
 const URL_PARAMS = new URLSearchParams(location.search);
 const MANUAL_INCOMING_TITLE = "fact";
@@ -69,7 +69,7 @@ const DEFAULT_MANUAL_CHANNEL_MAP = MANUAL_LEDGER_CONTRACT.CHANNEL_MAP || {
   "пейпал сad": ["paypal cad", "пейпал cad", "пейпал сad"],
   "приват 24-дол": ["privat usd", "privat 24 usd", "приват 24 дол"],
   "приват 24-евро": ["privat eur", "privat 24 eur", "приват 24 евро"],
-  "приват-фоп": ["приват фоп", "фоп приват", "privat fop", "privat24 fop", "privat 24 fop", "privat fop uah", "приват24 фоп", "приват 24 фоп"],
+  "приват-фоп": ["приват фоп", "фоп приват", "privat fop", "privat24 fop", "приват 24 фоп", "privat fop uah", "приват24 фоп", "приват 24 фоп"],
   "приват 24-грн": ["приват", "privat", "privat 24", "приват 24", "приват грн", "privat 24 грн", "privat 24 uah"],
   "монобанк грн": ["монобанк", "monobank", "mono", "монобанк грн", "monobank uah", "mono uah"],
   "трансервайз дол": ["wise usd", "transferwise usd"],
