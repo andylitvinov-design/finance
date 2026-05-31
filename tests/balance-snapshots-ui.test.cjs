@@ -252,8 +252,52 @@ test("balance snapshots UI labels selected, auto, and confirmed balances distinc
   const autoRows = textRows(tables[1]);
   const confirmedRows = textRows(tables[2]);
 
+  assert.equal(findByClass(section, "balance-snapshots-diagnostics").length, 1);
+  assert.match(section.textContent, /Raw auto\/confirmed rows are diagnostic only/);
   assert.deepEqual(selectedRows[0], ["Дата", "Канал", "Валюта", "Выбранный остаток", "Выбран из", "Статус"]);
   assert.deepEqual(selectedRows[1], ["2026-04-01", "wise usd", "USD", "120", "confirmed", "confirmed"]);
   assert.deepEqual(autoRows[0], ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"]);
   assert.deepEqual(confirmedRows[0], ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"]);
+});
+
+test("balance snapshots UI uses selected rows for the main balance table and keeps stale raw auto rows diagnostic-only", () => {
+  const context = createContext();
+  const section = context.window.EzohataBalanceSnapshotsUi.renderInventory({
+    balance_snapshots: {
+      dates: ["2026-05-28", "2026-05-31"],
+      valid_rows: 4,
+      incomplete_rows: 0,
+      by_channel_currency: [],
+      input_rows: [],
+      selected_rows: [
+        { date: "2026-05-28", channel: "binance save", currency: "USD", amount: 7432, selected_from: "confirmed", source_sheet: "Остатки", status: "confirmed" },
+        { date: "2026-05-28", channel: "Бинанс spot", currency: "USD", amount: 1162, selected_from: "confirmed", source_sheet: "Остатки", status: "confirmed" },
+        { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 10538, selected_from: "confirmed", source_sheet: "Остатки", status: "confirmed" },
+        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: 1333, selected_from: "confirmed", source_sheet: "Остатки", status: "confirmed" },
+      ],
+      auto_balance_rows: [
+        { date: "2026-05-31", channel: "binance save", currency: "USD", amount: 7425, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+        { date: "2026-05-31", channel: "Бинанс spot", currency: "USD", amount: 1689, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+        { date: "2026-05-31", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: 345, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+        { date: "2026-05-31", channel: "БАНК КАНАДА cad CAD", currency: "CAD", amount: 7351, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
+      ],
+    },
+  });
+
+  const tables = section.querySelectorAll("table");
+  const mainRowsText = JSON.stringify(textRows(tables[0]));
+  const diagnosticsText = findByClass(section, "balance-snapshots-diagnostics")[0].textContent;
+
+  assert.match(mainRowsText, /7432/);
+  assert.match(mainRowsText, /1162/);
+  assert.match(mainRowsText, /10538/);
+  assert.match(mainRowsText, /1333/);
+  assert.doesNotMatch(mainRowsText, /7425/);
+  assert.doesNotMatch(mainRowsText, /1689/);
+  assert.doesNotMatch(mainRowsText, /legacy_combined_binance_spot_funding/);
+  assert.doesNotMatch(mainRowsText, /7351/);
+  assert.match(diagnosticsText, /7425/);
+  assert.match(diagnosticsText, /1689/);
+  assert.match(diagnosticsText, /legacy_combined_binance_spot_funding/);
+  assert.match(diagnosticsText, /7351/);
 });
