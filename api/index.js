@@ -55,6 +55,13 @@ const CLIENT_PAID_COLUMN_HEADER = "ОПЛАЧЕНО КЛИЕНТОМ USD";
 const PAYMENT_FEE_COLUMN_HEADER = "КОМИССИЯ ПРОВАЙДЕРА USD";
 const NET_RECEIVED_COLUMN_HEADER = "ДОШЛО ДО НАС USD";
 const REAL_INCOME_COLUMN_HEADER = "ДОШЛО ФАКТ / PROVIDER NET";
+const PROVIDER_NET_COLUMN_ALIASES = [
+  REAL_INCOME_COLUMN_HEADER,
+  "PROVIDER NET",
+  "NET RECEIVED USD",
+  "realNetUsd",
+  "providerNetUsd",
+];
 const REAL_INCOME_CHANNELS = [
   "Яндекс руб",
   "пейпал дол",
@@ -411,6 +418,7 @@ async function maybeOverlayFreshSourceData(data) {
     });
     const orderPaymentCoverage = buildOrderPaymentCoverageReport(enrichedMovement.values, {
       providerEntries: realIncome?.candidateIncomeEntries || [],
+      transfers: data.manual?.transfers || [],
     });
     const actualPayments = buildActualPaymentSummaryByChannel(orderPaymentCoverage.rows, { realIncome });
     const movementWarnings = collectMovementVerificationWarnings(enrichedMovement.values);
@@ -536,6 +544,7 @@ async function maybeOverlayManualRepositoryData(data, requestParams = {}) {
     ? rebuildServicePaymentGapDiagnostics(nextRealIncome, data.tabs?.movement?.values || [], {
         ledgerOperations: periodOperations,
         period,
+        transfers: nextManual.transfers || [],
       })
     : null;
 
@@ -802,6 +811,14 @@ function normalizeSummaryText(value) {
 function findHeaderIndexByAliases(header, aliases) {
   const normalizedAliases = new Set((aliases || []).map((alias) => normalizeSummaryText(alias)));
   return (header || []).findIndex((cell) => normalizedAliases.has(normalizeSummaryText(cell)));
+}
+
+function getMovementProviderNetIndex(header = []) {
+  return findHeaderIndexByAliases(header, PROVIDER_NET_COLUMN_ALIASES);
+}
+
+function getMovementNetReceivedIndex(header = []) {
+  return findHeaderIndexByAliases(header, [NET_RECEIVED_COLUMN_HEADER]);
 }
 
 function buildFreshPayoutsTableFromRows(rows, period) {
@@ -1242,6 +1259,7 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
     providerEntries: realIncome?.candidateIncomeEntries || realIncome?.entries || [],
     ledgerOperations: options.ledgerOperations || [],
     period: options.period || {},
+    transfers: options.transfers || [],
   });
   const actualPayments = buildActualPaymentSummaryByChannel(orderPaymentCoverage.rows, { realIncome });
   return {
@@ -1257,6 +1275,9 @@ function rebuildServicePaymentGapDiagnostics(realIncome = {}, movementValues = [
 }
 
 export function buildOrderPaymentCoverageReport(movementValues = [], options = {}) {
+  const header = movementValues?.[2] || [];
+  const netReceivedIndex = getMovementNetReceivedIndex(header);
+  const providerNetIndex = getMovementProviderNetIndex(header);
   const dataRows = (movementValues || [])
     .slice(3)
     .filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
@@ -1267,9 +1288,10 @@ export function buildOrderPaymentCoverageReport(movementValues = [], options = {
     period: options.period || {},
   });
   const candidates = dataRows
-    .map((row) => buildOrderPaymentCoverageCandidate(row))
+    .map((row) => buildOrderPaymentCoverageCandidate(row, { netReceivedIndex, providerNetIndex }))
     .filter((row) => row.accruedPlus3Usd > 0);
-  const allocationByRowNumber = allocateOrderPaymentCoverageRows(candidates, providerGroupTotals);
+  const transferConfirmationByRowNumber = buildOrderPaymentTransferConfirmationMap(candidates, options.transfers || []);
+  const allocationByRowNumber = allocateOrderPaymentCoverageRows(candidates, providerGroupTotals, transferConfirmationByRowNumber);
   const rows = candidates.map((candidate) => buildOrderPaymentCoverageRow(candidate, allocationByRowNumber.get(candidate.rowNumber)));
   const summary = rows.reduce((totals, row) => {
     const excluded = row.status === "excluded";
@@ -1403,6 +1425,7 @@ export function buildCoverageSummaryByChannel(coverageRows = []) {
 
 function isIncludedOrderPaymentCoverageRow(row = {}) {
   if (row.status === "excluded") return false;
+  if (row.source === "transfer_confirmed" || row.source === "direct_to_transfers") return true;
   const text = normalizeLookupText([
     row.service,
     row.paymentMethod,
@@ -1417,21 +1440,24 @@ function isActionableOrderPaymentCoverageRow(row = {}) {
     ["needs verification", "no payment", "underpaid"].includes(String(row.status || "").trim().toLowerCase());
 }
 
-function buildOrderPaymentCoverageCandidate(row = []) {
+function buildOrderPaymentCoverageCandidate(row = [], options = {}) {
   const accruedPlus3Usd = parseLooseNumber(row?.[9]) || 0;
   const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
-  const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
+  const netReceivedUsd = options.netReceivedIndex >= 0 ? (parseLooseNumber(row?.[options.netReceivedIndex]) || 0) : 0;
+  const providerNetUsd = options.providerNetIndex >= 0 ? (parseLooseNumber(row?.[options.providerNetIndex]) || 0) : 0;
   const paymentMethod = String(row?.[14] || "").trim();
   const date = normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim();
   const channel = getOrderPaymentCoverageChannel(row);
   const safeDirectAmountUsd = getOrderPaymentCoverageDirectAmount(row, {
     clientPaidUsd,
+    netReceivedUsd,
     providerNetUsd,
     paymentMethod,
   });
   const reason = getServicePaymentGapReason(row, {
     expectedUsd: accruedPlus3Usd,
     clientPaidUsd,
+    netReceivedUsd,
     providerNetUsd,
     includedAmountUsd: safeDirectAmountUsd,
     includedByCurrentSummary: safeDirectAmountUsd > 0,
@@ -1446,6 +1472,7 @@ function buildOrderPaymentCoverageCandidate(row = []) {
     paymentMethod,
     channel,
     clientPaidUsd,
+    netReceivedUsd,
     providerNetUsd,
     safeDirectAmountUsd,
     reason,
@@ -1457,10 +1484,15 @@ function buildOrderPaymentCoverageCandidate(row = []) {
   };
 }
 
-function allocateOrderPaymentCoverageRows(candidates = [], providerGroupTotals = new Map()) {
+function allocateOrderPaymentCoverageRows(candidates = [], providerGroupTotals = new Map(), transferConfirmationByRowNumber = new Map()) {
   const output = new Map();
   const groups = new Map();
   for (const candidate of candidates) {
+    const transferConfirmation = transferConfirmationByRowNumber.get(candidate.rowNumber);
+    if (transferConfirmation) {
+      output.set(candidate.rowNumber, buildOrderPaymentTransferAllocation(candidate, transferConfirmation));
+      continue;
+    }
     if (!candidate.groupKey) {
       output.set(candidate.rowNumber, buildOrderPaymentDirectAllocation(candidate));
       continue;
@@ -1475,7 +1507,7 @@ function allocateOrderPaymentCoverageRows(candidates = [], providerGroupTotals =
       output.set(group[0].rowNumber, buildOrderPaymentDirectAllocation(group[0]));
       continue;
     }
-    const rowPaidUsd = roundNumber(group.reduce((sum, row) => sum + Math.max(row.providerNetUsd || 0, row.clientPaidUsd || 0), 0));
+    const rowPaidUsd = roundNumber(group.reduce((sum, row) => sum + Math.max(row.netReceivedUsd || 0, row.clientPaidUsd || 0), 0));
     const providerPaidUsd = roundNumber(providerGroupTotals.get(group[0].providerGroupKey) || 0);
     const useProviderPaid = providerPaidUsd > 0 && group.some((row) => row.needsProviderNet);
     const groupPaidUsd = useProviderPaid ? providerPaidUsd : rowPaidUsd;
@@ -1510,7 +1542,20 @@ function buildOrderPaymentDirectAllocation(candidate) {
   }
   return {
     allocatedPaidUsd: candidate.safeDirectAmountUsd,
-    allocationSource: candidate.providerNetUsd > 0 ? "provider net" : "direct row",
+    allocationSource: candidate.netReceivedUsd > 0 ? "movement net received" : (candidate.providerNetUsd > 0 ? "provider net" : "direct row"),
+  };
+}
+
+function buildOrderPaymentTransferAllocation(candidate, confirmation = {}) {
+  const confirmedUsd = roundNumber(Math.min(
+    Number(candidate.accruedPlus3Usd || 0),
+    Number(confirmation.amountUsd || 0),
+  ));
+  return {
+    allocatedPaidUsd: confirmedUsd,
+    allocationSource: confirmation.source || "transfer_confirmed",
+    source: confirmation.source || "transfer_confirmed",
+    confirmationNote: buildOrderPaymentTransferConfirmationNote(confirmation),
   };
 }
 
@@ -1532,8 +1577,18 @@ function buildOrderPaymentCoverageRow(candidate, allocation = {}) {
     allocationSource: allocation.allocationSource || "none",
     remainingUsd,
     status,
-    reviewNote: candidate.reviewNote || candidate.reason || "",
+    source: allocation.source || "",
+    netReceivedUsd: roundNumber(candidate.netReceivedUsd),
+    providerNetUsd: roundNumber(candidate.providerNetUsd),
+    reviewNote: getOrderPaymentCoverageReviewNote(candidate, allocation),
   };
+}
+
+function getOrderPaymentCoverageReviewNote(candidate, allocation = {}) {
+  if (allocation.source === "transfer_confirmed" || allocation.source === "direct_to_transfers") {
+    return allocation.confirmationNote || allocation.source;
+  }
+  return candidate.reviewNote || candidate.reason || "";
 }
 
 function getOrderPaymentCoverageStatus(candidate, { allocatedPaidUsd = 0, remainingUsd = 0 } = {}) {
@@ -1545,7 +1600,8 @@ function getOrderPaymentCoverageStatus(candidate, { allocatedPaidUsd = 0, remain
   return "covered";
 }
 
-function getOrderPaymentCoverageDirectAmount(row = [], { clientPaidUsd = 0, providerNetUsd = 0, paymentMethod = "" } = {}) {
+function getOrderPaymentCoverageDirectAmount(row = [], { clientPaidUsd = 0, netReceivedUsd = 0, providerNetUsd = 0, paymentMethod = "" } = {}) {
+  if (netReceivedUsd > 0) return netReceivedUsd;
   if (providerNetUsd > 0) return providerNetUsd;
   if (isExplicitNoFeeDirectPayment(paymentMethod)) return clientPaidUsd;
   if (isMovementServicePaymentRow(row) && clientPaidUsd > 0 && !/paypal|п(?:ей|эй)п|пейпал/i.test(paymentMethod)) return clientPaidUsd;
@@ -1562,6 +1618,114 @@ function getOrderPaymentCoverageChannel(row = []) {
   return "";
 }
 
+function buildOrderPaymentTransferConfirmationMap(candidates = [], transfers = []) {
+  const matches = new Map();
+  const normalizedTransfers = normalizeOrderPaymentTransferRows(transfers);
+  if (!normalizedTransfers.length) return matches;
+  const usedKeys = new Set();
+  for (const candidate of candidates || []) {
+    const match = findOrderPaymentTransferConfirmation(candidate, normalizedTransfers, usedKeys);
+    if (!match) continue;
+    matches.set(candidate.rowNumber, match);
+    usedKeys.add(match.matchKey);
+  }
+  return matches;
+}
+
+function normalizeOrderPaymentTransferRows(transfers = []) {
+  return (transfers || []).map((row) => {
+    const date = normalizeIsoDate(row?.transferDate || row?.date);
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    const explicitUsd = firstPositiveLooseNumber([row?.usdAmount, row?.amountUsd, row?.amount_usd]);
+    const amount = parseLooseNumber(row?.amount);
+    const amountUsd = explicitUsd > 0
+      ? explicitUsd
+      : (currency === "USD" && amount !== null ? Math.abs(amount) : 0);
+    const channel = String(row?.channel || row?.destination || row?.toAccount || "").trim();
+    const who = String(row?.who || row?.fromAccount || row?.comment || "").trim();
+    return {
+      date,
+      channel,
+      normalizedChannel: normalizeLookupText(channel),
+      who,
+      normalizedWho: normalizeLookupText(who),
+      amountUsd: roundNumber(Math.abs(amountUsd || 0)),
+      rawSourceId: String(row?.raw_source_id || row?.rawSourceId || row?.sourceTransactionId || "").trim(),
+      comment: String(row?.comment || "").trim(),
+    };
+  }).filter((row) => row.date && row.amountUsd > 0);
+}
+
+function findOrderPaymentTransferConfirmation(candidate, normalizedTransfers = [], usedKeys = new Set()) {
+  if (!isTransferConfirmableOrderPaymentCandidate(candidate)) return null;
+  const expectedUsd = roundNumber(candidate.accruedPlus3Usd || 0);
+  if (expectedUsd <= 0) return null;
+  const normalizedClient = normalizeLookupText(candidate.client);
+  const normalizedChannel = normalizeLookupText(candidate.channel || candidate.paymentMethod);
+  const matches = normalizedTransfers
+    .filter((transfer) => {
+      const matchKey = transfer.rawSourceId || `${transfer.date}|${transfer.normalizedWho}|${transfer.amountUsd}|${transfer.normalizedChannel}`;
+      if (usedKeys.has(matchKey)) return false;
+      if (Math.abs(transfer.amountUsd - expectedUsd) > 0.05) return false;
+      const dayOffset = getIsoDateDiffDays(candidate.date, transfer.date);
+      if (dayOffset === null || Math.abs(dayOffset) > 2) return false;
+      if (!doesOrderPaymentTransferClientMatch(normalizedClient, transfer.normalizedWho)) return false;
+      if (!doesOrderPaymentTransferChannelMatch(normalizedChannel, transfer.normalizedChannel, transfer.comment)) return false;
+      return true;
+    })
+    .map((transfer) => {
+      const dayOffset = getIsoDateDiffDays(candidate.date, transfer.date) || 0;
+      const matchKey = transfer.rawSourceId || `${transfer.date}|${transfer.normalizedWho}|${transfer.amountUsd}|${transfer.normalizedChannel}`;
+      return {
+        ...transfer,
+        dayOffset,
+        matchKey,
+      };
+    })
+    .sort((left, right) => Math.abs(left.dayOffset) - Math.abs(right.dayOffset));
+  const bestMatch = matches[0];
+  if (!bestMatch) return null;
+  return {
+    ...bestMatch,
+    source: isDirectToTransfersOrderPaymentCandidate(candidate) ? "direct_to_transfers" : "transfer_confirmed",
+  };
+}
+
+function isTransferConfirmableOrderPaymentCandidate(candidate = {}) {
+  return isWiseLikeOrderPaymentChannel(candidate.channel || candidate.paymentMethod);
+}
+
+function isDirectToTransfersOrderPaymentCandidate(candidate = {}) {
+  return /(ковалев|kovalev)/.test(normalizeLookupText(candidate.client)) &&
+    isWiseLikeOrderPaymentChannel(candidate.channel || candidate.paymentMethod);
+}
+
+function isWiseLikeOrderPaymentChannel(value = "") {
+  return /(wise|transferwise|трансервайз)/.test(normalizeLookupText(value));
+}
+
+function doesOrderPaymentTransferClientMatch(normalizedClient = "", normalizedWho = "") {
+  if (!normalizedClient || !normalizedWho) return false;
+  return normalizedWho.includes(normalizedClient) || normalizedClient.includes(normalizedWho);
+}
+
+function doesOrderPaymentTransferChannelMatch(normalizedChannel = "", normalizedTransferChannel = "", comment = "") {
+  const text = normalizeLookupText([normalizedTransferChannel, comment].filter(Boolean).join(" "));
+  if (normalizedChannel && normalizedTransferChannel && normalizedTransferChannel.includes(normalizedChannel)) return true;
+  if (normalizedChannel === normalizeLookupText("трансервайз дол") && /wise|transferwise|трансервайз/.test(text)) return true;
+  return false;
+}
+
+function buildOrderPaymentTransferConfirmationNote(confirmation = {}) {
+  return joinReviewParts([
+    confirmation.source || "transfer_confirmed",
+    confirmation.date ? `matched transfer ${confirmation.date}` : "",
+    confirmation.amountUsd > 0 ? `${formatDisplayNumber(confirmation.amountUsd)} USD` : "",
+    confirmation.dayOffset ? `${confirmation.dayOffset > 0 ? "+" : ""}${confirmation.dayOffset}d` : "",
+    confirmation.rawSourceId || "",
+  ]);
+}
+
 function getOrderPaymentCoverageGroupKey({ date, client, paymentMethod, channel } = {}) {
   const normalizedDate = normalizeIsoDate(date);
   const normalizedClient = normalizeLookupText(client);
@@ -1575,8 +1739,21 @@ function compareOrderPaymentCoverageCandidates(left, right) {
   return left.rowNumber.localeCompare(right.rowNumber, "en", { numeric: true });
 }
 
+function getIsoDateDiffDays(left, right) {
+  const leftDate = normalizeIsoDate(left);
+  const rightDate = normalizeIsoDate(right);
+  if (!leftDate || !rightDate) return null;
+  const leftTime = Date.parse(`${leftDate}T00:00:00Z`);
+  const rightTime = Date.parse(`${rightDate}T00:00:00Z`);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return null;
+  return Math.round((rightTime - leftTime) / 86400000);
+}
+
 export function buildServicePaymentGapDiagnostics(movementValues = [], servicePaymentSummaryByChannel = {}, options = {}) {
   const diagnosticsByChannel = new Map();
+  const header = movementValues?.[2] || [];
+  const netReceivedIndex = getMovementNetReceivedIndex(header);
+  const providerNetIndex = getMovementProviderNetIndex(header);
   const dataRows = (movementValues || []).slice(3).filter((row) => /^\d+$/.test(String(row?.[0] || "").trim()));
   const providerGroupTotals = buildServicePaymentProviderGroupTotals({
     providerEntries: options.providerEntries || [],
@@ -1588,7 +1765,7 @@ export function buildServicePaymentGapDiagnostics(movementValues = [], servicePa
 
   for (const row of dataRows) {
     if (isKovalevWiseBoleslavMovementRow({ client: row?.[2], paymentMethod: row?.[14] })) continue;
-    candidates.push(buildServicePaymentGapCandidate(row));
+    candidates.push(buildServicePaymentGapCandidate(row, { netReceivedIndex, providerNetIndex }));
   }
 
   const allocatedRowNumbers = allocateGroupedServicePaymentDiagnostics(candidates, diagnosticsByChannel, providerGroupTotals);
@@ -1645,17 +1822,19 @@ export function buildServicePaymentGapDiagnostics(movementValues = [], servicePa
   };
 }
 
-function buildServicePaymentGapCandidate(row = []) {
+function buildServicePaymentGapCandidate(row = [], options = {}) {
   const expectedUsd = parseLooseNumber(row?.[9]) || 0;
   const clientPaidUsd = parseLooseNumber(row?.[18]) || 0;
-  const providerNetUsd = parseLooseNumber(row?.[20]) || 0;
+  const netReceivedUsd = options.netReceivedIndex >= 0 ? (parseLooseNumber(row?.[options.netReceivedIndex]) || 0) : 0;
+  const providerNetUsd = options.providerNetIndex >= 0 ? (parseLooseNumber(row?.[options.providerNetIndex]) || 0) : 0;
   const includedByCurrentSummary = isMovementServicePaymentRow(row);
   const includedAmountUsd = includedByCurrentSummary
-    ? (providerNetUsd > 0 ? providerNetUsd : clientPaidUsd)
+    ? (netReceivedUsd > 0 ? netReceivedUsd : clientPaidUsd)
     : 0;
   const reason = getServicePaymentGapReason(row, {
     expectedUsd,
     clientPaidUsd,
+    netReceivedUsd,
     providerNetUsd,
     includedAmountUsd,
     includedByCurrentSummary,
@@ -1664,7 +1843,7 @@ function buildServicePaymentGapCandidate(row = []) {
   const date = normalizeDisplayDate(row?.[1]) || String(row?.[1] || "").trim();
   const client = String(row?.[2] || "").trim();
   const paymentMethod = String(row?.[14] || "").trim();
-  const groupPaidUsd = providerNetUsd > 0 ? providerNetUsd : clientPaidUsd;
+  const groupPaidUsd = netReceivedUsd > 0 ? netReceivedUsd : clientPaidUsd;
   return {
     row,
     rowNumber: String(row?.[0] || "").trim(),
@@ -1674,6 +1853,7 @@ function buildServicePaymentGapCandidate(row = []) {
     channel,
     expectedUsd,
     clientPaidUsd,
+    netReceivedUsd,
     providerNetUsd,
     includedAmountUsd,
     groupPaidUsd,
@@ -3218,6 +3398,15 @@ function parseLooseNumber(value) {
   if (!normalized) return null;
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function firstPositiveLooseNumber(values = []) {
+  for (const value of values || []) {
+    const numeric = parseLooseNumber(value);
+    if (numeric === null || numeric <= 0) continue;
+    return Math.abs(numeric);
+  }
+  return 0;
 }
 
 function normalizeNumberCell(value) {
