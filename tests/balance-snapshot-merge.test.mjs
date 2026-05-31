@@ -138,3 +138,70 @@ test("existing Остатки balance row suppresses same-key auto fallback row"
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].sourceSheet, "Остатки");
 });
+
+test("later derived auto rows do not override latest owner-confirmed balance by canonical key", () => {
+  const result = mergeManualAndAutoBalances(
+    [
+      { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", source: "manual_fact", sourceSheet: "Остатки" },
+      { date: "2026-05-28", channel: "binance save", currency: "USD", amount: "7432", source: "manual_fact", sourceSheet: "Остатки" },
+      { date: "2026-05-28", channel: "Бинанс spot", currency: "USD", amount: "1162", source: "manual_fact", sourceSheet: "Остатки" },
+    ],
+    [
+      {
+        date: "2026-05-31",
+        channel: "БАНК КАНАДА cad CAD",
+        currency: "CAD",
+        amount: "7351",
+        source: "provider_auto",
+        status: "derived_from_confirmed_balance",
+        sourceSheet: "Авто Остатки",
+      },
+      {
+        date: "2026-05-31",
+        channel: "binance save",
+        currency: "USD",
+        amount: "7425",
+        source: "provider_auto",
+        status: "derived_from_confirmed_balance",
+        sourceSheet: "Авто Остатки",
+      },
+      {
+        date: "2026-05-31",
+        channel: "Binance spot",
+        currency: "USD",
+        amount: "1689",
+        source: "provider_auto",
+        status: "derived_from_confirmed_balance",
+        sourceSheet: "Авто Остатки",
+      },
+    ]
+  );
+
+  assert.equal(result.autoIgnored, 3);
+  assert.deepEqual(result.rows.map((row) => `${row.date}|${row.channel}|${row.currency}|${row.amount}`).sort(), [
+    "2026-05-28|binance save|USD|7432",
+    "2026-05-28|БАНК КАНАДА cad|CAD|10538",
+    "2026-05-28|Бинанс spot|USD|1162",
+  ]);
+});
+
+test("retired legacy combined Binance derived row is not selected as auto fallback", () => {
+  const result = mergeManualAndAutoBalances(
+    [],
+    [
+      {
+        date: "2026-05-31",
+        channel: "legacy_combined_binance_spot_funding",
+        currency: "USDT",
+        amount: "345",
+        source: "provider_auto",
+        status: "derived_from_confirmed_balance",
+        sourceSheet: "Авто Остатки",
+      },
+    ]
+  );
+
+  assert.equal(result.autoIgnored, 1);
+  assert.equal(result.autoUsed, 0);
+  assert.deepEqual(result.rows, []);
+});
