@@ -142,14 +142,58 @@
     return true;
   }
 
+  function pickFirstNumber(row, fields = []) {
+    for (const field of fields) {
+      const raw = row?.[field];
+      if (raw === null || raw === undefined || raw === "") continue;
+      const parsed = parseMetricNumber(raw);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  }
+
+  function sumSelectedDateSnapshotUsdRows(snapshot = {}) {
+    const rows = Array.isArray(snapshot?.selected_date_rows) ? snapshot.selected_date_rows : [];
+    return rows.reduce((sum, row) => {
+      const explicitUsd = pickFirstNumber(row, [
+        "amount_usd",
+        "balance_usd",
+        "closing_amount_usd",
+        "closingUsd",
+        "end_amount_usd",
+        "endUsd",
+        "confirmed_end_usd",
+      ]);
+      if (explicitUsd !== null) return sum + explicitUsd;
+      const currency = String(row?.currency || row?.balance_currency || row?.account_currency || "").trim().toUpperCase();
+      if (currency === "USD" || currency === "USDT" || currency === "USDC") {
+        const amount = pickFirstNumber(row, ["amount", "balance", "closing_amount", "closing", "value"]);
+        if (amount !== null) return sum + amount;
+      }
+      return sum;
+    }, 0);
+  }
+
   function extractRemaindersClosingUsd(summary = {}) {
-    const total = Number(
-      summary?.totals?.closingUsd ??
-      summary?.visibleUsdTotals?.closingUsd ??
-      summary?.selectedDateSnapshot?.total_usd ??
-      0
-    );
-    return Number.isFinite(total) ? total : 0;
+    const candidates = [
+      summary?.totals?.closingUsd,
+      summary?.visibleUsdTotals?.closingUsd,
+      summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd,
+      summary?.periodReconciliation?.total_usd_row?.closing_usd,
+      summary?.periodReconciliation?.total_usd_row?.end_usd,
+      summary?.selectedDateSnapshot?.total_usd,
+      summary?.selectedDateSnapshot?.closing_usd,
+      summary?.selectedDateSnapshot?.confirmed_end_usd,
+    ];
+    for (const candidate of candidates) {
+      if (candidate === null || candidate === undefined || candidate === "") continue;
+      const total = parseMetricNumber(candidate);
+      if (Number.isFinite(total) && total !== 0) return total;
+    }
+    const selectedDateRowsTotal = sumSelectedDateSnapshotUsdRows(summary?.selectedDateSnapshot || {});
+    if (Number.isFinite(selectedDateRowsTotal) && selectedDateRowsTotal !== 0) return selectedDateRowsTotal;
+    const fallback = parseMetricNumber(summary?.totals?.closingUsd ?? 0);
+    return Number.isFinite(fallback) ? fallback : 0;
   }
 
   function shouldFetchLiveRemainders(node) {
@@ -290,6 +334,8 @@
     getPersonalOrdersGross,
     updatePersonalOrdersBadge,
     applyRemaindersTopCardTotal,
+    pickFirstNumber,
+    sumSelectedDateSnapshotUsdRows,
     extractRemaindersClosingUsd,
     refreshRemaindersTopCardFromLive,
     syncPayableTopCardFromDom,
