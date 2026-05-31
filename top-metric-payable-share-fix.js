@@ -47,6 +47,10 @@
     );
   }
 
+  function hasOwn(object, key) {
+    return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+  }
+
   function buildOrdersPaymentSummary(summary = {}) {
     const ordersAccruedWithPercent = parseMetricNumber(
       summary.ordersAccruedWithPercent ??
@@ -57,7 +61,9 @@
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
     const myOrdersGross = getPersonalOrdersGross(summary);
     const ordersPayableShare = ordersAccruedWithPercent * PAYABLE_ORDER_SHARE_RATE;
-    const totalAccrued = ordersPayableShare + myOrdersDiscounted;
+    const totalAccrued = hasOwn(summary, "totalAccrued")
+      ? parseMetricNumber(summary.totalAccrued)
+      : ordersAccruedWithPercent + myOrdersDiscounted;
     const remainingToPay = totalAccrued - totalPaid;
     const percentRate = parseMetricNumber(summary.percentRate || DEFAULT_PERCENT_RATE);
     return {
@@ -71,7 +77,7 @@
       totalPaid,
       remainingToPay,
       payable: remainingToPay,
-      payableFormula: "ordersAccruedWithPercent * 0.7 + myOrdersDiscounted - abs(totalPaid)"
+      payableFormula: "totalAccrued - abs(totalPaid)"
     };
   }
 
@@ -111,11 +117,11 @@
     const totalPaid = Math.abs(getMetricNumber("metricBalances"));
     const myOrdersDiscounted = getMetricNumber("metricPersonalOrdersAfterDiscount");
     if (!ordersAccruedWithPercent && !totalPaid && !myOrdersDiscounted) return false;
-    const value = ordersAccruedWithPercent * PAYABLE_ORDER_SHARE_RATE + myOrdersDiscounted - totalPaid;
+    const value = ordersAccruedWithPercent + myOrdersDiscounted - totalPaid;
     const nextText = formatMetricNumber(value);
     if (node.textContent === nextText) return false;
     node.textContent = nextText;
-    node.dataset.payableFormula = "ordersAccruedWithPercent * 0.7 + personalOrdersAfterDiscount - totalPaid";
+    node.dataset.payableFormula = "ordersAccruedWithPercent + personalOrdersAfterDiscount - totalPaid";
     node.dataset.totalPaidSource = "metricBalances";
     return true;
   }

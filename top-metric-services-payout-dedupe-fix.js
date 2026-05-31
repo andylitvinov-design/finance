@@ -158,25 +158,7 @@
   }
 
   function patchTopMetricsServicesMe() {
-    if (typeof root.buildTopMetricsSummary !== "function" || root.buildTopMetricsSummary.__servicesMeTopMetricPatched) return false;
-    const original = root.buildTopMetricsSummary;
-    const patched = function buildTopMetricsSummaryWithServicesMe(...args) {
-      const metrics = original.apply(this, args) || {};
-      const servicesMeTotal = getServicesMeTotal();
-      const currentServices = parseNumber(metrics.myServices);
-      if (!servicesMeTotal || currentServices >= servicesMeTotal - 0.0001) return metrics;
-      const delta = servicesMeTotal - currentServices;
-      return {
-        ...metrics,
-        myServices: servicesMeTotal,
-        profit: parseNumber(metrics.profit) + delta,
-        servicesMeTopMetricRestored: true,
-      };
-    };
-    patched.__servicesMeTopMetricPatched = true;
-    patched.__original = original;
-    root.buildTopMetricsSummary = patched;
-    return true;
+    return false;
   }
 
   function syncServicesBadgeFromSummary() {
@@ -184,16 +166,18 @@
     const summary = root.buildTopMetricsSummary();
     const node = root.document?.getElementById?.("metricMyServices");
     if (!node) return false;
-    const value = parseNumber(summary.myServices);
+    const summaryValue = parseNumber(summary.myServices);
+    const servicesMeTotal = getServicesMeTotal();
+    const restoredFromLedger = !summaryValue && Boolean(servicesMeTotal);
+    const value = summaryValue || servicesMeTotal;
     if (!value) return false;
     node.textContent = `Мои услуги: ${formatNumber(value)}`;
-    node.dataset.displaySource = summary.servicesMeTopMetricRestored ? "services_me_ledger" : "buildTopMetricsSummary.myServices";
+    node.dataset.displaySource = restoredFromLedger ? "services_me_ledger" : "buildTopMetricsSummary.myServices";
     return true;
   }
 
   function install() {
     patchPayoutTransferTotal();
-    patchTopMetricsServicesMe();
     root.setTimeout?.(syncServicesBadgeFromSummary, 0);
   }
 
