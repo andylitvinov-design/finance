@@ -63,7 +63,8 @@
     var rows = Array.isArray(data.rows) ? data.rows : [];
     if (selectedRows.length) section.appendChild(renderSelectedRowsTable(selectedRows));
     else if (rows.length) section.appendChild(renderRowsTable(rows));
-    var diagnostics = renderRawRowsDiagnostics(autoRows, confirmedRows);
+    if (confirmedRows.length) section.appendChild(renderConfirmedRowsBlock(confirmedRows));
+    var diagnostics = renderRawRowsDiagnostics(autoRows);
     if (diagnostics) section.appendChild(diagnostics);
     if (!rows.length && !inputRows.length) return section;
 
@@ -146,18 +147,24 @@
     return wrap;
   }
 
-  function renderRawRowsDiagnostics(autoRows, confirmedRows) {
-    if (!autoRows.length && !confirmedRows.length) return null;
+  function renderConfirmedRowsBlock(rows) {
+    var section = el("div", "balance-snapshots-confirmed-block");
+    section.appendChild(el("div", "tab-note", "Все строки Остатки / подтверждённые остатки"));
+    section.appendChild(renderTypedRowsTable(rows, {
+      headers: ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"],
+      amountHeader: "Подтвержденный остаток",
+    }));
+    return section;
+  }
+
+  function renderRawRowsDiagnostics(autoRows) {
+    if (!autoRows.length) return null;
     var details = el("details", "balance-snapshots-diagnostics");
     details.appendChild(el("summary", "", "Диагностика источников остатков"));
-    details.appendChild(el("div", "tab-note", "Raw auto/confirmed rows are diagnostic only. Main balance display must use selected_rows or selected_date_rows."));
+    details.appendChild(el("div", "tab-note", "Raw auto rows are diagnostic only. Main balance display must use selected_rows or selected_date_rows."));
     if (autoRows.length) details.appendChild(renderTypedRowsTable(autoRows, {
       headers: ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"],
       amountHeader: "Автоостаток",
-    }));
-    if (confirmedRows.length) details.appendChild(renderTypedRowsTable(confirmedRows, {
-      headers: ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"],
-      amountHeader: "Подтвержденный остаток",
     }));
     return details;
   }

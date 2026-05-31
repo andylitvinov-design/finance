@@ -94,6 +94,12 @@ function flushTimers(context) {
   }
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 test("canonical top metric finalizer is the only last-loaded final metric renderer", () => {
   assert.match(indexHtml, /<script[^>]+src=["']\.\/top-metric-canonical-finalizer\.js["'][^>]*>/);
   assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/top-metric-final-state-fix\.js["'][^>]*>/);
@@ -111,6 +117,33 @@ test("canonical top metric finalizer renders paid, payable, remainders, services
   assert.equal(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
   assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 647,5000");
+});
+
+test("May acceptance keeps live remainders canonical and does not pin 41,2922", async () => {
+  let liveRemaindersCalls = 0;
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({ totals: { closingUsd: 0 } }),
+      buildLiveRemaindersSummary: () => {
+        liveRemaindersCalls += 1;
+        return Promise.resolve({
+          periodReconciliation: {
+            total_usd_row: { confirmed_end_usd: 27837.7141 },
+          },
+        });
+      },
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+  await flushPromises();
+
+  assert.ok(liveRemaindersCalls >= 1);
+  assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
+  assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
+  assert.equal(context.nodes.metricProfit.textContent, "Остатки: 27837,7141");
+  assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
 });
 
 test("canonical paid keeps payout total unchanged when duplicate Wise transfers are already in payouts", () => {
@@ -158,6 +191,6 @@ test("canonical top metric finalizer applies May 2026 acceptance display when su
 
   assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
-  assert.equal(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+  assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
 });

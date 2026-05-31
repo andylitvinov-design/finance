@@ -87,9 +87,14 @@ test("summary metrics render directly in the top card flow", () => {
 
   assert.equal(elements.metricOrders.textContent, "5,7118");
   assert.equal(elements.metricTransfers.textContent, "5,7118");
-  assert.equal(elements.metricMyCosts.textContent, "Мои затраты: 150,0000");
+  assert.equal(elements.metricMyCosts.textContent, "Моя прибыль: 50,0000");
   assert.equal(elements.metricProfit.textContent, "Прибыль: 50,0000");
   assert.equal(elements.metricPersonalOrdersAfterDiscount.textContent, "Мои личные: 0,0000");
+});
+
+test("top card markup uses profit label instead of legacy personal costs label", () => {
+  assert.match(indexHtml, /id="metricMyCosts"[^>]*title="Моя прибыль за выбранный период"[^>]*>Моя прибыль: 0<\/span>/);
+  assert.doesNotMatch(indexHtml, /Мои затраты/);
 });
 
 test("top balance uses movement table total without changing payable or paid metrics", () => {

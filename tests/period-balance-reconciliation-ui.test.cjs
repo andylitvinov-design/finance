@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const ui = require("../period-balance-reconciliation-ui.js");
 const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"];
 const USD_TABLE_HEADER = ["Канал", "Остатки 1 USD", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"];
+const NATIVE_TABLE_HEADER = ["Канал", "Валюта", "Остатки 1", "Остатки 2", "Изменение", "Движение средств", "Статус"];
 
 test("period balance reconciliation UI wraps Analytics, not expense financial analysis", () => {
   const doc = createTestDocument();
@@ -686,11 +687,97 @@ test("period balance main table uses payment channel rows and preserves mismatch
   });
   const transferwise = rows.find((row) => row[0] === "трансервайз дол");
   const bankCanada = rows.find((row) => row[0] === "БАНК КАНАДА cad");
-  assert.deepEqual(rows[0], USD_TABLE_HEADER);
-  assert.deepEqual(transferwise.slice(1), ["2704.25", "1070.48", "-1633.77", "-1628", "-5.77"]);
-  assert.equal(bankCanada[1], "fx_missing");
-  assert.equal(bankCanada[2], "fx_missing");
-  assert.equal(rows.find((row) => row[0] === "Бинанс spot")[1], "fx_missing");
+  assert.deepEqual(rows[0], NATIVE_TABLE_HEADER);
+  assert.deepEqual(transferwise.slice(1), ["USD", "2704.25", "1070.48", "-1633.77", "-1628", "Реальное расхождение"]);
+  assert.deepEqual(bankCanada.slice(1), ["CAD", "10107.92", "7351", "-2756.92", "0", "Условно перенесено"]);
+  assert.deepEqual(rows.find((row) => row[0] === "Бинанс spot").slice(1), ["USDT", "—", "—", "—", "103", "Нет стартового остатка"]);
+});
+
+test("period balance UI renders native primary table when USD is mostly FX-missing", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "трансервайз дол",
+        currency: "USD",
+        opening_balance: 2704.25,
+        real_delta: -1628,
+        factual_closing_balance: 1070.48,
+        real_difference: -5.77,
+        opening_usd: 2704.25,
+        movement_usd: -1628,
+        confirmed_end_usd: 1070.48,
+        diff_usd: -5.77,
+        status: "mismatch",
+      },
+      {
+        channel: "Яндекс руб",
+        currency: "RUB",
+        opening_balance: 100,
+        real_delta: 0,
+        factual_closing_balance: 100,
+        real_difference: 0,
+        opening_usd: null,
+        movement_usd: null,
+        confirmed_end_usd: null,
+        diff_usd: null,
+        fx_warnings: ["opening_usd_fx_missing", "movement_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"],
+        status: "ok",
+      },
+      {
+        channel: "монобанк грн",
+        currency: "UAH",
+        opening_balance: 14033,
+        real_delta: -999.86,
+        factual_closing_balance: 13033.14,
+        real_difference: 0,
+        opening_usd: null,
+        movement_usd: null,
+        confirmed_end_usd: null,
+        diff_usd: null,
+        fx_warnings: ["opening_usd_fx_missing", "movement_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"],
+        status: "ok",
+      },
+      {
+        channel: "БАНК КАНАДА cad",
+        currency: "CAD",
+        opening_balance: 7351,
+        real_delta: 0,
+        factual_closing_balance: 10538,
+        real_difference: 3187,
+        opening_usd: null,
+        movement_usd: null,
+        confirmed_end_usd: null,
+        diff_usd: null,
+        fx_warnings: ["opening_usd_fx_missing", "movement_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"],
+        status: "calculated_from_previous",
+      },
+    ],
+    total_usd_row: {
+      label: "ВСЕГО USD",
+      currency: "USD",
+      opening_usd: 0,
+      movement_usd: 0,
+      confirmed_end_usd: 0,
+      diff_usd: 0,
+      excluded_fx_missing_rows: 3,
+    },
+    actionable_rows: [],
+  }));
+
+  const mainSection = findByClass(block, "period-balance-subsection")[0];
+  const rows = getTableTextRows(findTag(mainSection, "TABLE")[0]);
+  const labels = rows.slice(1).map((row) => row[0]);
+
+  assert.deepEqual(rows[0], NATIVE_TABLE_HEADER);
+  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad"), ["БАНК КАНАДА cad", "CAD", "7351", "10538", "3187", "0", "calculated from previous"]);
+  assert.deepEqual(rows.find((row) => row[0] === "Яндекс руб"), ["Яндекс руб", "RUB", "100", "100", "0", "0", "OK"]);
+  assert.ok(labels.indexOf("Яндекс руб") < labels.indexOf("монобанк грн"), "canonical order is preserved");
+  assert.ok(labels.indexOf("монобанк грн") < labels.indexOf("трансервайз дол"), "canonical order is preserved");
+  assert.ok(labels.indexOf("трансервайз дол") < labels.indexOf("БАНК КАНАДА cad"), "canonical order is preserved");
+  assert.ok(!labels.includes("ВСЕГО USD"), "zero USD total must not be the primary useful row");
+  assert.doesNotMatch(JSON.stringify(rows), /fx_missing/);
+  assert.match(block.textContent, /fx_missing: 3 row\(s\)/);
 });
 
 test("period balance analytics UI does not render raw daily snapshot inventory", () => {
