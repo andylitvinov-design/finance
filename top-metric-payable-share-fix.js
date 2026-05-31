@@ -7,7 +7,10 @@
   const BADGE_ID = "metricPersonalOrdersAfterDiscount";
   const DEFAULT_PERCENT_RATE = 3;
   const PAYABLE_ORDER_SHARE_RATE = 0.7;
+  const REMAINDERS_LIVE_REFRESH_THROTTLE_MS = 30000;
   let latestTopMetricsSummary = null;
+  let latestLiveRemaindersRefreshMs = 0;
+  let latestLiveRemaindersRequestId = 0;
 
   function parseMetricNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -129,19 +132,73 @@
     return true;
   }
 
+  function applyRemaindersTopCardTotal(node, total, source) {
+    if (!node || !Number.isFinite(total)) return false;
+    const nextText = `Остатки: ${formatMetricNumber(total)}`;
+    if (node.textContent === nextText && node.dataset.displaySource === source) return false;
+    node.textContent = nextText;
+    node.title = "Сумма текущих USD-остатков по всем каналам";
+    node.dataset.displaySource = source;
+    return true;
+  }
+
+  function extractRemaindersClosingUsd(summary = {}) {
+    const total = Number(
+      summary?.totals?.closingUsd ??
+      summary?.visibleUsdTotals?.closingUsd ??
+      summary?.selectedDateSnapshot?.total_usd ??
+      0
+    );
+    return Number.isFinite(total) ? total : 0;
+  }
+
+  function shouldFetchLiveRemainders(node) {
+    if (node?.dataset?.remaindersLivePending === "true") return false;
+    const now = Number(root.Date?.now?.() || Date.now());
+    if (latestLiveRemaindersRefreshMs && now - latestLiveRemaindersRefreshMs < REMAINDERS_LIVE_REFRESH_THROTTLE_MS) {
+      return false;
+    }
+    latestLiveRemaindersRefreshMs = now;
+    return true;
+  }
+
+  function refreshRemaindersTopCardFromLive(node, api) {
+    if (!node || typeof api?.buildLiveRemaindersSummary !== "function" || !shouldFetchLiveRemainders(node)) return false;
+    node.dataset.remaindersLivePending = "true";
+    const requestId = ++latestLiveRemaindersRequestId;
+    Promise.resolve(api.buildLiveRemaindersSummary())
+      .then((summary) => {
+        if (requestId !== latestLiveRemaindersRequestId) return;
+        const total = extractRemaindersClosingUsd(summary);
+        applyRemaindersTopCardTotal(node, total, "remaindersSummary.live.totals.closingUsd");
+      })
+      .catch((error) => {
+        node.dataset.remaindersLiveError = String(error?.message || error).slice(0, 300);
+      })
+      .finally(() => {
+        if (requestId === latestLiveRemaindersRequestId && node.dataset) {
+          node.dataset.remaindersLivePending = "false";
+        }
+      });
+    return true;
+  }
+
   function syncRemaindersTopCard() {
     const node = root.document?.getElementById?.("metricProfit");
     const api = root.EzohataRemaindersSummaryPopup;
-    if (!node || typeof api?.buildRemaindersSummary !== "function") return false;
-    const summary = api.buildRemaindersSummary(root.state || {});
-    const total = Number(summary?.totals?.closingUsd || 0);
-    if (!Number.isFinite(total)) return false;
-    const nextText = `Остатки: ${formatMetricNumber(total)}`;
-    if (node.textContent === nextText) return false;
-    node.textContent = nextText;
-    node.title = "Сумма текущих USD-остатков по всем каналам";
-    node.dataset.displaySource = "remaindersSummary.totals.closingUsd";
-    return true;
+    if (!node) return false;
+
+    let updated = false;
+    if (typeof api?.buildRemaindersSummary === "function") {
+      const summary = api.buildRemaindersSummary(root.state || {});
+      const total = extractRemaindersClosingUsd(summary);
+      if (Number.isFinite(total) && (total !== 0 || (summary?.rows || []).length > 0)) {
+        updated = applyRemaindersTopCardTotal(node, total, "remaindersSummary.local.totals.closingUsd") || updated;
+      }
+    }
+
+    refreshRemaindersTopCardFromLive(node, api);
+    return updated;
   }
 
   function syncTopCardsFromDom() {
@@ -226,11 +283,15 @@
   root.EzohataTopMetricPayableShareFix = {
     DEFAULT_PERCENT_RATE,
     PAYABLE_ORDER_SHARE_RATE,
+    REMAINDERS_LIVE_REFRESH_THROTTLE_MS,
     buildOrdersPaymentSummary,
     calculateTopMetricPayable,
     getPersonalOrdersAfterDiscount,
     getPersonalOrdersGross,
     updatePersonalOrdersBadge,
+    applyRemaindersTopCardTotal,
+    extractRemaindersClosingUsd,
+    refreshRemaindersTopCardFromLive,
     syncPayableTopCardFromDom,
     syncMyProfitTopCard,
     syncRemaindersTopCard,
