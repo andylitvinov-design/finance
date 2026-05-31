@@ -114,6 +114,10 @@ export function excerptBody(bodyText, limit = BODY_EXCERPT_LIMIT) {
   return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
 }
 
+export function getVerifyProductionExitCode(result) {
+  return result?.ok === true ? 0 : 1;
+}
+
 function assertHttpOk(result, label) {
   if (result.status !== 200) {
     throw new Error(`${label} endpoint failed: expected HTTP 200, got ${result.status}.`);
@@ -152,6 +156,7 @@ async function main() {
   try {
     const result = await verifyProduction(expectedSha);
     console.log(JSON.stringify(result, null, 2));
+    process.exitCode = getVerifyProductionExitCode(result);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

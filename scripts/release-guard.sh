@@ -10,7 +10,8 @@ if [[ ! -f "index.html" || ! -f "config.js" || ! -f "vercel.json" ]]; then
 fi
 
 origin_url="$(git remote get-url origin 2>/dev/null || true)"
-if [[ "$origin_url" != "https://github.com/andylitvinov-design/finance.git" ]]; then
+normalized_origin_url="${origin_url%.git}.git"
+if [[ "$normalized_origin_url" != "https://github.com/andylitvinov-design/finance.git" ]]; then
   echo "release-guard: origin must point to andylitvinov-design/finance.git." >&2
   exit 1
 fi
@@ -69,7 +70,12 @@ if ! command -v vercel >/dev/null 2>&1; then
   exit 1
 fi
 
-env_list="$(vercel env ls production 2>&1)"
+vercel_args=()
+if [[ -n "${VERCEL_TOKEN:-}" ]]; then
+  vercel_args+=(--token "$VERCEL_TOKEN")
+fi
+
+env_list="$(vercel env ls production ${vercel_args[@]+"${vercel_args[@]}"} 2>&1)"
 if ! grep -Eq '(^|[[:space:]])GOOGLE_SERVICE_ACCOUNT_EMAIL([[:space:]]|$)' <<<"$env_list"; then
   echo "release-guard: Vercel Production env is missing GOOGLE_SERVICE_ACCOUNT_EMAIL." >&2
   exit 1
@@ -79,7 +85,7 @@ if ! grep -Eq '(^|[[:space:]])GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY([[:space:]]|$)'
   exit 1
 fi
 
-project_list="$(vercel project ls 2>&1)"
+project_list="$(vercel project ls ${vercel_args[@]+"${vercel_args[@]}"} 2>&1)"
 if ! grep -Eq '(^|[[:space:]])ezohata-incoming-ledger([[:space:]]|$)' <<<"$project_list"; then
   echo "release-guard: Vercel project ezohata-incoming-ledger was not found for the current Vercel account." >&2
   exit 1

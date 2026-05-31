@@ -69,6 +69,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Vercel fallback credentials
+        run: |
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not configured for this repository or environment."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
       - name: Run release guard
         run: bash scripts/release-guard.sh
 
