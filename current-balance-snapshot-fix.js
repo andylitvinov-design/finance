@@ -86,12 +86,21 @@
     ));
   }
 
+  function shouldApplyOwnerConfirmedMaySnapshot(endDate) {
+    return String(endDate || "") >= OWNER_CONFIRMED_MAY_CURRENT_BALANCE_DATE;
+  }
+
+  function hasNewerConfirmedSnapshot(existing) {
+    return existing?.date && String(existing.date) > OWNER_CONFIRMED_MAY_CURRENT_BALANCE_DATE;
+  }
+
   function applyOwnerConfirmedMayCurrentBalanceCorrections(latest, endDate, diagnostics) {
-    if (endDate !== OWNER_CONFIRMED_MAY_CURRENT_BALANCE_DATE) return latest;
+    if (!shouldApplyOwnerConfirmedMaySnapshot(endDate)) return latest;
 
     OWNER_CONFIRMED_MAY_CURRENT_BALANCE_CORRECTIONS.forEach((correction) => {
       const channel = canonicalChannel(correction.channel);
       const existing = latest[channel] || {};
+      if (hasNewerConfirmedSnapshot(existing)) return;
       latest[channel] = {
         value: correction.value === null ? (existing.value || "") : correction.value,
         date: OWNER_CONFIRMED_MAY_CURRENT_BALANCE_DATE,
@@ -122,7 +131,7 @@
         const channel = canonicalChannel(row.channel);
         const raw = String(row.amount ?? "").trim();
         if (!channel || !raw || !parseAmount(raw)) return;
-        if (endDate === OWNER_CONFIRMED_MAY_CURRENT_BALANCE_DATE && isStaleMayCurrentBalanceRow(row, channel)) {
+        if (shouldApplyOwnerConfirmedMaySnapshot(endDate) && isStaleMayCurrentBalanceRow(row, channel)) {
           diagnostics.excludedStaleRows.push({
             date: row.date,
             channel,

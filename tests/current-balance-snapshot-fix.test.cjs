@@ -59,17 +59,43 @@ test("excludes stale May 28 current balance rows and applies owner-confirmed sna
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.appliedOwnerCorrections.length, 5);
 });
 
-test("does not apply May 28 snapshot correction outside May 28", () => {
+test("applies May 28 owner-confirmed snapshot to later selected dates until newer facts exist", () => {
+  const context = buildContext();
+  const result = context.buildLatestBalanceEntriesByChannel([
+    { date: "2026-05-28", channel: "binance save", amount: "7425", currency: "USD" },
+    { date: "2026-05-28", channel: "Бинанс spot", amount: "1689", currency: "USD" },
+    { date: "2026-05-28", channel: "legacy_combined_binance_spot_funding", amount: "345", currency: "USDT" },
+    { date: "2026-05-28", channel: "Payoneer - eur", amount: "1173", currency: "EUR" },
+    { date: "2026-05-27", channel: "Яндекс руб", amount: "100000", currency: "RUB", usdAmount: "1200" }
+  ], "2026-05-31");
+
+  assert.equal(result["binance save"].value, "7432");
+  assert.equal(result["Бинанс spot"].value, "1162");
+  assert.equal(result["БАНК КАНАДА cad"].value, "10538");
+  assert.equal(result["монобанк грн"].value, "1333");
+  assert.equal(result["Яндекс руб"].usdAmount, "1376");
+  assert.equal(context.__currentBalanceSnapshotFixDiagnostics.excludedStaleRows.length, 4);
+});
+
+test("newer confirmed balance rows override the May 28 owner-confirmed snapshot", () => {
+  const context = buildContext();
+  const result = context.buildLatestBalanceEntriesByChannel([
+    { date: "2026-05-28", channel: "БАНК КАНАДА cad", amount: "10538", currency: "CAD", usdAmount: "7798" },
+    { date: "2026-05-30", channel: "БАНК КАНАДА cad", amount: "10600", currency: "CAD", usdAmount: "7844" }
+  ], "2026-05-31");
+
+  assert.equal(result["БАНК КАНАДА cad"].value, "10600");
+  assert.equal(result["БАНК КАНАДА cad"].usdAmount, "7844");
+});
+
+test("does not apply May 28 snapshot correction before May 28", () => {
   const context = buildContext();
   const result = context.buildLatestBalanceEntriesByChannel([
     { date: "2026-05-28", channel: "binance save", amount: "7425", currency: "USD" },
     { date: "2026-05-28", channel: "Бинанс spot", amount: "1689", currency: "USD" }
-  ], "2026-05-29");
+  ], "2026-05-27");
 
-  assert.deepEqual(plain(result), {
-    "binance save": { value: "7425", date: "2026-05-28", currency: "USD", rate: "", usdAmount: "" },
-    "Бинанс spot": { value: "1689", date: "2026-05-28", currency: "USD", rate: "", usdAmount: "" }
-  });
+  assert.deepEqual(plain(result), {});
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.excludedStaleRows.length, 0);
   assert.equal(context.__currentBalanceSnapshotFixDiagnostics.appliedOwnerCorrections.length, 0);
 });
