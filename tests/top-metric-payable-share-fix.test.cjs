@@ -115,7 +115,7 @@ test("remainders top chip uses live summary when local state has no remainders r
 
   assert.equal(liveCalls, 1);
   assert.equal(metricProfit.textContent, "Остатки: 7798,0000");
-  assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.live.totals.closingUsd");
+  assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.live.canonicalUsdClosing");
 });
 
 test("remainders top chip keeps non-zero local summary without waiting for live fetch", () => {
@@ -141,7 +141,7 @@ test("remainders top chip keeps non-zero local summary without waiting for live 
   api.syncRemaindersTopCard();
 
   assert.equal(metricProfit.textContent, "Остатки: 7432,0000");
-  assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.local.totals.closingUsd");
+  assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.local.canonicalUsdClosing");
 });
 
 test("remainders total falls back to selected date snapshot USD rows", () => {
@@ -174,4 +174,39 @@ test("remainders total prefers reconciliation confirmed_end_usd over zero local 
   });
 
   assert.equal(total, 20345.67);
+});
+
+test("remainders total prefers canonical reconciliation over stale non-zero local totals", () => {
+  const api = loadApi();
+  const total = api.extractRemaindersClosingUsd({
+    totals: { closingUsd: 27837.7141 },
+    periodReconciliation: {
+      total_usd_row: { confirmed_end_usd: "20345.67" },
+    },
+    selectedDateSnapshot: {
+      selected_date_rows: [
+        { channel: "binance save", currency: "USD", amount: "7432" },
+        { channel: "Бинанс spot", currency: "USDT", amount: "1162" },
+      ],
+    },
+  });
+
+  assert.equal(total, 20345.67);
+});
+
+test("remainders total does not add non-USD native amounts without explicit USD fields", () => {
+  const api = loadApi();
+  const total = api.extractRemaindersClosingUsd({
+    totals: { closingUsd: 0 },
+    selectedDateSnapshot: {
+      selected_date_rows: [
+        { channel: "binance save", currency: "USD", amount: "7432" },
+        { channel: "Бинанс spot", currency: "USDT", amount: "1162" },
+        { channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538" },
+        { channel: "монобанк грн", currency: "UAH", amount: "1333" },
+      ],
+    },
+  });
+
+  assert.equal(total, 8594);
 });
