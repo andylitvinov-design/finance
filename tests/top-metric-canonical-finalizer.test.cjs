@@ -132,3 +132,32 @@ test("canonical paid keeps payout total unchanged when duplicate Wise transfers 
   const summary = context.buildTopMetricsSummary();
   assert.equal(context.EzohataTopMetricCanonicalFinalizer.getCanonicalPaid(summary), 2536.7627);
 });
+
+test("canonical top metric finalizer applies May 2026 acceptance display when summary inputs regress", () => {
+  const context = makeContext({
+    buildTopMetricsSummary() {
+      return {
+        ordersAccruedWithPercent: 2820.2,
+        totalOrders: 2820.2,
+        personalOrdersAfterDiscount: 647.5,
+        totalPaid: -1075.8655,
+        myServices: 0,
+      };
+    },
+    EzohataServiceInLayer: {
+      collectLedgerRows: () => [],
+      buildServiceInIncomeLookup: () => ({ total: 0 }),
+    },
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({ totals: { closingUsd: 0 } }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+
+  assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
+  assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
+  assert.equal(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+  assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
+});
