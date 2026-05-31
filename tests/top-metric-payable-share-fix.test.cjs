@@ -142,3 +142,35 @@ test("remainders top chip keeps non-zero local summary without waiting for live 
   assert.equal(metricProfit.textContent, "Остатки: 7432,0000");
   assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.local.totals.closingUsd");
 });
+
+test("remainders total falls back to selected date snapshot USD rows", () => {
+  const api = loadApi();
+  const total = api.extractRemaindersClosingUsd({
+    totals: { closingUsd: 0 },
+    selectedDateSnapshot: {
+      selected_date_rows: [
+        { channel: "binance save", currency: "USD", amount: "7432" },
+        { channel: "Бинанс spot", currency: "USDT", amount: "1162" },
+        { channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", amount_usd: "7798" },
+        { channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36" },
+      ],
+    },
+  });
+
+  assert.equal(Number(total.toFixed(2)), 16423.36);
+});
+
+test("remainders total prefers reconciliation confirmed_end_usd over zero local total", () => {
+  const api = loadApi();
+  const total = api.extractRemaindersClosingUsd({
+    totals: { closingUsd: 0 },
+    periodReconciliation: {
+      total_usd_row: { confirmed_end_usd: "20345.67" },
+    },
+    selectedDateSnapshot: {
+      selected_date_rows: [{ channel: "binance save", currency: "USD", amount: "7432" }],
+    },
+  });
+
+  assert.equal(total, 20345.67);
+});
