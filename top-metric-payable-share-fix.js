@@ -7,6 +7,7 @@
   const BADGE_ID = "metricPersonalOrdersAfterDiscount";
   const DEFAULT_PERCENT_RATE = 3;
   const PAYABLE_ORDER_SHARE_RATE = 0.7;
+  let latestTopMetricsSummary = null;
 
   function parseMetricNumber(value) {
     if (typeof root.parseLooseNumber === "function") {
@@ -116,6 +117,18 @@
     return true;
   }
 
+  function syncMyProfitTopCard() {
+    const node = root.document?.getElementById?.("metricMyCosts");
+    if (!node) return false;
+    const profit = parseMetricNumber(latestTopMetricsSummary?.profit);
+    const nextText = `Моя прибыль: ${formatMetricNumber(profit)}`;
+    if (node.textContent === nextText) return false;
+    node.textContent = nextText;
+    node.title = "Моя прибыль за выбранный период";
+    node.dataset.displaySource = "buildTopMetricsSummary.profit";
+    return true;
+  }
+
   function syncRemaindersTopCard() {
     const node = root.document?.getElementById?.("metricProfit");
     const api = root.EzohataRemaindersSummaryPopup;
@@ -133,6 +146,7 @@
 
   function syncTopCardsFromDom() {
     syncPayableTopCardFromDom();
+    syncMyProfitTopCard();
     syncRemaindersTopCard();
   }
 
@@ -160,6 +174,7 @@
         payableShare: canonical.remainingToPay,
         payableFormula: canonical.payableFormula
       };
+      latestTopMetricsSummary = nextSummary;
       updatePersonalOrdersBadge(nextSummary);
       root.setTimeout?.(syncTopCardsFromDom, 0);
       return nextSummary;
@@ -217,6 +232,7 @@
     getPersonalOrdersGross,
     updatePersonalOrdersBadge,
     syncPayableTopCardFromDom,
+    syncMyProfitTopCard,
     syncRemaindersTopCard,
     syncTopCardsFromDom,
     patchBuildTopMetricsSummary,
