@@ -258,6 +258,9 @@
   }
 
   function syncTopCardsFromDom() {
+    if (typeof root.EzohataTopMetricCanonicalFinalizer?.syncTopMetrics === "function") {
+      return root.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+    }
     syncPayableTopCardFromDom();
     syncMyProfitTopCard();
     syncRemaindersTopCard();
