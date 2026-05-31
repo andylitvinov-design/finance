@@ -1,0 +1,50 @@
+.monthly-plan-expense-balance-section {
+  margin: 14px 0 18px;
+}
+
+.monthly-plan-expense-balance-title {
+  font-size: 16px;
+}
+
+.monthly-plan-expense-balance-note {
+  margin-top: -4px;
+}
+
+.monthly-plan-expense-balance-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.monthly-plan-expense-balance-chart {
+  max-width: 240px;
+}
+
+.monthly-plan-expense-subtitle {
+  margin-top: 8px;
+  font-weight: 700;
+}
+
+.monthly-plan-expense-balance-table table {
+  min-width: 640px;
+}
+
+.monthly-plan-expense-balance-table th,
+.monthly-plan-expense-balance-table td {
+  vertical-align: top;
+}
+
+@media (max-width: 680px) {
+  .monthly-plan-expense-balance-body {
+    grid-template-columns: 1fr;
+  }
+
+  .monthly-plan-expense-balance-chart {
+    justify-self: center;
+  }
+
+  .monthly-plan-expense-balance-table table {
+    min-width: 560px;
+  }
+}
