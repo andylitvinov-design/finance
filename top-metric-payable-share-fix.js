@@ -17,10 +17,7 @@
       const parsed = root.parseLooseNumber(value);
       return Number.isFinite(parsed) ? parsed : 0;
     }
-    const raw = String(value ?? "")
-      .trim()
-      .replace(/\s+/g, "")
-      .replace(",", ".");
+    const raw = String(value ?? "").trim().replace(/\s+/g, "").replace(",", ".");
     const parsed = Number(raw.replace(/[^\d.-]/g, ""));
     return Number.isFinite(parsed) ? parsed : 0;
   }
@@ -31,19 +28,13 @@
   }
 
   function getPersonalOrdersAfterDiscount(summary = {}) {
-    return parseMetricNumber(
-      summary.personalOrdersAfterDiscount ?? summary.ordersSummary?.personalOrdersAfterDiscount
-    );
+    return parseMetricNumber(summary.personalOrdersAfterDiscount ?? summary.ordersSummary?.personalOrdersAfterDiscount);
   }
 
   function getPersonalOrdersGross(summary = {}) {
     return parseMetricNumber(
-      summary.personalOrdersGross ??
-      summary.ordersSummary?.personalOrdersGross ??
-      summary.personalOrdersBeforeDiscount ??
-      summary.ordersSummary?.personalOrdersBeforeDiscount ??
-      summary.grossPersonalOrders ??
-      getPersonalOrdersAfterDiscount(summary)
+      summary.personalOrdersGross ?? summary.ordersSummary?.personalOrdersGross ?? summary.personalOrdersBeforeDiscount ??
+      summary.ordersSummary?.personalOrdersBeforeDiscount ?? summary.grossPersonalOrders ?? getPersonalOrdersAfterDiscount(summary)
     );
   }
 
@@ -52,33 +43,15 @@
   }
 
   function buildOrdersPaymentSummary(summary = {}) {
-    const ordersAccruedWithPercent = parseMetricNumber(
-      summary.ordersAccruedWithPercent ??
-      summary.totalOrdersPlusPercent ??
-      summary.totalOrders
-    );
+    const ordersAccruedWithPercent = parseMetricNumber(summary.ordersAccruedWithPercent ?? summary.totalOrdersPlusPercent ?? summary.totalOrders);
     const totalPaid = Math.abs(parseMetricNumber(summary.totalPaid));
     const myOrdersDiscounted = getPersonalOrdersAfterDiscount(summary);
     const myOrdersGross = getPersonalOrdersGross(summary);
     const ordersPayableShare = ordersAccruedWithPercent * PAYABLE_ORDER_SHARE_RATE;
-    const totalAccrued = hasOwn(summary, "totalAccrued")
-      ? parseMetricNumber(summary.totalAccrued)
-      : ordersAccruedWithPercent + myOrdersDiscounted;
+    const totalAccrued = hasOwn(summary, "totalAccrued") ? parseMetricNumber(summary.totalAccrued) : ordersAccruedWithPercent + myOrdersDiscounted;
     const remainingToPay = totalAccrued - totalPaid;
     const percentRate = parseMetricNumber(summary.percentRate || DEFAULT_PERCENT_RATE);
-    return {
-      ordersAccruedWithPercent,
-      ordersPayableShare,
-      payableOrderShareRate: PAYABLE_ORDER_SHARE_RATE,
-      percentRate,
-      myOrdersGross,
-      myOrdersDiscounted,
-      totalAccrued,
-      totalPaid,
-      remainingToPay,
-      payable: remainingToPay,
-      payableFormula: "totalAccrued - abs(totalPaid)"
-    };
+    return { ordersAccruedWithPercent, ordersPayableShare, payableOrderShareRate: PAYABLE_ORDER_SHARE_RATE, percentRate, myOrdersGross, myOrdersDiscounted, totalAccrued, totalPaid, remainingToPay, payable: remainingToPay, payableFormula: "totalAccrued - abs(totalPaid)" };
   }
 
   function calculateTopMetricPayable(summary = {}) {
@@ -97,10 +70,7 @@
     const metricTransfers = root.document.getElementById("metricTransfers");
     const metricCard = metricTransfers?.closest?.(".metric");
     if (!metricCard?.insertAdjacentHTML) return null;
-    metricCard.insertAdjacentHTML(
-      "beforeend",
-      '<div class="metric-sub"><span class="metric-sub-btn accent" id="metricPersonalOrdersAfterDiscount" title="Personal orders after discount">Мои заказы: 0</span></div>'
-    );
+    metricCard.insertAdjacentHTML("beforeend", '<div class="metric-sub"><span class="metric-sub-btn accent" id="metricPersonalOrdersAfterDiscount" title="Personal orders after discount">Мои заказы: 0</span></div>');
     return root.document.getElementById(BADGE_ID);
   }
 
@@ -161,15 +131,7 @@
   function sumSelectedDateSnapshotUsdRows(snapshot = {}) {
     const rows = Array.isArray(snapshot?.selected_date_rows) ? snapshot.selected_date_rows : [];
     return rows.reduce((sum, row) => {
-      const explicitUsd = pickFirstNumber(row, [
-        "amount_usd",
-        "balance_usd",
-        "closing_amount_usd",
-        "closingUsd",
-        "end_amount_usd",
-        "endUsd",
-        "confirmed_end_usd",
-      ]);
+      const explicitUsd = pickFirstNumber(row, ["amount_usd", "balance_usd", "closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "confirmed_end_usd"]);
       if (explicitUsd !== null) return sum + explicitUsd;
       const currency = String(row?.currency || row?.balance_currency || row?.account_currency || "").trim().toUpperCase();
       if (currency === "USD" || currency === "USDT" || currency === "USDC") {
@@ -189,7 +151,7 @@
     return null;
   }
 
-  function extractRemaindersClosingUsd(summary = {}) {
+  function extractRemaindersClosingUsdWithSource(summary = {}) {
     const canonicalTotal = firstNonZeroCandidate([
       summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd,
       summary?.periodReconciliation?.total_usd_row?.closing_usd,
@@ -199,21 +161,21 @@
       summary?.selectedDateSnapshot?.confirmed_end_usd,
       summary?.visibleUsdTotals?.closingUsd,
     ]);
-    if (canonicalTotal !== null) return canonicalTotal;
-
+    if (canonicalTotal !== null) return { total: canonicalTotal, source: "canonical" };
     const selectedDateRowsTotal = sumSelectedDateSnapshotUsdRows(summary?.selectedDateSnapshot || {});
-    if (Number.isFinite(selectedDateRowsTotal) && selectedDateRowsTotal !== 0) return selectedDateRowsTotal;
+    if (Number.isFinite(selectedDateRowsTotal) && selectedDateRowsTotal !== 0) return { total: selectedDateRowsTotal, source: "selectedDateRowsUsd" };
+    const localTotal = firstNonZeroCandidate([summary?.totals?.closingUsd]);
+    return { total: localTotal !== null ? localTotal : 0, source: localTotal !== null ? "localTotals" : "none" };
+  }
 
-    const fallback = firstNonZeroCandidate([summary?.totals?.closingUsd]);
-    return fallback !== null ? fallback : 0;
+  function extractRemaindersClosingUsd(summary = {}) {
+    return extractRemaindersClosingUsdWithSource(summary).total;
   }
 
   function shouldFetchLiveRemainders(node) {
     if (node?.dataset?.remaindersLivePending === "true") return false;
     const now = Number(root.Date?.now?.() || Date.now());
-    if (latestLiveRemaindersRefreshMs && now - latestLiveRemaindersRefreshMs < REMAINDERS_LIVE_REFRESH_THROTTLE_MS) {
-      return false;
-    }
+    if (latestLiveRemaindersRefreshMs && now - latestLiveRemaindersRefreshMs < REMAINDERS_LIVE_REFRESH_THROTTLE_MS) return false;
     latestLiveRemaindersRefreshMs = now;
     return true;
   }
@@ -225,16 +187,18 @@
     Promise.resolve(api.buildLiveRemaindersSummary())
       .then((summary) => {
         if (requestId !== latestLiveRemaindersRequestId) return;
-        const total = extractRemaindersClosingUsd(summary);
-        applyRemaindersTopCardTotal(node, total, "remaindersSummary.live.canonicalUsdClosing");
+        const result = extractRemaindersClosingUsdWithSource(summary);
+        if (result.source === "localTotals") {
+          node.dataset.remaindersLiveLocalTotal = formatMetricNumber(result.total);
+          return;
+        }
+        applyRemaindersTopCardTotal(node, result.total, `remaindersSummary.live.${result.source}`);
       })
       .catch((error) => {
         node.dataset.remaindersLiveError = String(error?.message || error).slice(0, 300);
       })
       .finally(() => {
-        if (requestId === latestLiveRemaindersRequestId && node.dataset) {
-          node.dataset.remaindersLivePending = "false";
-        }
+        if (requestId === latestLiveRemaindersRequestId && node.dataset) node.dataset.remaindersLivePending = "false";
       });
     return true;
   }
@@ -243,16 +207,16 @@
     const node = root.document?.getElementById?.("metricProfit");
     const api = root.EzohataRemaindersSummaryPopup;
     if (!node) return false;
-
     let updated = false;
     if (typeof api?.buildRemaindersSummary === "function") {
       const summary = api.buildRemaindersSummary(root.state || {});
-      const total = extractRemaindersClosingUsd(summary);
-      if (Number.isFinite(total) && (total !== 0 || (summary?.rows || []).length > 0)) {
-        updated = applyRemaindersTopCardTotal(node, total, "remaindersSummary.local.canonicalUsdClosing") || updated;
+      const result = extractRemaindersClosingUsdWithSource(summary);
+      if (result.source === "localTotals") {
+        node.dataset.remaindersLocalTotal = formatMetricNumber(result.total);
+      } else if (Number.isFinite(result.total) && (result.total !== 0 || (summary?.rows || []).length > 0)) {
+        updated = applyRemaindersTopCardTotal(node, result.total, `remaindersSummary.local.${result.source}`) || updated;
       }
     }
-
     refreshRemaindersTopCardFromLive(node, api);
     return updated;
   }
@@ -266,36 +230,18 @@
   function patchBuildTopMetricsSummary() {
     if (typeof root.buildTopMetricsSummary !== "function") return false;
     if (root.buildTopMetricsSummary.__ezohataPayableSharePatched) return true;
-
     const originalBuildTopMetricsSummary = root.buildTopMetricsSummary;
     const patchedBuildTopMetricsSummary = function patchedBuildTopMetricsSummary(...args) {
       const summary = originalBuildTopMetricsSummary.apply(this, args) || {};
       const canonical = buildOrdersPaymentSummary(summary);
-      const nextSummary = {
-        ...summary,
-        ordersPaymentSummary: canonical,
-        ordersAccruedWithPercent: canonical.ordersAccruedWithPercent,
-        ordersPayableShare: canonical.ordersPayableShare,
-        payableOrderShareRate: canonical.payableOrderShareRate,
-        totalOrders: canonical.ordersAccruedWithPercent,
-        percentRate: canonical.percentRate,
-        personalOrdersGross: canonical.myOrdersGross,
-        personalOrdersAfterDiscount: canonical.myOrdersDiscounted,
-        totalAccrued: canonical.totalAccrued,
-        total: canonical.remainingToPay,
-        payable: canonical.remainingToPay,
-        payableShare: canonical.remainingToPay,
-        payableFormula: canonical.payableFormula
-      };
+      const nextSummary = { ...summary, ordersPaymentSummary: canonical, ordersAccruedWithPercent: canonical.ordersAccruedWithPercent, ordersPayableShare: canonical.ordersPayableShare, payableOrderShareRate: canonical.payableOrderShareRate, totalOrders: canonical.ordersAccruedWithPercent, percentRate: canonical.percentRate, personalOrdersGross: canonical.myOrdersGross, personalOrdersAfterDiscount: canonical.myOrdersDiscounted, totalAccrued: canonical.totalAccrued, total: canonical.remainingToPay, payable: canonical.remainingToPay, payableShare: canonical.remainingToPay, payableFormula: canonical.payableFormula };
       latestTopMetricsSummary = nextSummary;
       updatePersonalOrdersBadge(nextSummary);
       root.setTimeout?.(syncTopCardsFromDom, 0);
       return nextSummary;
     };
-
     patchedBuildTopMetricsSummary.__ezohataPayableSharePatched = true;
     patchedBuildTopMetricsSummary.__ezohataOriginalBuildTopMetricsSummary = originalBuildTopMetricsSummary;
-
     root.buildTopMetricsSummary = patchedBuildTopMetricsSummary;
     buildTopMetricsSummary = patchedBuildTopMetricsSummary;
     return true;
@@ -336,26 +282,5 @@
   root.setTimeout?.(install, 50);
   root.setTimeout?.(install, 250);
 
-  root.EzohataTopMetricPayableShareFix = {
-    DEFAULT_PERCENT_RATE,
-    PAYABLE_ORDER_SHARE_RATE,
-    REMAINDERS_LIVE_REFRESH_THROTTLE_MS,
-    buildOrdersPaymentSummary,
-    calculateTopMetricPayable,
-    getPersonalOrdersAfterDiscount,
-    getPersonalOrdersGross,
-    updatePersonalOrdersBadge,
-    applyRemaindersTopCardTotal,
-    pickFirstNumber,
-    sumSelectedDateSnapshotUsdRows,
-    firstNonZeroCandidate,
-    extractRemaindersClosingUsd,
-    refreshRemaindersTopCardFromLive,
-    syncPayableTopCardFromDom,
-    syncMyProfitTopCard,
-    syncRemaindersTopCard,
-    syncTopCardsFromDom,
-    patchBuildTopMetricsSummary,
-    patchRenderMetrics
-  };
+  root.EzohataTopMetricPayableShareFix = { DEFAULT_PERCENT_RATE, PAYABLE_ORDER_SHARE_RATE, REMAINDERS_LIVE_REFRESH_THROTTLE_MS, buildOrdersPaymentSummary, calculateTopMetricPayable, getPersonalOrdersAfterDiscount, getPersonalOrdersGross, updatePersonalOrdersBadge, applyRemaindersTopCardTotal, pickFirstNumber, sumSelectedDateSnapshotUsdRows, firstNonZeroCandidate, extractRemaindersClosingUsdWithSource, extractRemaindersClosingUsd, refreshRemaindersTopCardFromLive, syncPayableTopCardFromDom, syncMyProfitTopCard, syncRemaindersTopCard, syncTopCardsFromDom, patchBuildTopMetricsSummary, patchRenderMetrics };
 })();
