@@ -14,6 +14,7 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
   const manualFactKeys = new Set(manualRows
     .filter((row) => normalizeBalanceSource(row, "manual_fact") === "manual_fact")
     .map(balanceKey));
+  const manualFactAccountDates = buildManualFactAccountDates(manualRows);
   const manualBalanceKeys = new Set(manualRows.map(balanceKey));
   const autoFallbackRows = [];
   let autoIgnored = 0;
@@ -21,6 +22,10 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
 
   for (const row of autoBalances || []) {
     if (manualFactKeys.has(balanceKey(row)) || manualBalanceKeys.has(balanceKey(row))) {
+      autoIgnored += 1;
+      continue;
+    }
+    if (isRetiredAutoBalanceChannel(row) || isDerivedAutoSupersededByManualFact(row, manualFactAccountDates)) {
       autoIgnored += 1;
       continue;
     }
@@ -54,9 +59,55 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
 function balanceKey(row = {}) {
   return [
     normalizeDate(row.date),
-    String(row.channel || row.accountName || row.account || "").trim(),
+    canonicalBalanceChannel(row.channel || row.accountName || row.account, row.currency),
     String(row.currency || "").trim().toUpperCase(),
   ].join("|");
+}
+
+function accountKey(row = {}) {
+  return [
+    canonicalBalanceChannel(row.channel || row.accountName || row.account, row.currency),
+    String(row.currency || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function buildManualFactAccountDates(rows = []) {
+  const datesByKey = new Map();
+  for (const row of rows || []) {
+    if (normalizeBalanceSource(row, "manual_fact") !== "manual_fact") continue;
+    const date = normalizeDate(row.date);
+    const key = accountKey(row);
+    if (!date || key === "|") continue;
+    const dates = datesByKey.get(key) || [];
+    dates.push(date);
+    datesByKey.set(key, dates);
+  }
+  for (const dates of datesByKey.values()) dates.sort();
+  return datesByKey;
+}
+
+function isDerivedAutoSupersededByManualFact(row = {}, manualFactAccountDates = new Map()) {
+  if (normalizeBalanceSource(row, "provider_auto") !== "derived_balance") return false;
+  if (!isOwnerConfirmedCurrentOverrideKey(row)) return false;
+  const rowDate = normalizeDate(row.date);
+  if (!rowDate) return false;
+  const dates = manualFactAccountDates.get(accountKey(row)) || [];
+  return dates.some((date) => date <= rowDate);
+}
+
+function isOwnerConfirmedCurrentOverrideKey(row = {}) {
+  return new Set([
+    "binance save|USD",
+    "Бинанс spot|USD",
+    "БАНК КАНАДА cad|CAD",
+    "монобанк грн|UAH",
+    "приват 24-грн|UAH",
+  ]).has(accountKey(row));
+}
+
+function isRetiredAutoBalanceChannel(row = {}) {
+  if (normalizeBalanceSource(row, "provider_auto") !== "derived_balance") return false;
+  return canonicalBalanceChannel(row.channel || row.accountName || row.account, row.currency) === "";
 }
 
 function normalizeBalanceSource(row = {}, fallback = "manual_fact") {
@@ -98,4 +149,20 @@ function normalizeDate(value) {
   const displayMatch = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
   if (displayMatch) return `${displayMatch[3]}-${displayMatch[2].padStart(2, "0")}-${displayMatch[1].padStart(2, "0")}`;
   return "";
+}
+
+function canonicalBalanceChannel(value, currency = "") {
+  const raw = String(value || "").trim();
+  const normalized = raw.toLowerCase().replace(/\s+/g, " ");
+  if (!raw) return "";
+  if (normalized === "legacy_combined_binance_spot_funding") return "";
+  if (/^binance\s+spot$/.test(normalized)) return "Бинанс spot";
+  if (/^бинанс\s+spot$/.test(normalized)) return "Бинанс spot";
+  if (/^binance\s+save$/.test(normalized)) return "binance save";
+  if (/^банк\s+канада\s+cad(?:\s+cad)?$/i.test(raw)) return "БАНК КАНАДА cad";
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (normalizedCurrency && normalized.endsWith(` ${normalizedCurrency.toLowerCase()}`)) {
+    return raw.slice(0, -(normalizedCurrency.length + 1)).trim();
+  }
+  return raw;
 }

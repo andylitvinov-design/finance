@@ -494,6 +494,61 @@ test("balance snapshots selected date does not trust stale current-only historic
   ));
 });
 
+test("balance snapshots selected date carries owner-confirmed May 28 rows over stale derived current rows", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-28", to: "2026-05-31" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-28", channel: "binance save", currency: "USD", amount: "7432", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "Бинанс spot", currency: "USD", amount: "1162", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "приват 24-грн", currency: "UAH", amount: "1376", source: "manual_fact", sourceSheet: "Остатки" },
+      ],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-31", channel: "binance save", currency: "USD", amount: "7425", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-31", channel: "Бинанс spot", currency: "USD", amount: "1689", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-31", channel: "БАНК КАНАДА cad CAD", currency: "CAD", amount: "7351", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-05-31", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: "345", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+      ],
+      warnings: [],
+    }),
+  });
+
+  const selectedRows = snapshot.balance_snapshots.selected_rows.map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.selected_from}`).sort();
+  const selectedDateRows = snapshot.balance_snapshots.selected_date_rows.map((row) => `${row.channel}|${row.currency}|${row.amount}`).sort();
+  const selectedText = JSON.stringify({
+    selected_rows: snapshot.balance_snapshots.selected_rows,
+    selected_date_rows: snapshot.balance_snapshots.selected_date_rows,
+  });
+
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-31");
+  assert.equal(snapshot.balance_snapshots.selected_date_source, "latest_known");
+  assert.deepEqual(selectedDateRows, [
+    "binance save|USD|7432",
+    "БАНК КАНАДА cad|CAD|10538",
+    "Бинанс spot|USD|1162",
+    "монобанк грн|UAH|1333",
+    "приват 24-грн|UAH|1376",
+  ]);
+  assert.deepEqual(selectedRows, [
+    "binance save|USD|7432|confirmed",
+    "БАНК КАНАДА cad|CAD|10538|confirmed",
+    "Бинанс spot|USD|1162|confirmed",
+    "монобанк грн|UAH|1333|confirmed",
+    "приват 24-грн|UAH|1376|confirmed",
+  ]);
+  assert.equal(selectedText.includes("7425"), false);
+  assert.equal(selectedText.includes("1689"), false);
+  assert.equal(selectedText.includes("7351"), false);
+  assert.equal(selectedText.includes("legacy_combined_binance_spot_funding"), false);
+});
+
 test("balance snapshots May coverage detects missing dates from trusted merged coverage", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { from: "2026-05-01", to: "2026-05-03" },

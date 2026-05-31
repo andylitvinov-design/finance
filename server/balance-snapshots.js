@@ -208,7 +208,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     confirmed_rows: buildTypedBalanceRows(validRows, "confirmed"),
     auto_balance_rows: buildTypedBalanceRows(validAutoRows, "auto"),
     merged_rows: buildDetailedRows(validMergedRows),
-    selected_rows: buildSelectedRows(validMergedRows),
+    selected_rows: buildSelectedRows(selectedDateSummary.rows),
     selected_date: selectedDateSummary.selected_date,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
     selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date),
@@ -427,21 +427,14 @@ function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAut
       diagnostics: ["No balance snapshot for this date; run guarded May backfill."],
     };
   }
-  const sources = [
-    ["merged", validMergedRows],
-    ["auto", validAutoRows.filter((row) => !isStaleCurrentOnlyAutoSnapshot(row))],
-    ["manual", validRows],
-  ];
-  for (const [source, rows] of sources) {
-    const selectedRows = (rows || []).filter((row) => row.date === selectedDate);
-    if (selectedRows.length) {
-      return {
-        selected_date: selectedDate,
-        rows: selectedRows,
-        source,
-        diagnostics: [],
-      };
-    }
+  const selectedRows = latestKnownRowsForDate(validMergedRows, selectedDate);
+  if (selectedRows.length) {
+    return {
+      selected_date: selectedDate,
+      rows: selectedRows,
+      source: selectedRows.some((row) => row.date < selectedDate) ? "latest_known" : "merged",
+      diagnostics: [],
+    };
   }
   const staleForDate = (staleCurrentOnlyAutoRows || []).filter((row) => normalizeDate(row.date) === selectedDate);
   const diagnostics = ["No balance snapshot for this date; run guarded May backfill."];
@@ -454,6 +447,43 @@ function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAut
     source: "none",
     diagnostics,
   };
+}
+
+function latestKnownRowsForDate(rows = [], selectedDate = "") {
+  const exactRows = (rows || [])
+    .filter((row) => row.valid && row.date === selectedDate && !isRetiredSelectedBalanceRow(row));
+  const exactKeys = new Set(exactRows.map((row) => makeCanonicalKey(row.channel, row.currency)).filter(Boolean));
+  const latestByKey = new Map();
+  for (const row of rows || []) {
+    if (!row.valid || !row.date || row.date >= selectedDate) continue;
+    if (isRetiredSelectedBalanceRow(row)) continue;
+    const key = makeCanonicalKey(row.channel, row.currency);
+    if (!key || key === "|") continue;
+    if (exactKeys.has(key)) continue;
+    const current = latestByKey.get(key);
+    if (!current || compareSelectedBalanceRows(row, current) > 0) {
+      latestByKey.set(key, row);
+    }
+  }
+  return [...exactRows, ...Array.from(latestByKey.values())].sort(compareDetailedRows);
+}
+
+function compareSelectedBalanceRows(left, right) {
+  if (left.date !== right.date) return left.date.localeCompare(right.date);
+  return selectedBalancePriority(left) - selectedBalancePriority(right);
+}
+
+function selectedBalancePriority(row = {}) {
+  const source = normalizeDisplaySource(row);
+  if (source === "manual_fact") return 4;
+  if (source === "provider_auto") return 3;
+  if (source === "derived_balance") return 2;
+  return 1;
+}
+
+function isRetiredSelectedBalanceRow(row = {}) {
+  return normalizeDisplaySource(row) === "derived_balance"
+    && canonicalBalanceChannel(row.channel, row.currency) === "";
 }
 
 function loadConfiguredChannels() {
@@ -799,6 +829,29 @@ function resolvePeriod(periodFilter, dates = []) {
 
 function makeKey(channel, currency) {
   return `${channel}|${currency}`;
+}
+
+function makeCanonicalKey(channel, currency) {
+  const canonicalChannel = canonicalBalanceChannel(channel, currency);
+  const canonicalCurrency = String(currency || "").trim().toUpperCase();
+  if (!canonicalChannel || !canonicalCurrency) return "";
+  return makeKey(canonicalChannel, canonicalCurrency);
+}
+
+function canonicalBalanceChannel(value, currency = "") {
+  const raw = String(value || "").trim();
+  const normalized = raw.toLowerCase().replace(/\s+/g, " ");
+  if (!raw) return "";
+  if (normalized === "legacy_combined_binance_spot_funding") return "";
+  if (/^binance\s+spot$/.test(normalized)) return "Бинанс spot";
+  if (/^бинанс\s+spot$/.test(normalized)) return "Бинанс spot";
+  if (/^binance\s+save$/.test(normalized)) return "binance save";
+  if (/^банк\s+канада\s+cad(?:\s+cad)?$/i.test(raw)) return "БАНК КАНАДА cad";
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (normalizedCurrency && normalized.endsWith(` ${normalizedCurrency.toLowerCase()}`)) {
+    return raw.slice(0, -(normalizedCurrency.length + 1)).trim();
+  }
+  return raw;
 }
 
 function normalizeDate(value) {
