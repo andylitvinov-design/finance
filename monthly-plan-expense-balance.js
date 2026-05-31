@@ -122,6 +122,13 @@
     }
   }
 
+  function addCategoryAmount(byCategory, category, amount) {
+    const normalizedAmount = Math.abs(parseNumber(amount));
+    if (!normalizedAmount) return;
+    const normalizedCategory = normalizeCategory(category);
+    byCategory.set(normalizedCategory, (byCategory.get(normalizedCategory) || 0) + normalizedAmount);
+  }
+
   function summarizeExpenseBreakdown(period, options = {}) {
     const breakdownByChannel = options.breakdownByChannel || getProviderBreakdown(period, options.rateLookup);
     const byCategory = new Map();
@@ -130,12 +137,20 @@
       const channelTotal = parseNumber(breakdown?.total ?? breakdown?.totalUsd ?? breakdown?.realTotalUsd ?? 0);
       if (channel && channelTotal > 0) byChannel.set(channel, (byChannel.get(channel) || 0) + channelTotal);
       const categories = breakdown?.byCategory || {};
+      let categoryTotal = 0;
       Object.entries(categories).forEach(([rawCategory, rawAmount]) => {
         const amount = Math.abs(parseNumber(rawAmount));
         if (!amount) return;
-        const category = normalizeCategory(rawCategory);
-        byCategory.set(category, (byCategory.get(category) || 0) + amount);
+        categoryTotal += amount;
+        addCategoryAmount(byCategory, rawCategory, amount);
       });
+      if (!categoryTotal && channelTotal > 0) {
+        const personal = Math.abs(parseNumber(breakdown?.personal || 0));
+        const business = Math.abs(parseNumber(breakdown?.business || 0));
+        if (business) addCategoryAmount(byCategory, "business", business);
+        if (personal && personal < channelTotal) addCategoryAmount(byCategory, "uncategorized", personal);
+        if (!business && !personal) addCategoryAmount(byCategory, "business", channelTotal);
+      }
     });
     const categoryRows = Array.from(byCategory.entries())
       .map(([category, amount]) => ({ category, label: categoryLabel(category), amount: round(amount) }))
