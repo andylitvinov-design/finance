@@ -247,7 +247,8 @@
       }
 
       const localRemainders = getLocalRemaindersClosingUsd();
-      if (localRemainders !== null) {
+      const canRefreshLiveRemainders = canBuildLiveRemaindersSummary();
+      if (localRemainders !== null && (Math.abs(localRemainders) > 0.0001 || !canRefreshLiveRemainders)) {
         applyRemainders(localRemainders, "topMetricCanonicalFinalizer.localRemainders");
       }
       refreshLiveRemainders();
@@ -255,6 +256,10 @@
     } finally {
       syncing = false;
     }
+  }
+
+  function canBuildLiveRemaindersSummary() {
+    return typeof root.EzohataRemaindersSummaryPopup?.buildLiveRemaindersSummary === "function";
   }
 
   function scheduleSync() {
