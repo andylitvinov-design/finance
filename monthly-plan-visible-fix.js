@@ -20,7 +20,11 @@
     block.querySelector?.("#monthly-plan-expense-balance")?.remove();
     const section = renderer();
     const status = block.querySelector?.(".finance-status");
-    if (status?.parentNode) status.parentNode.insertBefore(section, status.nextSibling);
+    if (status?.parentNode) {
+      const siblings = Array.isArray(status.parentNode.children) ? status.parentNode.children : [];
+      const fallbackNext = siblings[siblings.indexOf(status) + 1] || null;
+      status.parentNode.insertBefore(section, status.nextSibling || fallbackNext);
+    }
     else block.prepend(section);
     return true;
   }
