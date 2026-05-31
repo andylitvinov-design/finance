@@ -69,7 +69,7 @@ test("summarizeExpenseBreakdown falls back to business totals when byCategory is
   );
 
   assert.equal(summary.total, 729.408);
-  assert.deepEqual(summary.categoryRows.map((row) => [row.category, row.amount, row.percent]), [
+  assert.deepEqual(Array.from(summary.categoryRows, (row) => [row.category, row.amount, row.percent]), [
     ["business", 729.408, 100],
   ]);
 });
