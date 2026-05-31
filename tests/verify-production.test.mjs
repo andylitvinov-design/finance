@@ -5,6 +5,7 @@ import {
   excerptBody,
   fetchEndpoint,
   normalizeSha,
+  getVerifyProductionExitCode,
   verifyProduction,
   verifyAuditSnapshotResponse,
   verifyStatusResponse,
@@ -54,6 +55,10 @@ test("verifyProduction reports deploy_pending without running app checks when li
   assert.match(result.message, /expected commit cf5230b23da5, live commit is aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
   assert.equal(requestedUrls.length, 1);
   assert.match(requestedUrls[0], /\/api\/status$/);
+});
+
+test("getVerifyProductionExitCode fails deploy_pending results", () => {
+  assert.equal(getVerifyProductionExitCode({ ok: false, status: "deploy_pending" }), 1);
 });
 
 test("verifyStatusResponse rejects non-main commitRef when present", () => {
