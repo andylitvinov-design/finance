@@ -119,18 +119,17 @@
     const rows = [];
     (sourceRows || []).forEach((sourceRow) => {
       const ordersUsd = parseNumber(sourceRow.ordersUsd);
-      const allocatedPaidUsd = parseNumber(sourceRow.coveredUsd);
-      if (ordersUsd === null || allocatedPaidUsd === null) {
+      const coveredUsd = parseNumber(sourceRow.coveredUsd);
+      if (ordersUsd === null || coveredUsd === null) {
         diagnostics.push(`needs verification: missing orders/coverage source for ${getCoverageChannel(sourceRow)}`);
         return;
       }
-      const cappedCoveredUsd = roundNumber(parseNumber(sourceRow.cappedCoveredUsd) ?? Math.min(allocatedPaidUsd, ordersUsd));
       const row = {
         channel: getCoverageChannel(sourceRow),
         ordersUsd: roundNumber(ordersUsd),
-        coveredUsd: roundNumber(allocatedPaidUsd),
-        differenceUsd: roundNumber(allocatedPaidUsd - ordersUsd),
-        cappedCoveredUsd,
+        coveredUsd: roundNumber(coveredUsd),
+        differenceUsd: roundNumber(coveredUsd - ordersUsd),
+        cappedCoveredUsd: roundNumber(parseNumber(sourceRow.cappedCoveredUsd) ?? Math.min(coveredUsd, ordersUsd)),
       };
       totals.ordersUsd = roundNumber(totals.ordersUsd + row.ordersUsd);
       totals.coveredUsd = roundNumber(totals.coveredUsd + row.coveredUsd);
@@ -164,17 +163,17 @@
     table.setAttribute?.("data-enhanced-by", ENHANCED_MARKER);
     const tbody = doc.createElement("tbody");
     const header = doc.createElement("tr");
-    ["channel", "заказы USD", "Распределено на заказы", "Покрыто по плану", "разница USD", "%"].forEach((label) => appendCell(header, "th", label, doc));
+    ["channel", "заказы USD", "покрыто USD", "разница USD", "%"].forEach((label) => appendCell(header, "th", label, doc));
     tbody.appendChild(header);
     rows.forEach((row) => {
       const tr = doc.createElement("tr");
-      [row.channel, formatMoney(row.ordersUsd), formatMoney(row.coveredUsd), formatMoney(row.cappedCoveredUsd), formatMoney(row.differenceUsd), formatSharePercent(row.percent)].forEach((value) => appendCell(tr, "td", value, doc));
+      [row.channel, formatMoney(row.ordersUsd), formatMoney(row.coveredUsd), formatMoney(row.differenceUsd), formatSharePercent(row.percent)].forEach((value) => appendCell(tr, "td", value, doc));
       tbody.appendChild(tr);
     });
     if (rows.length) {
       const total = doc.createElement("tr");
       total.className = "balance-income-channel-total";
-      ["Итого", formatMoney(totals.ordersUsd), formatMoney(totals.coveredUsd), formatMoney(totals.cappedCoveredUsd), formatMoney(totals.differenceUsd), formatSharePercent(totals.percent)].forEach((value) => appendCell(total, "td", value, doc));
+      ["Итого", formatMoney(totals.ordersUsd), formatMoney(totals.coveredUsd), formatMoney(totals.differenceUsd), formatSharePercent(totals.percent)].forEach((value) => appendCell(total, "td", value, doc));
       tbody.appendChild(total);
     }
     table.appendChild(tbody);

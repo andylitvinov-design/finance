@@ -428,7 +428,7 @@ test("income distribution uses actual payment summary before legacy service paym
     },
   });
 
-  assert.equal(distribution.title, "Реально пришло / fact paid");
+  assert.equal(distribution.title, "Факт оплат по каналам");
   assert.equal(distribution.source, "realIncome.actualPaymentSummaryByChannel");
   assert.equal(distribution.total, 345.62);
   assert.deepEqual(distribution.channels.map((row) => row.channel), ["трансервайз дол", "пейпал дол"]);
@@ -847,8 +847,8 @@ test("balance summary renders actual payment, coverage, and remaining check sect
     remainingToPay: 0,
     diagnostics: [],
     incomeChannelDistribution: {
-      title: "Реально пришло / fact paid",
-      note: "Реально пришло по каналам: provider-net fact paid, не плановая колонка движения.",
+      title: "Факт оплат по каналам",
+      note: "Факт оплат заказов/услуг по данным покрытия заказов.",
       source: "realIncome.actualPaymentSummaryByChannel",
       total: 345.62,
       channels: [
@@ -874,7 +874,8 @@ test("balance summary renders actual payment, coverage, and remaining check sect
   }, makeMockDocument());
 
   const text = collectText(block);
-  assert.match(text, /Реально пришло \/ fact paid/);
+  assert.match(text, /Факт оплат по каналам/);
+  assert.match(text, /фактически оплачено USD/);
   assert.match(text, /Покрытие заказов по каналам/);
   assert.match(text, /Осталось проверить/);
   assert.match(text, /18170/);

@@ -6,8 +6,8 @@
   const FALLBACK_PERCENT_RATE = 0.03;
   const FALLBACK_PERCENT_RATE_DISPLAY = 3;
   const INCOME_DISTRIBUTION_TITLE = "Распределение оплат заказов/услуг по каналам";
-  const ACTUAL_PAYMENTS_TITLE = "Реально пришло / fact paid";
-  const ACTUAL_PAYMENTS_NOTE = "Реально пришло по каналам: provider-net fact paid, не плановая колонка движения.";
+  const ACTUAL_PAYMENTS_TITLE = "Факт оплат по каналам";
+  const ACTUAL_PAYMENTS_NOTE = "Факт оплат заказов/услуг по данным покрытия заказов.";
   const INCOME_DISTRIBUTION_NOTE = "Возвраты, обмены и внутренние переводы исключены из процентов.";
   const COVERAGE_BY_CHANNEL_TITLE = "Покрытие заказов по каналам";
   const REMAINING_CHECK_TITLE = "Осталось проверить";
@@ -477,7 +477,7 @@
   }
 
   function getDistributionAmountHeader(distribution = {}) {
-    return distribution.title === ACTUAL_PAYMENTS_TITLE ? "Реально пришло / fact paid" : "сумма USD";
+    return distribution.title === ACTUAL_PAYMENTS_TITLE ? "фактически оплачено USD" : "сумма USD";
   }
 
   function renderIncomeChannelDistribution(distribution, doc = root.document) {
@@ -592,7 +592,7 @@
       const table = doc.createElement("table");
       const tbody = doc.createElement("tbody");
       const header = doc.createElement("tr");
-      ["channel", "Покрыто по плану", "%"].forEach((value) => {
+      ["channel", "покрыто USD", "%"].forEach((value) => {
         const th = doc.createElement("th");
         th.textContent = value;
         header.appendChild(th);

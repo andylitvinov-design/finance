@@ -118,8 +118,7 @@ test("coverage table renders new columns and total row", () => {
 
   assert.deepEqual(diagnostics, []);
   assert.match(text, /заказы USD/);
-  assert.match(text, /Распределено на заказы/);
-  assert.match(text, /Покрыто по плану/);
+  assert.match(text, /покрыто USD/);
   assert.match(text, /разница USD/);
   assert.match(text, /Wise/);
   assert.match(text, /-20,0000/);
