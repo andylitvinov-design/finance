@@ -63,14 +63,8 @@
     var rows = Array.isArray(data.rows) ? data.rows : [];
     if (selectedRows.length) section.appendChild(renderSelectedRowsTable(selectedRows));
     else if (rows.length) section.appendChild(renderRowsTable(rows));
-    if (autoRows.length) section.appendChild(renderTypedRowsTable(autoRows, {
-      headers: ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"],
-      amountHeader: "Автоостаток",
-    }));
-    if (confirmedRows.length) section.appendChild(renderTypedRowsTable(confirmedRows, {
-      headers: ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"],
-      amountHeader: "Подтвержденный остаток",
-    }));
+    var diagnostics = renderRawRowsDiagnostics(autoRows, confirmedRows);
+    if (diagnostics) section.appendChild(diagnostics);
     if (!rows.length && !inputRows.length) return section;
 
     var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];
@@ -150,6 +144,22 @@
     table.appendChild(tbody);
     wrap.appendChild(table);
     return wrap;
+  }
+
+  function renderRawRowsDiagnostics(autoRows, confirmedRows) {
+    if (!autoRows.length && !confirmedRows.length) return null;
+    var details = el("details", "balance-snapshots-diagnostics");
+    details.appendChild(el("summary", "", "Диагностика источников остатков"));
+    details.appendChild(el("div", "tab-note", "Raw auto/confirmed rows are diagnostic only. Main balance display must use selected_rows or selected_date_rows."));
+    if (autoRows.length) details.appendChild(renderTypedRowsTable(autoRows, {
+      headers: ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"],
+      amountHeader: "Автоостаток",
+    }));
+    if (confirmedRows.length) details.appendChild(renderTypedRowsTable(confirmedRows, {
+      headers: ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"],
+      amountHeader: "Подтвержденный остаток",
+    }));
+    return details;
   }
 
   function renderTypedRowsTable(rows, options) {
