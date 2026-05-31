@@ -120,13 +120,21 @@ export function extractSnapshotRows(payload = {}) {
   return single ? [single] : [];
 }
 
-export async function buildOstatkiUpsertPlan({ rows = [], fetchImpl = fetch } = {}) {
-  const existingValues = await readOstatkiValues({ fetchImpl });
-  const existingRows = parseOstatkiValues(existingValues);
+export async function buildOstatkiUpsertPlan({ rows = [], fetchImpl = fetch, existingValues = null } = {}) {
+  const sourceValues = Array.isArray(existingValues)
+    ? existingValues
+    : await readOstatkiValues({ fetchImpl });
+  const existingRows = parseOstatkiValues(sourceValues);
   const outputByKey = new Map();
   let deduped = 0;
 
+  const applyingOwnerConfirmedMayRows = hasOwnerConfirmedReplacementRows(rows);
+
   for (const row of existingRows) {
+    if (applyingOwnerConfirmedMayRows && isKnownStaleOwnerConfirmedReplacementRow(row)) {
+      deduped += 1;
+      continue;
+    }
     const key = buildOstatkiKey(row);
     const current = outputByKey.get(key);
     if (!current || rowPriority(row) >= rowPriority(current)) {
@@ -238,17 +246,19 @@ async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
 
 function normalizeSnapshotRow(row = {}, payload = {}) {
   const date = normalizeDate(row.date || row.snapshotDate || payload.date || payload.snapshotDate);
-  const channel = String(row.channel || row.accountName || row.account || row.provider || "").trim();
+  const channel = canonicalOstatkiChannel(row.channel || row.accountName || row.account || row.provider || "");
   const currency = normalizeCurrency(row.currency || row.nativeCurrency || row.balanceCurrency);
   const amount = row.amount ?? row.balanceAmount ?? row.nativeAmount ?? row.value;
-  if (!date || !channel || !currency || amount === undefined || amount === null || amount === "") return null;
+  const usdAmount = row.usdAmount ?? row.amount_usd ?? row.amountUsd ?? "";
+  if (!date || !channel || !currency) return null;
+  if ((amount === undefined || amount === null || amount === "") && (usdAmount === undefined || usdAmount === null || usdAmount === "")) return null;
   return {
     date,
     channel,
     currency,
     amount: normalizeNumberText(amount),
     rate: normalizeNumberText(row.rate ?? row.fxRate ?? ""),
-    usdAmount: normalizeNumberText(row.usdAmount ?? row.amount_usd ?? row.amountUsd ?? ""),
+    usdAmount: normalizeNumberText(usdAmount),
     comment: String(row.comment || row.status || row.source || payload.comment || "owner_confirmed").trim() || "owner_confirmed",
   };
 }
@@ -279,8 +289,51 @@ function buildHeaderMap(header = []) {
   };
 }
 
+function canonicalOstatkiChannel(value) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeLookupText(raw);
+  if (!normalized) return "";
+  const withoutTrailingCurrency = normalized.replace(/\s+(usd|usdt|usdc|eur|cad|uah|rub|chf|gbp|local|unknown)$/i, "").trim();
+
+  if (/legacy combined binance spot funding/.test(normalized)) return "legacy_combined_binance_spot_funding";
+  if (withoutTrailingCurrency === "binance save" || normalized === "binance save") return "binance save";
+  if (withoutTrailingCurrency === "бинанс spot" || normalized === "бинанс spot") return "Бинанс spot";
+  if (/банк канада cad|банк канада|bank canada|td bank/.test(withoutTrailingCurrency || normalized)) return "БАНК КАНАДА cad";
+  if (/монобанк грн|monobank uah/.test(withoutTrailingCurrency || normalized)) return "монобанк грн";
+  if (/яндекс руб|yandex rub/.test(withoutTrailingCurrency || normalized)) return "Яндекс руб";
+  return raw;
+}
+
 function buildOstatkiKey(row) {
-  return [row.date, normalizeLookupText(row.channel), normalizeCurrency(row.currency)].join("|");
+  return [row.date, normalizeLookupText(canonicalOstatkiChannel(row.channel)), normalizeCurrency(row.currency)].join("|");
+}
+
+function isKnownStaleOwnerConfirmedReplacementRow(row) {
+  const channel = canonicalOstatkiChannel(row.channel);
+  const currency = normalizeCurrency(row.currency);
+  const amount = parseNumber(row.amount);
+  const date = normalizeDate(row.date);
+  if (date !== "2026-05-28") return false;
+  if (channel === "binance save" && currency === "USD" && isSameAmount(amount, 7425)) return true;
+  if (channel === "Бинанс spot" && currency === "USD" && isSameAmount(amount, 1689)) return true;
+  if (channel === "legacy_combined_binance_spot_funding" && currency === "USDT" && isSameAmount(amount, 345)) return true;
+  if (channel === "Payoneer - eur" && currency === "EUR" && isSameAmount(amount, 1173)) return true;
+  if (channel === "БАНК КАНАДА cad" && currency === "CAD" && isSameAmount(amount, 7351)) return true;
+  return false;
+}
+
+function hasOwnerConfirmedReplacementRows(rows = []) {
+  return rows.some((row) => normalizeLookupText(row.comment || "").includes("owner confirmed 2026 05 28"));
+}
+
+function parseNumber(value) {
+  const normalized = String(value ?? "").trim().replace(/\s+/g, "").replace(/,/g, ".").replace(/[^0-9.+-]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSameAmount(left, right) {
+  return Math.abs(Number(left || 0) - Number(right || 0)) < 0.0001;
 }
 
 function rowPriority(row) {
