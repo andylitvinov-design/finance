@@ -46,12 +46,12 @@ test("summarizeExpenseBreakdown groups real expenses by category and channel", (
   );
 
   assert.equal(summary.total, 2249.23);
-  assert.deepEqual(summary.categoryRows.map((row) => [row.category, row.amount]), [
+  assert.deepEqual(Array.from(summary.categoryRows, (row) => [row.category, row.amount]), [
     ["business", 2087.68],
     ["house", 150.67],
     ["food", 10.88],
   ]);
-  assert.deepEqual(summary.channelRows.map((row) => [row.channel, row.amount]), [
+  assert.deepEqual(Array.from(summary.channelRows, (row) => [row.channel, row.amount]), [
     ["трансервайз дол", 1776.11],
     ["пейпал дол", 473.12],
   ]);
