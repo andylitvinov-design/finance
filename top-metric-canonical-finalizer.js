@@ -89,7 +89,6 @@
       paid: 2536.7627,
       personalOrders: 647.5,
       services: 204.7059,
-      closingUsd: 41.2922,
       source: "may2026.acceptance"
     };
   }
@@ -188,8 +187,16 @@
   function applyRemainders(total, source) {
     if (!Number.isFinite(total)) return false;
     const node = getNode("metricProfit");
+    if (!isExplicitCanonicalRemaindersSource(source) && Math.abs(total) < 0.0001) {
+      const current = parseNumber(node?.textContent);
+      if (Math.abs(current) > 0.0001) return false;
+    }
     if (node) node.title = "Сумма текущих USD-остатков по всем каналам";
     return setText(node, `Остатки: ${formatNumber(total)}`, { displaySource: source });
+  }
+
+  function isExplicitCanonicalRemaindersSource(source) {
+    return String(source || "").includes(".liveRemainders");
   }
 
   function refreshLiveRemainders() {
@@ -221,7 +228,6 @@
       const services = parseNumber(summary.myServices) || getServicesMeTotal();
       const displayPaid = mayAcceptance?.paid ?? paid;
       const displayServices = mayAcceptance?.services ?? services;
-      const displayClosingUsd = mayAcceptance?.closingUsd ?? null;
       const displaySourceSuffix = mayAcceptance?.source || "topMetricCanonicalFinalizer";
 
       setText(getNode("metricBalances"), formatNumber(displayPaid), {
@@ -241,12 +247,10 @@
       }
 
       const localRemainders = getLocalRemaindersClosingUsd();
-      if (displayClosingUsd !== null) {
-        applyRemainders(displayClosingUsd, `${displaySourceSuffix}.remainders`);
-      } else if (localRemainders !== null) {
+      if (localRemainders !== null) {
         applyRemainders(localRemainders, "topMetricCanonicalFinalizer.localRemainders");
       }
-      if (!mayAcceptance) refreshLiveRemainders();
+      refreshLiveRemainders();
       return true;
     } finally {
       syncing = false;

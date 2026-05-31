@@ -249,15 +249,17 @@ test("balance snapshots UI labels selected, auto, and confirmed balances distinc
 
   const tables = section.querySelectorAll("table");
   const selectedRows = textRows(tables[0]);
-  const autoRows = textRows(tables[1]);
-  const confirmedRows = textRows(tables[2]);
+  const visibleConfirmedRows = textRows(tables[1]);
+  const autoRows = textRows(tables[2]);
 
   assert.equal(findByClass(section, "balance-snapshots-diagnostics").length, 1);
-  assert.match(section.textContent, /Raw auto\/confirmed rows are diagnostic only/);
+  assert.match(section.textContent, /Все строки Остатки \/ подтверждённые остатки/);
+  assert.match(section.textContent, /Raw auto rows are diagnostic only/);
   assert.deepEqual(selectedRows[0], ["Дата", "Канал", "Валюта", "Выбранный остаток", "Выбран из", "Статус"]);
   assert.deepEqual(selectedRows[1], ["2026-04-01", "wise usd", "USD", "120", "confirmed", "confirmed"]);
+  assert.deepEqual(visibleConfirmedRows[0], ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"]);
+  assert.deepEqual(visibleConfirmedRows[1], ["2026-04-01", "wise usd", "USD", "120", "Остатки", "confirmed"]);
   assert.deepEqual(autoRows[0], ["Дата", "Канал", "Валюта", "Автоостаток", "Источник", "Статус"]);
-  assert.deepEqual(confirmedRows[0], ["Дата", "Канал", "Валюта", "Подтвержденный остаток", "Источник", "Статус"]);
 });
 
 test("balance snapshots UI uses selected rows for the main balance table and keeps stale raw auto rows diagnostic-only", () => {
@@ -281,11 +283,16 @@ test("balance snapshots UI uses selected rows for the main balance table and kee
         { date: "2026-05-31", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: 345, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
         { date: "2026-05-31", channel: "БАНК КАНАДА cad CAD", currency: "CAD", amount: 7351, source_sheet: "Авто Остатки", status: "derived_from_confirmed_balance" },
       ],
+      confirmed_rows: [
+        { date: "2026-05-28", channel: "binance save", currency: "USD", amount: 7432, source_sheet: "Остатки", status: "confirmed" },
+        { date: "2026-05-28", channel: "Бинанс spot", currency: "USD", amount: 1162, source_sheet: "Остатки", status: "confirmed" },
+      ],
     },
   });
 
   const tables = section.querySelectorAll("table");
   const mainRowsText = JSON.stringify(textRows(tables[0]));
+  const confirmedRowsText = JSON.stringify(textRows(tables[1]));
   const diagnosticsText = findByClass(section, "balance-snapshots-diagnostics")[0].textContent;
 
   assert.match(mainRowsText, /7432/);
@@ -296,6 +303,8 @@ test("balance snapshots UI uses selected rows for the main balance table and kee
   assert.doesNotMatch(mainRowsText, /1689/);
   assert.doesNotMatch(mainRowsText, /legacy_combined_binance_spot_funding/);
   assert.doesNotMatch(mainRowsText, /7351/);
+  assert.match(confirmedRowsText, /7432/);
+  assert.match(confirmedRowsText, /1162/);
   assert.match(diagnosticsText, /7425/);
   assert.match(diagnosticsText, /1689/);
   assert.match(diagnosticsText, /legacy_combined_binance_spot_funding/);

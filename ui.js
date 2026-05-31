@@ -6269,7 +6269,8 @@ function renderMetrics() {
     elements.metricMyServices.textContent = "Мои услуги: " + formatSheetNumber(metrics.myServices, 4);
   }
   if (elements.metricMyCosts) {
-    elements.metricMyCosts.textContent = "Мои затраты: " + formatSheetNumber(metrics.myCosts, 4);
+    elements.metricMyCosts.textContent = "Моя прибыль: " + formatSheetNumber(metrics.profit, 4);
+    elements.metricMyCosts.title = "Моя прибыль за выбранный период";
   }
   if (elements.metricProfit) {
     elements.metricProfit.textContent = "Прибыль: " + formatSheetNumber(metrics.profit, 4);

@@ -351,6 +351,9 @@
   }
 
   function renderPositionTable(doc, rows, summary = {}, totalUsdRow = null) {
+    if (shouldRenderNativePrimaryTable(rows)) {
+      return renderNativePositionTable(doc, rows, totalUsdRow);
+    }
     const tableRows = [
       ...sortDisplayRows(rows).map((row) => buildUsdTableRow(row)),
       ...(totalUsdRow ? [buildVisibleTotalUsdTableRow(totalUsdRow)] : []),
@@ -369,6 +372,83 @@
       block.appendChild(note);
     }
     return block;
+  }
+
+  function shouldRenderNativePrimaryTable(rows) {
+    const displayRows = sortDisplayRows(rows || []);
+    if (!displayRows.length) return false;
+    const nativeFallbackRows = displayRows.filter((row) => hasNativeBalanceValues(row) && !hasUsableUsdBalanceValues(row)).length;
+    const usdRows = displayRows.filter(hasUsableUsdBalanceValues).length;
+    return nativeFallbackRows > usdRows;
+  }
+
+  function hasNativeBalanceValues(row) {
+    return getNativeOpening(row) !== null || getNativeConfirmedEnd(row) !== null || getNativeMovement(row) !== null;
+  }
+
+  function hasUsableUsdBalanceValues(row) {
+    return parseNumeric(row?.opening_usd) !== null || parseNumeric(row?.confirmed_end_usd) !== null;
+  }
+
+  function renderNativePositionTable(doc, rows, totalUsdRow = null) {
+    const block = renderSubsection(
+      doc,
+      "Остатки по каналам оплаты",
+      ["Канал", "Валюта", "Остатки 1", "Остатки 2", "Изменение", "Движение средств", "Статус"],
+      sortDisplayRows(rows).map((row) => buildNativeTableRow(row))
+    );
+    const fxMissingText = formatFxMissingTotals(totalUsdRow);
+    if (fxMissingText) {
+      const note = doc.createElement("div");
+      note.className = "config-note";
+      note.textContent = fxMissingText;
+      block.appendChild(note);
+    }
+    return block;
+  }
+
+  function buildNativeTableRow(row) {
+    const opening = getNativeOpening(row);
+    const confirmedEnd = getNativeConfirmedEnd(row);
+    const change = getNativeChange(row, opening, confirmedEnd);
+    const movement = getNativeMovement(row);
+    return [
+      row?.channel || "—",
+      row?.currency || "—",
+      formatNativeCell(opening),
+      formatNativeCell(confirmedEnd),
+      formatNativeCell(change),
+      formatNativeCell(movement),
+      getStatusLabel(row?.status),
+    ];
+  }
+
+  function getNativeOpening(row) {
+    return parseNumeric(row?.opening_native ?? row?.opening_fact_balance ?? row?.opening_balance);
+  }
+
+  function getNativeConfirmedEnd(row) {
+    return parseNumeric(
+      row?.confirmed_end_native ??
+      row?.manual_provider_closing_balance ??
+      row?.factual_closing_balance ??
+      row?.displayed_fact_balance ??
+      row?.carried_forward_balance
+    );
+  }
+
+  function getNativeMovement(row) {
+    return parseNumeric(row?.movement_native ?? row?.real_delta);
+  }
+
+  function getNativeChange(row, opening, confirmedEnd) {
+    const explicit = parseNumeric(row?.change_native);
+    if (explicit !== null) return explicit;
+    return opening !== null && confirmedEnd !== null ? roundDisplayNumber(confirmedEnd - opening) : null;
+  }
+
+  function formatNativeCell(value) {
+    return value === null ? "—" : formatNumber(value);
   }
 
   function buildUsdTableRow(row) {
