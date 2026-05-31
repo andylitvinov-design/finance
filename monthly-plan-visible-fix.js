@@ -14,13 +14,26 @@
       typeof renderMonthlyPlanBlock === "function";
   }
 
+  function insertMonthlyPlanExpenseBalance(block) {
+    const renderer = globalThis.MonthlyPlanExpenseBalance?.renderMonthlyPlanExpenseBalance;
+    if (!block || typeof renderer !== "function") return false;
+    block.querySelector?.("#monthly-plan-expense-balance")?.remove();
+    const section = renderer();
+    const status = block.querySelector?.(".finance-status");
+    if (status?.parentNode) status.parentNode.insertBefore(section, status.nextSibling);
+    else block.prepend(section);
+    return true;
+  }
+
   function renderMonthlyPlanPanel() {
     if (!hasRequiredGlobals()) return false;
     state.activeTab = MONTHLY_PLAN_TAB_ID;
     elements.tabPanels.innerHTML = "";
     const panel = document.createElement("section");
     panel.className = "tab-panel active";
-    panel.appendChild(renderMonthlyPlanBlock());
+    const block = renderMonthlyPlanBlock();
+    insertMonthlyPlanExpenseBalance(block);
+    panel.appendChild(block);
     elements.tabPanels.appendChild(panel);
     Array.from(elements.tabs.querySelectorAll(".tab")).forEach((button) => {
       button.classList.toggle("active", button.dataset.tabId === MONTHLY_PLAN_TAB_ID || button.textContent === MONTHLY_PLAN_LABEL);
@@ -70,6 +83,7 @@
 
   globalThis.ensureMonthlyPlanTabButton = ensureMonthlyPlanTabButton;
   globalThis.openMonthlyPlanTab = openMonthlyPlanTab;
+  globalThis.insertMonthlyPlanExpenseBalance = insertMonthlyPlanExpenseBalance;
 
   startMonthlyPlanTabGuard();
 })();
