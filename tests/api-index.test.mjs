@@ -2625,7 +2625,7 @@ test("service payment diagnostics keep Wise grouped rows on movement same-date c
   );
 });
 
-test("order payment coverage allocates grouped payments and leaves only unsafe rows actionable", () => {
+test("order payment coverage confirms adjacent-day Wise transfer rows and leaves only unsafe rows actionable", () => {
   const movementHeader = new Array(25).fill("");
   movementHeader[0] = "NUMBER";
   movementHeader[1] = "DATE";
@@ -2768,6 +2768,16 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
       channel: "пейпал дол",
       realNetUsd: 113.87,
     }],
+    transfers: [{
+      transferDate: "2026-05-22",
+      who: "Вилл",
+      amount: "25.75",
+      currency: "USD",
+      channel: "трансервайз дол",
+      usdAmount: "25.75",
+      raw_source_id: "transfer-18170",
+      comment: "adjacent Wise payout",
+    }],
   });
   const byRow = Object.fromEntries(coverage.rows.map((row) => [row.rowNumber, row]));
   const actionable = coverage.rows.filter((row) => row.remainingUsd > 0.01 || row.status === "needs verification");
@@ -2779,27 +2789,85 @@ test("order payment coverage allocates grouped payments and leaves only unsafe r
   assert.equal(byRow["18149"].allocationSource, "provider net");
   assert.equal(byRow["18150"].remainingUsd, 0);
   assert.equal(byRow["18151"].status, "overpaid");
-  assert.equal(byRow["18170"].remainingUsd, 25.75);
-  assert.equal(byRow["18170"].status, "needs verification");
+  assert.equal(byRow["18170"].remainingUsd, 0);
+  assert.equal(byRow["18170"].status, "covered");
+  assert.equal(byRow["18170"].allocationSource, "transfer_confirmed");
+  assert.equal(byRow["18170"].source, "transfer_confirmed");
   assert.equal(byRow["18204"].status, "excluded");
-  assert.deepEqual(actionable.map((row) => row.rowNumber), ["18170"]);
+  assert.deepEqual(actionable.map((row) => row.rowNumber), []);
   assert.equal(coverage.summary.totalAccruedOrdersUsd, 471.8);
-  assert.equal(coverage.summary.totalAllocatedToOrdersUsd, 448.62);
-  assert.equal(coverage.summary.totalRemainingOrderUsd, 25.75);
+  assert.equal(coverage.summary.totalAllocatedToOrdersUsd, 474.37);
+  assert.equal(coverage.summary.totalRemainingOrderUsd, 0);
   assert.equal(coverage.summary.totalOverpaidOffsetUsd, 2.57);
   assert.equal(coverage.summary.totalExcludedNonServiceUsd, 103);
   assert.equal(coverage.summary.totalUnexplainedUsd, 0);
 
   const actualPayments = buildActualPaymentSummaryByChannel(coverage.rows);
-  assert.equal(actualPayments.summaryByChannel?.["трансервайз дол"]?.actualPaidUsd, 231.75);
+  assert.equal(actualPayments.summaryByChannel?.["трансервайз дол"]?.actualPaidUsd, 257.5);
   assert.equal(actualPayments.summaryByChannel?.["пейпал дол"]?.actualPaidUsd, 113.87);
   assert.equal(actualPayments.summaryByChannel?.["Бинанс spot"]?.rows.includes("18204"), false);
-  assert.equal(actualPayments.totals.actualPaidUsd, 448.62);
+  assert.equal(actualPayments.totals.actualPaidUsd, 474.37);
 
   const coverageByChannel = buildCoverageSummaryByChannel(coverage.rows);
   assert.equal(coverageByChannel.summaryByChannel?.["пейпал дол"]?.coveredUsd, 113.3);
-  assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.remainingUsd, 25.75);
-  assert.deepEqual(coverageByChannel.actionableRows.map((row) => row.rowNumber), ["18170"]);
+  assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.coveredUsd, 257.5);
+  assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.remainingUsd, 0);
+  assert.deepEqual(coverageByChannel.actionableRows.map((row) => row.rowNumber), []);
+});
+
+test("order payment coverage counts Sergey Kovalev row 18185 transfer-route Wise rows as direct to transfers", () => {
+  const movementHeader = new Array(25).fill("");
+  movementHeader[0] = "NUMBER";
+  movementHeader[1] = "DATE";
+  movementHeader[2] = "CLIENT";
+  movementHeader[3] = "SERVICE";
+  movementHeader[9] = "ACCRUED +3%";
+  movementHeader[14] = "PAYMENT METHOD";
+  movementHeader[18] = "ОПЛАЧЕНО КЛИЕНТОМ USD";
+  movementHeader[20] = "ДОШЛО ДО НАС USD";
+  movementHeader[21] = "ДОШЛО ФАКТ / PROVIDER NET";
+
+  const row = new Array(25).fill("");
+  row[0] = "18185";
+  row[1] = "2026-05-24";
+  row[2] = "Сергей Ковалев";
+  row[3] = "Wise transfer route";
+  row[9] = "103";
+  row[14] = "трансервайз дол";
+  row[23] = "NEEDS VERIFICATION";
+  row[24] = "provider fee/net missing";
+
+  const coverage = buildOrderPaymentCoverageReport([
+    ["header"],
+    [""],
+    movementHeader,
+    row,
+  ], {
+    transfers: [{
+      transferDate: "2026-05-24",
+      who: "Сергей Ковалев / Немиша / не мне",
+      amount: "103",
+      currency: "USD",
+      channel: "wise boleslav usd",
+      usdAmount: "103",
+      raw_source_id: "source-order:18185",
+      comment: "Перевод Wise / не мне",
+    }],
+  });
+
+  const coverageRow = coverage.rows.find((candidate) => candidate.rowNumber === "18185");
+  const actualPayments = buildActualPaymentSummaryByChannel(coverage.rows);
+  const coverageByChannel = buildCoverageSummaryByChannel(coverage.rows);
+
+  assert.equal(coverageRow?.status, "covered");
+  assert.equal(coverageRow?.remainingUsd, 0);
+  assert.equal(coverageRow?.allocationSource, "direct_to_transfers");
+  assert.equal(coverageRow?.source, "direct_to_transfers");
+  assert.match(String(coverageRow?.reviewNote || ""), /direct_to_transfers/i);
+  assert.equal(actualPayments.summaryByChannel?.["трансервайз дол"]?.actualPaidUsd, 103);
+  assert.equal(actualPayments.totals.actualPaidUsd, 103);
+  assert.equal(coverageByChannel.summaryByChannel?.["трансервайз дол"]?.coveredUsd, 103);
+  assert.deepEqual(coverageByChannel.actionableRows, []);
 });
 
 test("order payment coverage reads provider net from movement header alias, not net received column", () => {
