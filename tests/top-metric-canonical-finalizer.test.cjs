@@ -139,7 +139,7 @@ test("canonical top metric finalizer applies May 2026 acceptance display when su
       return {
         ordersAccruedWithPercent: 2820.2,
         totalOrders: 2820.2,
-        personalOrdersAfterDiscount: 647.5,
+        personalOrdersAfterDiscount: 0,
         totalPaid: -1075.8655,
         myServices: 0,
       };
