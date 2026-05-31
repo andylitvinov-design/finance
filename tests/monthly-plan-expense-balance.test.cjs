@@ -57,6 +57,23 @@ test("summarizeExpenseBreakdown groups real expenses by category and channel", (
   ]);
 });
 
+test("summarizeExpenseBreakdown falls back to business totals when byCategory is missing", () => {
+  const api = loadApi();
+  const summary = api.summarizeExpenseBreakdown(
+    { startDate: "2026-05-01", endDate: "2026-05-31" },
+    {
+      breakdownByChannel: {
+        "пейпал евр": { total: 729.408, business: 729.408, personal: 0, byCategory: {} },
+      },
+    }
+  );
+
+  assert.equal(summary.total, 729.408);
+  assert.deepEqual(summary.categoryRows.map((row) => [row.category, row.amount, row.percent]), [
+    ["business", 729.408, 100],
+  ]);
+});
+
 test("getPreviousEqualPeriod returns the same number of days before selected period", () => {
   const api = loadApi();
   const previous = api.getPreviousEqualPeriod({ startDate: "2026-05-10", endDate: "2026-05-20" });
