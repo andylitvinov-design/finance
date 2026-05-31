@@ -2,6 +2,14 @@
 // ANALYTICS AND TOTALS
 // ============================================================
 
+function parseLooseNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : 0;
+}
+
 function getAnalyticsMergedValues() {
   const baseValues = state.data?.tabs?.analytics?.values || [];
   const factMoneyRows = state.analyticsFact?.moneyRows || [];
