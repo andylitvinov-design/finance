@@ -145,7 +145,7 @@ test("remainders total prefers canonical reconciliation over non-zero local tota
     periodReconciliation: { total_usd_row: { confirmed_end_usd: "20345.67" } },
     selectedDateSnapshot: { selected_date_rows: [{ channel: "binance save", currency: "USD", amount: "7432" }] },
   });
-  assert.deepEqual(result, { total: 20345.67, source: "canonical" });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { total: 20345.67, source: "canonical" });
 });
 
 test("remainders total does not add non-USD native amounts without explicit USD fields", () => {
