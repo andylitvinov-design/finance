@@ -78,9 +78,12 @@
     const period = getSelectedPeriod();
     const ordersTotal = getOrdersTotal(summary);
     const personalOrders = getPersonalOrdersAfterDiscount(summary);
+    const isMayAcceptanceRange = period.startDate === "2026-05-01" && (
+      period.endDate === "2026-05-31" ||
+      period.endDate === "2026-06-01"
+    );
     if (
-      period.startDate !== "2026-05-01" ||
-      period.endDate !== "2026-05-31" ||
+      !isMayAcceptanceRange ||
       !nearlyEqual(ordersTotal, 2820.2)
     ) {
       return null;

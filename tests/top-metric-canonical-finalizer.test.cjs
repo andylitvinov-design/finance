@@ -222,3 +222,32 @@ test("canonical top metric finalizer applies May 2026 acceptance display when su
   assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
 });
+
+test("canonical top metric finalizer applies May acceptance display when range closes on June 1", () => {
+  const context = makeContext({
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-06-01" },
+    },
+    buildTopMetricsSummary() {
+      return {
+        ordersAccruedWithPercent: 2820.2,
+        totalOrders: 2820.2,
+        personalOrdersAfterDiscount: 0,
+        totalPaid: 3234.4949,
+        myServices: 0,
+      };
+    },
+    EzohataServiceInLayer: {
+      collectLedgerRows: () => [],
+      buildServiceInIncomeLookup: () => ({ total: 0 }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+
+  assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
+  assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
+  assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 647,5000");
+});
