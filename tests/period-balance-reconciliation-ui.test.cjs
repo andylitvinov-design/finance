@@ -780,6 +780,84 @@ test("period balance UI renders native primary table when USD is mostly FX-missi
   assert.match(block.textContent, /fx_missing: 3 row\(s\)/);
 });
 
+test("period balance UI does not present zero USD total as authoritative when confirmed total is non-zero", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, {
+    ok: true,
+    period_balance_reconciliation: {
+      period: { from: "2026-05-01", to: "2026-06-01" },
+      summary: {
+        status: "needs_verification",
+        positions_checked: 3,
+        currencies_checked: 3,
+        channels_checked: 3,
+        planned_rows: 0,
+        planned_source_status: "ok",
+        missing_amount_net_rows: 0,
+        blocked: 0,
+        status_counts: { ok: 3 },
+      },
+      by_currency: [],
+      by_channel_currency: [
+        {
+          channel: "Яндекс руб",
+          currency: "RUB",
+          opening_balance: 100,
+          factual_closing_balance: 125,
+          real_delta: 25,
+          opening_usd: null,
+          confirmed_end_usd: null,
+          movement_usd: null,
+          diff_usd: null,
+          fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing", "diff_usd_fx_missing"],
+          status: "ok",
+        },
+        {
+          channel: "монобанк грн",
+          currency: "UAH",
+          opening_balance: 14033,
+          factual_closing_balance: 13033.14,
+          real_delta: -999.86,
+          opening_usd: null,
+          confirmed_end_usd: null,
+          movement_usd: null,
+          diff_usd: null,
+          fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing", "diff_usd_fx_missing"],
+          status: "ok",
+        },
+      ],
+      total_usd_row: {
+        label: "ВСЕГО USD",
+        currency: "USD",
+        opening_usd: 0,
+        movement_usd: 0,
+        confirmed_end_usd: 0,
+        diff_usd: 0,
+        excluded_fx_missing_rows: 2,
+      },
+      reconciliation_report_summary: {
+        total_usd_row: {
+          label: "Подтверждено USD",
+          currency: "USD",
+          opening_usd: 24993,
+          movement_usd: -120,
+          confirmed_end_usd: 24873,
+          diff_usd: 0,
+        },
+      },
+      actionable_rows: [],
+    },
+  });
+
+  const mainSection = findByClass(block, "period-balance-subsection")[0];
+  const rows = getTableTextRows(findTag(mainSection, "TABLE")[0]);
+  const labels = rows.slice(1).map((row) => row[0]);
+
+  assert.ok(!labels.includes("ВСЕГО USD"), "zero USD total must not be authoritative");
+  assert.match(block.textContent, /24873/);
+  assert.match(block.textContent, /fx_missing: 2 row\(s\)/);
+});
+
 test("period balance analytics UI does not render raw daily snapshot inventory", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, {

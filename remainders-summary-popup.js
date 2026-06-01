@@ -102,7 +102,7 @@
   }
 
   function buildVisibleUsdRowsFromPeriodReconciliation(reconciliation) {
-    return sortDisplayRows(reconciliation?.by_channel_currency || [])
+    const rows = sortDisplayRows(reconciliation?.by_channel_currency || [])
       .filter((row) => row?.channel && row.channel !== "ВСЕГО USD")
       .map((row) => ({
         sort_channel: row.channel || "",
@@ -112,19 +112,47 @@
         movementUsd: parseNumber(row.movement_usd),
         fxMissing: Array.isArray(row.fx_warnings) && row.fx_warnings.length > 0,
       }));
+    if (
+      rows.length &&
+      rows.every((row) => row.fxMissing) &&
+      hasNonZeroConfirmedTotal(buildVisibleUsdTotalFromPeriodReconciliation(reconciliation))
+    ) {
+      return [];
+    }
+    return rows;
   }
 
   function buildVisibleUsdTotalFromPeriodReconciliation(reconciliation) {
-    const row = reconciliation?.total_usd_row || null;
+    const row = chooseConfirmedUsdTotalRow(reconciliation);
     if (!row) return null;
+    const primary = reconciliation?.total_usd_row || null;
     return {
       openingUsd: parseNumber(row.opening_usd) || 0,
       closingUsd: parseNumber(row.confirmed_end_usd) || 0,
       changeUsd: parseNumber(row.change_usd) || 0,
       movementUsd: parseNumber(row.movement_usd) || 0,
       diffUsd: parseNumber(row.diff_usd) || 0,
-      fxMissingCount: Number(row.excluded_fx_missing_rows || 0),
+      fxMissingCount: Number(row.excluded_fx_missing_rows || primary?.excluded_fx_missing_rows || 0),
     };
+  }
+
+  function hasNonZeroConfirmedTotal(total) {
+    return Boolean(total) && Math.abs(Number(total.closingUsd || 0)) > 0.0001;
+  }
+
+  function chooseConfirmedUsdTotalRow(reconciliation = {}) {
+    const primary = reconciliation?.total_usd_row || null;
+    const candidates = [
+      reconciliation?.canonical_total_usd_row,
+      reconciliation?.confirmed_total_usd_row,
+      reconciliation?.reconciliation_report_summary?.total_usd_row,
+      reconciliation?.summary?.total_usd_row,
+      reconciliation?.summary?.confirmed_total_usd_row,
+    ].filter(Boolean);
+    const primaryClosing = parseNumber(primary?.confirmed_end_usd);
+    if (primary && Math.abs(primaryClosing || 0) > 0.0001) return primary;
+    const confirmed = candidates.find((row) => Math.abs(parseNumber(row?.confirmed_end_usd) || 0) > 0.0001);
+    return confirmed || primary;
   }
 
   function asRows(source) {
@@ -627,7 +655,12 @@
   function renderDefaultUsdBalancesTable(summary, doc = root.document) {
     const periodRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
     const rows = sortDisplayRows(periodRows.length ? periodRows : (summary.rows || []));
-    const totals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation) || buildVisibleUsdTotals(rows);
+    const periodTotals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation);
+    const totals = periodTotals || buildVisibleUsdTotals(rows);
+    const periodInputRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
+    const allPeriodRowsWereFxMissing = Boolean(summary.periodReconciliation?.by_channel_currency?.length) &&
+      !periodInputRows.length &&
+      hasNonZeroConfirmedTotal(periodTotals);
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
     const title = doc.createElement("h4");
@@ -681,7 +714,9 @@
     if (totals.fxMissingCount) {
       const note = doc.createElement("div");
       note.className = "balance-summary-diagnostics";
-      note.textContent = `fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`;
+      note.textContent = allPeriodRowsWereFxMissing
+        ? `USD table is incomplete; showing confirmed/canonical total while fx_missing rows stay in diagnostics. fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`
+        : `fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`;
       section.appendChild(note);
     }
     return section;

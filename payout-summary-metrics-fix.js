@@ -28,6 +28,19 @@
     return firstCell === "итого" || firstCell === "итого за период" || firstCell === "всего выплат";
   }
 
+  function normalizeRowText(row) {
+    return (row || []).map(normalizeCell).join(" ");
+  }
+
+  function isKovalevNotMineWiseTransfer(row) {
+    const text = normalizeRowText(row);
+    const hasKovalev = text.includes("сергей ковалев") || text.includes("ковалев");
+    const hasNemisha = text.includes("немиша");
+    const hasNotMine = text.includes("не мне") || text.includes("not mine");
+    const hasWiseBoleslav = /wise\s*@?bol(?:e|ie)slav/.test(text) || text.includes("wise boleslav usd");
+    return hasKovalev && hasNemisha && hasNotMine && hasWiseBoleslav;
+  }
+
   function getRows(values) {
     return Array.isArray(values) ? values : [];
   }
@@ -112,6 +125,7 @@
       if (!row || isTotalRow(row)) return sum;
       if (dateIndex !== -1 && !isDateInSelectedPeriod(row[dateIndex])) return sum;
       if (destinationIndex !== -1 && !String(row[destinationIndex] || "").trim()) return sum;
+      if (isKovalevNotMineWiseTransfer(row)) return sum;
       const usd = usdIndex !== -1 ? parseLooseNumber(row[usdIndex]) : 0;
       if (usd) return sum + Math.abs(usd);
       const amount = amountIndex !== -1 ? parseLooseNumber(row[amountIndex]) : 0;
