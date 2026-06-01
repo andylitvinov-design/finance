@@ -123,7 +123,9 @@ test("handler returns structured MONOBANK_TOKEN_MISSING when one-click import ha
       ok: false,
       code: "MONOBANK_TOKEN_MISSING",
       error: "Monobank token is not configured.",
-      action: "configure_env_or_manual_token"
+      action: "configure_env_or_manual_token",
+      warning: "Monobank token/permission stale; upload screenshot or refresh token.",
+      ui_action: "upload screenshot or refresh token"
     });
   } finally {
     global.fetch = previousFetch;

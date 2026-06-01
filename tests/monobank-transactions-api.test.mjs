@@ -168,6 +168,25 @@ test("fetchMonobankClientInfo surfaces invalid-token failures", async () => {
   );
 });
 
+test("handler returns Monobank stale permission action when env token is missing", async () => {
+  const response = createResponseRecorder();
+
+  await handler({
+    method: "POST",
+    body: {
+      action: "import",
+      startDate: "2026-05-30",
+      endDate: "2026-05-30",
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.code, "MONOBANK_TOKEN_MISSING");
+  assert.equal(response.body.warning, "Monobank token/permission stale; upload screenshot or refresh token.");
+  assert.equal(response.body.ui_action, "upload screenshot or refresh token");
+});
+
 test("fetchMonobankStatementEntries loads client accounts and statements", async () => {
   const urls = [];
   const result = await fetchMonobankStatementEntries({

@@ -25,6 +25,7 @@ const FACT_BALANCE_WARNING = "Остатки внесены во вкладку 
 const BALANCE_TARGET_COLUMNS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
 const PROVIDERS_WITH_TRANSACTION_IMPORT = new Set(["wise", "monobank", "paypal", "privatbank", "yoomoney", "binance"]);
 const PROVIDERS_WITH_CURRENT_BALANCE_REFRESH = new Set(["wise", "monobank", "paypal", "yoomoney", "binance"]);
+const MONOBANK_PERMISSION_WARNING = "Monobank token/permission stale; upload screenshot or refresh token.";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -822,12 +823,14 @@ function buildProviderChannelMatrix({
     const lastImportDate = lastOperationByKey.get(key) || null;
     const supportsCurrentBalance = PROVIDERS_WITH_CURRENT_BALANCE_REFRESH.has(provider);
     const supportsTransactionImport = PROVIDERS_WITH_TRANSACTION_IMPORT.has(provider);
+    const providerTokenStatus = providerStatusByProvider.get(provider) || "unknown";
     const source = classifyBalanceSnapshotSource(lastBalance);
     const lastManualSnapshotDate = source === "manual/screenshot" ? lastBalanceDate : null;
+    const permissionWarning = buildProviderPermissionWarning(provider, providerTokenStatus);
     const reasons = [];
 
     if (!supportsCurrentBalance) reasons.push("current balance auto refresh unsupported");
-    if (supportsCurrentBalance && providerStatusByProvider.get(provider) !== "available") reasons.push("provider token not available");
+    if (supportsCurrentBalance && providerTokenStatus !== "available") reasons.push("provider token not available");
     if (!supportsTransactionImport) reasons.push("transaction import unsupported");
     if (!lastBalanceDate) reasons.push("missing balance snapshot");
     else if (selectedDate && lastBalanceDate < selectedDate) reasons.push("last balance snapshot before selected period end");
@@ -841,14 +844,17 @@ function buildProviderChannelMatrix({
       currency: String(pair.currency || "").trim().toUpperCase(),
       supports_current_balance_auto_refresh: supportsCurrentBalance,
       supports_transaction_import: supportsTransactionImport,
-      provider_token_status: providerStatusByProvider.get(provider) || "unknown",
+      provider_token_status: providerTokenStatus,
       last_successful_operation_import_date: lastImportDate,
       last_successful_balance_refresh_date: lastBalanceDate,
       last_manual_screenshot_snapshot_date: lastManualSnapshotDate,
       source,
       stale: reasons.length > 0,
       reason: reasons.join("; ") || "fresh",
+      permission_warning: permissionWarning,
       action_required: buildProviderMatrixActionRequired({
+        provider,
+        providerTokenStatus,
         supportsCurrentBalance,
         supportsTransactionImport,
         source,
@@ -903,18 +909,31 @@ function classifyBalanceSnapshotSource(row = {}) {
 }
 
 function buildProviderMatrixActionRequired({
+  provider,
+  providerTokenStatus,
   supportsCurrentBalance,
   supportsTransactionImport,
   source,
   lastBalanceDate,
   selectedDate,
 } = {}) {
+  if (provider === "monobank" && supportsCurrentBalance && providerTokenStatus !== "available") {
+    return [
+      "upload screenshot or refresh token",
+      ...(supportsTransactionImport && selectedDate ? ["verify latest imported operations"] : []),
+    ].join(" / ");
+  }
   const actions = [];
   if (!supportsCurrentBalance) actions.push("upload screenshot");
   if (supportsCurrentBalance && selectedDate && (!lastBalanceDate || lastBalanceDate < selectedDate)) actions.push("refresh token");
   if (source !== "provider" || !lastBalanceDate || (selectedDate && lastBalanceDate < selectedDate)) actions.push("manual balance needed");
   if (supportsTransactionImport && selectedDate) actions.push("verify latest imported operations");
   return unique(actions).join(" / ") || "none";
+}
+
+function buildProviderPermissionWarning(provider, providerTokenStatus) {
+  if (provider === "monobank" && providerTokenStatus !== "available") return MONOBANK_PERMISSION_WARNING;
+  return null;
 }
 
 function compareProviderMatrixRows(left, right) {

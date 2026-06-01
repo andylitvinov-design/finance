@@ -3,6 +3,7 @@ const MONOBANK_MAX_RANGE_DAYS = 31;
 const MONOBANK_CHANNEL_BY_CURRENCY = {
   UAH: "монобанк грн"
 };
+const MONOBANK_PERMISSION_WARNING = "Monobank token/permission stale; upload screenshot or refresh token.";
 const MONOBANK_CURRENCY_BY_CODE = {
   124: "CAD",
   840: "USD",
@@ -420,7 +421,9 @@ function buildMonobankErrorPayload(error, token) {
       ok: false,
       code: "MONOBANK_TOKEN_MISSING",
       error: "Monobank token is not configured.",
-      action: "configure_env_or_manual_token"
+      action: "configure_env_or_manual_token",
+      warning: MONOBANK_PERMISSION_WARNING,
+      ui_action: "upload screenshot or refresh token"
     };
   }
   return {

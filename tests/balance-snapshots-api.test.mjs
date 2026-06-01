@@ -270,7 +270,8 @@ test("provider matrix marks unsupported and stale channels with last snapshot/im
   assert.equal(mono.last_successful_operation_import_date, "2026-05-28");
   assert.equal(mono.last_successful_balance_refresh_date, "2026-05-28");
   assert.equal(mono.stale, true);
-  assert.match(mono.action_required, /manual balance needed|refresh token|upload screenshot/);
+  assert.equal(mono.permission_warning, "Monobank token/permission stale; upload screenshot or refresh token.");
+  assert.equal(mono.action_required, "upload screenshot or refresh token / verify latest imported operations");
 
   assert.equal(privat.supports_current_balance_auto_refresh, false);
   assert.equal(privat.supports_transaction_import, true);
