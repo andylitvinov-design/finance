@@ -184,12 +184,14 @@
     return [];
   }
 
-  function buildUsdTableDiagnostics({ summary, rows, allPeriodRowsWereFxMissing }) {
+  function buildUsdTableDiagnostics({ summary, rows, allPrimaryRowsWereFxMissing, localFxMissingRows = [] }) {
     const diagnostics = [];
     const periodRawRows = Array.isArray(summary.periodReconciliation?.by_channel_currency)
       ? summary.periodReconciliation.by_channel_currency
       : [];
-    const fxRows = periodRawRows.filter((row) => getFxWarnings(row).length > 0);
+    const fxRows = periodRawRows.length
+      ? periodRawRows.filter((row) => getFxWarnings(row).length > 0)
+      : localFxMissingRows;
     if (fxRows.length) {
       diagnostics.push(`fx_missing rows: ${fxRows.map((row) => {
         const warnings = getFxWarnings(row);
@@ -209,8 +211,8 @@
     if (missingSelectedRows.length) {
       diagnostics.push(`missing from primary rows: ${missingSelectedRows.map((row) => `${formatChannelCurrency(row)} (selectedDateSnapshot)`).join("; ")}`);
     }
-    if (allPeriodRowsWereFxMissing && !missingSelectedRows.length && !fxRows.length) {
-      diagnostics.push("primary rows suppressed because every period reconciliation row is fx_missing.");
+    if (allPrimaryRowsWereFxMissing && !missingSelectedRows.length && !fxRows.length) {
+      diagnostics.push("primary rows suppressed because every source row is fx_missing.");
     }
     return diagnostics;
   }
@@ -732,18 +734,25 @@
     const periodInputRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
     const periodTotals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation);
     const selectedDateTotals = buildVisibleUsdTotalFromSelectedDateSnapshot(summary.selectedDateSnapshot);
+    const fallbackRows = summary.rows || [];
+    const primaryRows = periodRows.length ? periodRows : fallbackRows;
     const allPeriodRowsWereFxMissing = Boolean(summary.periodReconciliation?.by_channel_currency?.length) &&
       periodInputRows.length > 0 &&
       periodInputRows.every((row) => row.fxMissing);
-    const rows = sortDisplayRows(allPeriodRowsWereFxMissing ? [] : (periodRows.length ? periodRows : (summary.rows || [])));
+    const localFxMissingRows = !periodRows.length
+      ? fallbackRows.filter((row) => computeVisibleUsdRow(row).fxMissing)
+      : [];
+    const allPrimaryRowsWereFxMissing = allPeriodRowsWereFxMissing ||
+      (!periodRows.length && fallbackRows.length > 0 && localFxMissingRows.length === fallbackRows.length);
+    const rows = sortDisplayRows(allPrimaryRowsWereFxMissing ? [] : primaryRows);
     const fxMissingCount = Number(periodTotals?.fxMissingCount || summary.periodReconciliation?.total_usd_row?.excluded_fx_missing_rows || 0);
     const fallbackTotals = hasNonZeroConfirmedTotal(periodTotals)
       ? periodTotals
       : (hasNonZeroConfirmedTotal(selectedDateTotals) ? selectedDateTotals : null);
-    const totals = allPeriodRowsWereFxMissing
+    const totals = allPrimaryRowsWereFxMissing
       ? (fallbackTotals ? { ...fallbackTotals, fxMissingCount } : null)
       : (periodTotals || buildVisibleUsdTotals(rows));
-    const diagnostics = buildUsdTableDiagnostics({ summary, rows, allPeriodRowsWereFxMissing });
+    const diagnostics = buildUsdTableDiagnostics({ summary, rows, allPrimaryRowsWereFxMissing, localFxMissingRows });
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
     const title = doc.createElement("h4");
@@ -794,12 +803,12 @@
     wrap.appendChild(table);
     section.appendChild(wrap);
 
-    if (totals?.fxMissingCount || (allPeriodRowsWereFxMissing && !totals)) {
+    if (totals?.fxMissingCount || (allPrimaryRowsWereFxMissing && !totals)) {
       const note = doc.createElement("div");
       note.className = "balance-summary-diagnostics";
-      note.textContent = allPeriodRowsWereFxMissing && !totals
-        ? `USD table needs verification; all period rows are fx_missing and no non-zero confirmed/canonical/selected-date USD total is available. fx_missing: ${fxMissingCount} row(s) excluded from ВСЕГО USD.`
-        : (allPeriodRowsWereFxMissing
+      note.textContent = allPrimaryRowsWereFxMissing && !totals
+        ? `USD table needs verification; all source rows are fx_missing and no non-zero confirmed/canonical/selected-date USD total is available. fx_missing: ${fxMissingCount || localFxMissingRows.length} row(s) excluded from ВСЕГО USD.`
+        : (allPrimaryRowsWereFxMissing
           ? `USD table is incomplete; showing confirmed/canonical total while fx_missing rows stay in diagnostics. fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`
           : `fx_missing: ${totals.fxMissingCount} row(s) excluded from ВСЕГО USD.`);
       section.appendChild(note);
