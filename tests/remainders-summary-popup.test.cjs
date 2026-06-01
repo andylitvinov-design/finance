@@ -1011,6 +1011,34 @@ test("remainders diagnostics list fx_missing and selected-date rows missing from
   resetRemaindersModule();
 });
 
+test("remainders table renders needs verification when fallback local rows are all fx_missing", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "Яндекс руб", currency: "RUB" },
+        { channel: "пейпал дол", currency: "USD" },
+      ],
+    },
+  });
+
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
+    "ВСЕГО USD",
+    "needs verification",
+    "needs verification",
+    "needs verification",
+    "needs verification",
+    "needs verification",
+  ]);
+  assert.doesNotMatch(JSON.stringify(rows), /ВСЕГО USD","0,0000","0,0000","0,0000"/);
+  assert.match(collectText(block), /USD table needs verification/);
+  assert.match(collectText(block), /fx_missing rows: Яндекс руб RUB; пейпал дол USD/);
+  resetRemaindersModule();
+});
+
 test("remainders collapsed native diagnostics use canonical channel order", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
