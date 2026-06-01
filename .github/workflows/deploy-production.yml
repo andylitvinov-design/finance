@@ -74,11 +74,12 @@ jobs:
           missing=0
           for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
             if [ -z "${!name}" ]; then
-              echo "::error::$name is not configured for this repository or environment."
+              echo "::error::$name is not configured as a GitHub Actions repository secret for ${{ github.repository }}. This is a deploy credential, not an app runtime/provider env var. Add it in GitHub Settings -> Secrets and variables -> Actions, using the private wallet as the source of truth. See docs/vercel-fallback-deploy-secrets.md."
               missing=1
             fi
           done
           if [ "$missing" -ne 0 ]; then
+            echo "Fallback deploy blocked: missing GitHub Actions Vercel deploy secrets. Production was not deployed."
             exit 1
           fi
 
