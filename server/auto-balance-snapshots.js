@@ -39,15 +39,7 @@ const PAYONEER_DERIVED_CHANNELS = [
 ];
 const CURRENT_ONLY_NOT_HISTORICAL_STATUS = "current_only_not_historical";
 const CURRENT_ONLY_BALANCE_PROVIDERS = new Set(["wise", "monobank", "yoomoney", "binance"]);
-const FALLBACK_USD_RATES = {
-  USD: 1,
-  EUR: 1.16,
-  CAD: 0.74,
-  UAH: 1 / 43.86,
-  RUB: 1 / 84.5563,
-  USDT: 1,
-  USDC: 1,
-};
+const STABLE_USD_CURRENCIES = new Set(["USD", "USDT", "USDC"]);
 
 export const EXPECTED_PROVIDER_BALANCES = [
   { provider: "wise", channel: "трансервайз дол", currency: "USD", source: "wise_auto" },
@@ -959,6 +951,10 @@ function replaceExpectedRow(rows, replacement) {
   else rows[index] = replacement;
 }
 
+export function buildAutoBalanceSnapshotRow(input = {}) {
+  return buildSnapshotRow(input);
+}
+
 function buildSnapshotRow({
   date,
   provider = "provider",
@@ -977,11 +973,16 @@ function buildSnapshotRow({
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
   const normalizedChannel = String(channel || "").trim();
   const normalizedProvider = normalizeProvider(provider);
-  const rate = Number(FALLBACK_USD_RATES[normalizedCurrency] || 0);
   const numericUsd = parseSheetNumber(amountUsd);
+  const usesStableUsdNative = hasAmount && STABLE_USD_CURRENCIES.has(normalizedCurrency) && !Number.isFinite(numericUsd);
+  const needsFx = hasAmount && numericAmount !== 0 && !STABLE_USD_CURRENCIES.has(normalizedCurrency) && !Number.isFinite(numericUsd);
+  const rate = Number.isFinite(numericUsd)
+    ? (hasAmount && numericAmount !== 0 ? numericUsd / numericAmount : 1)
+    : (usesStableUsdNative ? 1 : null);
   const usdAmount = Number.isFinite(numericUsd)
     ? numericUsd
-    : (hasAmount && rate ? numericAmount * rate : "");
+    : (usesStableUsdNative ? numericAmount : "");
+  const baseStatus = String(status || (hasAmount && numericAmount === 0 ? "zero_balance" : "ok")).trim();
   if (!normalizedChannel || !normalizedCurrency) return null;
   return {
     date: normalizeIsoDate(date),
@@ -994,8 +995,10 @@ function buildSnapshotRow({
     source: String(source || `${normalizedProvider}_auto`).trim(),
     fetchedAt: String(fetchedAt || new Date().toISOString()).trim(),
     rawSourceId: String(rawSourceId || `${normalizedProvider}:${normalizedChannel}:${normalizedCurrency}`).trim(),
-    status: String(status || (hasAmount && numericAmount === 0 ? "zero_balance" : "ok")).trim(),
-    comment: String(comment || SNAPSHOT_COMMENT).trim(),
+    status: needsFx && ["ok", "zero_balance"].includes(baseStatus) ? "fx_missing" : baseStatus,
+    comment: String(needsFx
+      ? [comment || SNAPSHOT_COMMENT, "amount_usd requires FX Rates; no fallback FX applied"].filter(Boolean).join(" | ")
+      : (comment || SNAPSHOT_COMMENT)).trim(),
   };
 }
 

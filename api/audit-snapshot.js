@@ -10,6 +10,7 @@ import {
   countMissingAmountNetRows,
   isExchangeMissingAmountUsdRow,
 } from "../server/ledger-audit-helpers.js";
+import { buildCanonicalBalanceTotal } from "../server/canonical-balance-total.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const PUBLIC_SUMMARY_ONLY_WARNING =
@@ -113,6 +114,12 @@ export async function buildAuditSnapshot(options = {}) {
   warnings.push(...exchange.warnings);
   warnings.push(...buildSourceWarnings(sources, summary.ledger_rows));
   warnings.push(...buildAnalyticsWarnings(repository));
+  const canonicalTotal = buildCanonicalBalanceTotal({
+    selectedDateTotalUsd: null,
+    selectedDateStatus: "needs_verification",
+    periodTotalUsd: null,
+    periodStatus: "needs_verification",
+  });
 
   auditChecks.push(
     {
@@ -157,6 +164,7 @@ export async function buildAuditSnapshot(options = {}) {
     period,
     schema,
     summary,
+    canonical_total: canonicalTotal,
     balances: {
       by_channel: balanceResult.by_channel,
       total_usd: balanceResult.total_usd,

@@ -13,10 +13,12 @@ import {
   buildDailyCalculatedBalances,
   toCalculatedBalanceSnapshotRows,
 } from "./daily-calculated-balances.js";
+import { buildCanonicalBalanceTotal } from "./canonical-balance-total.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { applyOwnerMayCurrentBalanceSnapshot } from "./may-2026-owner-current-balances.js";
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
+import { buildProviderBalanceMatrix } from "./provider-balance-matrix.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const BALANCE_SHEET_NAME = "Остатки";
@@ -200,6 +202,11 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     staleCurrentOnlyAutoRows,
     canonicalUsdLookup: selectedCanonicalUsdLookup,
   });
+  const selectedTotalUsd = sumSelectedDateUsd(selectedDateSummary.rows);
+  const canonicalTotal = buildCanonicalBalanceTotal({
+    selectedDateTotalUsd: selectedTotalUsd,
+    selectedDateStatus: selectedDateSummary.rows.length ? "ok" : "needs_verification",
+  });
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
   return {
@@ -233,6 +240,9 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     merged_rows: buildDetailedRows(validMergedRows),
     selected_rows: buildSelectedRows(selectedDateSummary.rows),
     selected_date: selectedDateSummary.selected_date,
+    total_usd: selectedTotalUsd,
+    canonical_total_usd: canonicalTotal.canonical_total_usd,
+    canonical_total: canonicalTotal,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
     selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date),
     provider_channel_matrix: buildProviderChannelMatrix({
@@ -804,59 +814,30 @@ function buildProviderChannelMatrix({
   operations = [],
   providerStatuses = [],
 } = {}) {
-  const expected = filterExpectedProviderBalancesForDate(EXPECTED_PROVIDER_BALANCES, selectedDate);
-  const providerStatusByProvider = new Map((providerStatuses || []).map((row) => [
-    String(row.provider || "").trim().toLowerCase(),
-    String(row.provider_current_balance_status || "unknown"),
-  ]));
-  const lastOperationByKey = buildLastOperationDateByKey(operations, selectedDate);
-  const lastBalanceByKey = buildLastBalanceRowByKey(allRows, selectedDate);
-  const selectedByKey = new Map((selectedRows || []).map((row) => [makeKey(row.channel, row.currency), row]));
+  return buildProviderBalanceMatrix({
+    selectedDate,
+    expectedProviderBalances: filterExpectedProviderBalancesForDate(EXPECTED_PROVIDER_BALANCES, selectedDate),
+    selectedRows,
+    allRows,
+    operations,
+    providerStatuses,
+  });
+}
 
-  return expected.map((pair) => {
-    const key = makeKey(pair.channel, pair.currency);
-    const provider = String(pair.provider || "").trim().toLowerCase();
-    const selected = selectedByKey.get(key) || null;
-    const lastBalance = selected || lastBalanceByKey.get(key) || null;
-    const lastBalanceDate = lastBalance?.date || null;
-    const lastImportDate = lastOperationByKey.get(key) || null;
-    const supportsCurrentBalance = PROVIDERS_WITH_CURRENT_BALANCE_REFRESH.has(provider);
-    const supportsTransactionImport = PROVIDERS_WITH_TRANSACTION_IMPORT.has(provider);
-    const source = classifyBalanceSnapshotSource(lastBalance);
-    const lastManualSnapshotDate = source === "manual/screenshot" ? lastBalanceDate : null;
-    const reasons = [];
+function sumSelectedDateUsd(rows = []) {
+  let total = 0;
+  let finiteRows = 0;
+  for (const row of rows || []) {
+    const value = parseNumber(row?.amount_usd ?? row?.usdAmount);
+    if (value === null) continue;
+    total += value;
+    finiteRows += 1;
+  }
+  return finiteRows ? round(total) : null;
+}
 
-    if (!supportsCurrentBalance) reasons.push("current balance auto refresh unsupported");
-    if (supportsCurrentBalance && providerStatusByProvider.get(provider) !== "available") reasons.push("provider token not available");
-    if (!supportsTransactionImport) reasons.push("transaction import unsupported");
-    if (!lastBalanceDate) reasons.push("missing balance snapshot");
-    else if (selectedDate && lastBalanceDate < selectedDate) reasons.push("last balance snapshot before selected period end");
-    if (supportsTransactionImport && (!lastImportDate || (selectedDate && lastImportDate < selectedDate))) {
-      reasons.push("last imported operation before selected period end");
-    }
-
-    return {
-      provider,
-      channel: pair.channel,
-      currency: String(pair.currency || "").trim().toUpperCase(),
-      supports_current_balance_auto_refresh: supportsCurrentBalance,
-      supports_transaction_import: supportsTransactionImport,
-      provider_token_status: providerStatusByProvider.get(provider) || "unknown",
-      last_successful_operation_import_date: lastImportDate,
-      last_successful_balance_refresh_date: lastBalanceDate,
-      last_manual_screenshot_snapshot_date: lastManualSnapshotDate,
-      source,
-      stale: reasons.length > 0,
-      reason: reasons.join("; ") || "fresh",
-      action_required: buildProviderMatrixActionRequired({
-        supportsCurrentBalance,
-        supportsTransactionImport,
-        source,
-        lastBalanceDate,
-        selectedDate,
-      }),
-    };
-  }).sort(compareProviderMatrixRows);
+function round(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 10000) / 10000;
 }
 
 function buildLastOperationDateByKey(operations = [], selectedDate = "") {

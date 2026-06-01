@@ -1105,7 +1105,7 @@ test("remainders popup renders reconcile button", () => {
   const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
   const text = collectText(block);
 
-  assert.match(text, /Обновить остатки и пересчитать/);
+  assert.match(text, /Обновить все остатки/);
   resetRemaindersModule();
 });
 
@@ -1134,6 +1134,17 @@ test("reconcile workflow posts selected period and renders structured result", a
           balances_pulled: 2,
           transfers_imported: 3,
           computed_rows_count: 1,
+          canonical_total: { canonical_total_usd: 123, source: "selected_date_snapshot", totals_match: true, status: "ok" },
+          refresh_report: {
+            totals: { canonical_total_usd: 123, source: "selected_date_snapshot", totals_match: true, status: "ok" },
+            pulled: [{ provider: "wise", details: "операции обработаны: 4" }],
+            operations_imported: [{ provider: "wise", imported: 4, status: "ok", write_status: "processed_provider_movements" }],
+            balances_updated: [{ provider: "wise", updated: 1, status: "available" }],
+            errors: [{ provider: "paypal", reason: "PayPal permission missing", action_required: "обновить токен" }],
+            stale_manual_channels: [{ provider: "revolut", channel: "REVOLUT евро", currency: "EUR", reason: "manual only", action_required: "ручной скриншот", severity: "red" }],
+            manual_actions: [{ channel: "Payoneer - dol", currency: "USD", reason: "missing closing_usd", action_required: "ручной ввод" }],
+            provider_matrix: [{ provider: "revolut", channel: "REVOLUT евро", currency: "EUR", current_balance_auto: false, transaction_import: false, access_status: "not_implemented", severity: "red", action_required: "ручной скриншот" }],
+          },
           provider_failures: [{ provider: "paypal", error: "PayPal permission missing" }],
           needs_verification_rows: [{ channel: "Payoneer - dol", currency: "USD", reason: "missing closing_usd" }],
           audit_snapshot: {
@@ -1151,9 +1162,13 @@ test("reconcile workflow posts selected period and renders structured result", a
   const result = await api.runBalanceReconcileWorkflow();
   const panel = api.renderReconcileResult(result, makeMockDocument());
 
-  assert.match(requestedUrl, /\/api\/index\?action=reconcileBalancesAndTransfers$/);
+  assert.match(requestedUrl, /\/api\/refresh-all-balances$/);
   assert.deepEqual(requestedBody, { from: "2026-05-01", to: "2026-05-31" });
   assert.match(collectText(panel), /providers checked: wise, monobank/);
+  assert.match(collectText(panel), /Итоговые суммы/);
+  assert.match(collectText(panel), /Успешно обновлено/);
+  assert.match(collectText(panel), /Ошибки провайдеров/);
+  assert.match(collectText(panel), /Требуется ручное действие/);
   assert.match(collectText(panel), /balances pulled: 2/);
   assert.match(collectText(panel), /transfers imported: 3/);
   assert.match(collectText(panel), /computed rows: 1/);
@@ -1233,7 +1248,7 @@ test("reconcile button refetches selected-date balance snapshots after successfu
   const text = collectText(parent.children[0]);
 
   assert.ok(requested.some((entry) =>
-    entry.method === "POST" && /\/api\/index\?action=reconcileBalancesAndTransfers$/.test(entry.url)
+    entry.method === "POST" && /\/api\/refresh-all-balances$/.test(entry.url)
   ));
   assert.ok(requested.some((entry) =>
     entry.method === "GET" && /\/api\/balance-snapshots\?from=2026-05-01&to=2026-05-20$/.test(entry.url)
@@ -1357,6 +1372,32 @@ test("reconcile result summary is rendered as grouped sections", () => {
   const api = loadApi();
   const panel = api.renderReconcileResult({
     providers_checked: ["wise", "paypal"],
+    canonical_total: { canonical_total_usd: 123, source: "selected_date_snapshot", totals_match: true, status: "ok" },
+    refresh_report: {
+      totals: { canonical_total_usd: 123, source: "selected_date_snapshot", totals_match: true, status: "ok" },
+      pulled: [
+        { provider: "wise", status: "ok", details: "операции обработаны: 4" },
+      ],
+      operations_imported: [
+        { provider: "wise", status: "ok", imported: 4, write_status: "processed_provider_movements" },
+      ],
+      balances_updated: [
+        { provider: "wise", status: "available", updated: 1 },
+        { provider: "paypal", status: "needs_permission", updated: 0, error: "OAuth failed" },
+      ],
+      errors: [
+        { provider: "paypal", reason: "OAuth failed", action_required: "обновить токен" },
+      ],
+      stale_manual_channels: [
+        { provider: "revolut", channel: "REVOLUT евро", reason: "not_implemented", action_required: "ручной скриншот или ручной ввод", severity: "red" },
+      ],
+      manual_actions: [
+        { channel: "Payoneer", currency: "USD", reason: "missing anchor", action_required: "ручной ввод" },
+      ],
+      provider_matrix: [
+        { provider: "revolut", channel: "REVOLUT евро", currency: "EUR", current_balance_auto: false, transaction_import: false, access_status: "not_implemented", severity: "red", action_required: "ручной скриншот" },
+      ],
+    },
     balances_pulled: 2,
     transfers_imported: 3,
     computed_rows_count: 1,
@@ -1368,9 +1409,18 @@ test("reconcile result summary is rendered as grouped sections", () => {
   const text = collectText(panel);
 
   assert.match(text, /Итог обновления/);
-  assert.match(text, /Провайдеры/);
+  assert.match(text, /Итоговые суммы/);
+  assert.match(text, /Успешно обновлено/);
+  assert.match(text, /Операции импортированы/);
+  assert.match(text, /Остатки обновлены/);
+  assert.match(text, /Ошибки провайдеров/);
+  assert.match(text, /Stale\/manual channels/);
+  assert.match(text, /Требуется ручное действие/);
+  assert.match(text, /Provider matrix/);
   assert.match(text, /Нужна проверка/);
   assert.match(text, /paypal: OAuth failed/);
+  assert.match(text, /ручной скриншот или ручной ввод/);
+  assert.ok(findAll(panel, (node) => /needs-verification/.test(node.className || "")).length >= 1);
   assert.ok(panel.children.length >= 3);
   resetRemaindersModule();
 });

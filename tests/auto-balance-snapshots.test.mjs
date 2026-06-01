@@ -52,7 +52,7 @@ test("manual PayPal balance input creates factual auto balance rows including ze
 
   assert.deepEqual(rows.map((row) => `${row.provider}|${row.channel}|${row.currency}|${row.amount}|${row.status}|${row.source}|${row.rawSourceId}`), [
     "paypal|пейпал дол|USD|123,45|ok|paypal_manual_balance|paypal_manual_balance:2026-05-20:USD",
-    "paypal|пейпал евр|EUR|67,89|ok|paypal_manual_balance|paypal_manual_balance:2026-05-20:EUR",
+    "paypal|пейпал евр|EUR|67,89|fx_missing|paypal_manual_balance|paypal_manual_balance:2026-05-20:EUR",
     "paypal|пейпал сad|CAD|0|zero_balance|paypal_manual_balance|paypal_manual_balance:2026-05-20:CAD",
   ]);
   assert.equal(rows.every((row) => /REST balance API unavailable for personal account/.test(row.comment)), true);
@@ -547,7 +547,7 @@ test("Binance, YooMoney, and PayPal current balance APIs produce provider snapsh
     "binance save|USDC||missing_provider_balance",
   ]);
   assert.deepEqual(rows.filter((row) => row.provider === "yoomoney").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
-    "Яндекс руб|RUB|1234,56|ok",
+    "Яндекс руб|RUB|1234,56|fx_missing",
   ]);
   assert.deepEqual(rows.filter((row) => row.provider === "paypal").map((row) => `${row.channel}|${row.currency}|${row.amount}|${row.status}`), [
     "пейпал дол|USD|10,5|ok",
