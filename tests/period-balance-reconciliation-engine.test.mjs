@@ -1677,3 +1677,37 @@ test("total USD excludes legacy combined Binance row when split rows exist", () 
   });
   assert.equal(result.total_usd_row.confirmed_end_usd, 8594);
 });
+
+test("May current owner-confirmed snapshot wins over stale current rows in period reconciliation", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-06-01" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+      { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
+      { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425" },
+      { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "1689", amount_usd: "1689" },
+      { date: "2026-05-01", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: "345", amount_usd: "345" },
+    ],
+    calculatedBalanceRows: [
+      { date: "2026-06-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", balanceSource: "calculated_balance" },
+      { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "603", balanceSource: "calculated_balance" },
+      { date: "2026-06-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528", balanceSource: "provider_auto" },
+      { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775", amount_usd: "5413.0775", balanceSource: "provider_auto" },
+      { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523", balanceSource: "provider_auto" },
+    ],
+  });
+
+  const rows = new Map(result.by_channel_currency.map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_native, 10538);
+  assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_usd, 7798);
+  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_native, 1333);
+  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 31.36);
+  assert.equal(rows.get("Яндекс руб|RUB").confirmed_end_usd, 1376);
+  assert.equal(rows.get("binance save|USD").confirmed_end_usd, 7432);
+  assert.equal(rows.get("Бинанс spot|USD").confirmed_end_usd, 1162);
+  assert.equal(rows.has("legacy_combined_binance_spot_funding|USDT"), false);
+  assert.equal(rows.has("binance save|USDT"), false);
+  assert.equal(rows.has("Бинанс spot|USDT"), false);
+});
