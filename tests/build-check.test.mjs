@@ -9,13 +9,21 @@ test("composeBuildMeta preserves existing git metadata when remote build has no 
     "VERCEL_GIT_COMMIT_SHA",
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_PROVIDER",
-    "VERCEL_GIT_REPO_SLUG"
+    "VERCEL_GIT_REPO_SLUG",
+    "DEPLOY_REF",
+    "EXPECTED_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF"
   ]);
 
   delete process.env.VERCEL_GIT_COMMIT_SHA;
   delete process.env.VERCEL_GIT_COMMIT_REF;
   delete process.env.VERCEL_GIT_PROVIDER;
   delete process.env.VERCEL_GIT_REPO_SLUG;
+  delete process.env.DEPLOY_REF;
+  delete process.env.EXPECTED_REF;
+  delete process.env.GITHUB_REF_NAME;
+  delete process.env.GITHUB_HEAD_REF;
   process.env.VERCEL_ENV = "production";
 
   try {
@@ -41,6 +49,138 @@ test("composeBuildMeta preserves existing git metadata when remote build has no 
     assert.equal(buildMeta.gitCommitRef, "main");
     assert.equal(buildMeta.gitProvider, "github");
     assert.equal(buildMeta.gitRepoSlug, "andylitvinov-design/finance");
+  } finally {
+    restoreEnv(envBackup);
+  }
+});
+
+test("composeBuildMeta writes main when detached checkout has explicit deploy ref main", () => {
+  const envBackup = snapshotEnv([
+    "VERCEL_ENV",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "DEPLOY_REF",
+    "EXPECTED_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF"
+  ]);
+
+  Object.assign(process.env, {
+    VERCEL_ENV: "production",
+    VERCEL_GIT_COMMIT_SHA: "mainsha123",
+    VERCEL_GIT_PROVIDER: "github",
+    VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance",
+    DEPLOY_REF: "main"
+  });
+  process.env.VERCEL_GIT_COMMIT_REF = "HEAD";
+  delete process.env.EXPECTED_REF;
+  delete process.env.GITHUB_REF_NAME;
+  delete process.env.GITHUB_HEAD_REF;
+
+  try {
+    const buildMeta = composeBuildMeta({
+      packageJson: { version: "3.0.31" },
+      appBuildVersion: "2026.06.01.1",
+      detectGitValueFn: (...args) => (
+        args.join(" ") === "rev-parse --abbrev-ref HEAD" ? "HEAD" : ""
+      ),
+      existingBuildMeta: {}
+    });
+
+    assert.equal(buildMeta.commitSha, "mainsha123");
+    assert.equal(buildMeta.commitRef, "main");
+    assert.equal(buildMeta.gitCommitRef, "main");
+    assert.equal(buildMeta.deployRef, "main");
+    assert.equal(buildMeta.sourceRef, "main");
+  } finally {
+    restoreEnv(envBackup);
+  }
+});
+
+test("composeBuildMeta writes main when GitHub Actions ref name is main", () => {
+  const envBackup = snapshotEnv([
+    "VERCEL_ENV",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "DEPLOY_REF",
+    "EXPECTED_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF"
+  ]);
+
+  Object.assign(process.env, {
+    VERCEL_ENV: "production",
+    VERCEL_GIT_COMMIT_SHA: "mainsha456",
+    VERCEL_GIT_PROVIDER: "github",
+    VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance",
+    GITHUB_REF_NAME: "main"
+  });
+  process.env.VERCEL_GIT_COMMIT_REF = "HEAD";
+  delete process.env.DEPLOY_REF;
+  delete process.env.EXPECTED_REF;
+  delete process.env.GITHUB_HEAD_REF;
+
+  try {
+    const buildMeta = composeBuildMeta({
+      packageJson: { version: "3.0.31" },
+      appBuildVersion: "2026.06.01.1",
+      detectGitValueFn: (...args) => (
+        args.join(" ") === "rev-parse --abbrev-ref HEAD" ? "HEAD" : ""
+      ),
+      existingBuildMeta: {}
+    });
+
+    assert.equal(buildMeta.commitSha, "mainsha456");
+    assert.equal(buildMeta.commitRef, "main");
+    assert.equal(buildMeta.gitCommitRef, "main");
+    assert.equal(buildMeta.deployRef, "main");
+    assert.equal(buildMeta.sourceRef, "main");
+  } finally {
+    restoreEnv(envBackup);
+  }
+});
+
+test("composeBuildMeta preserves real feature branch refs", () => {
+  const envBackup = snapshotEnv([
+    "VERCEL_ENV",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "DEPLOY_REF",
+    "EXPECTED_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF"
+  ]);
+
+  Object.assign(process.env, {
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_SHA: "featuresha123",
+    VERCEL_GIT_COMMIT_REF: "feature/foo",
+    VERCEL_GIT_PROVIDER: "github",
+    VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance"
+  });
+  delete process.env.DEPLOY_REF;
+  delete process.env.EXPECTED_REF;
+  delete process.env.GITHUB_REF_NAME;
+  delete process.env.GITHUB_HEAD_REF;
+
+  try {
+    const buildMeta = composeBuildMeta({
+      packageJson: { version: "3.0.31" },
+      appBuildVersion: "2026.06.01.1",
+      detectGitValueFn: () => "",
+      existingBuildMeta: {}
+    });
+
+    assert.equal(buildMeta.commitRef, "feature/foo");
+    assert.equal(buildMeta.gitCommitRef, "feature/foo");
+    assert.equal(buildMeta.deployRef, "feature/foo");
+    assert.equal(buildMeta.sourceRef, "feature/foo");
   } finally {
     restoreEnv(envBackup);
   }

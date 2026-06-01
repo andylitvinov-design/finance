@@ -346,6 +346,122 @@ test("GET /api/status normalizes detached HEAD to main when env SHA matches buil
   }
 });
 
+test("GET /api/status normalizes detached HEAD to main when generated metadata records deployRef main", async () => {
+  const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
+  const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
+  const envBackup = snapshotEnv([
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+  ]);
+
+  const buildMeta = {
+    appVersion: "9.9.9",
+    appBuildVersion: "2026.06.01.1",
+    buildTime: "2026-06-01T12:22:54.890Z",
+    deploymentEnvironment: "production",
+    commitSha: "mainsha123",
+    commitRef: "HEAD",
+    deployRef: "main",
+    sourceRef: "main",
+    gitCommitSha: "mainsha123",
+    gitCommitRef: "HEAD"
+  };
+  await mkdir(path.dirname(buildMetaPath), { recursive: true });
+  await mkdir(path.dirname(overridePath), { recursive: true });
+  await writeFile(buildMetaPath, `${JSON.stringify(buildMeta, null, 2)}\n`, "utf8");
+  await writeFile(overridePath, `${JSON.stringify(buildMeta, null, 2)}\n`, "utf8");
+  Object.assign(process.env, {
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    VERCEL_URL: "ezohata-incoming-ledger.vercel.app",
+    VERCEL_PROJECT_PRODUCTION_URL: "ezohata-incoming-ledger.vercel.app",
+    VERCEL_GIT_COMMIT_SHA: "mainsha123",
+    VERCEL_GIT_COMMIT_REF: "HEAD",
+    VERCEL_GIT_PROVIDER: "github",
+    VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance"
+  });
+  clearGoogleEnv();
+
+  try {
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: {} }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.commitSha, "mainsha123");
+    assert.equal(response.body?.commitRef, "main");
+    assert.equal(response.body?.observability?.liveCommitMatchesBuildCommit, true);
+  } finally {
+    await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
+    restoreEnv(envBackup);
+  }
+});
+
+test("GET /api/status keeps detached HEAD when generated metadata has no main source ref", async () => {
+  const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
+  const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");
+  const originalText = await readFile(buildMetaPath, "utf8").catch(() => null);
+  const originalOverrideText = await readFile(overridePath, "utf8").catch(() => null);
+  const envBackup = snapshotEnv([
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_SHA",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_PROVIDER",
+    "VERCEL_GIT_REPO_SLUG",
+    "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+  ]);
+
+  const buildMeta = {
+    appVersion: "9.9.9",
+    appBuildVersion: "2026.06.01.1",
+    buildTime: "2026-06-01T12:22:54.890Z",
+    deploymentEnvironment: "production",
+    commitSha: "mainsha123",
+    commitRef: "HEAD",
+    gitCommitSha: "mainsha123",
+    gitCommitRef: "HEAD"
+  };
+  await mkdir(path.dirname(buildMetaPath), { recursive: true });
+  await mkdir(path.dirname(overridePath), { recursive: true });
+  await writeFile(buildMetaPath, `${JSON.stringify(buildMeta, null, 2)}\n`, "utf8");
+  await writeFile(overridePath, `${JSON.stringify(buildMeta, null, 2)}\n`, "utf8");
+  Object.assign(process.env, {
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    VERCEL_URL: "ezohata-incoming-ledger.vercel.app",
+    VERCEL_PROJECT_PRODUCTION_URL: "ezohata-incoming-ledger.vercel.app",
+    VERCEL_GIT_COMMIT_SHA: "mainsha123",
+    VERCEL_GIT_COMMIT_REF: "HEAD"
+  });
+  clearGoogleEnv();
+
+  try {
+    const response = createResponseRecorder();
+    await handler({ method: "GET", query: {} }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.commitRef, "HEAD");
+  } finally {
+    await restoreFile(buildMetaPath, originalText);
+    await restoreFile(overridePath, originalOverrideText);
+    restoreEnv(envBackup);
+  }
+});
+
 test("GET /api/status preserves real branch refs instead of rewriting to main", async () => {
   const buildMetaPath = path.join(process.cwd(), "ops", "build-meta.json");
   const overridePath = path.join(process.cwd(), ".generated", "build-meta.override.json");

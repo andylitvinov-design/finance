@@ -12,6 +12,14 @@ export function resolveCommitRef({
     if (buildRef === "main" && envSha && buildSha && envSha === buildSha) {
       return "main";
     }
+    const buildSourceRef = normalizeValue(
+      buildMeta.deployRef
+      || buildMeta.sourceRef
+      || buildMeta.expectedRef
+    );
+    if (buildSourceRef === "main" && envSha && buildSha && envSha === buildSha) {
+      return "main";
+    }
     return envRef;
   }
 

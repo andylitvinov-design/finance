@@ -103,31 +103,41 @@ export function composeBuildMeta({
   existingBuildMeta = {},
   detectGitValueFn = detectGitValue
 }) {
+  const deploymentEnvironment = normalizeValue(
+    process.env.VERCEL_ENV
+    || existingBuildMeta.deploymentEnvironment
+    || process.env.NODE_ENV
+    || "local"
+  ) || "local";
   const gitCommitSha = normalizeValue(
     process.env.VERCEL_GIT_COMMIT_SHA
     || detectGitValueFn("rev-parse", "HEAD")
     || existingBuildMeta.gitCommitSha
     || existingBuildMeta.commitSha
   );
-  const gitCommitRef = normalizeValue(
+  const rawGitCommitRef = normalizeValue(
     process.env.VERCEL_GIT_COMMIT_REF
     || detectGitValueFn("rev-parse", "--abbrev-ref", "HEAD")
     || existingBuildMeta.gitCommitRef
     || existingBuildMeta.commitRef
   );
+  const deployRef = resolveDeployRef({ existingBuildMeta });
+  const sourceRef = resolveSourceRef({ rawGitCommitRef, deployRef, existingBuildMeta });
+  const gitCommitRef = resolveGeneratedCommitRef({
+    rawGitCommitRef,
+    sourceRef,
+    deploymentEnvironment
+  });
 
   return {
     appVersion: String(packageJson.version || ""),
     appBuildVersion,
     buildTime: new Date().toISOString(),
-    deploymentEnvironment: normalizeValue(
-      process.env.VERCEL_ENV
-      || existingBuildMeta.deploymentEnvironment
-      || process.env.NODE_ENV
-      || "local"
-    ) || "local",
+    deploymentEnvironment,
     commitSha: gitCommitSha || "",
     commitRef: gitCommitRef || "",
+    deployRef: deployRef || "",
+    sourceRef: sourceRef || "",
     gitProvider: normalizeValue(
       process.env.VERCEL_GIT_PROVIDER
       || existingBuildMeta.gitProvider
@@ -139,6 +149,61 @@ export function composeBuildMeta({
     gitCommitSha: gitCommitSha || "",
     gitCommitRef: gitCommitRef || ""
   };
+}
+
+function resolveGeneratedCommitRef({
+  rawGitCommitRef,
+  sourceRef,
+  deploymentEnvironment
+}) {
+  if (rawGitCommitRef === "HEAD" && isMainRef(sourceRef) && deploymentEnvironment === "production") {
+    return "main";
+  }
+
+  return rawGitCommitRef || sourceRef || "";
+}
+
+function resolveDeployRef({ existingBuildMeta = {} } = {}) {
+  return normalizeValue(
+    process.env.DEPLOY_REF
+    || process.env.EXPECTED_REF
+    || nonDetachedRef(process.env.VERCEL_GIT_COMMIT_REF)
+    || process.env.GITHUB_HEAD_REF
+    || process.env.GITHUB_REF_NAME
+    || normalizeGithubRef(process.env.GITHUB_REF)
+    || existingBuildMeta.deployRef
+    || existingBuildMeta.expectedRef
+  );
+}
+
+function resolveSourceRef({ rawGitCommitRef, deployRef, existingBuildMeta = {} } = {}) {
+  if (rawGitCommitRef && rawGitCommitRef !== "HEAD") {
+    return rawGitCommitRef;
+  }
+
+  return normalizeValue(
+    deployRef
+    || process.env.SOURCE_REF
+    || existingBuildMeta.sourceRef
+  );
+}
+
+function normalizeGithubRef(value) {
+  const normalized = normalizeValue(value);
+  if (!normalized) return "";
+  return normalized
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/tags\//, "")
+    .replace(/^refs\/pull\/([^/]+)\/merge$/, "pull/$1");
+}
+
+function isMainRef(value) {
+  return normalizeValue(value) === "main";
+}
+
+function nonDetachedRef(value) {
+  const normalized = normalizeValue(value);
+  return normalized && normalized !== "HEAD" ? normalized : "";
 }
 
 async function parseJsonFile(relativePath) {

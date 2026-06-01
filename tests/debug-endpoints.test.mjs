@@ -213,6 +213,54 @@ test("debug deploy metadata normalizes detached HEAD to main when SHA matches bu
   assert.equal(deploy.metadataStatus, "ok");
 });
 
+test("debug deploy metadata normalizes detached HEAD to main when deployRef records main", () => {
+  const deploy = composeDeployMetadata({
+    buildMeta: {
+      deploymentEnvironment: "production",
+      commitSha: "mainsha123",
+      commitRef: "HEAD",
+      deployRef: "main",
+      sourceRef: "main",
+      gitRepoSlug: "andylitvinov-design/finance",
+      gitCommitSha: "mainsha123",
+      gitCommitRef: "HEAD"
+    },
+    env: {
+      VERCEL_GIT_COMMIT_SHA: "mainsha123",
+      VERCEL_GIT_COMMIT_REF: "HEAD",
+      VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance",
+      VERCEL_PROJECT_NAME: "ezohata-incoming-ledger"
+    }
+  });
+
+  assert.equal(deploy.commitSha, "mainsha123");
+  assert.equal(deploy.commitRef, "main");
+  assert.equal(deploy.metadataStatus, "ok");
+});
+
+test("debug deploy metadata keeps detached HEAD without main source ref", () => {
+  const deploy = composeDeployMetadata({
+    buildMeta: {
+      deploymentEnvironment: "production",
+      commitSha: "mainsha123",
+      commitRef: "HEAD",
+      gitRepoSlug: "andylitvinov-design/finance",
+      gitCommitSha: "mainsha123",
+      gitCommitRef: "HEAD"
+    },
+    env: {
+      VERCEL_GIT_COMMIT_SHA: "mainsha123",
+      VERCEL_GIT_COMMIT_REF: "HEAD",
+      VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance",
+      VERCEL_PROJECT_NAME: "ezohata-incoming-ledger"
+    }
+  });
+
+  assert.equal(deploy.commitSha, "mainsha123");
+  assert.equal(deploy.commitRef, "HEAD");
+  assert.equal(deploy.metadataStatus, "ok");
+});
+
 test("GET /api/debug-analytics returns period guard scaffold", async () => {
   const response = createResponseRecorder();
   await indexHandler({

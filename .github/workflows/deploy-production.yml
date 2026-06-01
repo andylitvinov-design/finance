@@ -35,6 +35,8 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
+      EXPECTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
       PRODUCTION_URL: https://ezohata-incoming-ledger.vercel.app/
       STATUS_URL: https://ezohata-incoming-ledger.vercel.app/api/status
 
