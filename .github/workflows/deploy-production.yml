@@ -1,6 +1,9 @@
 name: Deploy Production Fallback
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       ref:
@@ -39,23 +42,27 @@ jobs:
       - name: Checkout selected ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
 
       - name: Print checked-out commit
         run: |
-          echo "ref=${{ inputs.ref }}"
-          echo "reason=${{ inputs.reason }}"
-          echo "expected_sha=${{ inputs.expected_sha }}"
+          echo "ref=${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}"
+          echo "reason=${{ github.event_name == 'workflow_dispatch' && inputs.reason || 'push to main' }}"
+          echo "expected_sha=${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}"
           echo "actual_sha=$(git rev-parse HEAD)"
           git log -1 --oneline
 
-      - name: Verify expected SHA if provided
-        if: ${{ inputs.expected_sha != '' }}
+      - name: Verify expected SHA
         run: |
+          EXPECTED_SHA="${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}"
+          if [ -z "$EXPECTED_SHA" ]; then
+            echo "No expected SHA provided; skipping explicit expected SHA validation."
+            exit 0
+          fi
           ACTUAL_SHA="$(git rev-parse HEAD)"
-          if [ "$ACTUAL_SHA" != "${{ inputs.expected_sha }}" ]; then
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
             echo "Expected SHA does not match checked-out SHA"
-            echo "expected=${{ inputs.expected_sha }}"
+            echo "expected=$EXPECTED_SHA"
             echo "actual=$ACTUAL_SHA"
             exit 1
           fi
@@ -145,10 +152,10 @@ jobs:
           {
             echo "## Production Deploy Fallback"
             echo "- Repository: ${{ github.repository }}"
-            echo "- Ref: ${{ inputs.ref }}"
-            echo "- Expected SHA: ${{ inputs.expected_sha }}"
+            echo "- Ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}"
+            echo "- Expected SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}"
             echo "- Actual SHA: $(git rev-parse HEAD)"
-            echo "- Reason: ${{ inputs.reason }}"
+            echo "- Reason: ${{ github.event_name == 'workflow_dispatch' && inputs.reason || 'push to main' }}"
             echo "- Deploy URL: ${DEPLOY_URL:-unknown}"
             echo "- Production URL: $PRODUCTION_URL"
             echo "- Status URL: $STATUS_URL"
