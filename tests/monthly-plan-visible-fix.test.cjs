@@ -105,3 +105,63 @@ test("visibility guard inserts expense balance section after Plan status", () =>
   assert.equal(block.children[1].id, "monthly-plan-expense-balance");
   assert.equal(block.children[2], grid);
 });
+
+test("visibility guard routes existing Plan tab clicks through expense balance insertion", async () => {
+  const listeners = {};
+  const existingButton = {
+    dataset: {},
+    textContent: "План",
+    classList: { toggle() {} },
+    addEventListener(type, listener) {
+      listeners[type] = listener;
+    },
+  };
+  const block = createNode("finance-shell");
+  block.appendChild(createNode("finance-status"));
+  const panels = createNode("tab-panels");
+  const context = {
+    state: { activeTab: "movement" },
+    elements: {
+      tabs: {
+        querySelectorAll() { return [existingButton]; },
+        appendChild() {},
+      },
+      tabPanels: panels,
+    },
+    document: {
+      createElement(tag) {
+        return createNode(tag);
+      },
+    },
+    window: {
+      setInterval() { return 1; },
+      clearInterval() {},
+      addEventListener() {},
+    },
+    renderMonthlyPlanBlock() {
+      return block;
+    },
+    refreshGoogleControlsVisibility() {},
+    MonthlyPlanExpenseBalance: {
+      renderMonthlyPlanExpenseBalance() {
+        const section = createNode("expense-section");
+        section.id = "monthly-plan-expense-balance";
+        return section;
+      },
+    },
+  };
+  context.globalThis = context;
+  const vm = require("node:vm");
+  vm.createContext(context);
+  vm.runInContext(guardJs, context, { filename: "monthly-plan-visible-fix.js" });
+
+  assert.equal(context.ensureMonthlyPlanTabButton(), true);
+  assert.equal(typeof listeners.click, "function");
+  await listeners.click({
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(context.state.activeTab, "monthlyPlan");
+  assert.equal(block.querySelector("#monthly-plan-expense-balance")?.id, "monthly-plan-expense-balance");
+});
