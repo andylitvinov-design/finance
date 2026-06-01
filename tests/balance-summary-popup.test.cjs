@@ -229,6 +229,7 @@ test("balance popup reuses May acceptance values when incoming personal orders r
 
   const summary = api.buildBalanceTextSummary({
     totalOrders: 2820.2,
+    totalAccrued: 3467.7,
     totalPaid: 3234.4949,
     personalOrdersAfterDiscount: 0,
   }, { startDate: "2026-05-01", endDate: "2026-06-01" });
