@@ -286,6 +286,7 @@ test("balance snapshots API exposes confirmed, auto, and selected balances separ
       channel: "wise usd",
       currency: "USD",
       amount: 120,
+      amount_usd: 120,
       balance_kind: "selected",
       source: "manual_fact",
       source_sheet: "Остатки",
@@ -395,7 +396,7 @@ test("balance snapshots selected date returns merged fallback rows when manual r
   assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-17");
   assert.equal(snapshot.balance_snapshots.selected_date_source, "merged");
   assert.deepEqual(snapshot.balance_snapshots.selected_date_rows, [
-    { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 90 },
+    { date: "2026-05-17", channel: "wise usd", currency: "USD", amount: 90, amount_usd: 90 },
   ]);
   assert.deepEqual(snapshot.balance_snapshots.diagnostics.selected_balance_dates, ["2026-05-17"]);
   assert.deepEqual(snapshot.balance_snapshots.diagnostics.missing_daily_coverage_dates, []);
@@ -650,4 +651,74 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
   assert.equal(selected.has("legacy_combined_binance_spot_funding|USDT"), false);
   assert.equal(selected.has("binance save|USDT"), false);
   assert.equal(selected.has("Бинанс spot|USDT"), false);
+});
+
+test("balance snapshots selected date hydrates USD from canonical reconciliation values", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { date: "2026-06-01" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42" },
+        { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
+        { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523" },
+        { date: "2026-05-28", channel: "приват 24-грн", currency: "UAH", amount: "91.849248", amount_usd: "2.1068" },
+        { date: "2026-05-28", channel: "пейпал дол", currency: "USD", amount: "12.07", amount_usd: "12.07" },
+      ],
+      autoBalances: [
+        { date: "2026-06-01", channel: "трансервайз дол", currency: "USD", amount: "1275.42" },
+        { date: "2026-06-01", channel: "Payoneer - eur", currency: "EUR", amount: "1008.19", rate: "1.16" },
+        { date: "2026-06-01", channel: "нал-мам-евро", currency: "EUR", amount: "580", rate: "1.165868" },
+        { date: "2026-06-01", channel: "трансервайз евро", currency: "EUR", amount: "148.94", rate: "1.16" },
+        { date: "2026-06-01", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", rate: "1.165868" },
+        { date: "2026-06-01", channel: "Налично -я-евр", currency: "EUR", amount: "91", rate: "1.165868" },
+        { date: "2026-06-01", channel: "приват 24-дол", currency: "USD", amount: "43" },
+        { date: "2026-06-01", channel: "REVOLUT франк", currency: "CHF", amount: "15", rate: "1.2760333333333333" },
+        { date: "2026-06-01", channel: "REVOLUT дол", currency: "USD", amount: "18.38" },
+        { date: "2026-06-01", channel: "Payoneer - dol", currency: "USD", amount: "3.48" },
+        { date: "2026-06-01", channel: "приват 24-евро", currency: "EUR", amount: "1", rate: "1.1659" },
+        { date: "2026-06-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
+        { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775" },
+        { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523" },
+      ],
+      operations: [],
+      fxRates: [],
+      plannedRows: [],
+      warnings: [],
+    }),
+  });
+
+  const selected = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
+  const total = snapshot.balance_snapshots.selected_date_rows.reduce((sum, row) => sum + Number(row.amount_usd || 0), 0);
+
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-06-01");
+  assert.equal(selected.get("трансервайз дол|USD").amount_usd, 1275.42);
+  assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
+  assert.equal(selected.get("Payoneer - eur|EUR").amount_usd, 1169.5004);
+  assert.equal(selected.get("binance save|USD").amount_usd, 7432);
+  assert.equal(selected.has("binance save|USDC"), false);
+  assert.equal(selected.has("binance save|USDT"), false);
+  assert.equal(selected.has("Бинанс spot|USDT"), false);
+  assert.equal(Number(total.toFixed(4)), 21427.7996);
+});
+
+test("balance snapshots selected date does not apply May current overrides after the May carry-forward window", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-06-02", to: "2026-06-02" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-06-02", channel: "binance save", currency: "USDT", amount: "12", amount_usd: "12" },
+      ],
+      autoBalances: [],
+      operations: [],
+      warnings: [],
+    }),
+  });
+
+  const selected = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(selected.get("binance save|USDT").amount_usd, 12);
+  assert.equal(selected.has("binance save|USD"), false);
 });

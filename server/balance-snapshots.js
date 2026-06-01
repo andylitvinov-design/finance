@@ -9,9 +9,14 @@ import {
   getProviderCurrentBalanceCapabilities,
 } from "./auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
+import {
+  buildDailyCalculatedBalances,
+  toCalculatedBalanceSnapshotRows,
+} from "./daily-calculated-balances.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { applyOwnerMayCurrentBalanceSnapshot } from "./may-2026-owner-current-balances.js";
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
+import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const BALANCE_SHEET_NAME = "Остатки";
@@ -162,6 +167,9 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   const mergedSourceRows = Array.isArray(repository.mergedBalances)
     ? repository.mergedBalances
     : mergeManualAndAutoBalances(balanceRows || [], repository.autoBalances || []).rows;
+  const preOwnerMergedSourceRows = Array.isArray(repository.balanceSnapshotMerge?.rows)
+    ? repository.balanceSnapshotMerge.rows
+    : mergedSourceRows;
   const normalizedMergedRows = (mergedSourceRows || []).map(normalizeBalanceSnapshotRow);
   const filteredRows = normalizedRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
   const filteredAutoRows = normalizedAutoRows.filter((row) => isBalanceRowInPeriod(row, periodFilter));
@@ -175,12 +183,20 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
   const mergedDates = unique(validMergedRows.map((row) => row.date)).sort();
   const targetDate = resolveInputTargetDate(periodFilter, validRows);
   const selectedDate = resolveSelectedDate(periodFilter, validMergedRows, validAutoRows, validRows);
+  const selectedCanonicalUsdLookup = buildSelectedCanonicalUsdLookup({
+    selectedDate,
+    periodFilter,
+    rows: validMergedRows,
+    sourceRows: preOwnerMergedSourceRows,
+    repository,
+  });
   const selectedDateSummary = buildSelectedDateSummary({
     selectedDate,
     validMergedRows,
     validAutoRows,
     validRows,
     staleCurrentOnlyAutoRows,
+    canonicalUsdLookup: selectedCanonicalUsdLookup,
   });
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
@@ -423,7 +439,14 @@ function resolveSelectedDate(periodFilter = {}, mergedRows = [], autoRows = [], 
   return dates.at(-1) || "";
 }
 
-function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAutoRows = [], validRows = [], staleCurrentOnlyAutoRows = [] } = {}) {
+function buildSelectedDateSummary({
+  selectedDate,
+  validMergedRows = [],
+  validAutoRows = [],
+  validRows = [],
+  staleCurrentOnlyAutoRows = [],
+  canonicalUsdLookup = new Map(),
+} = {}) {
   if (!selectedDate) {
     return {
       selected_date: "",
@@ -432,13 +455,13 @@ function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAut
       diagnostics: ["No balance snapshot for this date; run guarded May backfill."],
     };
   }
-  const selectedRows = latestKnownRowsForDate(validMergedRows, selectedDate);
+  const selectedRows = hydrateSelectedDateRows(latestKnownRowsForDate(validMergedRows, selectedDate), canonicalUsdLookup);
   if (selectedRows.length) {
     return {
       selected_date: selectedDate,
       rows: selectedRows,
       source: selectedRows.some((row) => row.date < selectedDate) ? "latest_known" : "merged",
-      diagnostics: [],
+      diagnostics: buildSelectedHydrationDiagnostics(selectedRows),
     };
   }
   const staleForDate = (staleCurrentOnlyAutoRows || []).filter((row) => normalizeDate(row.date) === selectedDate);
@@ -452,6 +475,94 @@ function buildSelectedDateSummary({ selectedDate, validMergedRows = [], validAut
     source: "none",
     diagnostics,
   };
+}
+
+function buildSelectedCanonicalUsdLookup({
+  selectedDate,
+  periodFilter = {},
+  rows = [],
+  sourceRows = [],
+  repository = {},
+} = {}) {
+  if (!selectedDate) return new Map();
+  const from = periodFilter.from || findEarliestBalanceDate(rows, selectedDate);
+  const period = { from, to: selectedDate };
+  const baseRows = Array.isArray(sourceRows) && sourceRows.length ? sourceRows : rows;
+  const calculatedBalanceRows = from
+    ? toCalculatedBalanceSnapshotRows(buildDailyCalculatedBalances({
+      operations: repository.operations || [],
+      balanceRows: baseRows,
+      period,
+    }).rows)
+    : [];
+  const reconciliation = buildPeriodBalanceReconciliation({
+    operations: repository.operations || [],
+    balanceRows: baseRows,
+    calculatedBalanceRows,
+    fxRates: Array.isArray(repository.fxRates) ? repository.fxRates : [],
+    plannedRows: Array.isArray(repository.plannedRows) ? repository.plannedRows : [],
+    plannedSourceStatus: repository.plannedSourceStatus || "needs_verification",
+    period,
+  });
+  const lookup = new Map();
+  for (const row of reconciliation.by_channel_currency || []) {
+    const key = makeCanonicalKey(row.channel, row.currency);
+    if (!key) continue;
+    const confirmedUsd = parseNumber(row.confirmed_end_usd);
+    lookup.set(key, {
+      confirmed_end_usd: confirmedUsd,
+      confirmed_end_native: parseNumber(row.confirmed_end_native),
+      status: row.status || "",
+    });
+  }
+  return lookup;
+}
+
+function hydrateSelectedDateRows(rows = [], canonicalUsdLookup = new Map()) {
+  const aggregateKeys = new Set(canonicalUsdLookup.keys());
+  return (rows || [])
+    .filter((row) => !isDuplicateBinanceComponentRow(row, aggregateKeys))
+    .map((row) => hydrateSelectedDateRow(row, canonicalUsdLookup));
+}
+
+function hydrateSelectedDateRow(row = {}, canonicalUsdLookup = new Map()) {
+  const key = makeCanonicalKey(row.channel, row.currency);
+  const canonical = key ? canonicalUsdLookup.get(key) : null;
+  const canonicalUsd = parseNumber(canonical?.confirmed_end_usd);
+  const fallbackUsd = canonicalUsd !== null
+    ? canonicalUsd
+    : resolveStableUsdAmount(row);
+  if (fallbackUsd === null) return row;
+  return {
+    ...row,
+    amount_usd: fallbackUsd,
+    selected_usd_source: canonicalUsd !== null ? "period_reconciliation_confirmed_end_usd" : "stable_usd_currency",
+  };
+}
+
+function isDuplicateBinanceComponentRow(row = {}, aggregateKeys = new Set()) {
+  const channel = canonicalBalanceChannel(row.channel, row.currency);
+  const currency = String(row.currency || "").trim().toUpperCase();
+  if (!["USDT", "USDC"].includes(currency)) return false;
+  return (channel === "binance save" && aggregateKeys.has(makeKey("binance save", "USD")))
+    || (channel === "Бинанс spot" && aggregateKeys.has(makeKey("Бинанс spot", "USD")));
+}
+
+function buildSelectedHydrationDiagnostics(rows = []) {
+  const diagnostics = [];
+  const hydrated = rows.filter((row) => row.selected_usd_source).length;
+  const missingUsdRows = rows.filter((row) => parseNumber(row.amount) !== null && parseNumber(row.amount_usd) === null);
+  if (hydrated) diagnostics.push(`Hydrated ${hydrated} selected-date USD value(s) from canonical reconciliation or stable USD currency.`);
+  if (missingUsdRows.length) diagnostics.push(`needs verification: ${missingUsdRows.length} selected-date row(s) still have native amount without trusted USD equivalent.`);
+  return diagnostics;
+}
+
+function findEarliestBalanceDate(rows = [], selectedDate = "") {
+  const dates = unique((rows || [])
+    .map((row) => row.date)
+    .filter((date) => date && (!selectedDate || date <= selectedDate)))
+    .sort();
+  return dates[0] || "";
 }
 
 function latestKnownRowsForDate(rows = [], selectedDate = "") {
@@ -816,6 +927,17 @@ function parsePeriodFilter(query = {}) {
       period: { from: `${period}-01`, to: lastDayOfMonth(period) },
     };
   }
+  const selectedDate = normalizeDate(query.date);
+  if (selectedDate) {
+    return {
+      from: "",
+      to: selectedDate,
+      period: {
+        from: "needs verification",
+        to: selectedDate,
+      },
+    };
+  }
   const from = normalizeDate(query.from);
   const to = normalizeDate(query.to);
   return {
@@ -878,6 +1000,13 @@ function parseNumber(value) {
   if (!raw) return null;
   const numeric = Number(raw.replace(/\s/g, "").replace(/,/g, ".").replace(/[^\d.+-]/g, ""));
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function resolveStableUsdAmount(row = {}) {
+  const amount = parseNumber(row.amount);
+  if (amount === null) return null;
+  const currency = String(row.currency || "").trim().toUpperCase();
+  return ["USD", "USDT", "USDC"].includes(currency) ? amount : null;
 }
 
 function unique(values) {
