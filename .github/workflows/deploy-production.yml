@@ -85,6 +85,27 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
+      - name: Prepare Vercel project link
+        run: |
+          mkdir -p .vercel
+          node <<'NODE'
+          const fs = require("fs");
+          const required = ["VERCEL_ORG_ID", "VERCEL_PROJECT_ID"];
+          const missing = required.filter((name) => !process.env[name]);
+          if (missing.length) {
+            console.error(`Missing required Vercel link values: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            ".vercel/project.json",
+            `${JSON.stringify({
+              orgId: process.env.VERCEL_ORG_ID,
+              projectId: process.env.VERCEL_PROJECT_ID,
+              projectName: "ezohata-incoming-ledger",
+            }, null, 2)}\n`
+          );
+          NODE
+
       - name: Run release guard
         run: bash scripts/release-guard.sh
 
