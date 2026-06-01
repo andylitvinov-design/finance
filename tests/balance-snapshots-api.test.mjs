@@ -622,6 +622,7 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
     repositoryLoader: async () => ({
       ok: true,
       balances: [
+        { date: "2026-03-10", channel: "деп24-дол", currency: "USD", amount: "0" },
         { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
         { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
@@ -664,8 +665,8 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42" },
         { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
         { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523" },
+        { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "435", amount_usd: "435" },
         { date: "2026-05-28", channel: "приват 24-грн", currency: "UAH", amount: "91.849248", amount_usd: "2.1068" },
-        { date: "2026-05-28", channel: "пейпал дол", currency: "USD", amount: "12.07", amount_usd: "12.07" },
       ],
       autoBalances: [
         { date: "2026-06-01", channel: "трансервайз дол", currency: "USD", amount: "1275.42" },
@@ -677,6 +678,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
         { date: "2026-06-01", channel: "приват 24-дол", currency: "USD", amount: "43" },
         { date: "2026-06-01", channel: "REVOLUT франк", currency: "CHF", amount: "15", rate: "1.2760333333333333" },
         { date: "2026-06-01", channel: "REVOLUT дол", currency: "USD", amount: "18.38" },
+        { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "35.3" },
         { date: "2026-06-01", channel: "Payoneer - dol", currency: "USD", amount: "3.48" },
         { date: "2026-06-01", channel: "приват 24-евро", currency: "EUR", amount: "1", rate: "1.1659" },
         { date: "2026-06-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
@@ -697,6 +699,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
   assert.equal(selected.get("трансервайз дол|USD").amount_usd, 1275.42);
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
   assert.equal(selected.get("Payoneer - eur|EUR").amount_usd, 1169.5004);
+  assert.equal(selected.get("пейпал дол|USD").amount_usd, 12.07);
   assert.equal(selected.get("binance save|USD").amount_usd, 7432);
   assert.equal(selected.has("binance save|USDC"), false);
   assert.equal(selected.has("binance save|USDT"), false);
