@@ -90,6 +90,14 @@ button:disabled { cursor: wait; opacity: 0.6; transform: none; }
 .balance-income-channel-distribution td:nth-child(3) { text-align: right; white-space: nowrap; }
 .balance-income-channel-total td { font-weight: 700; }
 .balance-summary-diagnostics { margin-top: 10px; color: var(--muted); font-size: 13px; }
+.balance-summary-diagnostics.needs-verification {
+  color: #a12216;
+  font-weight: 700;
+}
+.remainders-summary-block tr.needs-verification td {
+  background: #fff0ed;
+  color: #7f1d1d;
+}
 .remainders-summary-block {
   max-width: 100%;
   min-width: 0;

@@ -219,6 +219,70 @@ test("balance snapshots reads Остатки rows and warns about Факт now r
   ));
 });
 
+test("selected-date snapshot hydrates native USD stablecoin rows but keeps non-USD without trusted USD as verification", () => {
+  const summary = buildBalanceSnapshotsSummary([
+    { date: "2026-06-01", channel: "трансервайз дол", currency: "USD", amount: "1275.42" },
+    { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "100" },
+    { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "10313" },
+  ], { from: "2026-06-01", to: "2026-06-01" });
+
+  const byChannel = new Map(summary.selected_date_rows.map((row) => [row.channel, row]));
+
+  assert.equal(byChannel.get("трансервайз дол")?.amount_usd, 1275.42);
+  assert.equal(byChannel.get("Бинанс spot")?.amount_usd, 100);
+  assert.equal(byChannel.get("монобанк грн")?.amount_usd, undefined);
+  assert.ok(summary.selected_date_diagnostics.some((line) =>
+    /native amount without trusted USD equivalent/.test(line)
+  ));
+});
+
+test("provider matrix marks unsupported and stale channels with last snapshot/import evidence", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-06-01" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual screenshot" },
+        { date: "2026-05-31", channel: "приват 24-грн", currency: "UAH", amount: "93.27", amount_usd: "2.1068", source: "manual screenshot" },
+        { date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", amount_usd: "129.1082", source: "manual screenshot" },
+      ],
+      operations: [
+        {
+          date: "2026-05-28",
+          operation: "income",
+          toChannel: "монобанк грн",
+          currency: "UAH",
+          ledgerV2: { date: "2026-05-28", operation: "income", to_channel: "монобанк грн", currency: "UAH" },
+        },
+      ],
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+  });
+
+  const matrix = snapshot.balance_snapshots.provider_channel_matrix;
+  const mono = matrix.find((row) => row.channel === "монобанк грн" && row.currency === "UAH");
+  const privat = matrix.find((row) => row.channel === "приват 24-грн" && row.currency === "UAH");
+  const revolut = matrix.find((row) => row.channel === "REVOLUT евро" && row.currency === "EUR");
+
+  assert.equal(mono.supports_current_balance_auto_refresh, true);
+  assert.equal(mono.supports_transaction_import, true);
+  assert.equal(mono.last_successful_operation_import_date, "2026-05-28");
+  assert.equal(mono.last_successful_balance_refresh_date, "2026-05-28");
+  assert.equal(mono.stale, true);
+  assert.match(mono.action_required, /manual balance needed|refresh token|upload screenshot/);
+
+  assert.equal(privat.supports_current_balance_auto_refresh, false);
+  assert.equal(privat.supports_transaction_import, true);
+  assert.equal(privat.stale, true);
+  assert.match(privat.reason, /current balance auto refresh unsupported/);
+
+  assert.equal(revolut.supports_current_balance_auto_refresh, false);
+  assert.equal(revolut.supports_transaction_import, false);
+  assert.equal(revolut.provider_token_status, "not_implemented");
+  assert.equal(revolut.last_manual_screenshot_snapshot_date, "2026-05-31");
+});
+
 test("balance snapshots API exposes confirmed, auto, and selected balances separately", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
     query: { from: "2026-04-01", to: "2026-04-01" },

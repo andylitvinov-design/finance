@@ -23,6 +23,8 @@ const BALANCE_SHEET_NAME = "Остатки";
 const FACT_SHEET_NAME = "Факт";
 const FACT_BALANCE_WARNING = "Остатки внесены во вкладку Факт, но сверка использует вкладку Остатки.";
 const BALANCE_TARGET_COLUMNS = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
+const PROVIDERS_WITH_TRANSACTION_IMPORT = new Set(["wise", "monobank", "paypal", "privatbank", "yoomoney", "binance"]);
+const PROVIDERS_WITH_CURRENT_BALANCE_REFRESH = new Set(["wise", "monobank", "paypal", "yoomoney", "binance"]);
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -233,6 +235,13 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     selected_date: selectedDateSummary.selected_date,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
     selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date),
+    provider_channel_matrix: buildProviderChannelMatrix({
+      selectedDate: selectedDateSummary.selected_date,
+      selectedRows: selectedDateSummary.rows,
+      allRows: validMergedRows,
+      operations: repository.operations || [],
+      providerStatuses: getProviderCurrentBalanceCapabilities(),
+    }),
     selected_date_source: selectedDateSummary.source,
     selected_date_diagnostics: selectedDateSummary.diagnostics,
     fact_balance_rows: factBalanceRows,
@@ -274,6 +283,7 @@ function emptyBalanceSnapshotsSummary() {
     selected_date: "",
     selected_date_rows: [],
     selected_date_coverage: buildSelectedDateCoverage([], EXPECTED_PROVIDER_BALANCES),
+    provider_channel_matrix: [],
     selected_date_source: "none",
     selected_date_diagnostics: [],
     input_rows: [],
@@ -785,6 +795,132 @@ function buildSelectedDateCoverage(rows = [], expectedPairs = [], selectedDate =
     missing_channels: missingChannels,
     status,
   };
+}
+
+function buildProviderChannelMatrix({
+  selectedDate = "",
+  selectedRows = [],
+  allRows = [],
+  operations = [],
+  providerStatuses = [],
+} = {}) {
+  const expected = filterExpectedProviderBalancesForDate(EXPECTED_PROVIDER_BALANCES, selectedDate);
+  const providerStatusByProvider = new Map((providerStatuses || []).map((row) => [
+    String(row.provider || "").trim().toLowerCase(),
+    String(row.provider_current_balance_status || "unknown"),
+  ]));
+  const lastOperationByKey = buildLastOperationDateByKey(operations, selectedDate);
+  const lastBalanceByKey = buildLastBalanceRowByKey(allRows, selectedDate);
+  const selectedByKey = new Map((selectedRows || []).map((row) => [makeKey(row.channel, row.currency), row]));
+
+  return expected.map((pair) => {
+    const key = makeKey(pair.channel, pair.currency);
+    const provider = String(pair.provider || "").trim().toLowerCase();
+    const selected = selectedByKey.get(key) || null;
+    const lastBalance = selected || lastBalanceByKey.get(key) || null;
+    const lastBalanceDate = lastBalance?.date || null;
+    const lastImportDate = lastOperationByKey.get(key) || null;
+    const supportsCurrentBalance = PROVIDERS_WITH_CURRENT_BALANCE_REFRESH.has(provider);
+    const supportsTransactionImport = PROVIDERS_WITH_TRANSACTION_IMPORT.has(provider);
+    const source = classifyBalanceSnapshotSource(lastBalance);
+    const lastManualSnapshotDate = source === "manual/screenshot" ? lastBalanceDate : null;
+    const reasons = [];
+
+    if (!supportsCurrentBalance) reasons.push("current balance auto refresh unsupported");
+    if (supportsCurrentBalance && providerStatusByProvider.get(provider) !== "available") reasons.push("provider token not available");
+    if (!supportsTransactionImport) reasons.push("transaction import unsupported");
+    if (!lastBalanceDate) reasons.push("missing balance snapshot");
+    else if (selectedDate && lastBalanceDate < selectedDate) reasons.push("last balance snapshot before selected period end");
+    if (supportsTransactionImport && (!lastImportDate || (selectedDate && lastImportDate < selectedDate))) {
+      reasons.push("last imported operation before selected period end");
+    }
+
+    return {
+      provider,
+      channel: pair.channel,
+      currency: String(pair.currency || "").trim().toUpperCase(),
+      supports_current_balance_auto_refresh: supportsCurrentBalance,
+      supports_transaction_import: supportsTransactionImport,
+      provider_token_status: providerStatusByProvider.get(provider) || "unknown",
+      last_successful_operation_import_date: lastImportDate,
+      last_successful_balance_refresh_date: lastBalanceDate,
+      last_manual_screenshot_snapshot_date: lastManualSnapshotDate,
+      source,
+      stale: reasons.length > 0,
+      reason: reasons.join("; ") || "fresh",
+      action_required: buildProviderMatrixActionRequired({
+        supportsCurrentBalance,
+        supportsTransactionImport,
+        source,
+        lastBalanceDate,
+        selectedDate,
+      }),
+    };
+  }).sort(compareProviderMatrixRows);
+}
+
+function buildLastOperationDateByKey(operations = [], selectedDate = "") {
+  const map = new Map();
+  for (const operation of operations || []) {
+    const date = normalizeDate(operation?.date || operation?.ledgerV2?.date);
+    if (!date || (selectedDate && date > selectedDate)) continue;
+    for (const pair of getOperationChannelCurrencyPairs(operation)) {
+      const key = makeKey(pair.channel, pair.currency);
+      if (!map.has(key) || date > map.get(key)) map.set(key, date);
+    }
+  }
+  return map;
+}
+
+function buildLastBalanceRowByKey(rows = [], selectedDate = "") {
+  const map = new Map();
+  for (const row of rows || []) {
+    if (!row.valid || !row.date || (selectedDate && row.date > selectedDate)) continue;
+    const key = makeKey(row.channel, row.currency);
+    const current = map.get(key);
+    if (!current || compareSelectedBalanceRows(row, current) > 0) map.set(key, row);
+  }
+  return map;
+}
+
+function classifyBalanceSnapshotSource(row = {}) {
+  if (!row) return "missing";
+  const text = [
+    row.source,
+    row.fact_source,
+    row.provider,
+    row.comment,
+    row.sourceSheet,
+    row.status,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean).join(" ");
+  if (/manual|screenshot|owner|confirmed|остатки/.test(text) || normalizeDisplaySource(row) === "manual_fact") {
+    return "manual/screenshot";
+  }
+  if (/provider|auto|wise|paypal|binance|monobank|privat|yoomoney/.test(text) || normalizeDisplaySource(row) === "provider_auto") {
+    return "provider";
+  }
+  return "unknown";
+}
+
+function buildProviderMatrixActionRequired({
+  supportsCurrentBalance,
+  supportsTransactionImport,
+  source,
+  lastBalanceDate,
+  selectedDate,
+} = {}) {
+  const actions = [];
+  if (!supportsCurrentBalance) actions.push("upload screenshot");
+  if (supportsCurrentBalance && selectedDate && (!lastBalanceDate || lastBalanceDate < selectedDate)) actions.push("refresh token");
+  if (source !== "provider" || !lastBalanceDate || (selectedDate && lastBalanceDate < selectedDate)) actions.push("manual balance needed");
+  if (supportsTransactionImport && selectedDate) actions.push("verify latest imported operations");
+  return unique(actions).join(" / ") || "none";
+}
+
+function compareProviderMatrixRows(left, right) {
+  if (left.provider !== right.provider) return left.provider.localeCompare(right.provider);
+  if (left.channel !== right.channel) return left.channel.localeCompare(right.channel);
+  return left.currency.localeCompare(right.currency);
 }
 
 function normalizeExpectedPairs(rows = []) {
