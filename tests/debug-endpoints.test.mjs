@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 
 import statusHandler from "../api/status.js";
 import indexHandler from "../api/index.js";
-import { buildDebugUiState, buildExpensePlanReconciliationByChannel } from "../server/debug-endpoints.js";
+import {
+  buildDebugUiState,
+  buildExpensePlanReconciliationByChannel,
+  composeDeployMetadata
+} from "../server/debug-endpoints.js";
 
 function createResponseRecorder() {
   return {
@@ -184,6 +188,29 @@ test("GET /api/debug-full returns deploy metadata and endpoint inventory", async
   } finally {
     restoreEnv(envBackup);
   }
+});
+
+test("debug deploy metadata normalizes detached HEAD to main when SHA matches build metadata", () => {
+  const deploy = composeDeployMetadata({
+    buildMeta: {
+      deploymentEnvironment: "production",
+      commitSha: "mainsha123",
+      commitRef: "main",
+      gitRepoSlug: "andylitvinov-design/finance",
+      gitCommitSha: "mainsha123",
+      gitCommitRef: "main"
+    },
+    env: {
+      VERCEL_GIT_COMMIT_SHA: "mainsha123",
+      VERCEL_GIT_COMMIT_REF: "HEAD",
+      VERCEL_GIT_REPO_SLUG: "andylitvinov-design/finance",
+      VERCEL_PROJECT_NAME: "ezohata-incoming-ledger"
+    }
+  });
+
+  assert.equal(deploy.commitSha, "mainsha123");
+  assert.equal(deploy.commitRef, "main");
+  assert.equal(deploy.metadataStatus, "ok");
 });
 
 test("GET /api/debug-analytics returns period guard scaffold", async () => {

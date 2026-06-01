@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveCommitRef } from "../server/deploy-metadata.js";
 import { probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
 
 export default async function handler(request, response) {
@@ -57,11 +58,7 @@ export default async function handler(request, response) {
       deployTime: deployTime || "unknown",
       deploymentEnvironment,
       commitSha,
-      commitRef: normalizeValue(
-        process.env.VERCEL_GIT_COMMIT_REF
-        || buildMeta.gitCommitRef
-        || buildMeta.commitRef
-      ) || "unknown",
+      commitRef: resolveCommitRef({ buildMeta }) || "unknown",
       gitProvider: normalizeValue(process.env.VERCEL_GIT_PROVIDER || buildMeta.gitProvider) || "unknown",
       gitRepoSlug: normalizeValue(process.env.VERCEL_GIT_REPO_SLUG || buildMeta.gitRepoSlug) || "unknown",
       hasGoogleServiceAccountEmail: googleProbe.hasEmail,
