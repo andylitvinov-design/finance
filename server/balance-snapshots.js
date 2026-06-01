@@ -485,7 +485,7 @@ function buildSelectedCanonicalUsdLookup({
   repository = {},
 } = {}) {
   if (!selectedDate) return new Map();
-  const from = periodFilter.from || findEarliestBalanceDate(rows, selectedDate);
+  const from = periodFilter.from || resolveSelectedCanonicalPeriodStart(rows, selectedDate);
   const period = { from, to: selectedDate };
   const baseRows = Array.isArray(sourceRows) && sourceRows.length ? sourceRows : rows;
   const calculatedBalanceRows = from
@@ -563,6 +563,14 @@ function findEarliestBalanceDate(rows = [], selectedDate = "") {
     .filter((date) => date && (!selectedDate || date <= selectedDate)))
     .sort();
   return dates[0] || "";
+}
+
+function resolveSelectedCanonicalPeriodStart(rows = [], selectedDate = "") {
+  const earliest = findEarliestBalanceDate(rows, selectedDate);
+  if (selectedDate >= "2026-06-01" && earliest && earliest <= "2026-05-01") {
+    return "2026-05-01";
+  }
+  return earliest;
 }
 
 function latestKnownRowsForDate(rows = [], selectedDate = "") {
