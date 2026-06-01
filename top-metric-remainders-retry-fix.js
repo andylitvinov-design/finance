@@ -7,7 +7,7 @@
   const BOUND_FLAG = "topMetricRemaindersRetryBound";
 
   function getBadgeNode() {
-    return root.document?.getElementById?.("metricProfit") || null;
+    return root.document?.getElementById?.("metricRemainders") || null;
   }
 
   function getTopMetricApi() {

@@ -111,6 +111,11 @@
   function applyRemaindersTopCardTotal(node, total, source) {
     if (!node || !Number.isFinite(total)) return false;
     const nextText = `Остатки: ${formatMetricNumber(total)}`;
+    const valueNode = root.document?.getElementById?.("metricRemaindersValue");
+    if (valueNode) {
+      valueNode.textContent = formatMetricNumber(total);
+      valueNode.dataset.displaySource = source;
+    }
     if (node.textContent === nextText && node.dataset.displaySource === source) return false;
     node.textContent = nextText;
     node.title = "Сумма текущих USD-остатков по всем каналам";
@@ -204,7 +209,7 @@
   }
 
   function syncRemaindersTopCard() {
-    const node = root.document?.getElementById?.("metricProfit");
+    const node = root.document?.getElementById?.("metricRemainders");
     const api = root.EzohataRemaindersSummaryPopup;
     if (!node) return false;
     let updated = false;

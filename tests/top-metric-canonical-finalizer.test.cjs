@@ -22,6 +22,8 @@ function makeContext(extra = {}) {
     metricBalances: makeNode("3234,4949"),
     metricTransfers: makeNode("-414,2949"),
     metricProfit: makeNode("Прибыль: 0,0000"),
+    metricRemainders: makeNode("Остатки: 0,0000"),
+    metricRemaindersValue: makeNode("0"),
     metricMyServices: makeNode("Мои услуги: 0,0000"),
     metricPersonalOrdersAfterDiscount: makeNode("Мои личные: 0,0000"),
     ...(extra.nodes || {}),
@@ -115,7 +117,9 @@ test("canonical top metric finalizer renders paid, payable, remainders, services
 
   assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
-  assert.equal(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 41,2922");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "41,2922");
+  assert.equal(context.nodes.metricProfit.textContent, "Прибыль: 0,0000");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
   assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 647,5000");
 });
@@ -143,8 +147,10 @@ test("May acceptance keeps live remainders canonical and does not pin 41,2922", 
   assert.ok(liveRemaindersCalls >= 1);
   assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
-  assert.equal(context.nodes.metricProfit.textContent, "Остатки: 27837,7141");
-  assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 27837,7141");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "27837,7141");
+  assert.equal(context.nodes.metricProfit.textContent, "Прибыль: 0,0000");
+  assert.notEqual(context.nodes.metricRemainders.textContent, "Остатки: 41,2922");
 });
 
 test("live remainders zero does not overwrite an existing non-zero top badge", async () => {
@@ -153,6 +159,8 @@ test("live remainders zero does not overwrite an existing non-zero top badge", a
       metricBalances: makeNode("2536,7627"),
       metricTransfers: makeNode("84,8773"),
       metricProfit: makeNode("Прибыль: 846,0600"),
+      metricRemainders: makeNode("Остатки: 19255,2484"),
+      metricRemaindersValue: makeNode("19255,2484"),
       metricMyServices: makeNode("Мои услуги: 204,7059"),
       metricPersonalOrdersAfterDiscount: makeNode("Мои заказы: 647,5000"),
     },
@@ -172,6 +180,28 @@ test("live remainders zero does not overwrite an existing non-zero top badge", a
 
   assert.equal(context.nodes.metricProfit.textContent, "Прибыль: 846,0600");
   assert.equal(context.nodes.metricProfit.dataset.displaySource, undefined);
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 19255,2484");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "19255,2484");
+});
+
+test("renderMetrics after remainders does not erase dedicated remainders card", () => {
+  const context = makeContext({
+    renderMetrics() {
+      context.nodes.metricProfit.textContent = "Прибыль: 846,0600";
+    },
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({ totals: { closingUsd: 19255.2484 } }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+  context.renderMetrics();
+  flushTimers(context);
+
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 19255,2484");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "19255,2484");
+  assert.equal(context.nodes.metricProfit.textContent, "Прибыль: 846,0600");
 });
 
 test("canonical paid keeps payout total unchanged when duplicate Wise transfers are already in payouts", () => {
@@ -220,6 +250,7 @@ test("canonical top metric finalizer applies May 2026 acceptance display when su
   assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
   assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "0,0000");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
 });
 

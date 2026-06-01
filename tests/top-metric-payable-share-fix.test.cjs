@@ -70,11 +70,16 @@ test("patchBuildTopMetricsSummary rewrites payable but keeps visible totalOrders
 });
 
 test("remainders top chip uses live canonical summary when local state has no remainders rows", async () => {
-  const metricProfit = { textContent: "Остатки: 0,0000", dataset: {}, title: "" };
+  const metricRemainders = { textContent: "Остатки: 0,0000", dataset: {}, title: "" };
+  const metricRemaindersValue = { textContent: "0", dataset: {}, title: "" };
   let liveCalls = 0;
   const api = loadApi({
     document: {
-      getElementById(id) { return id === "metricProfit" ? metricProfit : null; },
+      getElementById(id) {
+        if (id === "metricRemainders") return metricRemainders;
+        if (id === "metricRemaindersValue") return metricRemaindersValue;
+        return null;
+      },
       readyState: "complete",
     },
     Date: { now: () => 100000 },
@@ -89,15 +94,16 @@ test("remainders top chip uses live canonical summary when local state has no re
   api.syncRemaindersTopCard();
   await flushPromises();
   assert.equal(liveCalls, 1);
-  assert.equal(metricProfit.textContent, "Остатки: 7798,0000");
-  assert.equal(metricProfit.dataset.displaySource, "remaindersSummary.live.canonical");
+  assert.equal(metricRemainders.textContent, "Остатки: 7798,0000");
+  assert.equal(metricRemaindersValue.textContent, "7798,0000");
+  assert.equal(metricRemainders.dataset.displaySource, "remaindersSummary.live.canonical");
 });
 
 test("remainders top chip does not write local totals as authoritative", () => {
-  const metricProfit = { textContent: "Остатки: 0,0000", dataset: {}, title: "" };
+  const metricRemainders = { textContent: "Остатки: 0,0000", dataset: {}, title: "" };
   const api = loadApi({
     document: {
-      getElementById(id) { return id === "metricProfit" ? metricProfit : null; },
+      getElementById(id) { return id === "metricRemainders" ? metricRemainders : null; },
       readyState: "complete",
     },
     Date: { now: () => 200000 },
@@ -107,9 +113,9 @@ test("remainders top chip does not write local totals as authoritative", () => {
     },
   });
   api.syncRemaindersTopCard();
-  assert.equal(metricProfit.textContent, "Остатки: 0,0000");
-  assert.equal(metricProfit.dataset.remaindersLocalTotal, "27837,7141");
-  assert.equal(metricProfit.dataset.displaySource, undefined);
+  assert.equal(metricRemainders.textContent, "Остатки: 0,0000");
+  assert.equal(metricRemainders.dataset.remaindersLocalTotal, "27837,7141");
+  assert.equal(metricRemainders.dataset.displaySource, undefined);
 });
 
 test("remainders total falls back to selected date snapshot USD rows", () => {

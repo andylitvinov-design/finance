@@ -28,6 +28,14 @@
     return root.document?.getElementById?.(id) || null;
   }
 
+  function getRemaindersNode() {
+    return getNode("metricRemainders");
+  }
+
+  function getRemaindersValueNode() {
+    return getNode("metricRemaindersValue");
+  }
+
   function setText(node, text, dataset = {}) {
     if (!node) return false;
     let changed = false;
@@ -189,13 +197,17 @@
 
   function applyRemainders(total, source) {
     if (!Number.isFinite(total)) return false;
-    const node = getNode("metricProfit");
+    const node = getRemaindersNode();
+    const valueNode = getRemaindersValueNode();
     if (Math.abs(total) < 0.0001) {
-      const current = parseNumber(node?.textContent);
+      const current = parseNumber(valueNode?.textContent ?? node?.textContent);
       if (Math.abs(current) > 0.0001) return false;
     }
     if (node) node.title = "Сумма текущих USD-остатков по всем каналам";
-    return setText(node, `Остатки: ${formatNumber(total)}`, { displaySource: source });
+    const formatted = formatNumber(total);
+    const changedChip = setText(node, `Остатки: ${formatted}`, { displaySource: source });
+    const changedValue = setText(valueNode, formatted, { displaySource: source });
+    return changedChip || changedValue;
   }
 
   function isExplicitCanonicalRemaindersSource(source) {
@@ -204,7 +216,7 @@
 
   function refreshLiveRemainders() {
     const api = root.EzohataRemaindersSummaryPopup;
-    const node = getNode("metricProfit");
+    const node = getRemaindersNode() || getRemaindersValueNode();
     if (!node || typeof api?.buildLiveRemaindersSummary !== "function") return false;
     const requestId = ++liveRemaindersRequestId;
     Promise.resolve(api.buildLiveRemaindersSummary())
