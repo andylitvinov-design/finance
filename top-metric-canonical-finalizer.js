@@ -187,7 +187,7 @@
   function applyRemainders(total, source) {
     if (!Number.isFinite(total)) return false;
     const node = getNode("metricProfit");
-    if (!isExplicitCanonicalRemaindersSource(source) && Math.abs(total) < 0.0001) {
+    if (Math.abs(total) < 0.0001) {
       const current = parseNumber(node?.textContent);
       if (Math.abs(current) > 0.0001) return false;
     }

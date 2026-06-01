@@ -24,6 +24,7 @@ function makeContext(extra = {}) {
     metricProfit: makeNode("Прибыль: 0,0000"),
     metricMyServices: makeNode("Мои услуги: 0,0000"),
     metricPersonalOrdersAfterDiscount: makeNode("Мои личные: 0,0000"),
+    ...(extra.nodes || {}),
   };
   const timers = [];
   const context = {
@@ -144,6 +145,33 @@ test("May acceptance keeps live remainders canonical and does not pin 41,2922", 
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
   assert.equal(context.nodes.metricProfit.textContent, "Остатки: 27837,7141");
   assert.notEqual(context.nodes.metricProfit.textContent, "Остатки: 41,2922");
+});
+
+test("live remainders zero does not overwrite an existing non-zero top badge", async () => {
+  const context = makeContext({
+    nodes: {
+      metricBalances: makeNode("2536,7627"),
+      metricTransfers: makeNode("84,8773"),
+      metricProfit: makeNode("Прибыль: 846,0600"),
+      metricMyServices: makeNode("Мои услуги: 204,7059"),
+      metricPersonalOrdersAfterDiscount: makeNode("Мои заказы: 647,5000"),
+    },
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({ totals: { closingUsd: 0 } }),
+      buildLiveRemaindersSummary: () => Promise.resolve({
+        periodReconciliation: {
+          total_usd_row: { confirmed_end_usd: 0 },
+        },
+      }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+  await flushPromises();
+
+  assert.equal(context.nodes.metricProfit.textContent, "Прибыль: 846,0600");
+  assert.equal(context.nodes.metricProfit.dataset.displaySource, undefined);
 });
 
 test("canonical paid keeps payout total unchanged when duplicate Wise transfers are already in payouts", () => {
