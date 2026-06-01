@@ -795,6 +795,71 @@ test("remainders period reconciliation USD table uses canonical channel order an
   resetRemaindersModule();
 });
 
+test("remainders table does not render authoritative zero total when all visible rows are fx_missing and confirmed total is non-zero", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({
+    balances: {
+      remainders_rows: [
+        { channel: "Fallback", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 1 },
+      ],
+    },
+  });
+  summary.periodReconciliation = {
+    by_channel_currency: [
+      {
+        channel: "Яндекс руб",
+        currency: "RUB",
+        opening_usd: null,
+        confirmed_end_usd: null,
+        movement_usd: null,
+        fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing"],
+      },
+      {
+        channel: "монобанк грн",
+        currency: "UAH",
+        opening_usd: null,
+        confirmed_end_usd: null,
+        movement_usd: null,
+        fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing"],
+      },
+    ],
+    total_usd_row: {
+      opening_usd: 0,
+      confirmed_end_usd: 0,
+      change_usd: 0,
+      movement_usd: 0,
+      diff_usd: 0,
+      excluded_fx_missing_rows: 2,
+    },
+    reconciliation_report_summary: {
+      total_usd_row: {
+        opening_usd: 24993,
+        confirmed_end_usd: 24873,
+        change_usd: -120,
+        movement_usd: -120,
+        diff_usd: 0,
+      },
+    },
+  };
+
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const labels = rows.map((row) => row[0]);
+
+  assert.ok(!labels.includes("Яндекс руб RUB"), "all-fx_missing rows should move out of primary table");
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
+    "ВСЕГО USD",
+    "24993,0000",
+    "24873,0000",
+    "-120,0000",
+    "-120,0000",
+    "0,0000",
+  ]);
+  assert.match(collectText(block), /USD table is incomplete/);
+  assert.match(collectText(block), /fx_missing: 2 row\(s\)/);
+  resetRemaindersModule();
+});
+
 test("remainders collapsed native diagnostics use canonical channel order", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({

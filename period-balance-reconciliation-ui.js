@@ -134,9 +134,10 @@
     if (reconciliation.binance_wallet_diagnostics) {
       section.appendChild(renderBinanceWalletDiagnostics(doc, reconciliation.binance_wallet_diagnostics));
     }
-    section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}, reconciliation.total_usd_row || reconciliation.reconciliation_report_summary?.total_usd_row || null));
+    const visibleTotalUsdRow = chooseVisibleTotalUsdRow(reconciliation);
+    section.appendChild(renderPositionTable(doc, meaningfulRows, reconciliation.summary || {}, visibleTotalUsdRow));
     if (options.showDiagnostics) {
-      section.appendChild(renderDiagnosticPositionTable(doc, meaningfulRows, reconciliation.summary || {}, reconciliation.total_usd_row || reconciliation.reconciliation_report_summary?.total_usd_row || null));
+      section.appendChild(renderDiagnosticPositionTable(doc, meaningfulRows, reconciliation.summary || {}, visibleTotalUsdRow));
       section.appendChild(renderTopTotals(doc, reconciliation || {}));
     }
     if (emptyRows.length) section.appendChild(renderNoDataRowsBlock(doc, emptyRows));
@@ -374,6 +375,33 @@
     return block;
   }
 
+  function chooseVisibleTotalUsdRow(reconciliation = {}) {
+    const primary = reconciliation.total_usd_row || null;
+    const candidates = [
+      reconciliation.canonical_total_usd_row,
+      reconciliation.confirmed_total_usd_row,
+      reconciliation.reconciliation_report_summary?.total_usd_row,
+      reconciliation.summary?.total_usd_row,
+      reconciliation.summary?.confirmed_total_usd_row,
+    ].filter(Boolean);
+    const primaryEnd = parseNumeric(primary?.confirmed_end_usd);
+    if (primary && primaryEnd !== null && Math.abs(primaryEnd) > 0.0001) return primary;
+    const confirmed = candidates.find((row) => {
+      const end = parseNumeric(row?.confirmed_end_usd);
+      return end !== null && Math.abs(end) > 0.0001;
+    });
+    if (!confirmed) return primary;
+    return {
+      ...confirmed,
+      excluded_fx_missing_rows: confirmed.excluded_fx_missing_rows ?? primary?.excluded_fx_missing_rows,
+      fx_missing_start_rows: confirmed.fx_missing_start_rows ?? primary?.fx_missing_start_rows,
+      fx_missing_end_rows: confirmed.fx_missing_end_rows ?? primary?.fx_missing_end_rows,
+      fx_missing_change_rows: confirmed.fx_missing_change_rows ?? primary?.fx_missing_change_rows,
+      fx_missing_movement_rows: confirmed.fx_missing_movement_rows ?? primary?.fx_missing_movement_rows,
+      fx_missing_diff_rows: confirmed.fx_missing_diff_rows ?? primary?.fx_missing_diff_rows,
+    };
+  }
+
   function shouldRenderNativePrimaryTable(rows) {
     const displayRows = sortDisplayRows(rows || []);
     if (!displayRows.length) return false;
@@ -401,7 +429,10 @@
     if (fxMissingText) {
       const note = doc.createElement("div");
       note.className = "config-note";
-      note.textContent = fxMissingText;
+      const confirmedEnd = parseNumeric(totalUsdRow?.confirmed_end_usd);
+      note.textContent = confirmedEnd !== null && Math.abs(confirmedEnd) > 0.0001
+        ? `USD table is incomplete; confirmed/canonical USD total is ${formatNumber(confirmedEnd)}. ${fxMissingText}`
+        : fxMissingText;
       block.appendChild(note);
     }
     return block;

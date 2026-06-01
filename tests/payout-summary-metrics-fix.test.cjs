@@ -154,6 +154,52 @@ test("server manual transfer rows are excluded outside the selected payout perio
   assert.equal(round4(context.buildTopMetricsSummary().totalPaid), -154.5001);
 });
 
+test("Kovalev Nemisha not-mine Wise transfer rows remain displayable but are excluded from payout transfer total", () => {
+  const context = makeContext(
+    { totalOrders: 2820.2, balance: 0, totalPaid: 2536.7627, total: 0 },
+    [],
+    {
+      startDate: "2026-05-01",
+      endDate: "2026-06-01",
+      manualTransferRows: [
+        {
+          transferDate: "2026-05-24",
+          who: "Сергей Ковалев / Немиша / не мне",
+          amount: "597,4",
+          currency: "USD",
+          channel: "wise boleslav usd",
+          rate: "1",
+          usdAmount: "597,4",
+          paymentMethod: "Wise @bolieslavn",
+        },
+        {
+          transferDate: "2026-05-29",
+          who: "Сергей Ковалев / Немиша / не мне",
+          amount: "103",
+          currency: "USD",
+          channel: "wise boleslav usd",
+          rate: "1",
+          usdAmount: "103",
+          paymentMethod: "Wise @bolieslavn",
+        },
+        {
+          transferDate: "2026-05-30",
+          who: "me",
+          amount: "26000",
+          currency: "UAH",
+          channel: "fop",
+          rate: "44,05",
+          usdAmount: "590,2384",
+        },
+      ],
+    }
+  );
+
+  assert.equal(context.state.manualTransfers.data.transferRows.length, 3);
+  assert.equal(round4(context.calculateCurrentPayoutTransferUsdTotal()), 590.2384);
+  assert.equal(round4(context.buildTopMetricsSummary().totalPaid), 2536.7627);
+});
+
 test("payout summary fix loads after finance and before ui", () => {
   assert.match(indexHtml, /finance\.js[\s\S]*orders\.js[\s\S]*payout-summary-metrics-fix\.js[\s\S]*ui\.js/);
 });

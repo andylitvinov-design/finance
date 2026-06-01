@@ -14,6 +14,7 @@ function resetBalanceModule() {
   delete global.elements;
   delete global.buildTopMetricsSummary;
   delete global.EzohataBalanceSummaryPopup;
+  delete global.EzohataTopMetricCanonicalFinalizer;
 }
 
 function loadApi() {
@@ -207,6 +208,42 @@ test("top metric fallback treats totalOrders as accrued plus percent", () => {
   assert.equal(Number(summary.totalOrdersPlusPercent.toFixed(4)), 2047.8);
   assert.equal(Number(summary.totalAccrued.toFixed(4)), 2047.8);
   assert.equal(Number(summary.remainingToPay.toFixed(4)), 1082.0961);
+  resetBalanceModule();
+});
+
+test("balance popup reuses May acceptance values when incoming personal orders regress to zero", () => {
+  resetBalanceModule();
+  global.elements = {
+    startDate: { value: "2026-05-01" },
+    endDate: { value: "2026-06-01" },
+  };
+  global.EzohataTopMetricCanonicalFinalizer = {
+    getMay2026AcceptanceDisplay: () => ({
+      paid: 2536.7627,
+      personalOrders: 647.5,
+      services: 204.7059,
+      source: "may2026.acceptance",
+    }),
+  };
+  const api = require("../balance-summary-popup.js");
+
+  const summary = api.buildBalanceTextSummary({
+    totalOrders: 2820.2,
+    totalPaid: 3234.4949,
+    personalOrdersAfterDiscount: 0,
+  }, { startDate: "2026-05-01", endDate: "2026-06-01" });
+  const block = api.renderBalanceSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+
+  assert.equal(Number(summary.totalPaid.toFixed(4)), 2536.7627);
+  assert.equal(Number(summary.myOrdersPayable.toFixed(4)), 647.5);
+  assert.equal(Number(summary.myServices.toFixed(4)), 204.7059);
+  assert.equal(Number(summary.remainingToPay.toFixed(4)), 84.8773);
+  assert.match(text, /Мои заказы: 647,5000/);
+  assert.match(text, /ВСЕГО оплачено: 2536,7627/);
+  assert.match(text, /ОСТАТОК оплатить: 84,8773/);
+  assert.match(text, /Мои услуги: 204,7059/);
+  assert.doesNotMatch(text, /Мои заказы: 0,0000/);
   resetBalanceModule();
 });
 
