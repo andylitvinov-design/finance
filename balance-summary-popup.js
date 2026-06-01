@@ -461,10 +461,10 @@
       totalPaid = Math.abs(parseNumber(acceptance.paid));
     }
 
-    const totalAccruedInput = hasOwn(metrics, "totalAccrued")
-      ? metrics.totalAccrued
-      : (acceptance
-        ? totalOrdersPlusPercent * PAYABLE_ORDER_SHARE_RATE + myOrdersPayableInput
+    const totalAccruedInput = acceptance
+      ? totalOrdersPlusPercent * PAYABLE_ORDER_SHARE_RATE + myOrdersPayableInput
+      : (hasOwn(metrics, "totalAccrued")
+        ? metrics.totalAccrued
         : (hasOwn(metricsOrState, "totalOrders") ? totalOrdersPlusPercent : totalOrdersPlusPercent + myOrdersPayableInput));
     const canonical = getSharedOrdersPaymentSummary({
       ordersAccruedWithPercent: totalOrdersPlusPercent,

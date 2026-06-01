@@ -860,6 +860,61 @@ test("remainders table does not render authoritative zero total when all visible
   resetRemaindersModule();
 });
 
+test("remainders table uses selected-date canonical USD total when period rows are all fx_missing", () => {
+  const api = loadApi();
+  const summary = {
+    ...api.buildRemaindersSummary({
+      balances: {
+        remainders_rows: [
+          { channel: "Fallback", currency: "USD", opening_amount_usd: 1, closing_amount_usd: 1 },
+        ],
+      },
+    }),
+    selectedDateSnapshot: {
+      selected_date: "2026-06-01",
+      selected_date_rows: [
+        { channel: "трансервайз дол", currency: "USD", amount_usd: 19255.2484 },
+        { channel: "Яндекс руб", currency: "RUB", amount_usd: null, amount: 139786 },
+      ],
+    },
+    periodReconciliation: {
+      by_channel_currency: [
+        {
+          channel: "Яндекс руб",
+          currency: "RUB",
+          opening_usd: null,
+          confirmed_end_usd: null,
+          movement_usd: null,
+          fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing"],
+        },
+      ],
+      total_usd_row: {
+        opening_usd: 0,
+        confirmed_end_usd: 0,
+        change_usd: 0,
+        movement_usd: 0,
+        diff_usd: 0,
+        excluded_fx_missing_rows: 1,
+      },
+    },
+  };
+
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
+    "ВСЕГО USD",
+    "0,0000",
+    "19255,2484",
+    "19255,2484",
+    "0,0000",
+    "19255,2484",
+  ]);
+  assert.doesNotMatch(JSON.stringify(rows), /Яндекс руб RUB/);
+  assert.match(collectText(block), /USD table is incomplete/);
+  resetRemaindersModule();
+});
+
 test("remainders collapsed native diagnostics use canonical channel order", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({

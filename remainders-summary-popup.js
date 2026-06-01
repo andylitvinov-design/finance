@@ -112,13 +112,6 @@
         movementUsd: parseNumber(row.movement_usd),
         fxMissing: Array.isArray(row.fx_warnings) && row.fx_warnings.length > 0,
       }));
-    if (
-      rows.length &&
-      rows.every((row) => row.fxMissing) &&
-      hasNonZeroConfirmedTotal(buildVisibleUsdTotalFromPeriodReconciliation(reconciliation))
-    ) {
-      return [];
-    }
     return rows;
   }
 
@@ -138,6 +131,31 @@
 
   function hasNonZeroConfirmedTotal(total) {
     return Boolean(total) && Math.abs(Number(total.closingUsd || 0)) > 0.0001;
+  }
+
+  function buildVisibleUsdTotalFromSelectedDateSnapshot(snapshot = {}) {
+    const rows = Array.isArray(snapshot?.selected_date_rows) ? snapshot.selected_date_rows : [];
+    const closingUsd = rows.reduce((sum, row) => {
+      const explicitUsd = parseNumber(row?.amount_usd ?? row?.balance_usd ?? row?.closing_amount_usd ?? row?.closingUsd ?? row?.end_amount_usd ?? row?.endUsd ?? row?.confirmed_end_usd);
+      if (explicitUsd !== null) return sum + explicitUsd;
+      const currency = String(row?.currency || row?.balance_currency || row?.account_currency || "").trim().toUpperCase();
+      if (currency === "USD" || currency === "USDT" || currency === "USDC") {
+        const nativeAmount = parseNumber(row?.amount ?? row?.balance ?? row?.closing_amount ?? row?.closing ?? row?.value);
+        if (nativeAmount !== null) return sum + nativeAmount;
+      }
+      return sum;
+    }, 0);
+    const direct = parseNumber(snapshot?.total_usd ?? snapshot?.closing_usd ?? snapshot?.confirmed_end_usd);
+    const total = Math.abs(direct || 0) > 0.0001 ? direct : closingUsd;
+    if (!Number.isFinite(total) || Math.abs(total) < 0.0001) return null;
+    return {
+      openingUsd: 0,
+      closingUsd: total,
+      changeUsd: total,
+      movementUsd: 0,
+      diffUsd: total,
+      fxMissingCount: 0,
+    };
   }
 
   function chooseConfirmedUsdTotalRow(reconciliation = {}) {
@@ -654,13 +672,17 @@
 
   function renderDefaultUsdBalancesTable(summary, doc = root.document) {
     const periodRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
-    const rows = sortDisplayRows(periodRows.length ? periodRows : (summary.rows || []));
-    const periodTotals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation);
-    const totals = periodTotals || buildVisibleUsdTotals(rows);
     const periodInputRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
+    const periodTotals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation);
+    const selectedDateTotals = buildVisibleUsdTotalFromSelectedDateSnapshot(summary.selectedDateSnapshot);
     const allPeriodRowsWereFxMissing = Boolean(summary.periodReconciliation?.by_channel_currency?.length) &&
-      !periodInputRows.length &&
-      hasNonZeroConfirmedTotal(periodTotals);
+      periodInputRows.length > 0 &&
+      periodInputRows.every((row) => row.fxMissing) &&
+      (hasNonZeroConfirmedTotal(periodTotals) || hasNonZeroConfirmedTotal(selectedDateTotals));
+    const rows = sortDisplayRows(allPeriodRowsWereFxMissing ? [] : (periodRows.length ? periodRows : (summary.rows || [])));
+    const totals = (allPeriodRowsWereFxMissing && selectedDateTotals && !hasNonZeroConfirmedTotal(periodTotals))
+      ? { ...selectedDateTotals, fxMissingCount: Number(periodTotals?.fxMissingCount || summary.periodReconciliation?.total_usd_row?.excluded_fx_missing_rows || 0) }
+      : (periodTotals || buildVisibleUsdTotals(rows));
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
     const title = doc.createElement("h4");
