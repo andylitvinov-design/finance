@@ -60,6 +60,14 @@
       .find((button) => button.dataset.tabId === MONTHLY_PLAN_TAB_ID || button.textContent === MONTHLY_PLAN_LABEL);
     if (existing) {
       existing.dataset.tabId = MONTHLY_PLAN_TAB_ID;
+      if (!existing.__monthlyPlanVisibilityGuardClick) {
+        existing.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopImmediatePropagation?.();
+          openMonthlyPlanTab();
+        });
+        existing.__monthlyPlanVisibilityGuardClick = true;
+      }
       existing.classList.toggle("active", state.activeTab === MONTHLY_PLAN_TAB_ID);
       return true;
     }
