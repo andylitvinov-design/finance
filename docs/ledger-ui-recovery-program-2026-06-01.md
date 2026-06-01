@@ -2,141 +2,116 @@
 
 ## 0. Purpose
 
-This document is the working recovery program for the current Ezohata Ledger regression cluster.
+This document is the working correction program for the current Ezohata Ledger regression cluster.
 
-Use it as the source of truth before creating more patches. Do not re-audit from scratch unless live evidence contradicts this document.
+Use it as the source of truth before creating more patches. Do **not** re-audit from scratch unless live evidence contradicts this document.
 
-Current project:
+Project:
 
 - Repo: `andylitvinov-design/finance`
 - Live: `https://ezohata-incoming-ledger.vercel.app`
 - Known main after PR #516: `9ed1476afe3462f9c1680aed58cd8daeaeec8fc8`
-- Manual production deploy must always be verified with `/api/status`.
+- Production deploy must always be verified with `/api/status`.
 
 Core instruction:
 
 > First prove the failing layer before patching.
 
-Do not assume commits disappeared. Prove ancestry and live SHA first.
+Operational rule:
+
+```text
+Do not say “rollback” unless /api/status, Git ancestry, or Vercel deployment source proves it.
+Preferred wording until disproven:
+Commits are present in main. The regression is caused by internal UI/detail paths bypassing canonical fixes.
+```
 
 ---
 
-## 1. Current recovery thesis
+## 1. Executive diagnosis
 
-The latest screenshots do **not** prove that Git commits disappeared. They show a split-brain UI state:
+The current issue is a **split-brain UI state**:
 
 ```text
 Top cards -> mostly corrected by PR #514/#516
 Internal detail blocks -> still using old/raw/parallel calculation paths
 ```
 
-The current recovery problem is not a blind rollback. It is that multiple internal UI/detail blocks bypass canonical fixes.
+The user-visible screenshots after PR #516 show that the **top dashboard cards** can be correct while internal detail blocks still display old values.
 
-### Working statement until disproven
+This means the current recovery is not a blind rollback and not a cherry-pick of old commits. The correction program must reconnect internal detail blocks to the same canonical rules that the top cards already use.
+
+---
+
+## 2. Program overview: correction phases
+
+Work through these phases in order. Do not skip a phase.
+
+| Phase | Name | Goal | Exit criterion |
+|---:|---|---|---|
+| 0 | Freeze and baseline | Prevent random fixes and capture source of truth | live SHA, main SHA, screenshots/API samples recorded |
+| 1 | Prove deploy/source | Decide if this is deploy mismatch or runtime bug | `/api/status` matches latest main or deploy is fixed first |
+| 2 | Prove commit ancestry | Check whether “lost commits” are actually missing | historical PR commits are ancestors of `main` |
+| 3 | Map failing layer | Split top-card, payout detail, balance popup, remainders table | exact failing layer per symptom documented |
+| 4 | Patch only failing layers | Make minimal UI/detail fixes | max 3 key production files unless justified |
+| 5 | Regression tests | Protect the exact symptoms | targeted tests + full test suite pass |
+| 6 | Deploy | Put new main on production | live `/api/status` equals new main SHA |
+| 7 | Acceptance verification | Check user-visible tasks | all success indicators pass, no stop signals remain |
+
+---
+
+## 3. Phase 0 — Freeze and baseline
+
+### 3.1 Required baseline commands
+
+```bash
+git checkout main
+git pull origin main
+git rev-parse HEAD
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/status?ts='$(date +%s)
+```
+
+Record:
 
 ```text
-Commits are present in main. The regression is caused by internal UI/detail paths bypassing canonical fixes.
+local main SHA
+live commitSha
+live deploymentUrl
+live deployTime
+appVersion/appBuildVersion
+commitRef
+liveCommitMatchesBuildCommit
 ```
 
-Only say “rollback” if `/api/status`, Git ancestry, or Vercel deployment source proves production is serving an older SHA.
+### 3.2 Required browser baseline
 
----
-
-## 2. Current user-visible regression cluster
-
-For `2026-05-01..2026-06-01`, screenshots after PR #516 deployment showed top cards mostly corrected:
-
-- `Итоговая сумма заказов`: `2820,2000`
-- `Баланс`: `41,2922`
-- `Сумма оплачена`: `2536,7627`
-- `Оплатить`: `84,8773`
-- `Мои услуги`: `204,7059`
-- `Мои заказы`: `647,5000`
-- `Остатки`: non-zero, example `18737,0698`
-
-But internal detail blocks still showed old/raw calculations:
-
-1. **Payout/transfer detail block**
-   - `Переводы из вкладки Переводы` still includes Sergey Kovalev / Nemisha / not-mine transfer rows:
-     - `2026-05-24`, `Сергей Ковалев / Немиша / не мне`, `597.4 USD`, `wise boleslav usd`
-     - `2026-05-29`, `Сергей Ковалев / Немиша / не мне`, `103 USD`, `wise boleslav usd`
-   - These rows still contribute to the internal `Всего выплат` / payout detail total.
-
-2. **Balance detail popup**
-   - Internal text still shows `Мои заказы: 0,0000`.
-   - Top card correctly shows `Мои заказы: 647,5000`.
-
-3. **Остатки / period reconciliation block**
-   - Visible table shows many/all rows as `fx_missing`.
-   - Visible total shows `ВСЕГО USD 0,0000`.
-   - Top remainders badge is non-zero.
-
----
-
-## 3. Critical stop signals for update readiness
-
-An update is **not ready** if any stop signal below is present on live production after deploy.
-
-### 3.1 Deployment/source-of-truth stop signals
-
-Stop immediately and fix deploy/source before debugging finance logic if:
-
-- `/api/status` `commitSha` is not the expected latest `main` SHA.
-- `/api/status` is missing or not JSON.
-- `/api/status` has `status != ok` or `ok != true`.
-- `/api/status` has `liveCommitMatchesBuildCommit != true`.
-- `commitRef` is not `main` for production.
-- Vercel deployment URL is older than the latest deploy.
-- GitHub `main` is ahead of live production.
-- `npm run verify:production -- <expected-sha>` returns `deploy_pending`.
-- GitHub Actions / Vercel checks show no workflow run or no check-run for latest main when auto-deploy was expected.
-- Vercel Git Integration is disconnected (`gitRepository: null`, `link: null`) and fallback deploy is not configured.
-- fallback workflow fails at credentials gate.
-- missing deploy secrets:
-  - `VERCEL_TOKEN`
-  - `VERCEL_ORG_ID`
-  - `VERCEL_PROJECT_ID`
-
-Required check:
-
-```bash
-curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/status?ts='$(date +%s)
-npm run verify:production -- <expected-main-sha>
-```
-
-### 3.2 Git ancestry stop signals
-
-Stop and investigate branch/source if any historical fix is no longer an ancestor of `main`:
-
-```bash
-git merge-base --is-ancestor da96e7d657f341bf2cc752a556cd69f5d07f7e25 main || echo 'PR423 missing'
-git merge-base --is-ancestor 770aedb3a7aacc1eed917da3682e6259fea134b7 main || echo 'PR424 missing'
-git merge-base --is-ancestor 8e023a97dbae3a0c4542cb4255bbbea419f52215 main || echo 'PR431 missing'
-git merge-base --is-ancestor 9ed1476afe3462f9c1680aed58cd8daeaeec8fc8 main || echo 'PR516 missing'
-```
-
-If these are present, do **not** cherry-pick or revert old commits. The issue is likely a bypassing layer, not missing commits.
-
-### 3.3 Top-card dashboard stop signals
-
-The update is not ready if either range below shows old values:
+Check both ranges:
 
 ```text
 2026-05-01..2026-05-31
 2026-05-01..2026-06-01
 ```
 
-Stop signals:
+Capture exact values for:
 
-- `Сумма оплачена = 3234,4949`
-- `Оплатить = -1260,3549`
-- `Мои заказы = 0,0000`
-- `Мои услуги = 0,0000` when the expected May acceptance contract applies
-- `Остатки = 0,0000`
-- `Итоговая сумма заказов` is not `2820,2000` for the May acceptance case
-- opening `Остатки` changes a non-zero top badge to `Остатки: 0,0000`
+```text
+Top cards:
+- Итоговая сумма заказов
+- Баланс
+- Сумма оплачена
+- Оплатить
+- Мои услуги
+- Мои заказы
+- Остатки
 
-Expected top-card values for the May acceptance contract:
+Internal blocks:
+- Переводы / Всего выплат
+- Balance detail / Мои заказы
+- Остатки visible table / ВСЕГО USD / fx_missing
+```
+
+### 3.3 Baseline expected current top-card values
+
+For the May acceptance case, the expected top-card contract is:
 
 ```text
 Итоговая сумма заказов = 2820,2000
@@ -147,123 +122,87 @@ Expected top-card values for the May acceptance contract:
 Остатки != 0
 ```
 
-### 3.4 Kovalev / payout detail stop signals
+---
 
-The update is not ready if any internal payout/detail total counts the not-mine Kovalev rows as payouts:
+## 4. Phase 1 — Prove deploy/source-of-truth first
 
-Rows:
+Before any finance debugging, prove whether production serves latest `main`.
 
-```text
-2026-05-24 Сергей Ковалев / Немиша / не мне 597.4 USD wise boleslav usd
-2026-05-29 Сергей Ковалев / Немиша / не мне 103 USD wise boleslav usd
-```
-
-Stop signals:
-
-- `Всего выплат` includes `597,4000 + 103,0000` from Kovalev/Nemisha/not-mine rows.
-- internal payout total returns to `-3234,4949` or `3234,4949` because of these rows.
-- `Сергей Ковалев / Немиша / не мне` is treated as paid order / service payment instead of transfer-not-payout.
-- row `18179` or `18185` contributes to payout total without an explicit safe classification.
-
-Allowed behavior:
-
-- The rows may remain visible as transfer/source rows.
-- They must be excluded from `Всего выплат` / payout transfer paid total.
-- Do not delete rows from Sheets.
-
-### 3.5 Balance popup stop signals
-
-The update is not ready if balance details disagree with top-card canonical values.
-
-Stop signals:
-
-- Balance popup/detail says `Мои заказы: 0,0000` while top card says `647,5000`.
-- popup uses raw `totalPaid = 3234,4949` while top card uses `2536,7627`.
-- popup payable/remaining uses `-414,2949` or other raw non-canonical total for the May acceptance case.
-- popup double-counts movement + orders.
-- popup applies a second personal-order discount.
-- popup ignores May acceptance ranges:
-  - `2026-05-01..2026-05-31`
-  - `2026-05-01..2026-06-01`
-
-Expected popup values for the May acceptance contract:
-
-```text
-Мои заказы = 647,5000
-paid = 2536,7627
-payable = 84,8773
-myServices = 204,7059
-```
-
-### 3.6 Остатки / reconciliation stop signals
-
-The update is not ready if the primary visible Остатки/reconciliation result contradicts non-zero canonical remainders.
-
-Stop signals:
-
-- primary table shows all rows as `fx_missing`.
-- primary `ВСЕГО USD = 0,0000` while top remainders are non-zero.
-- `fx_missing` diagnostic rows are shown as the main/authoritative table.
-- selected/confirmed/manual rows are hidden while raw/diagnostic rows are visible.
-- stale markers appear in selected rows:
-  - `7425`
-  - `1689`
-  - `7351`
-  - `legacy_combined_binance_spot_funding`
-- `Остатки` popup uses stale audit-summary FX diagnostics when `/api/period-balance-reconciliation` has canonical totals.
-
-Required API check:
+### 4.1 Required checks
 
 ```bash
-curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/period-balance-reconciliation?from=2026-05-01&to=2026-06-01' > /tmp/pbr.json
-curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/balance-snapshots?from=2026-05-28&to=2026-05-31&includeRows=true&ts='$(date +%s) > /tmp/balance-snapshots.json
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/status?ts='$(date +%s)
+npm run verify:production -- <expected-main-sha>
 ```
 
-Expected behavior:
+### 4.2 Stop signals: deploy/source
 
-- visible primary result must not present `ВСЕГО USD 0` as authoritative when canonical/confirmed total is non-zero.
-- `fx_missing` rows may remain in diagnostics.
-- selected rows must not include stale markers above.
+Stop all finance debugging and fix deploy first if any is true:
 
-### 3.7 Google Sheets / data source stop signals
+- `/api/status` `commitSha` is not the expected latest `main` SHA.
+- `/api/status` is not JSON.
+- `/api/status` has `ok != true` or `status != ok`.
+- `/api/status` has `liveCommitMatchesBuildCommit != true`.
+- `commitRef` is not `main` in production.
+- `npm run verify:production -- <expected-sha>` returns `deploy_pending`.
+- Vercel Git Integration is disconnected and fallback deploy is not configured.
+- fallback workflow fails at credentials gate.
+- required deploy secrets are missing:
+  - `VERCEL_TOKEN`
+  - `VERCEL_ORG_ID`
+  - `VERCEL_PROJECT_ID`
 
-Stop and fix source loading before UI patching if:
+### 4.3 Deploy recovery command
 
-- `/api/status` reports `googleSheetConfigured != true`.
-- `/api/status` reports `googleSheetReadOk != true`.
-- API falls back to empty/manual mock data.
-- `Остатки` sheet rows are not loaded.
-- selected rows are empty while raw rows are present.
-- source priority uses raw auto rows instead of selected/confirmed rows.
+If production is stale but local main is correct:
 
-### 3.8 Provider/import stop signals
-
-These are not the current root cause, but are release blockers if observed:
-
-- provider/API returns non-JSON and UI shows raw `Unexpected token ... is not valid JSON`.
-- PayPal/Wise/Bank import changes `amount_net` semantics.
-- PayPal fee/net/gross semantics change without explicit transport proof.
-- provider transport fix changes balance logic.
-- rows with valid `amount_net` are excluded from balance only because `source=unknown`.
-
-### 3.9 Release hygiene stop signals
-
-Do not mark the update ready if:
-
-- more than 3 key production files were changed without explanation.
-- no regression tests were added for the exact symptom.
-- `node --test tests/*.test.*` was not run.
-- `bash scripts/release-guard.sh` was not run or failed.
-- `npm run build` was not run or failed.
-- production was not deployed after merge.
-- browser verification for both May ranges was not done.
-- before/after live SHA is not recorded.
+```bash
+cd /Users/andriilitvinov/projects/MYPROJECTS/finance
+git checkout main
+git pull origin main
+git rev-parse HEAD
+npx vercel@latest --prod --yes
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/status?ts='$(date +%s)
+```
 
 ---
 
-## 4. Historical fixes that must be respected
+## 5. Phase 2 — Prove commit ancestry
 
-### 4.1 Kovalev / Wise / bolieslavn history
+Before claiming commits disappeared, run ancestry checks.
+
+```bash
+git checkout main
+git pull origin main
+
+git merge-base --is-ancestor da96e7d657f341bf2cc752a556cd69f5d07f7e25 main && echo 'PR423 present'
+git merge-base --is-ancestor 770aedb3a7aacc1eed917da3682e6259fea134b7 main && echo 'PR424 present'
+git merge-base --is-ancestor 8e023a97dbae3a0c4542cb4255bbbea419f52215 main && echo 'PR431 present'
+git merge-base --is-ancestor 9ed1476afe3462f9c1680aed58cd8daeaeec8fc8 main && echo 'PR516 present'
+```
+
+Expected: all are present.
+
+If present:
+
+```text
+Do not cherry-pick old commits.
+Do not revert main.
+Do not restore stale branches.
+Root cause is likely a parallel UI/detail path bypassing old fixes.
+```
+
+If any is missing:
+
+```text
+Stop. Investigate branch/source mismatch before patching.
+```
+
+---
+
+## 6. Historical fixes that must be respected
+
+### 6.1 Kovalev / Wise / bolieslavn history
 
 #### PR #423 — `Classify Kovalev Wise orders as transfers`
 
@@ -274,7 +213,8 @@ Do not mark the update ready if:
 - Scope:
   - normalization/classification
   - movement/payout source rows
-- Not enough for current bug because current bug is in **detail payout total aggregation**.
+- Current limitation:
+  - Not enough for current bug because current bug is in **detail payout total aggregation**.
 
 #### PR #424 — `Keep Kovalev Wise order and sync transfer`
 
@@ -283,9 +223,9 @@ Do not mark the update ready if:
   - Keep Kovalev Wise source order visible where needed.
   - Derive stable source-order transfer row on `wise boleslav usd`.
   - Add explicit `Перевод Wise` category bridge.
-- Important nuance:
-  - This intentionally keeps the source order/transfer visible.
-  - Current fix must not delete the row. It must prevent it from counting as a payout total when marked `не мне` / transfer-not-payout.
+- Important:
+  - Current fix must not delete the row.
+  - Current fix must prevent it from counting as a payout total when marked `не мне` / transfer-not-payout.
 
 #### PR #431 — `Exclude Kovalev Wise transfer from service gaps`
 
@@ -293,9 +233,10 @@ Do not mark the update ready if:
 - Purpose:
   - Exclude Kovalev Wise `@bolieslavn` rows from service payment summary and service-gap diagnostics.
   - Specifically row `18179`, `Сергей Ковалев`, `Wise @bolieslavn`, clientPaid `597.4`.
-- Not enough for current bug because current bug is not service gap diagnostics; it is `Всего выплат` in payout/transfer detail UI.
+- Current limitation:
+  - Not enough for current bug because current bug is not service gap diagnostics; it is `Всего выплат` in payout/transfer detail UI.
 
-### 4.2 Personal orders / balance popup history
+### 6.2 Personal orders / balance popup history
 
 #### PR #358 — `Fix accrued orders and personal order summary semantics`
 
@@ -316,9 +257,10 @@ Do not mark the update ready if:
   - Prevent transient zero remainders from overwriting non-zero badge.
 - PR #516:
   - Apply May acceptance display also when selected period closes on `2026-06-01`.
-- These fixed the top-card, but not every internal popup/detail block.
+- Current limitation:
+  - These fixed the top card, but not every internal popup/detail block.
 
-### 4.3 Остатки / FX / reconciliation history
+### 6.3 Остатки / FX / reconciliation history
 
 #### PR #467 — `Fix issue #464: render Остатки as USD-only table`
 
@@ -347,7 +289,205 @@ Do not mark the update ready if:
 
 ---
 
-## 5. Files to inspect
+## 7. Phase 3 — Failing layer map
+
+Use this map before patching:
+
+```text
+UI top cards -> fixed by PR #514/#516
+Payout detail block -> still failing
+Balance popup summary -> still failing
+Remainders / period reconciliation visible table -> still failing
+API/provider/import/ledger semantics -> not currently proven failing
+```
+
+### 7.1 Not current root cause unless newly proven
+
+- Provider/import transport
+- Ledger save
+- `amount_net` formula
+- gross/net/fee/source semantics
+- PayPal/Wise/Bank import layer
+- Google secrets/env
+- main branch rollback
+- lost Git commits
+
+### 7.2 Current likely failing layers
+
+| Problem | Failing layer | Confidence | Why |
+|---|---|---:|---|
+| Kovalev `597.4 + 103` visible in `Всего выплат` | payout detail UI aggregation | high | Top-card paid is correct; detail payout sums raw transfer rows |
+| `Мои заказы: 0` in balance details | `balance-summary-popup.js` internal metrics | high | Top-card already shows `647.5` |
+| `fx_missing` / `ВСЕГО USD 0` in Остатки | `period-balance-reconciliation-ui.js` / `remainders-summary-popup.js` source priority | medium-high | Top remainders are non-zero while table renders diagnostic/fallback rows |
+
+---
+
+## 8. Phase 4 — Correction tasks
+
+### Task A — Kovalev rows in `Всего выплат`
+
+#### Prove first
+
+Prove whether rows `597.4` and `103` enter `Всего выплат` through:
+
+- `root.state.manualTransfers.data.transferRows`
+- `root.state.aggregatedManualRange.transferRows`
+- `root.state.data.tabs.payouts.closedFactTransfers`
+- `root.state.manualFinance.data.transferRows`
+- `root.state.data.manual.transfers`
+- `root.state.data.tabs.savings.values`
+- payout table values
+
+Candidate functions:
+
+```text
+calculatePayoutTransferUsdTotal
+calculateCurrentPayoutTransferUsdTotal
+```
+
+#### Required behavior
+
+Rows containing all/most of:
+
+```text
+Сергей Ковалев
+Немиша
+не мне
+wise boleslav usd
+Wise @bolieslavn
+```
+
+may remain visible as transfer/source rows, but must be excluded from:
+
+```text
+Всего выплат
+payout transfer paid total
+```
+
+#### Stop signals for Task A
+
+- `Всего выплат` includes `597,4000 + 103,0000` from Kovalev/Nemisha/not-mine rows.
+- internal payout total returns to `3234,4949` or `-3234,4949` because of these rows.
+- `Сергей Ковалев / Немиша / не мне` is treated as paid order/service payment instead of transfer-not-payout.
+
+#### Do not do
+
+- Do not delete rows.
+- Do not mutate Google Sheets.
+- Do not change Ledger semantics.
+- Do not change provider/import logic.
+
+---
+
+### Task B — `Мои заказы: 0` in balance detail
+
+#### Prove first
+
+Prove whether `balance-summary-popup.js` is:
+
+- receiving stale metrics through `options.metrics`, or
+- calling `root.buildTopMetricsSummary()` before canonical finalizer values apply, or
+- deriving personal orders from a source that lacks personal orders for the selected range.
+
+Candidate functions:
+
+```text
+getMetrics
+buildBalanceSummary
+renderBalanceSummary
+personalOrdersAfterDiscount
+```
+
+#### Required behavior
+
+For ranges:
+
+```text
+2026-05-01..2026-05-31
+2026-05-01..2026-06-01
+```
+
+when `ordersTotal` is `2820.2`, use canonical May acceptance display contract:
+
+```text
+paid = 2536.7627
+payable = 84.8773
+personalOrdersAfterDiscount = 647.5
+myServices = 204.7059
+closingUsd = 41.2922 where used by balance top-card contract
+```
+
+#### Stop signals for Task B
+
+- Balance popup/detail says `Мои заказы: 0,0000` while top card says `647,5000`.
+- popup uses raw `totalPaid = 3234,4949` while top card uses `2536,7627`.
+- popup double-counts movement + orders.
+- popup applies a second personal-order discount.
+- popup ignores May acceptance ranges.
+
+---
+
+### Task C — Остатки `fx_missing` / primary `ВСЕГО USD 0`
+
+#### Prove first
+
+Check live/API:
+
+```bash
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/period-balance-reconciliation?from=2026-05-01&to=2026-06-01' > /tmp/pbr.json
+curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/balance-snapshots?from=2026-05-28&to=2026-05-31&includeRows=true&ts='$(date +%s) > /tmp/balance-snapshots.json
+```
+
+Inspect:
+
+```text
+period_balance_reconciliation.by_channel_currency
+period_balance_reconciliation.total_usd_row
+period_balance_reconciliation.reconciliation_report_summary.total_usd_row
+confirmed_end_usd
+status
+fx diagnostics
+selected rows
+raw rows
+```
+
+#### Required behavior
+
+If visible rows are all `fx_missing` and primary total USD is `0`, but canonical/confirmed/manual total is non-zero, the UI must not present:
+
+```text
+ВСЕГО USD 0,0000
+```
+
+as authoritative.
+
+Allowed fixes:
+
+- Show canonical/confirmed total row as primary.
+- Move all-`fx_missing` rows to diagnostics.
+- Render a warning that USD table is incomplete and show the non-zero confirmed/canonical total separately.
+
+#### Stop signals for Task C
+
+- primary table shows all rows as `fx_missing`.
+- primary `ВСЕГО USD = 0,0000` while top remainders are non-zero.
+- `fx_missing` diagnostic rows are shown as the main/authoritative table.
+- selected/confirmed/manual rows are hidden while raw/diagnostic rows are visible.
+- stale markers appear in selected rows:
+  - `7425`
+  - `1689`
+  - `7351`
+  - `legacy_combined_binance_spot_funding`
+
+#### Do not do
+
+- Do not synthesize fake FX values.
+- Do not alter balance math.
+- Do not exclude valid `amount_net` rows from balance because `source=unknown`.
+
+---
+
+## 9. Files to inspect
 
 Primary candidate files:
 
@@ -378,183 +518,86 @@ by_channel_currency
 confirmed_end_usd
 ```
 
----
+Patch constraints:
 
-## 6. Recovery tasks
-
-### Task A — Kovalev rows in `Всего выплат`
-
-Prove whether rows `597.4` and `103` enter `Всего выплат` through:
-
-- `root.state.manualTransfers.data.transferRows`
-- `root.state.aggregatedManualRange.transferRows`
-- `root.state.data.tabs.payouts.closedFactTransfers`
-- `root.state.manualFinance.data.transferRows`
-- `root.state.data.manual.transfers`
-- `root.state.data.tabs.savings.values`
-- payout table values
-
-Candidate functions:
-
-```text
-calculatePayoutTransferUsdTotal
-calculateCurrentPayoutTransferUsdTotal
-```
-
-Rows containing all/most of:
-
-```text
-Сергей Ковалев
-Немиша
-не мне
-wise boleslav usd
-Wise @bolieslavn
-```
-
-may remain visible as transfer/source rows, but must be excluded from:
-
-```text
-Всего выплат
-payout transfer paid total
-```
-
-Do not delete rows, mutate Sheets, or alter Ledger/provider semantics.
-
-### Task B — `Мои заказы: 0` in balance detail
-
-Prove whether `balance-summary-popup.js` is:
-
-- receiving stale metrics through `options.metrics`, or
-- calling `root.buildTopMetricsSummary()` before canonical finalizer values apply, or
-- deriving personal orders from a source that lacks personal orders for the selected range.
-
-For ranges:
-
-```text
-2026-05-01..2026-05-31
-2026-05-01..2026-06-01
-```
-
-when `ordersTotal` is `2820.2`, use canonical May acceptance display contract:
-
-```text
-paid = 2536.7627
-payable = 84.8773
-personalOrdersAfterDiscount = 647.5
-myServices = 204.7059
-closingUsd = 41.2922 where used by balance top-card contract
-```
-
-### Task C — Остатки `fx_missing` / primary `ВСЕГО USD 0`
-
-Check live/API:
-
-```bash
-curl -sS 'https://ezohata-incoming-ledger.vercel.app/api/period-balance-reconciliation?from=2026-05-01&to=2026-06-01' > /tmp/pbr.json
-```
-
-Inspect:
-
-```text
-period_balance_reconciliation.by_channel_currency
-period_balance_reconciliation.total_usd_row
-period_balance_reconciliation.reconciliation_report_summary.total_usd_row
-confirmed_end_usd
-status
-fx diagnostics
-```
-
-If visible rows are all `fx_missing` and primary total USD is `0`, but canonical/confirmed/manual total is non-zero, the UI must not present `ВСЕГО USD 0,0000` as authoritative.
-
-Allowed fixes:
-
-- Show canonical/confirmed total row as primary.
-- Move all-`fx_missing` rows to diagnostics.
-- Render a warning that USD table is incomplete and show the non-zero confirmed/canonical total separately.
-
-Do not synthesize fake FX values. Do not alter balance math.
+- Prefer max 3 key production files unless proven necessary.
+- Add regression tests.
+- Do not change provider/import transport.
+- Do not change ledger save.
+- Do not change `amount_net`, gross/net/fee/source semantics.
+- Do not change secrets/env.
+- Do not rewrite architecture.
+- Do not delete Google Sheet rows.
 
 ---
 
-## 7. Regression tests to add
+## 10. Phase 5 — Regression tests
 
-### Payout tests
-
-File:
-
-```text
-tests/payout-summary-metrics-fix.test.cjs
-```
-
-Required case:
-
-```text
-Rows:
-2026-05-24 Сергей Ковалев / Немиша / не мне 597.4 USD wise boleslav usd
-2026-05-29 Сергей Ковалев / Немиша / не мне 103 USD wise boleslav usd
-
-Expected:
-- rows may remain displayable
-- excluded from Всего выплат / payout total
-```
-
-### Balance popup tests
-
-File:
-
-```text
-tests/balance-summary-popup.test.cjs
-```
-
-Required case:
-
-```text
-Range: 2026-05-01..2026-06-01
-ordersTotal: 2820.2
-bad incoming personalOrdersAfterDiscount: 0
-Expected visible detail:
-Мои заказы: 647,5000
-paid: 2536,7627
-payable: 84,8773
-```
-
-### Remainders / reconciliation tests
-
-Files:
-
-```text
-tests/period-balance-reconciliation-ui.test.cjs
-tests/remainders-summary-popup.test.cjs
-```
-
-Required case:
-
-```text
-Visible rows all fx_missing
-primary total_usd_row = 0
-canonical/confirmed total non-zero
-Expected:
-- visible primary result must not say ВСЕГО USD 0 as if it is authoritative
-- diagnostics may still show fx_missing rows
-```
-
-### Full regression
-
-Run:
+### Required targeted tests
 
 ```bash
 node --test tests/payout-summary-metrics-fix.test.cjs
 node --test tests/balance-summary-popup.test.cjs
 node --test tests/period-balance-reconciliation-ui.test.cjs
 node --test tests/remainders-summary-popup.test.cjs
+```
+
+### Required full checks
+
+```bash
 node --test tests/*.test.*
 bash scripts/release-guard.sh
 npm run build
 ```
 
+### Required regression cases
+
+1. Kovalev payout detail:
+
+```text
+Rows:
+2026-05-24 Сергей Ковалев / Немиша / не мне 597.4 USD wise boleslav usd
+2026-05-29 Сергей Ковалев / Немиша / не мне 103 USD wise boleslav usd
+Expected:
+- rows may remain displayable
+- excluded from Всего выплат / payout total
+```
+
+2. Balance popup:
+
+```text
+Range: 2026-05-01..2026-06-01
+ordersTotal: 2820.2
+bad incoming personalOrdersAfterDiscount: 0
+Expected:
+Мои заказы: 647,5000
+paid: 2536,7627
+payable: 84,8773
+```
+
+3. Остатки / reconciliation:
+
+```text
+Visible rows all fx_missing
+primary total_usd_row = 0
+canonical/confirmed total non-zero
+Expected:
+- visible primary result must not say ВСЕГО USD 0 as authoritative
+- diagnostics may still show fx_missing rows
+```
+
+4. Top-card safety:
+
+```text
+paid = 2536,7627
+payable = 84,8773
+personal orders = 647,5000
+remainders != 0
+```
+
 ---
 
-## 8. Deployment and verification program
+## 11. Phase 6 — Deploy and production verification
 
 After PR is ready and checks pass:
 
@@ -575,23 +618,31 @@ status = ok
 liveCommitMatchesBuildCommit = true
 ```
 
-Browser verification for both ranges:
+---
+
+## 12. Phase 7 — Final acceptance criteria
+
+The update is successful only if all criteria pass on live production after deploy.
+
+### 12.1 Ranges to verify
 
 ```text
 2026-05-01..2026-05-31
 2026-05-01..2026-06-01
 ```
 
-Expected top cards:
+### 12.2 Top cards must show
 
 ```text
+Итоговая сумма заказов = 2820,2000
 Сумма оплачена = 2536,7627
 Оплатить = 84,8773
 Мои заказы = 647,5000
+Мои услуги = 204,7059
 Остатки != 0
 ```
 
-Expected detail blocks:
+### 12.3 Detail blocks must show
 
 ```text
 Всего выплат does not include Kovalev 597.4 + 103
@@ -599,15 +650,31 @@ Balance detail does not show Мои заказы: 0,0000
 Остатки does not show all-fx_missing / ВСЕГО USD 0 as primary authoritative result
 ```
 
+### 12.4 Absolute stop signals
+
+The update is not ready if any of these remain:
+
+```text
+Сумма оплачена = 3234,4949
+Оплатить = -1260,3549
+Мои заказы = 0,0000
+Остатки = 0,0000
+Всего выплат includes Kovalev 597.4 + 103
+Primary Остатки table shows all fx_missing / ВСЕГО USD 0
+live SHA != latest main SHA
+verify:production = deploy_pending
+```
+
 ---
 
-## 9. Codex execution prompt
+## 13. Codex execution prompt
 
 ```text
 Repo: andylitvinov-design/finance
 Live URL: https://ezohata-incoming-ledger.vercel.app
 
 Mode: FORENSIC RECOVERY. Do not re-audit blindly.
+Use docs/ledger-ui-recovery-program-2026-06-01.md as the source of truth.
 
 User report:
 They believe recent commits disappeared and the site rolled back. Current evidence suggests commits are present but internal UI detail blocks bypass canonical fixes.
@@ -655,8 +722,6 @@ A. payout detail UI aggregation, likely payout-summary-metrics-fix.js / finance.
 B. balance-summary-popup.js internal metrics
 C. period-balance-reconciliation-ui.js / remainders-summary-popup.js visible source priority
 
-Use the stop-signal checklist in docs/ledger-ui-recovery-program-2026-06-01.md before declaring done.
-
 Files to inspect:
 - payout-summary-metrics-fix.js
 - finance.js
@@ -693,26 +758,16 @@ Deploy:
 npx vercel@latest --prod --yes
 npm run verify:production -- <new-main-sha>
 
+Before declaring done, check every stop signal and acceptance criterion in docs/ledger-ui-recovery-program-2026-06-01.md.
+
 Output required:
 - proof whether commits were lost or not
 - root cause per issue
-- stop-signal checklist results
+- stop-signal checklist result
 - changed files/functions
 - tests/checks
 - deploy URL
 - live SHA before/after
 - before/after UI values
 - remaining risks
-```
-
----
-
-## 10. Current operational rule
-
-Do not say “we rolled back” unless `/api/status` or Git ancestry proves it.
-
-Preferred wording until disproven:
-
-```text
-Commits are present in main. The regression is caused by internal UI/detail paths bypassing canonical fixes.
 ```
