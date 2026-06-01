@@ -614,3 +614,40 @@ test("balance snapshots API returns safe empty snapshot when repository access f
   assert.equal(snapshot.audit_checks[0].status, "needs verification");
   assert.ok(snapshot.warnings.some((warning) => warning.includes("service account access")));
 });
+
+test("balance snapshots selected date applies owner-confirmed May current snapshot corrections", async () => {
+  const snapshot = await buildBalanceSnapshotsSnapshot({
+    query: { from: "2026-05-01", to: "2026-06-01" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
+        { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425" },
+        { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "1689", amount_usd: "1689" },
+        { date: "2026-05-01", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: "345", amount_usd: "345" },
+      ],
+      autoBalances: [
+        { date: "2026-06-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528", source: "provider_auto", sourceSheet: "Авто Остатки", comment: "auto daily provider snapshot" },
+        { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775", amount_usd: "5413.0775", source: "provider_auto", sourceSheet: "Авто Остатки", comment: "auto daily provider snapshot" },
+        { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523", source: "provider_auto", sourceSheet: "Авто Остатки", comment: "auto daily provider snapshot" },
+      ],
+      plannedRows: [],
+      warnings: [],
+    }),
+  });
+
+  const selected = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(snapshot.balance_snapshots.selected_date_source, "latest_known");
+  assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount, 10538);
+  assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount_usd, 7798);
+  assert.equal(selected.get("монобанк грн|UAH").amount, 1333);
+  assert.equal(selected.get("монобанк грн|UAH").amount_usd, 31.36);
+  assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
+  assert.equal(selected.get("binance save|USD").amount_usd, 7432);
+  assert.equal(selected.get("Бинанс spot|USD").amount_usd, 1162);
+  assert.equal(selected.has("legacy_combined_binance_spot_funding|USDT"), false);
+  assert.equal(selected.has("binance save|USDT"), false);
+  assert.equal(selected.has("Бинанс spot|USDT"), false);
+});

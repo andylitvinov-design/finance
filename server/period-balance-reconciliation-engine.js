@@ -3,6 +3,9 @@ import {
   buildReconciliationAdjustedMayOpening,
 } from "./may-2026-owner-opening-balances.js";
 import {
+  applyOwnerMayCurrentBalanceSnapshot,
+} from "./may-2026-owner-current-balances.js";
+import {
   buildFxRateLookup,
   isStableUsdCurrency,
   resolveFrozenFxRate,
@@ -42,11 +45,19 @@ export function buildPeriodBalanceReconciliation({
     operations,
     period,
   });
-  const effectiveBalanceRows = ownerMayOpeningSeed.rows || balanceRows;
+  const ownerMayCurrentSnapshot = applyOwnerMayCurrentBalanceSnapshot([
+    ...(ownerMayOpeningSeed.rows || balanceRows || []),
+    ...(calculatedBalanceRows || []),
+  ], {
+    period,
+    rowDate: period?.to,
+  });
+  const effectiveBalanceRows = ownerMayCurrentSnapshot.rows || ownerMayOpeningSeed.rows || balanceRows;
+  const effectiveCalculatedBalanceRows = ownerMayCurrentSnapshot.applied ? [] : calculatedBalanceRows;
   const periodReal = buildRealMovementIndex(operations, { from, to });
   const planned = buildPlannedMovementIndex(plannedRows, { from, to });
   const fxRateLookup = buildFxRateLookup(fxRates);
-  const balanceIndex = buildBalanceIndex(effectiveBalanceRows, autoBalanceRows, calculatedBalanceRows, fxRateLookup);
+  const balanceIndex = buildBalanceIndex(effectiveBalanceRows, autoBalanceRows, effectiveCalculatedBalanceRows, fxRateLookup);
   const accountKeys = new Set([
     ...periodReal.byKey.keys(),
     ...planned.byKey.keys(),
@@ -74,7 +85,7 @@ export function buildPeriodBalanceReconciliation({
     balanceRows: [
       ...(effectiveBalanceRows || []),
       ...(autoBalanceRows || []),
-      ...(calculatedBalanceRows || []),
+      ...(ownerMayCurrentSnapshot.applied ? [] : (calculatedBalanceRows || [])),
     ],
   });
   const byCurrency = buildCurrencyRows(rows);

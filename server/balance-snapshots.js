@@ -10,6 +10,7 @@ import {
 } from "./auto-balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "./balance-snapshot-merge.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+import { applyOwnerMayCurrentBalanceSnapshot } from "./may-2026-owner-current-balances.js";
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
@@ -68,10 +69,13 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const ownerMayOpeningSeed = applyOwnerMayOpeningBalanceSeed(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
+  const ownerMayCurrentSnapshot = applyOwnerMayCurrentBalanceSnapshot(ownerMayOpeningSeed.rows, {
+    period: periodFilter.period,
+  });
   const balanceSnapshots = buildBalanceSnapshotsSummary(manualBalances, periodFilter, {
     ...repository,
     autoBalances: autoBalanceRows,
-    mergedBalances: ownerMayOpeningSeed.rows,
+    mergedBalances: ownerMayCurrentSnapshot.rows,
     balanceSnapshotMerge,
   });
   auditChecks.push(
@@ -107,6 +111,7 @@ export async function buildBalanceSnapshotsSnapshot(options = {}) {
       ...(repository.warnings || []).map(toSafeWarning),
       ...(autoBalances.warnings || []).map(toSafeWarning),
       ...ownerMayOpeningSeed.warnings,
+      ...ownerMayCurrentSnapshot.warnings,
       ...warnings,
     ]),
     audit_checks: auditChecks,
@@ -511,6 +516,7 @@ function normalizeBalanceSnapshotRow(row) {
   const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
   const currency = String(row?.currency || "").trim().toUpperCase();
   const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+  const amountUsd = parseNumber(row?.amount_usd ?? row?.amountUsd ?? row?.usdAmount ?? row?.balance_usd ?? row?.balanceUsd);
   const missing = {
     date: !date,
     channel: !channel,
@@ -526,6 +532,7 @@ function normalizeBalanceSnapshotRow(row) {
     channel,
     currency,
     amount,
+    amount_usd: amountUsd,
     source: row?.source,
     fact_source: row?.fact_source,
     provider: row?.provider,
@@ -578,6 +585,7 @@ function buildDetailedRows(rows) {
       channel: row.channel,
       currency: row.currency,
       amount: row.amount,
+      ...(row.amount_usd !== null && row.amount_usd !== undefined ? { amount_usd: row.amount_usd } : {}),
     }))
     .sort((left, right) => {
       if (left.date !== right.date) return left.date.localeCompare(right.date);
@@ -610,6 +618,7 @@ function buildSelectedRows(rows) {
         channel: row.channel,
         currency: row.currency,
         amount: row.amount,
+        ...(row.amount_usd !== null && row.amount_usd !== undefined ? { amount_usd: row.amount_usd } : {}),
         balance_kind: "selected",
         source: normalizeDisplaySource(row),
         source_sheet: row.sourceSheet || (selectedFrom === "confirmed" ? BALANCE_SHEET_NAME : "Авто Остатки"),
