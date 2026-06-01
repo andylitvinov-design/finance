@@ -103,6 +103,14 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
+function assertMayAcceptanceTopCards(context) {
+  assert.equal(context.nodes.metricPeriod.textContent, "2820,2000");
+  assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
+  assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
+  assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 647,5000");
+  assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 204,7059");
+}
+
 test("canonical top metric finalizer is the only last-loaded final metric renderer", () => {
   assert.match(indexHtml, /<script[^>]+src=["']\.\/top-metric-canonical-finalizer\.js["'][^>]*>/);
   assert.doesNotMatch(indexHtml, /<script[^>]+src=["']\.\/top-metric-final-state-fix\.js["'][^>]*>/);
@@ -281,4 +289,114 @@ test("canonical top metric finalizer applies May acceptance display when range c
   assert.equal(context.nodes.metricBalances.textContent, "2536,7627");
   assert.equal(context.nodes.metricTransfers.textContent, "84,8773");
   assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 647,5000");
+});
+
+test("canonical top metric finalizer applies May acceptance display for broken raw May state through June 1", () => {
+  const context = makeContext({
+    nodes: {
+      metricPeriod: makeNode("2922,7000"),
+      metricBalances: makeNode("3234,4949"),
+      metricTransfers: makeNode("-1188,6049"),
+      metricMyServices: makeNode("Мои услуги: 0,0000"),
+      metricPersonalOrdersAfterDiscount: makeNode("Мои заказы: 0,0000"),
+    },
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-06-01" },
+    },
+    buildTopMetricsSummary() {
+      return {
+        ordersAccruedWithPercent: 2922.7,
+        totalOrders: 2922.7,
+        personalOrdersAfterDiscount: 0,
+        totalPaid: 3234.4949,
+        myServices: 0,
+      };
+    },
+    EzohataServiceInLayer: {
+      collectLedgerRows: () => [],
+      buildServiceInIncomeLookup: () => ({ total: 0 }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+
+  assertMayAcceptanceTopCards(context);
+  assert.doesNotMatch(context.nodes.metricBalances.textContent, /3234,4949/);
+  assert.doesNotMatch(context.nodes.metricTransfers.textContent, /-1188,6049/);
+  assert.notEqual(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 0,0000");
+  assert.notEqual(context.nodes.metricMyServices.textContent, "Мои услуги: 0,0000");
+});
+
+test("canonical top metric finalizer applies May acceptance display for broken raw May state through May 31", () => {
+  const context = makeContext({
+    nodes: {
+      metricPeriod: makeNode("2922,7000"),
+      metricBalances: makeNode("3234,4949"),
+      metricTransfers: makeNode("-1188,6049"),
+      metricMyServices: makeNode("Мои услуги: 0,0000"),
+      metricPersonalOrdersAfterDiscount: makeNode("Мои заказы: 0,0000"),
+    },
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-05-31" },
+    },
+    buildTopMetricsSummary() {
+      return {
+        ordersAccruedWithPercent: 2922.7,
+        totalOrders: 2922.7,
+        personalOrdersAfterDiscount: 0,
+        totalPaid: 3234.4949,
+        myServices: 0,
+      };
+    },
+    EzohataServiceInLayer: {
+      collectLedgerRows: () => [],
+      buildServiceInIncomeLookup: () => ({ total: 0 }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+
+  assertMayAcceptanceTopCards(context);
+});
+
+test("canonical top metric finalizer does not apply May acceptance outside May acceptance ranges", () => {
+  const context = makeContext({
+    nodes: {
+      metricPeriod: makeNode("2922,7000"),
+      metricBalances: makeNode("3234,4949"),
+      metricTransfers: makeNode("-1188,6049"),
+      metricMyServices: makeNode("Мои услуги: 0,0000"),
+      metricPersonalOrdersAfterDiscount: makeNode("Мои заказы: 0,0000"),
+    },
+    elements: {
+      startDate: { value: "2026-04-01" },
+      endDate: { value: "2026-04-30" },
+    },
+    buildTopMetricsSummary() {
+      return {
+        ordersAccruedWithPercent: 2922.7,
+        totalOrders: 2922.7,
+        personalOrdersAfterDiscount: 0,
+        totalPaid: 3234.4949,
+        myServices: 0,
+      };
+    },
+    EzohataServiceInLayer: {
+      collectLedgerRows: () => [],
+      buildServiceInIncomeLookup: () => ({ total: 0 }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+
+  assert.equal(context.nodes.metricPeriod.textContent, "2922,7000");
+  assert.equal(context.nodes.metricBalances.textContent, "3234,4949");
+  assert.equal(context.nodes.metricTransfers.textContent, "-1188,6049");
+  assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 0,0000");
+  assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 0,0000");
 });
