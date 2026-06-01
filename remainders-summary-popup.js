@@ -186,6 +186,8 @@
 
   function buildUsdTableDiagnostics({ summary, rows, allPrimaryRowsWereFxMissing, localFxMissingRows = [] }) {
     const diagnostics = [];
+    const canonicalWarning = buildCanonicalTotalWarning(summary);
+    if (canonicalWarning) diagnostics.push(canonicalWarning);
     const periodRawRows = Array.isArray(summary.periodReconciliation?.by_channel_currency)
       ? summary.periodReconciliation.by_channel_currency
       : [];
@@ -197,6 +199,25 @@
         const warnings = getFxWarnings(row);
         return `${formatChannelCurrency(row)}${warnings.length ? ` (${warnings.join(", ")})` : ""}`;
       }).join("; ")}`);
+    }
+    const mismatchRows = periodRawRows
+      .map((row) => ({
+        label: formatChannelCurrency(row),
+        diffUsd: parseNumber(row?.diff_usd),
+        status: row?.status,
+      }))
+      .filter((row) => Number.isFinite(row.diffUsd) && Math.abs(row.diffUsd) > 0.0001)
+      .sort((left, right) => Math.abs(right.diffUsd) - Math.abs(left.diffUsd))
+      .slice(0, 6);
+    if (mismatchRows.length) {
+      diagnostics.push(`top mismatch rows: ${mismatchRows.map((row) => `${row.label} diff_usd=${formatMoney(row.diffUsd)}${row.status ? ` status=${row.status}` : ""}`).join("; ")}`);
+    }
+    const staleRows = [
+      ...(Array.isArray(summary.periodReconciliation?.summary?.stale_ostatki_rows) ? summary.periodReconciliation.summary.stale_ostatki_rows : []),
+      ...(Array.isArray(summary.periodReconciliation?.summary?.manual_confirmation_required_rows) ? summary.periodReconciliation.summary.manual_confirmation_required_rows : []),
+    ];
+    if (staleRows.length) {
+      diagnostics.push(`stale/manual rows: ${staleRows.slice(0, 8).map((row) => `${formatChannelCurrency(row)}${row.reason ? ` (${row.reason})` : ""}`).join("; ")}`);
     }
 
     const periodKeys = new Set(periodRawRows.map(rowKeyFromChannelCurrency));
@@ -215,6 +236,28 @@
       diagnostics.push("primary rows suppressed because every source row is fx_missing.");
     }
     return diagnostics;
+  }
+
+  function buildCanonicalTotalWarning(summary = {}) {
+    const total = summary?.periodReconciliation?.canonical_total ||
+      summary?.selectedDateSnapshot?.canonical_total ||
+      summary?.canonical_total ||
+      null;
+    if (!total || isTrustedCanonicalTotal(total)) return "";
+    return [
+      "canonical total needs verification",
+      `status=${total.status || NEEDS_VERIFICATION}`,
+      `selected-date ${formatMoney(parseNumber(total.selected_date_total_usd))} vs period ${formatMoney(parseNumber(total.period_total_usd))}`,
+      `delta ${formatMoney(parseNumber(total.delta_usd))}`,
+    ].join("; ");
+  }
+
+  function isTrustedCanonicalTotal(total = {}) {
+    const value = parseNumber(total?.canonical_total_usd);
+    if (!Number.isFinite(value)) return false;
+    if (total.totals_match === false) return false;
+    const status = String(total.status || "").toLowerCase();
+    return !/(needs|missing|partial|fx_missing|mismatch|stale|failed|blocked|error)/.test(status);
   }
 
   function chooseConfirmedUsdTotalRow(reconciliation = {}) {
@@ -853,6 +896,7 @@
 
     const total = doc.createElement("tr");
     total.className = "balance-income-channel-total";
+    if (buildCanonicalTotalWarning(summary)) total.className += " needs-verification";
     total.appendChild(renderCell(doc, "ВСЕГО USD"));
     total.appendChild(renderCell(doc, formatMoney(totals?.openingUsd), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(totals?.closingUsd), "numeric"));

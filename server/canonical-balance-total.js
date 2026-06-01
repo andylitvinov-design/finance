@@ -9,9 +9,35 @@ export function buildCanonicalBalanceTotal({
   const selected = parseNumber(selectedDateTotalUsd);
   const period = parseNumber(periodTotalUsd);
   const selectedUsable = selected !== null && !isBlockingStatus(selectedDateStatus);
-  const periodUsable = period !== null;
+  const periodUsable = period !== null && !isBlockingStatus(periodStatus);
   const delta = selected !== null && period !== null ? round(selected - period) : null;
   const totalsMatch = selected !== null && period !== null && Math.abs(delta) <= MATCH_TOLERANCE_USD;
+
+  if (selectedUsable && periodUsable && !totalsMatch) {
+    return {
+      source: "needs_verification",
+      selected_date_total_usd: selected,
+      period_total_usd: period,
+      canonical_total_usd: null,
+      delta_usd: delta,
+      totals_match: false,
+      status: "mismatch",
+      explanation: "Selected-date and period USD totals differ beyond tolerance; canonical total needs verification.",
+    };
+  }
+
+  if (selected !== null && !selectedUsable) {
+    return {
+      source: "needs_verification",
+      selected_date_total_usd: selected,
+      period_total_usd: period,
+      canonical_total_usd: null,
+      delta_usd: delta,
+      totals_match: totalsMatch,
+      status: normalizeUntrustedSelectedStatus(selectedDateStatus),
+      explanation: "Selected-date balance snapshot is incomplete, stale, missing FX, or otherwise not trusted.",
+    };
+  }
 
   if (selectedUsable) {
     return {
@@ -38,6 +64,19 @@ export function buildCanonicalBalanceTotal({
       explanation: selected === null
         ? "Using period reconciliation because selected-date total is unavailable."
         : "Using period reconciliation because selected-date total needs verification.",
+    };
+  }
+
+  if (period !== null && !periodUsable) {
+    return {
+      source: "needs_verification",
+      selected_date_total_usd: selected,
+      period_total_usd: period,
+      canonical_total_usd: null,
+      delta_usd: delta,
+      totals_match: totalsMatch,
+      status: normalizeStatus(periodStatus) || "needs_verification",
+      explanation: "Period reconciliation total is incomplete, stale, missing FX, or otherwise not trusted.",
     };
   }
 
@@ -108,8 +147,28 @@ function extractSelectedDateStatus(snapshot = {}) {
 }
 
 function isBlockingStatus(status = "") {
-  const normalized = String(status || "").trim().toLowerCase();
-  return ["missing", "needs_verification", "error"].includes(normalized);
+  const normalized = normalizeStatus(status);
+  return [
+    "missing",
+    "partial",
+    "needs_verification",
+    "error",
+    "fx_missing",
+    "mismatch",
+    "stale",
+    "blocked",
+    "failed",
+  ].includes(normalized);
+}
+
+function normalizeStatus(status = "") {
+  return String(status || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function normalizeUntrustedSelectedStatus(status = "") {
+  const normalized = normalizeStatus(status);
+  if (!normalized || normalized === "partial" || normalized === "missing") return "needs_verification";
+  return normalized;
 }
 
 function parseNumber(value) {

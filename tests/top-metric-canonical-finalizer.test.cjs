@@ -161,6 +161,48 @@ test("May acceptance keeps live remainders canonical and does not pin 41,2922", 
   assert.notEqual(context.nodes.metricRemainders.textContent, "Остатки: 41,2922");
 });
 
+test("canonical top metric finalizer renders red warning for untrusted remainders total", async () => {
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({
+        selectedDateSnapshot: {
+          canonical_total: {
+            source: "needs_verification",
+            selected_date_total_usd: 7985.2535,
+            period_total_usd: 27322.5439,
+            canonical_total_usd: null,
+            delta_usd: -19337.2904,
+            totals_match: false,
+            status: "mismatch",
+          },
+        },
+      }),
+      buildLiveRemaindersSummary: () => Promise.resolve({
+        periodReconciliation: {
+          canonical_total: {
+            source: "needs_verification",
+            selected_date_total_usd: 7985.2535,
+            period_total_usd: 27322.5439,
+            canonical_total_usd: null,
+            delta_usd: -19337.2904,
+            totals_match: false,
+            status: "mismatch",
+          },
+        },
+      }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+  await flushPromises();
+
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: needs verification");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "needs verification");
+  assert.match(context.nodes.metricRemainders.className, /needs-verification/);
+  assert.match(context.nodes.metricRemainders.title, /selected-date 7985\.2535 vs period 27322\.5439/i);
+});
+
 test("live remainders zero does not overwrite an existing non-zero top badge", async () => {
   const context = makeContext({
     nodes: {
