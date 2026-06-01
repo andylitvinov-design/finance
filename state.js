@@ -125,6 +125,8 @@ const elements = {
   manualEndpointLabel: document.getElementById("manualEndpointLabel"),
   metricPeriod: document.getElementById("metricPeriod"),
   metricOrders: document.getElementById("metricOrders"),
+  metricRemainders: document.getElementById("metricRemainders"),
+  metricRemaindersValue: document.getElementById("metricRemaindersValue"),
   metricBalances: document.getElementById("metricBalances"),
   metricTransfers: document.getElementById("metricTransfers"),
   metricPersonalOrdersAfterDiscount: document.getElementById("metricPersonalOrdersAfterDiscount"),
