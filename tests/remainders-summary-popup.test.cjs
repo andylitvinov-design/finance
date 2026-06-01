@@ -1105,7 +1105,7 @@ test("remainders popup renders reconcile button", () => {
   const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
   const text = collectText(block);
 
-  assert.match(text, /Обновить остатки и пересчитать/);
+  assert.match(text, /Обновить все остатки/);
   resetRemaindersModule();
 });
 
@@ -1357,6 +1357,27 @@ test("reconcile result summary is rendered as grouped sections", () => {
   const api = loadApi();
   const panel = api.renderReconcileResult({
     providers_checked: ["wise", "paypal"],
+    refresh_report: {
+      pulled: [
+        { provider: "wise", status: "ok", details: "операции обработаны: 4" },
+      ],
+      operations_imported: [
+        { provider: "wise", status: "ok", imported: 4, write_status: "processed_provider_movements" },
+      ],
+      balances_updated: [
+        { provider: "wise", status: "available", updated: 1 },
+        { provider: "paypal", status: "needs_permission", updated: 0, error: "OAuth failed" },
+      ],
+      errors: [
+        { provider: "paypal", reason: "OAuth failed", action_required: "обновить токен" },
+      ],
+      unsupported_channels: [
+        { provider: "revolut", channel: "REVOLUT евро", reason: "not_implemented", action_required: "ручной скриншот или ручной ввод" },
+      ],
+      manual_actions: [
+        { channel: "Payoneer", currency: "USD", reason: "missing anchor", action_required: "ручной ввод" },
+      ],
+    },
     balances_pulled: 2,
     transfers_imported: 3,
     computed_rows_count: 1,
@@ -1368,9 +1389,16 @@ test("reconcile result summary is rendered as grouped sections", () => {
   const text = collectText(panel);
 
   assert.match(text, /Итог обновления/);
-  assert.match(text, /Провайдеры/);
+  assert.match(text, /Что удалось подтянуть/);
+  assert.match(text, /Операции импортированы/);
+  assert.match(text, /Остатки обновлены/);
+  assert.match(text, /Ошибки/);
+  assert.match(text, /Не поддерживает автообновление/);
+  assert.match(text, /Нужен ручной ввод/);
+  assert.match(text, /ручной скриншот или ручной ввод/);
   assert.match(text, /Нужна проверка/);
   assert.match(text, /paypal: OAuth failed/);
+  assert.ok(findAll(panel, (node) => /needs-verification/.test(node.className || "")).length >= 1);
   assert.ok(panel.children.length >= 3);
   resetRemaindersModule();
 });

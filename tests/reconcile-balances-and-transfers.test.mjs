@@ -47,3 +47,59 @@ test("reconcile balances ensures FX Rates before balances and audit snapshot", a
   ]);
   assert.deepEqual(calls[0][4], ["EUR", "CAD", "UAH", "RUB", "CHF", "GBP", "THB"]);
 });
+
+test("reconcile balances returns refresh-all report for auto and manual provider outcomes", async () => {
+  const result = await runReconcileBalancesAndTransfers({
+    from: "2026-06-01",
+    to: "2026-06-02",
+    currentDate: "2026-06-02",
+    ensureFxRatesRunner: async () => ({ ok: true, checked: 0, errors: [] }),
+    autoBalanceRunner: async () => ({
+      ok: true,
+      saved_rows: 2,
+      providers_checked: ["wise", "paypal", "binance", "revolut"],
+      providers_succeeded: ["wise", "binance"],
+      provider_results: [
+        { provider: "wise", provider_current_balance_status: "available", writable_rows: 1, rows: 1 },
+        { provider: "paypal", provider_current_balance_status: "needs_permission", writable_rows: 0, rows: 3, error: "PayPal token expired" },
+        { provider: "binance", provider_current_balance_status: "available", writable_rows: 1, rows: 1 },
+        { provider: "revolut", provider_current_balance_status: "not_implemented", writable_rows: 0, rows: 0 },
+      ],
+    }),
+    providerTransferCollector: async () => [
+      { provider: "wise", status: "ok", entries: 4, write_status: "processed_provider_movements" },
+      { provider: "paypal", status: "needs_permission", entries: 0, error: "PayPal token expired", write_status: "not_written_to_ledger" },
+      { provider: "binance", status: "ok", entries: 2, write_status: "processed_provider_movements" },
+    ],
+    auditSnapshotRunner: async () => ({
+      ok: true,
+      balances: {
+        total_usd: 123.45,
+        remainders_rows: [
+          { channel: "REVOLUT евро", currency: "EUR", status: "needs_verification", source: "manual" },
+        ],
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.transactions_imported, 6);
+  assert.equal(result.updated_balance_rows, 2);
+  assert.equal(result.selected_date_total_usd, 123.45);
+  assert.deepEqual(result.auto_refresh_supported_providers, ["wise", "paypal", "binance"]);
+  assert.deepEqual(result.refresh_report.operations_imported, [
+    { provider: "wise", status: "ok", imported: 4, write_status: "processed_provider_movements", warnings: [] },
+    { provider: "paypal", status: "needs_permission", imported: 0, write_status: "not_written_to_ledger", error: "PayPal token expired", warnings: [] },
+    { provider: "binance", status: "ok", imported: 2, write_status: "processed_provider_movements", warnings: [] },
+  ]);
+  assert.deepEqual(result.refresh_report.balances_updated, [
+    { provider: "wise", status: "available", updated: 1, rows: 1, error: null },
+    { provider: "paypal", status: "needs_permission", updated: 0, rows: 3, error: "PayPal token expired" },
+    { provider: "binance", status: "available", updated: 1, rows: 1, error: null },
+  ]);
+  assert.ok(result.refresh_report.errors.some((row) => row.provider === "paypal" && /token expired/i.test(row.reason)));
+  assert.ok(result.refresh_report.unsupported_channels.some((row) => row.provider === "revolut" && /ручной скриншот/i.test(row.action_required)));
+  assert.ok(result.refresh_report.manual_actions.some((row) => row.channel === "REVOLUT евро" && /руч/i.test(row.action_required)));
+  assert.equal(result.manual_required, result.refresh_report.manual_actions);
+  assert.equal(result.stale_channels, result.refresh_report.unsupported_channels);
+});

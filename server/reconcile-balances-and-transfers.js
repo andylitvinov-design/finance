@@ -10,6 +10,15 @@ import { runAutoBalanceSnapshots } from "./auto-balance-snapshots.js";
 import { DEFAULT_PROVIDER_FX_CURRENCIES, ensureFxRates } from "./fx-rates.js";
 
 const PROVIDER_ORDER = ["wise", "monobank", "paypal", "privatbank", "yoomoney", "binance"];
+const AUTO_REFRESH_SUPPORTED_PROVIDERS = ["wise", "paypal", "binance"];
+const MANUAL_PROVIDER_ACTIONS = {
+  monobank: "ручной скриншот или отдельная кнопка Monobank; этот общий flow не обновляет канал автоматически",
+  privatbank: "ручной скриншот или ручной ввод остатка; автообновление текущего остатка не реализовано",
+  yoomoney: "ручной скриншот или отдельный OAuth/token flow; этот общий flow не обновляет канал автоматически",
+  tdbank: "ручной скриншот или ручной ввод остатка; автообновление не реализовано",
+  payoneer: "ручной ввод подтверждённого остатка или ручной скриншот; API текущего остатка не настроен",
+  revolut: "ручной скриншот или ручной ввод остатка; автообновление не реализовано",
+};
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -73,9 +82,49 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
   const needsVerificationRows = collectRemainderRows(auditSnapshot)
     .filter((row) => row.needs_verification === true || String(row.status || "").toLowerCase().includes("needs"))
     .map(buildNeedsVerificationReason);
+  const providerFailures = [
+    ...extractBalanceProviderFailures(balances.result),
+    ...transfers.filter((result) => result.status === "error" || result.status === "needs_permission"),
+  ];
   const balanceStepOk = Boolean(balances.ok && balances.result?.ok !== false);
   const auditStepOk = Boolean(audit.ok && auditSnapshot?.ok !== false);
   const fxRatesStepOk = Boolean(fxRatesEnsure.ok && fxRatesEnsure.result?.ok !== false);
+  const structuredErrors = [
+    ...[fxRatesEnsure, balances, audit].filter((step) => !step.ok).map((step) => ({
+      step: step.step,
+      code: step.code,
+      message: step.error,
+    })),
+    ...(!fxRatesStepOk && fxRatesEnsure.ok ? [{
+      step: fxRatesEnsure.step,
+      code: "step_failed",
+      message: (fxRatesEnsure.result?.errors || []).map((error) => error.message).filter(Boolean).join("; ") || "ensure FX Rates returned ok=false",
+    }] : []),
+    ...(!balanceStepOk && balances.ok ? [{
+      step: balances.step,
+      code: "step_failed",
+      message: balances.result?.error || "auto balance snapshot step returned ok=false",
+    }] : []),
+    ...(!auditStepOk && audit.ok ? [{
+      step: audit.step,
+      code: "step_failed",
+      message: auditSnapshot?.error || "audit snapshot step returned ok=false",
+    }] : []),
+  ];
+  const refreshReport = buildRefreshReport({
+    balances: balances.result,
+    transfers,
+    providerFailures,
+    needsVerificationRows,
+    errors: structuredErrors,
+  });
+  const warnings = uniqueStrings([
+    ...(fxRatesEnsure.result?.warnings || []),
+    ...(balances.result?.warnings || []),
+    ...(auditSnapshot?.warnings || []),
+  ].map((warning) => String(warning || "")).filter(Boolean));
+  const selectedDateTotalUsd = toNumber(auditSnapshot?.balances?.total_usd);
+  const periodTotalUsd = toNumber(auditSnapshot?.period_balance_reconciliation?.total_usd_row?.confirmed_end_usd);
 
   return {
     ok: Boolean(fxRatesStepOk && balanceStepOk && auditStepOk),
@@ -87,42 +136,99 @@ export async function runReconcileBalancesAndTransfers(options = {}) {
       "Computed balances are returned by audit snapshot only and are not written to Остатки or Авто Остатки as factual rows.",
       "Provider movement fetches are read-only; Ledger save is not called.",
     ],
+    auto_refresh_supported_providers: AUTO_REFRESH_SUPPORTED_PROVIDERS,
     providers_checked: PROVIDER_ORDER,
     fx_rates_ensure: summarizeFxRatesEnsureStep(fxRatesEnsure),
     balances_pulled: Number(balances.result?.saved_rows || 0),
+    updated_balance_rows: Number(balances.result?.saved_rows || 0),
     balance_snapshot: summarizeBalanceStep(balances),
     transfers_imported: transfers.reduce((sum, result) => sum + Number(result.entries || 0), 0),
+    transactions_imported: transfers.reduce((sum, result) => sum + Number(result.entries || 0), 0),
     provider_transfers: transfers,
     computed_rows_count: computedRows.length,
     computed_rows_factual_conflicts: computedRows.filter((row) => row.factual_provider_balance === true).length,
     needs_verification_rows: needsVerificationRows,
-    provider_failures: [
-      ...extractBalanceProviderFailures(balances.result),
-      ...transfers.filter((result) => result.status === "error" || result.status === "needs_permission"),
-    ],
+    provider_failures: providerFailures,
+    refresh_report: refreshReport,
+    manual_required: refreshReport.manual_actions,
+    stale_channels: refreshReport.unsupported_channels,
+    selected_date_total_usd: selectedDateTotalUsd,
+    period_total_usd: periodTotalUsd,
+    warnings,
     audit_snapshot: auditSnapshot,
-    errors: [
-      ...[fxRatesEnsure, balances, audit].filter((step) => !step.ok).map((step) => ({
-        step: step.step,
-        code: step.code,
-        message: step.error,
+    errors: structuredErrors,
+  };
+}
+
+function buildRefreshReport({ balances = {}, transfers = [], providerFailures = [], needsVerificationRows = [], errors = [] } = {}) {
+  const operations = (transfers || [])
+    .filter((row) => AUTO_REFRESH_SUPPORTED_PROVIDERS.includes(row.provider))
+    .map((row) => ({
+      provider: row.provider,
+      status: row.status || "unknown",
+      imported: Number(row.entries || 0),
+      write_status: row.write_status || "processed_provider_movements",
+      ...(row.error ? { error: row.error } : {}),
+      warnings: Array.isArray(row.warnings) ? row.warnings.slice(0, 10) : [],
+    }));
+  const balanceRows = (balances?.provider_results || [])
+    .filter((row) => AUTO_REFRESH_SUPPORTED_PROVIDERS.includes(row.provider))
+    .map((row) => ({
+      provider: row.provider,
+      status: row.provider_current_balance_status || "unknown",
+      updated: Number(row.writable_rows ?? row.rows ?? 0),
+      rows: Number(row.rows || 0),
+      error: row.error || row.original_provider_error || null,
+    }));
+  const unsupported = (balances?.provider_results || [])
+    .filter((row) => !AUTO_REFRESH_SUPPORTED_PROVIDERS.includes(row.provider))
+    .map((row) => ({
+      provider: row.provider,
+      channel: row.channel || row.provider,
+      status: row.provider_current_balance_status || "not_supported",
+      reason: row.error || row.provider_current_balance_status || "not_supported_by_refresh_all",
+      action_required: MANUAL_PROVIDER_ACTIONS[row.provider] || "ручной ввод или ручной скриншот",
+    }));
+  const reportErrors = uniqueProviderErrors([
+    ...providerFailures.map((row) => ({
+      provider: row.provider || row.step || "backend",
+      reason: row.error || row.message || row.status || "error",
+      action_required: actionForFailure(row),
+    })),
+    ...errors.map((row) => ({
+      provider: row.step || "backend",
+      reason: row.message || row.error || row.code || "error",
+      action_required: "проверить backend-flow и повторить обновление",
+    })),
+  ]);
+  const manualActions = [
+    ...unsupported,
+    ...(needsVerificationRows || []).map((row) => ({
+      channel: row.channel || "Не указан",
+      currency: row.currency || "UNKNOWN",
+      status: row.status || "needs_verification",
+      reason: row.reason || "needs_verification",
+      action_required: "ручной ввод остатка, ручной скриншот или обновление токена провайдера",
+    })),
+  ];
+  return {
+    pulled: [
+      ...operations.map((row) => ({
+        provider: row.provider,
+        status: row.status,
+        details: `операции обработаны: ${row.imported}`,
       })),
-      ...(!fxRatesStepOk && fxRatesEnsure.ok ? [{
-        step: fxRatesEnsure.step,
-        code: "step_failed",
-        message: (fxRatesEnsure.result?.errors || []).map((error) => error.message).filter(Boolean).join("; ") || "ensure FX Rates returned ok=false",
-      }] : []),
-      ...(!balanceStepOk && balances.ok ? [{
-        step: balances.step,
-        code: "step_failed",
-        message: balances.result?.error || "auto balance snapshot step returned ok=false",
-      }] : []),
-      ...(!auditStepOk && audit.ok ? [{
-        step: audit.step,
-        code: "step_failed",
-        message: auditSnapshot?.error || "audit snapshot step returned ok=false",
-      }] : []),
+      ...balanceRows.map((row) => ({
+        provider: row.provider,
+        status: row.status,
+        details: `остатки обновлены: ${row.updated}`,
+      })),
     ],
+    operations_imported: operations,
+    balances_updated: balanceRows,
+    errors: reportErrors,
+    unsupported_channels: unsupported,
+    manual_actions: manualActions,
   };
 }
 
@@ -222,10 +328,36 @@ async function collectProviderTransfers({ from, to, env, fetchImpl }) {
       entries: Array.isArray(result.result?.entries) ? result.result.entries.length : 0,
       transaction_count: Number(result.result?.transactionCount || 0),
       warnings: Array.isArray(result.result?.warnings) ? result.result.warnings.slice(0, 10) : [],
-      write_status: "not_written_to_ledger",
+      write_status: "processed_provider_movements",
     });
   }
   return results;
+}
+
+function actionForFailure(row = {}) {
+  const status = String(row.status || "").toLowerCase();
+  const text = String(row.error || row.message || row.reason || "").toLowerCase();
+  if (status.includes("permission") || /token|credential|oauth|permission|secret|api key/.test(text)) {
+    return "обновить токен или проверить права API";
+  }
+  if (status.includes("not_implemented")) return "ручной ввод или ручной скриншот";
+  return "проверить ошибку провайдера и повторить обновление";
+}
+
+function uniqueProviderErrors(rows = []) {
+  const seen = new Set();
+  const result = [];
+  for (const row of rows) {
+    const key = `${row.provider || ""}|${row.reason || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(row);
+  }
+  return result;
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(new Set(values));
 }
 
 async function runStep(step, runner) {

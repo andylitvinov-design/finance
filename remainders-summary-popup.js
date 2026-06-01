@@ -6,7 +6,7 @@
   const REMAINDERS_BUTTON_ID = "remaindersLauncherButton";
   const REMAINDERS_BLOCK_ID = "remaindersSummaryBlock";
   const NEEDS_VERIFICATION = "needs verification";
-  const RECONCILE_BUTTON_TEXT = "Обновить остатки и пересчитать";
+  const RECONCILE_BUTTON_TEXT = "Обновить все остатки";
 
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
   const CURRENCY_FIELDS = ["currency", "account_currency", "accountCurrency", "balance_currency", "balanceCurrency"];
@@ -999,6 +999,7 @@
   function renderReconcileResult(result, doc = root.document) {
     const panel = doc.createElement("div");
     panel.className = "balance-summary-diagnostics remainders-reconcile-result";
+    const report = result.refresh_report || {};
     const failures = Array.isArray(result.provider_failures) ? result.provider_failures : [];
     const needsRows = Array.isArray(result.needs_verification_rows) ? result.needs_verification_rows : [];
     const providerFailures = failures
@@ -1014,15 +1015,26 @@
       `computed rows: ${Number(result.computed_rows_count || 0)}`,
       `needs verification rows: ${needsRows.length}`,
     ]);
-    appendReconcileSection(doc, panel, "Провайдеры", providerFailures.length ? providerFailures : ["provider failures/errors: none"]);
+    appendReconcileSection(doc, panel, "Что удалось подтянуть", formatReportRows(report.pulled, formatPulledRow) || ["нет успешных автообновлений"]);
+    appendReconcileSection(doc, panel, "Операции импортированы", formatReportRows(report.operations_imported, formatOperationRow) || ["операции не импортированы"]);
+    appendReconcileSection(doc, panel, "Остатки обновлены", formatReportRows(report.balances_updated, formatBalanceRow) || ["остатки не обновлены"]);
+    appendReconcileSection(doc, panel, "Ошибки", formatReportRows(report.errors, formatErrorRow) || (providerFailures.length ? providerFailures : ["provider failures/errors: none"]), {
+      warning: Boolean((report.errors || []).length || providerFailures.length),
+    });
+    appendReconcileSection(doc, panel, "Не поддерживает автообновление", formatReportRows(report.unsupported_channels, formatManualActionRow) || ["нет неподдерживаемых каналов"], {
+      warning: Boolean((report.unsupported_channels || []).length),
+    });
+    appendReconcileSection(doc, panel, "Нужен ручной ввод", formatReportRows(report.manual_actions, formatManualActionRow) || ["ручные действия не требуются"], {
+      warning: Boolean((report.manual_actions || []).length),
+    });
     appendReconcileSection(doc, panel, "Нужна проверка", needsReasons.length ? needsReasons : ["reasons: none"]);
     if (result.error) appendReconcileSection(doc, panel, "Ошибка", [`error: ${result.error}`]);
     return panel;
   }
 
-  function appendReconcileSection(doc, panel, title, rows) {
+  function appendReconcileSection(doc, panel, title, rows, options = {}) {
     const section = doc.createElement("section");
-    section.className = "remainders-reconcile-section";
+    section.className = `remainders-reconcile-section${options.warning ? " needs-verification" : ""}`;
     const heading = doc.createElement("strong");
     heading.textContent = title;
     section.appendChild(heading);
@@ -1034,6 +1046,33 @@
     });
     section.appendChild(list);
     panel.appendChild(section);
+  }
+
+  function formatReportRows(rows, formatter) {
+    const list = Array.isArray(rows) ? rows.map(formatter).filter(Boolean) : [];
+    return list.length ? list.slice(0, 12) : null;
+  }
+
+  function formatPulledRow(row) {
+    return `${row.provider || "provider"}: ${row.details || row.status || "ok"}`;
+  }
+
+  function formatOperationRow(row) {
+    return `${row.provider || "provider"}: ${Number(row.imported || 0)} operation(s), status=${row.status || "unknown"}, ${row.write_status || "processed"}`;
+  }
+
+  function formatBalanceRow(row) {
+    const error = row.error ? `, error=${row.error}` : "";
+    return `${row.provider || "provider"}: ${Number(row.updated || 0)} balance row(s), status=${row.status || "unknown"}${error}`;
+  }
+
+  function formatErrorRow(row) {
+    return `${row.provider || "provider"}: ${row.reason || row.error || "error"}${row.action_required ? `; action: ${row.action_required}` : ""}`;
+  }
+
+  function formatManualActionRow(row) {
+    const channel = [row.channel, row.currency].filter(Boolean).join(" ").trim() || row.provider || "channel";
+    return `${channel}: ${row.reason || row.status || "needs manual action"}; action: ${row.action_required || "ручной ввод или ручной скриншот"}`;
   }
 
   function getSummaryMount(doc = root.document) {
