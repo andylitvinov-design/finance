@@ -187,10 +187,16 @@
     const api = root.EzohataTopMetricPayableShareFix;
     if (typeof api?.extractRemaindersClosingUsd === "function") return api.extractRemaindersClosingUsd(summary);
     return parseNumber(
+      summary?.canonical_total?.canonical_total_usd ??
+      summary?.canonicalTotal?.canonical_total_usd ??
+      summary?.refresh_report?.totals?.canonical_total_usd ??
+      summary?.selectedDateSnapshot?.total_usd ??
+      summary?.selectedDateSnapshot?.canonical_total_usd ??
+      summary?.selectedDateSnapshot?.canonical_total?.canonical_total_usd ??
+      summary?.selectedDateSnapshot?.closing_usd ??
+      summary?.periodReconciliation?.canonical_total?.canonical_total_usd ??
       summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd ??
       summary?.periodReconciliation?.total_usd_row?.closing_usd ??
-      summary?.selectedDateSnapshot?.total_usd ??
-      summary?.selectedDateSnapshot?.closing_usd ??
       summary?.totals?.closingUsd ??
       0
     );

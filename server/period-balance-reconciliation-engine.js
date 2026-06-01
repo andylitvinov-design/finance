@@ -10,6 +10,7 @@ import {
   isStableUsdCurrency,
   resolveFrozenFxRate,
 } from "./fx-rates.js";
+import { buildCanonicalBalanceTotal } from "./canonical-balance-total.js";
 
 const STATUS = {
   OK: "ok",
@@ -90,6 +91,12 @@ export function buildPeriodBalanceReconciliation({
   });
   const byCurrency = buildCurrencyRows(rows);
   const totalUsdRow = buildTotalUsdRow(rows);
+  const canonicalTotal = buildCanonicalBalanceTotal({
+    selectedDateTotalUsd: null,
+    selectedDateStatus: "needs_verification",
+    periodTotalUsd: totalUsdRow.confirmed_end_usd,
+    periodStatus: totalUsdRow.status,
+  });
   const missingAmountNetRows = rows.reduce((sum, row) => sum + Number(row.missing_amount_net_rows || 0), 0);
   const summary = buildSummary(rows, {
     missingAmountNetRows,
@@ -115,6 +122,13 @@ export function buildPeriodBalanceReconciliation({
     by_currency: byCurrency,
     by_channel_currency: rows,
     total_usd_row: totalUsdRow,
+    canonical_total: canonicalTotal,
+    canonical_total_usd_row: {
+      ...totalUsdRow,
+      canonical_total_usd: canonicalTotal.canonical_total_usd,
+      source: canonicalTotal.source,
+      totals_match: canonicalTotal.totals_match,
+    },
     reconciliation_report: reconciliationReport.rows,
     reconciliation_report_summary: {
       ...reconciliationReport.summary,

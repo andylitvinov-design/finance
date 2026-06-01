@@ -6,7 +6,7 @@
   const REMAINDERS_BUTTON_ID = "remaindersLauncherButton";
   const REMAINDERS_BLOCK_ID = "remaindersSummaryBlock";
   const NEEDS_VERIFICATION = "needs verification";
-  const RECONCILE_BUTTON_TEXT = "Обновить остатки и пересчитать";
+  const RECONCILE_BUTTON_TEXT = "Обновить все остатки";
 
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
   const CURRENCY_FIELDS = ["currency", "account_currency", "accountCurrency", "balance_currency", "balanceCurrency"];
@@ -360,7 +360,7 @@
 
   function buildReconcileUrl() {
     const base = root.location?.href || "https://ezohata-incoming-ledger.vercel.app/";
-    return new URL("./api/index?action=reconcileBalancesAndTransfers", base);
+    return new URL("./api/refresh-all-balances", base);
   }
 
   async function fetchAuditSnapshotRemainders() {
@@ -999,6 +999,7 @@
   function renderReconcileResult(result, doc = root.document) {
     const panel = doc.createElement("div");
     panel.className = "balance-summary-diagnostics remainders-reconcile-result";
+    const report = result.refresh_report || {};
     const failures = Array.isArray(result.provider_failures) ? result.provider_failures : [];
     const needsRows = Array.isArray(result.needs_verification_rows) ? result.needs_verification_rows : [];
     const providerFailures = failures
@@ -1014,15 +1015,32 @@
       `computed rows: ${Number(result.computed_rows_count || 0)}`,
       `needs verification rows: ${needsRows.length}`,
     ]);
-    appendReconcileSection(doc, panel, "Провайдеры", providerFailures.length ? providerFailures : ["provider failures/errors: none"]);
+    appendReconcileSection(doc, panel, "Итоговые суммы", formatTotalsRows(report.totals || result.canonical_total) || ["canonical total: needs verification"], {
+      warning: String((report.totals || result.canonical_total || {}).status || "").includes("missing")
+        || String((report.totals || result.canonical_total || {}).status || "").includes("verification"),
+    });
+    appendReconcileSection(doc, panel, "Успешно обновлено", formatReportRows(report.pulled, formatPulledRow) || ["нет успешных автообновлений"]);
+    appendReconcileSection(doc, panel, "Операции импортированы", formatReportRows(report.operations_imported, formatOperationRow) || ["операции не импортированы"]);
+    appendReconcileSection(doc, panel, "Остатки обновлены", formatReportRows(report.balances_updated, formatBalanceRow) || ["остатки не обновлены"]);
+    appendReconcileSection(doc, panel, "Ошибки провайдеров", formatReportRows(report.errors || report.provider_failures, formatErrorRow) || (providerFailures.length ? providerFailures : ["provider failures/errors: none"]), {
+      warning: Boolean((report.errors || report.provider_failures || []).length || providerFailures.length),
+    });
+    appendReconcileSection(doc, panel, "Stale/manual channels", formatReportRows(report.stale_manual_channels || report.unsupported_channels, formatManualActionRow) || ["нет stale/manual каналов"], {
+      warning: Boolean((report.stale_manual_channels || report.unsupported_channels || []).length),
+    });
+    appendReconcileSection(doc, panel, "Требуется ручное действие", formatReportRows(report.manual_actions, formatManualActionRow) || ["ручные действия не требуются"], {
+      warning: Boolean((report.manual_actions || []).length),
+    });
     appendReconcileSection(doc, panel, "Нужна проверка", needsReasons.length ? needsReasons : ["reasons: none"]);
+    const matrix = renderRefreshProviderMatrix(report.provider_matrix || result.provider_matrix, doc);
+    if (matrix) panel.appendChild(matrix);
     if (result.error) appendReconcileSection(doc, panel, "Ошибка", [`error: ${result.error}`]);
     return panel;
   }
 
-  function appendReconcileSection(doc, panel, title, rows) {
+  function appendReconcileSection(doc, panel, title, rows, options = {}) {
     const section = doc.createElement("section");
-    section.className = "remainders-reconcile-section";
+    section.className = `remainders-reconcile-section${options.warning ? " needs-verification" : ""}`;
     const heading = doc.createElement("strong");
     heading.textContent = title;
     section.appendChild(heading);
@@ -1034,6 +1052,88 @@
     });
     section.appendChild(list);
     panel.appendChild(section);
+  }
+
+  function formatReportRows(rows, formatter) {
+    const list = Array.isArray(rows) ? rows.map(formatter).filter(Boolean) : [];
+    return list.length ? list.slice(0, 12) : null;
+  }
+
+  function formatTotalsRows(totals = {}) {
+    if (!totals || typeof totals !== "object") return null;
+    const rows = [
+      `canonical_total_usd: ${formatMoney(totals.canonical_total_usd)}`,
+      `source: ${totals.source || "needs_verification"}`,
+      `selected_date_total_usd: ${formatMoney(totals.selected_date_total_usd)}`,
+      `period_total_usd: ${formatMoney(totals.period_total_usd)}`,
+      `delta_usd: ${formatMoney(totals.delta_usd)}`,
+      `totals_match: ${totals.totals_match === true ? "true" : "false"}`,
+      `status: ${totals.status || "needs_verification"}`,
+    ];
+    if (totals.explanation) rows.push(`explanation: ${totals.explanation}`);
+    return rows;
+  }
+
+  function formatPulledRow(row) {
+    return `${row.provider || "provider"}: ${row.details || row.status || "ok"}`;
+  }
+
+  function formatOperationRow(row) {
+    return `${row.provider || "provider"}: ${Number(row.imported || 0)} operation(s), status=${row.status || "unknown"}, ${row.write_status || "processed"}`;
+  }
+
+  function formatBalanceRow(row) {
+    const error = row.error ? `, error=${row.error}` : "";
+    return `${row.provider || "provider"}: ${Number(row.updated || 0)} balance row(s), status=${row.status || "unknown"}${error}`;
+  }
+
+  function formatErrorRow(row) {
+    return `${row.provider || "provider"}: ${row.reason || row.error || "error"}${row.action_required ? `; action: ${row.action_required}` : ""}`;
+  }
+
+  function formatManualActionRow(row) {
+    const channel = [row.channel, row.currency].filter(Boolean).join(" ").trim() || row.provider || "channel";
+    return `${channel}: ${row.reason || row.status || "needs manual action"}; action: ${row.action_required || "ручной ввод или ручной скриншот"}`;
+  }
+
+  function renderRefreshProviderMatrix(rows, doc = root.document) {
+    const matrixRows = Array.isArray(rows) ? rows.slice(0, 40) : [];
+    if (!matrixRows.length) return null;
+    const section = doc.createElement("section");
+    section.className = "remainders-reconcile-section remainders-refresh-provider-matrix";
+    const heading = doc.createElement("strong");
+    heading.textContent = "Provider matrix";
+    section.appendChild(heading);
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap remainders-summary-table-wrap";
+    const table = doc.createElement("table");
+    const thead = doc.createElement("thead");
+    const header = doc.createElement("tr");
+    ["Channel", "Currency", "Provider", "Current auto", "Transactions", "Access", "Last import", "Last balance", "Last fact", "Action"].forEach((label) => {
+      header.appendChild(renderHeaderCell(doc, label));
+    });
+    thead.appendChild(header);
+    table.appendChild(thead);
+    const tbody = doc.createElement("tbody");
+    matrixRows.forEach((row) => {
+      const tr = doc.createElement("tr");
+      if (row.severity === "red" || row.stale || row.access_status !== "available") tr.className = "needs-verification";
+      tr.appendChild(renderCell(doc, row.channel));
+      tr.appendChild(renderCell(doc, row.currency));
+      tr.appendChild(renderCell(doc, row.provider));
+      tr.appendChild(renderCell(doc, row.current_balance_auto === true || row.supports_current_balance_auto_refresh === true ? "yes" : "no"));
+      tr.appendChild(renderCell(doc, row.transaction_import === true || row.supports_transaction_import === true ? "yes" : "no"));
+      tr.appendChild(renderCell(doc, row.access_status || row.provider_token_status || ""));
+      tr.appendChild(renderCell(doc, row.last_import_date || row.last_successful_operation_import_date || ""));
+      tr.appendChild(renderCell(doc, row.last_balance_date || row.last_successful_balance_refresh_date || ""));
+      tr.appendChild(renderCell(doc, row.last_fact_date || row.last_successful_balance_refresh_date || ""));
+      tr.appendChild(renderCell(doc, row.action_required || ""));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+    return section;
   }
 
   function getSummaryMount(doc = root.document) {
