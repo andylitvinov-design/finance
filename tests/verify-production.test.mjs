@@ -65,7 +65,7 @@ test("verifyStatusResponse rejects non-main commitRef when present", () => {
   assert.throws(() => verifyStatusResponse(jsonResponse({
     status: "ok",
     commitSha: "cf5230b23da5525a0d50056b1daae1d1195fb692",
-    commitRef: "feature",
+    commitRef: "feature/foo",
     googleSheetReadOk: true,
   }), "cf5230b23da5"), /expected commitRef=main/);
 });

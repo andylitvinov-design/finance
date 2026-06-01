@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveCommitRef } from "./deploy-metadata.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const DEBUG_ACTIONS = new Set(["debugFull", "debugAnalytics", "debugUiState"]);
@@ -790,31 +791,42 @@ async function getDeployMetadata() {
     loadJson(path.join(process.cwd(), ".vercel", "project.json"))
   ]);
 
+  return composeDeployMetadata({ buildMeta, packageJson, vercelProject });
+}
+
+export function composeDeployMetadata({
+  buildMeta = {},
+  packageJson = {},
+  vercelProject = {},
+  env = process.env
+} = {}) {
   const commitSha = normalizeValue(
-    process.env.VERCEL_GIT_COMMIT_SHA
+    env.VERCEL_GIT_COMMIT_SHA
     || buildMeta.gitCommitSha
     || buildMeta.commitSha
   );
   const commitRef = normalizeValue(
-    process.env.VERCEL_GIT_COMMIT_REF
-    || buildMeta.gitCommitRef
-    || buildMeta.commitRef
+    resolveCommitRef({
+      envCommitRef: env.VERCEL_GIT_COMMIT_REF,
+      envCommitSha: env.VERCEL_GIT_COMMIT_SHA,
+      buildMeta
+    })
   );
   return {
     commitSha: commitSha || "unknown",
     commitRef: commitRef || "unknown",
     project: normalizeValue(
-      process.env.VERCEL_PROJECT_NAME
+      env.VERCEL_PROJECT_NAME
       || vercelProject.projectName
       || packageJson.name
     ) || "ezohata-incoming-ledger",
     source: normalizeValue(
-      process.env.VERCEL_GIT_REPO_SLUG
+      env.VERCEL_GIT_REPO_SLUG
       || buildMeta.gitRepoSlug
     ) || "andylitvinov-design/finance",
-    deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",
-    productionUrl: normalizeValue(process.env.VERCEL_PROJECT_PRODUCTION_URL) || "unknown",
-    deploymentEnvironment: normalizeValue(process.env.VERCEL_ENV || buildMeta.deploymentEnvironment) || "unknown",
+    deploymentUrl: normalizeValue(env.VERCEL_URL) || "unknown",
+    productionUrl: normalizeValue(env.VERCEL_PROJECT_PRODUCTION_URL) || "unknown",
+    deploymentEnvironment: normalizeValue(env.VERCEL_ENV || buildMeta.deploymentEnvironment) || "unknown",
     metadataStatus: commitSha && commitRef ? "ok" : "needs_verification",
   };
 }
