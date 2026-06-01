@@ -186,20 +186,51 @@
   function extractRemaindersClosingUsd(summary = {}) {
     const api = root.EzohataTopMetricPayableShareFix;
     if (typeof api?.extractRemaindersClosingUsd === "function") return api.extractRemaindersClosingUsd(summary);
+    const canonical = findCanonicalTotal(summary);
+    if (canonical && !isTrustedCanonicalTotal(canonical)) return null;
+    if (canonical && isTrustedCanonicalTotal(canonical)) return parseNumber(canonical.canonical_total_usd);
     return parseNumber(
-      summary?.canonical_total?.canonical_total_usd ??
-      summary?.canonicalTotal?.canonical_total_usd ??
-      summary?.refresh_report?.totals?.canonical_total_usd ??
       summary?.selectedDateSnapshot?.total_usd ??
       summary?.selectedDateSnapshot?.canonical_total_usd ??
-      summary?.selectedDateSnapshot?.canonical_total?.canonical_total_usd ??
       summary?.selectedDateSnapshot?.closing_usd ??
-      summary?.periodReconciliation?.canonical_total?.canonical_total_usd ??
       summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd ??
       summary?.periodReconciliation?.total_usd_row?.closing_usd ??
       summary?.totals?.closingUsd ??
       0
     );
+  }
+
+  function findCanonicalTotal(summary = {}) {
+    return summary?.canonical_total ||
+      summary?.canonicalTotal ||
+      summary?.refresh_report?.totals ||
+      summary?.selectedDateSnapshot?.canonical_total ||
+      summary?.periodReconciliation?.canonical_total ||
+      null;
+  }
+
+  function isTrustedCanonicalTotal(total = {}) {
+    const value = parseNumber(total?.canonical_total_usd);
+    if (!Number.isFinite(value)) return false;
+    if (total.totals_match === false) return false;
+    const status = String(total.status || "").toLowerCase();
+    return !/(needs|missing|partial|fx_missing|mismatch|stale|failed|blocked|error)/.test(status);
+  }
+
+  function formatTrustNumber(value) {
+    const parsed = parseNumber(value);
+    return Number.isFinite(parsed) ? String(parsed) : "n/a";
+  }
+
+  function getRemaindersTrustWarning(summary = {}) {
+    const total = findCanonicalTotal(summary);
+    if (!total || isTrustedCanonicalTotal(total)) return null;
+    return [
+      "canonical total needs verification",
+      `status=${total.status || "needs_verification"}`,
+      `selected-date ${formatTrustNumber(total.selected_date_total_usd)} vs period ${formatTrustNumber(total.period_total_usd)}`,
+      `delta ${formatTrustNumber(total.delta_usd)}`,
+    ].join("; ");
   }
 
   function getLocalRemaindersClosingUsd() {
@@ -228,6 +259,24 @@
     return changedChip || changedValue;
   }
 
+  function applyRemaindersWarning(message) {
+    if (!message) return false;
+    const node = getRemaindersNode();
+    const valueNode = getRemaindersValueNode();
+    if (!node && !valueNode) return false;
+    if (node) {
+      node.title = message;
+      node.className = `${String(node.className || "").replace(/\bneeds-verification\b/g, "").trim()} needs-verification`.trim();
+    }
+    if (valueNode) {
+      valueNode.title = message;
+      valueNode.className = `${String(valueNode.className || "").replace(/\bneeds-verification\b/g, "").trim()} needs-verification`.trim();
+    }
+    const changedChip = setText(node, "Остатки: needs verification", { displaySource: "topMetricCanonicalFinalizer.needsVerification" });
+    const changedValue = setText(valueNode, "needs verification", { displaySource: "topMetricCanonicalFinalizer.needsVerification" });
+    return changedChip || changedValue;
+  }
+
   function isExplicitCanonicalRemaindersSource(source) {
     return String(source || "").includes(".liveRemainders");
   }
@@ -240,6 +289,11 @@
     Promise.resolve(api.buildLiveRemaindersSummary())
       .then((summary) => {
         if (requestId !== liveRemaindersRequestId) return;
+        const warning = getRemaindersTrustWarning(summary || {});
+        if (warning) {
+          applyRemaindersWarning(warning);
+          return;
+        }
         applyRemainders(extractRemaindersClosingUsd(summary || {}), "topMetricCanonicalFinalizer.liveRemainders");
       })
       .catch((error) => {
@@ -285,8 +339,15 @@
       }
 
       const localRemainders = getLocalRemaindersClosingUsd();
+      const localSummary = typeof root.EzohataRemaindersSummaryPopup?.buildRemaindersSummary === "function"
+        ? root.EzohataRemaindersSummaryPopup.buildRemaindersSummary(root.state || {})
+        : null;
+      const localWarning = getRemaindersTrustWarning(localSummary || {});
+      if (localWarning) {
+        applyRemaindersWarning(localWarning);
+      }
       const canRefreshLiveRemainders = canBuildLiveRemaindersSummary();
-      if (localRemainders !== null && (Math.abs(localRemainders) > 0.0001 || !canRefreshLiveRemainders)) {
+      if (!localWarning && localRemainders !== null && (Math.abs(localRemainders) > 0.0001 || !canRefreshLiveRemainders)) {
         applyRemainders(localRemainders, "topMetricCanonicalFinalizer.localRemainders");
       }
       refreshLiveRemainders();

@@ -1499,6 +1499,76 @@ test("remainders table has a mobile horizontal scroll container", () => {
   assert.match(mobileCss, /\.remainders-summary-table-wrap table tr > :first-child\s*\{[^}]*max-width:\s*160px;[^}]*white-space:\s*normal;/s);
 });
 
+test("remainders popup renders canonical mismatch warning and diagnostic rows", () => {
+  const api = loadApi();
+  const summary = {
+    source: "test",
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    diagnostics: [],
+    periodReconciliation: {
+      canonical_total: {
+        source: "needs_verification",
+        selected_date_total_usd: 7985.2535,
+        period_total_usd: 27322.5439,
+        canonical_total_usd: null,
+        delta_usd: -19337.2904,
+        totals_match: false,
+        status: "mismatch",
+      },
+      total_usd_row: {
+        opening_usd: 15368.9443,
+        confirmed_end_usd: 27322.5439,
+        change_usd: 11953.5996,
+        movement_usd: -2985.6546,
+        diff_usd: 14939.2542,
+        excluded_fx_missing_rows: 2,
+      },
+      by_channel_currency: [
+        {
+          channel: "Яндекс руб",
+          currency: "RUB",
+          opening_usd: 1905.0232,
+          confirmed_end_usd: 1376,
+          movement_usd: -569.3747,
+          diff_usd: 40.3515,
+          fx_warnings: [],
+        },
+        {
+          channel: "карта май",
+          currency: "UNKNOWN",
+          opening_usd: null,
+          confirmed_end_usd: null,
+          movement_usd: 0,
+          diff_usd: null,
+          fx_warnings: ["confirmed_end_usd_fx_missing"],
+        },
+      ],
+      summary: {
+        stale_ostatki_rows: [
+          { channel: "Яндекс руб", currency: "RUB", reason: "operation_sum_mismatch" },
+        ],
+        manual_confirmation_required_rows: [
+          { channel: "Яндекс руб", currency: "RUB", reason: "operation_sum_mismatch" },
+        ],
+      },
+    },
+  };
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const text = collectText(block);
+  const warnings = findAll(block, (node) => String(node.className || "").includes("needs-verification"));
+
+  assert.match(text, /canonical total needs verification/i);
+  assert.match(text, /selected-date 7985,2535 vs period 27322,5439/i);
+  assert.match(text, /top mismatch rows/i);
+  assert.match(text, /Яндекс руб RUB/);
+  assert.match(text, /fx_missing rows/i);
+  assert.match(text, /stale\/manual rows/i);
+  assert.ok(warnings.length >= 1);
+  resetRemaindersModule();
+});
+
 test("collapsed remainders diagnostics table keeps horizontal scroll controls", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock(api.buildRemaindersSummary({

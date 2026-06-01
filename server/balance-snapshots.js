@@ -202,10 +202,11 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     staleCurrentOnlyAutoRows,
     canonicalUsdLookup: selectedCanonicalUsdLookup,
   });
+  const selectedDateCoverage = buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date);
   const selectedTotalUsd = sumSelectedDateUsd(selectedDateSummary.rows);
   const canonicalTotal = buildCanonicalBalanceTotal({
     selectedDateTotalUsd: selectedTotalUsd,
-    selectedDateStatus: selectedDateSummary.rows.length ? "ok" : "needs_verification",
+    selectedDateStatus: selectedDateCoverage.status,
   });
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
 
@@ -244,7 +245,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     canonical_total_usd: canonicalTotal.canonical_total_usd,
     canonical_total: canonicalTotal,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
-    selected_date_coverage: buildSelectedDateCoverage(selectedDateSummary.rows, EXPECTED_PROVIDER_BALANCES, selectedDateSummary.selected_date),
+    selected_date_coverage: selectedDateCoverage,
     provider_channel_matrix: buildProviderChannelMatrix({
       selectedDate: selectedDateSummary.selected_date,
       selectedRows: selectedDateSummary.rows,
