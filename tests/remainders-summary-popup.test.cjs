@@ -1375,6 +1375,61 @@ test("reconcile result summary is rendered as grouped sections", () => {
   resetRemaindersModule();
 });
 
+test("remainders diagnostics renders provider matrix stale warnings", () => {
+  const api = loadApi();
+  const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    selectedDateSnapshot: {
+      selected_date: "2026-06-01",
+      selected_date_rows: [],
+      provider_channel_matrix: [
+        {
+          channel: "монобанк грн",
+          currency: "UAH",
+          supports_current_balance_auto_refresh: true,
+          supports_transaction_import: true,
+          provider_token_status: "available",
+          last_successful_operation_import_date: "2026-05-28",
+          last_successful_balance_refresh_date: "2026-05-28",
+          last_manual_screenshot_snapshot_date: "2026-05-28",
+          source: "manual/screenshot",
+          stale: true,
+          reason: "last balance snapshot before selected period end",
+          action_required: "manual balance needed / refresh token / upload screenshot",
+        },
+        {
+          channel: "REVOLUT евро",
+          currency: "EUR",
+          supports_current_balance_auto_refresh: false,
+          supports_transaction_import: false,
+          provider_token_status: "not_implemented",
+          last_successful_operation_import_date: null,
+          last_successful_balance_refresh_date: "2026-05-31",
+          last_manual_screenshot_snapshot_date: "2026-05-31",
+          source: "manual/screenshot",
+          stale: true,
+          reason: "current balance auto refresh unsupported",
+          action_required: "upload screenshot / manual balance needed",
+        },
+      ],
+    },
+  }, makeMockDocument());
+  const text = collectText(block);
+  const staleRows = findAll(block, (node) => node.tag === "tr" && String(node.className || "").includes("needs-verification"));
+
+  assert.match(text, /Матрица провайдеров/);
+  assert.match(text, /монобанк грн/);
+  assert.match(text, /REVOLUT евро/);
+  assert.match(text, /last balance snapshot before selected period end/);
+  assert.match(text, /current balance auto refresh unsupported/);
+  assert.match(styleCss, /\.remainders-summary-block tr\.needs-verification td\s*\{[^}]*background:\s*#fff0ed;/s);
+  assert.ok(staleRows.length >= 2);
+  resetRemaindersModule();
+});
+
 test("remainders table has a mobile horizontal scroll container", () => {
   const styleCss = fs.readFileSync(path.join(root, "style.css"), "utf8");
   const mobileCss = fs.readFileSync(path.join(root, "mobile-finance-table-scroll.css"), "utf8");

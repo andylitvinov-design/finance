@@ -729,6 +729,67 @@
     return section;
   }
 
+  function renderProviderMatrixBlock(snapshot, doc = root.document) {
+    const rows = Array.isArray(snapshot?.provider_channel_matrix) ? snapshot.provider_channel_matrix : [];
+    if (!rows.length) return null;
+    const section = doc.createElement("section");
+    section.className = "provider-channel-matrix";
+    const title = doc.createElement("h4");
+    title.textContent = "Матрица провайдеров";
+    section.appendChild(title);
+
+    const warningRows = rows.filter((row) => row.stale).length;
+    if (warningRows) {
+      const note = doc.createElement("div");
+      note.className = "balance-summary-diagnostics needs-verification";
+      note.textContent = `Красные строки требуют ручного действия: ${warningRows}`;
+      section.appendChild(note);
+    }
+
+    const wrap = doc.createElement("div");
+    wrap.className = "table-wrap remainders-summary-table-wrap";
+    const table = doc.createElement("table");
+    const thead = doc.createElement("thead");
+    const header = doc.createElement("tr");
+    [
+      "Канал",
+      "Валюта",
+      "Авто остаток",
+      "Импорт операций",
+      "Статус токена",
+      "Последняя операция",
+      "Последний остаток",
+      "Снимок",
+      "Источник",
+      "Причина",
+      "Действие",
+    ].forEach((label) => header.appendChild(renderHeaderCell(doc, label)));
+    thead.appendChild(header);
+    table.appendChild(thead);
+
+    const tbody = doc.createElement("tbody");
+    rows.forEach((row) => {
+      const tr = doc.createElement("tr");
+      if (row.stale) tr.className = "needs-verification";
+      tr.appendChild(renderCell(doc, row.channel || "—"));
+      tr.appendChild(renderCell(doc, row.currency || "—"));
+      tr.appendChild(renderCell(doc, row.supports_current_balance_auto_refresh ? "yes" : "no"));
+      tr.appendChild(renderCell(doc, row.supports_transaction_import ? "yes" : "no"));
+      tr.appendChild(renderCell(doc, row.provider_token_status || "unknown"));
+      tr.appendChild(renderCell(doc, row.last_successful_operation_import_date || "—"));
+      tr.appendChild(renderCell(doc, row.last_successful_balance_refresh_date || "—"));
+      tr.appendChild(renderCell(doc, row.last_manual_screenshot_snapshot_date || "—"));
+      tr.appendChild(renderCell(doc, row.source || "unknown"));
+      tr.appendChild(renderCell(doc, row.reason || "—"));
+      tr.appendChild(renderCell(doc, row.action_required || "—"));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+    return section;
+  }
+
   function renderDefaultUsdBalancesTable(summary, doc = root.document) {
     const periodRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
     const periodInputRows = buildVisibleUsdRowsFromPeriodReconciliation(summary.periodReconciliation);
@@ -876,6 +937,8 @@
     if (selectedDateBlock) details.appendChild(selectedDateBlock);
     const periodChangesBlock = renderPeriodBalanceChangesBlock(summary.selectedDateSnapshot, summary.periodMovementRows || [], doc);
     if (periodChangesBlock) details.appendChild(periodChangesBlock);
+    const providerMatrixBlock = renderProviderMatrixBlock(summary.selectedDateSnapshot, doc);
+    if (providerMatrixBlock) details.appendChild(providerMatrixBlock);
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";
