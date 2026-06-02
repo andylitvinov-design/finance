@@ -1083,3 +1083,80 @@ test("handler returns structured auth_failed diagnostics when PayPal REST OAuth 
     }
   }
 });
+
+test("handler classifies PayPal MCP grant-not-found refresh failures without leaking tokens", async () => {
+  const previousEnv = {
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
+    PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
+    PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_ENVIRONMENT: process.env.PAYPAL_ENVIRONMENT,
+  };
+  const previousFetch = global.fetch;
+
+  process.env.PAYPAL_CLIENT_ID = "live-client-1234";
+  process.env.PAYPAL_CLIENT_SECRET = "bad-rest-secret";
+  process.env.PAYPAL_MCP_CLIENT_ID = "mcp-client-5678";
+  process.env.PAYPAL_MCP_REFRESH_TOKEN = "mcp-refresh-secret-token";
+  process.env.PAYPAL_ENVIRONMENT = "live";
+
+  try {
+    global.fetch = async (url) => {
+      const href = String(url);
+      if (href.endsWith("/v1/oauth2/token")) {
+        return {
+          ok: false,
+          status: 401,
+          async json() {
+            return { error: "invalid_client", error_description: "Client Authentication failed" };
+          }
+        };
+      }
+      if (href === "https://mcp.paypal.com/token") {
+        return {
+          ok: false,
+          status: 400,
+          async json() {
+            return { error: "invalid_grant", error_description: "Grant not found" };
+          }
+        };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler(
+      { method: "POST", body: { startDate: "2026-05-01", endDate: "2026-06-02" } },
+      response
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.providerStatus, "mcp_grant_not_found");
+    assert.equal(response.body.phase, "mcp_token");
+    assert.equal(response.body.paypalRest.providerStatus, "auth_failed");
+    assert.equal(response.body.paypalRest.phase, "oauth");
+    assert.equal(response.body.paypalRest.environment, "live");
+    assert.equal(response.body.paypalRest.hasClientId, true);
+    assert.equal(response.body.paypalRest.hasClientSecret, true);
+    assert.equal(response.body.paypalRest.maskedClientId, "live...1234");
+    assert.deepEqual(response.body.paypalMcp, {
+      phase: "mcp_token",
+      providerStatus: "mcp_grant_not_found",
+      hasClientId: true,
+      hasRefreshToken: true
+    });
+    assert.match(response.body.shortExcerpt, /PayPal MCP token refresh failed \(400\): Grant not found/);
+    assert.match(response.body.warnings.join(" | "), /PayPal REST import failed: PayPal OAuth failed \(401\): Client Authentication failed/);
+    assert.doesNotMatch(JSON.stringify(response.body), /bad-rest-secret|mcp-refresh-secret-token/);
+  } finally {
+    global.fetch = previousFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});

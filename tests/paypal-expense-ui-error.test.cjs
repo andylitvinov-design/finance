@@ -81,6 +81,40 @@ test("PayPal auth diagnostics show credentials and environment hint", () => {
   );
 });
 
+test("PayPal manual import message combines REST auth rejection and MCP grant-not-found", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    provider: "paypal",
+    phase: "mcp_token",
+    providerStatus: "mcp_grant_not_found",
+    shortExcerpt: "PayPal MCP token refresh failed (400): Grant not found",
+    warnings: ["PayPal REST import failed: PayPal OAuth failed (401): Client Authentication failed"],
+    paypalRest: {
+      phase: "oauth",
+      providerStatus: "auth_failed",
+      environment: "live",
+      hasClientId: true,
+      hasClientSecret: true,
+      maskedClientId: "live...1234"
+    },
+    paypalMcp: {
+      phase: "mcp_token",
+      providerStatus: "mcp_grant_not_found",
+      hasClientId: true,
+      hasRefreshToken: true
+    }
+  });
+
+  assert.match(message, /PayPal REST credentials rejected by PayPal/);
+  assert.match(message, /PAYPAL_CLIENT_ID\/PAYPAL_CLIENT_SECRET/);
+  assert.match(message, /PAYPAL_ENVIRONMENT live\/sandbox/);
+  assert.match(message, /MCP fallback also failed: refresh grant not found/);
+  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
+  assert.match(message, /Activity\/CSV/);
+  assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
+});
+
 test("readPayPalExpenseStatementPayload converts non-JSON provider text into contextual UI error", async () => {
   const context = createContext();
 
