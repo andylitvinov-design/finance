@@ -1696,6 +1696,8 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
       { date: "2026-06-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528", balanceSource: "provider_auto" },
       { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775", amount_usd: "5413.0775", balanceSource: "provider_auto" },
       { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523", balanceSource: "provider_auto" },
+      { date: "2026-06-01", channel: "Payoneer - eur", currency: "EUR", amount: "1008.19", amount_usd: "1175.3751", balanceSource: "payoneer_derived_balance" },
+      { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "12.07", balanceSource: "paypal_derived_balance" },
     ],
   });
 
@@ -1705,6 +1707,10 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
   assert.equal(rows.get("монобанк грн|UAH").confirmed_end_native, 1333);
   assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 31.36);
   assert.equal(rows.get("Яндекс руб|RUB").confirmed_end_usd, 1376);
+  assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_native, 1418.39);
+  assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_usd, 1653.5973);
+  assert.equal(rows.get("пейпал дол|USD").confirmed_end_native, 86.89);
+  assert.equal(rows.get("пейпал дол|USD").confirmed_end_usd, 86.89);
   assert.equal(rows.get("binance save|USDT").confirmed_end_native, 5412);
   assert.equal(rows.get("binance save|USDT").confirmed_end_usd, 5412);
   assert.equal(rows.get("binance save|USDC").confirmed_end_native, 2020);
