@@ -88,7 +88,9 @@ export default async function handler(request, response) {
             providerStatus: getPayPalProviderStatus(mcpError),
             warnings: [restWarning],
             availableMcpTools: mcpError.availableMcpTools || [],
-            restConfig
+            restConfig,
+            paypalRest: restDiagnostics,
+            mcpConfig: { clientId: mcpClientId, refreshToken: mcpRefreshToken }
           }));
         }
         result = {
@@ -126,7 +128,8 @@ export default async function handler(request, response) {
           phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
           providerStatus: getPayPalProviderStatus(mcpError),
           availableMcpTools: mcpError.availableMcpTools || [],
-          restConfig
+          restConfig,
+          mcpConfig: { clientId: mcpClientId, refreshToken: mcpRefreshToken }
         }));
       }
     }
@@ -303,7 +306,10 @@ async function getPayPalMcpAccessToken(options = {}) {
   });
   const payload = await readJsonOrTextResponse(upstream, "PayPal MCP token refresh failed");
   if (!upstream.ok || !payload?.access_token) {
-    throw new Error(formatPayPalUpstreamError("PayPal MCP token refresh failed", upstream.status, payload));
+    throw createPayPalApiError(
+      formatPayPalUpstreamError("PayPal MCP token refresh failed", upstream.status, payload),
+      { status: upstream.status, payload, phase: "mcp_token" }
+    );
   }
   return payload.access_token;
 }
@@ -748,7 +754,8 @@ function buildPayPalManualImportRequiredPayload(error, options = {}) {
     fallback: "manual_activity_import",
     canUseManualImport: true,
     providerStatus: String(options.providerStatus || getPayPalProviderStatus(error)).trim() || "provider_unavailable",
-    paypalRest: buildPayPalRestDiagnostics(error, options.restConfig || {}),
+    paypalRest: options.paypalRest || buildPayPalRestDiagnostics(error, options.restConfig || {}),
+    ...(options.mcpConfig ? { paypalMcp: buildPayPalMcpDiagnostics(error, options.mcpConfig) } : {}),
     shortExcerpt,
     ...(Array.isArray(options.warnings) && options.warnings.length ? { warnings: uniquePayPalWarnings(options.warnings) } : {}),
     ...(Array.isArray(options.availableMcpTools) && options.availableMcpTools.length ? { availableMcpTools: options.availableMcpTools } : {})
@@ -776,11 +783,21 @@ function buildPayPalRestDiagnostics(error, options = {}) {
   };
 }
 
+function buildPayPalMcpDiagnostics(error, options = {}) {
+  return {
+    phase: getPayPalFailurePhase(error, "mcp_fallback"),
+    providerStatus: getPayPalProviderStatus(error),
+    hasClientId: Boolean(String(options.clientId || "").trim()),
+    hasRefreshToken: Boolean(String(options.refreshToken || "").trim())
+  };
+}
+
 function getPayPalFailurePhase(error, fallback = "provider_import") {
   const explicit = String(error?.paypalPhase || error?.phase || "").trim();
   if (explicit) return explicit;
   const message = String(error?.message || error || "").toLowerCase();
   if (/mcp.*tool.*not found|tool list_transactions not found|method not found/.test(message)) return "mcp_tool_not_found";
+  if (/grant not found|invalid_grant/.test(message)) return "mcp_token";
   if (/mcp.*timed out|event stream timed out|request timed out/.test(message)) return "mcp_fallback";
   if (/mcp.*non-json|mcp.*empty response|mcp.*failed/.test(message)) return "mcp_fallback";
   if (/refresh token|mcp token/.test(message)) return "mcp_token";
@@ -795,6 +812,7 @@ function getPayPalProviderStatus(error) {
   const status = Number(error?.paypalStatus || error?.status || 0);
   const message = String(error?.message || error || "").toLowerCase();
   const code = String(error?.paypalError || error?.paypalName || "").toLowerCase();
+  if (/grant not found|invalid_grant/.test(`${message} ${code}`)) return "mcp_grant_not_found";
   if (status === 401 || /invalid_client|client authentication failed|unauthorized|authentication failed/.test(`${message} ${code}`)) return "auth_failed";
   if (/tool list_transactions not found|tool not found|method not found/.test(message)) return "mcp_tool_not_found";
   if (status === 403 || /not_authorized|permission_denied|permission denied|permission|not authorized/.test(`${message} ${code}`)) return "permission_denied";

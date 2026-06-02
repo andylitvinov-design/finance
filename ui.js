@@ -2577,6 +2577,14 @@ function getPayPalManualImportMessage(payload = {}) {
   const providerStatus = String(payload?.providerStatus || payload?.paypalRest?.providerStatus || "").trim();
   const excerpt = String(payload?.shortExcerpt || "").trim();
   const details = [phase ? `phase: ${phase}` : "", excerpt ? `details: ${excerpt}` : ""].filter(Boolean).join(" · ");
+  const warnings = Array.isArray(payload?.warnings) ? payload.warnings.join(" ") : "";
+  const restStatus = String(payload?.paypalRest?.providerStatus || "").trim();
+  const mcpStatus = String(payload?.paypalMcp?.providerStatus || providerStatus).trim();
+  const restRejected = restStatus === "auth_failed" || /rest import failed: paypal oauth failed .*client authentication failed/i.test(warnings);
+  const mcpGrantMissing = mcpStatus === "mcp_grant_not_found" || /grant not found/i.test(excerpt);
+  if (restRejected && mcpGrantMissing) {
+    return `PayPal REST credentials rejected by PayPal: check Vercel PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET and PAYPAL_ENVIRONMENT live/sandbox. MCP fallback also failed: refresh grant not found; re-authorize PayPal MCP or replace PAYPAL_MCP_REFRESH_TOKEN. You can still import Activity/CSV and confirm net manually.${details ? ` ${details}` : ""}`;
+  }
   if (phase === "oauth" && providerStatus === "auth_failed") {
     return `PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env.${details ? ` ${details}` : ""}`;
   }
