@@ -157,7 +157,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
   const realInflow = round(real?.inflow || 0);
   const realOutflow = round(real?.outflow || 0);
   const realDelta = round(realInflow - realOutflow);
-  const ownerEvidence = getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta, fxRateLookup });
+  const ownerEvidence = getReportOwnerEvidence({ channel, currency, from, to, openingSnapshot, realDelta, fxRateLookup });
   let opening = ownerEvidence?.opening ?? openingSnapshot?.amount ?? null;
   let openingAmountUsd = ownerEvidence && Object.prototype.hasOwnProperty.call(ownerEvidence, "openingUsd")
     ? ownerEvidence.openingUsd
@@ -1268,8 +1268,9 @@ function coalesceNumber(...values) {
   return null;
 }
 
-function getReportOwnerEvidence({ channel, currency, from, openingSnapshot, realDelta, fxRateLookup = new Map() } = {}) {
+function getReportOwnerEvidence({ channel, currency, from, to, openingSnapshot, realDelta, fxRateLookup = new Map() } = {}) {
   if (from !== "2026-05-01") return null;
+  if (normalizeDate(to) >= "2026-06-01") return null;
   const key = makeKey(String(channel || "").trim(), String(currency || "").trim().toUpperCase());
   const openingAmount = coalesceNumber(openingSnapshot?.amount);
   const evidence = {

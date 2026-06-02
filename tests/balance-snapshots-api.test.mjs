@@ -572,6 +572,8 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
         { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "Яндекс руб", currency: "RUB", amount: "104862.88", amount_usd: "1376", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-06-01", channel: "Payoneer - eur", currency: "EUR", amount: "1008.19", amount_usd: "1175.3751", source: "payoneer_derived_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "12.07", source: "paypal_derived_balance", sourceSheet: "Авто Остатки" },
       ],
       warnings: [],
     }),
@@ -601,6 +603,7 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
   assert.equal(snapshot.balance_snapshots.selected_date, "2026-06-01");
   assert.equal(snapshot.balance_snapshots.selected_date_source, "latest_known");
   assert.deepEqual(selectedDateRows, [
+    "Payoneer - eur|EUR|1418.39",
     "binance save|USDC|2020",
     "binance save|USDT|5412",
     "БАНК КАНАДА cad|CAD|10538",
@@ -608,8 +611,10 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
     "Бинанс spot|USDT|1162",
     "Яндекс руб|RUB|104862.88",
     "монобанк грн|UAH|1333",
+    "пейпал дол|USD|86.89",
   ]);
   assert.deepEqual(selectedRows, [
+    "Payoneer - eur|EUR|1418.39|confirmed",
     "binance save|USDC|2020|confirmed",
     "binance save|USDT|5412|confirmed",
     "БАНК КАНАДА cad|CAD|10538|confirmed",
@@ -617,10 +622,16 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
     "Бинанс spot|USDT|1162|confirmed",
     "Яндекс руб|RUB|104862.88|confirmed",
     "монобанк грн|UAH|1333|confirmed",
+    "пейпал дол|USD|86.89|confirmed",
   ]);
+  const rows = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
+  assert.equal(rows.get("Payoneer - eur|EUR")?.amount_usd, 1653.5973);
+  assert.equal(rows.get("пейпал дол|USD")?.amount_usd, 86.89);
   assert.equal(selectedText.includes("7425"), false);
   assert.equal(selectedText.includes("1689"), false);
   assert.equal(selectedText.includes("7351"), false);
+  assert.equal(selectedText.includes("1175.3751"), false);
+  assert.equal(selectedText.includes("12.07"), false);
   assert.equal(selectedText.includes("legacy_combined_binance_spot_funding"), false);
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDT"), false);
   assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDC"), false);
@@ -786,14 +797,14 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
   assert.equal(snapshot.balance_snapshots.selected_date, "2026-06-01");
   assert.equal(selected.get("трансервайз дол|USD").amount_usd, 1275.42);
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
-  assert.equal(selected.get("Payoneer - eur|EUR").amount_usd, 1169.5004);
-  assert.equal(selected.get("пейпал дол|USD").amount_usd, 12.07);
+  assert.equal(selected.get("Payoneer - eur|EUR").amount_usd, 1645.3324);
+  assert.equal(selected.get("пейпал дол|USD").amount_usd, 86.89);
   assert.equal(selected.get("binance save|USDT").amount_usd, 5412);
   assert.equal(selected.get("binance save|USDC").amount_usd, 2020);
   assert.equal(selected.get("Бинанс spot|USDT").amount_usd, 1162);
   assert.equal(selected.get("Бинанс spot|USDC").amount_usd, 0);
   assert.equal(selected.has("binance save|USD"), false);
-  assert.equal(Number(total.toFixed(4)), 21427.7996);
+  assert.equal(Number(total.toFixed(4)), 21978.4516);
 });
 
 test("balance snapshots selected date does not apply May current overrides after the May carry-forward window", async () => {
