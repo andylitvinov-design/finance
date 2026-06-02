@@ -9,7 +9,15 @@ export const OWNER_MAY_CURRENT_BALANCE_CORRECTIONS = [
   { channel: "Бинанс spot", currency: "USDT", amount: 1162, amount_usd: 1162 },
   { channel: "Бинанс spot", currency: "USDC", amount: 0, amount_usd: 0 },
   { channel: "БАНК КАНАДА cad", currency: "CAD", amount: 10538, amount_usd: 7798 },
-  { channel: "монобанк грн", currency: "UAH", amount: 1333, amount_usd: 31.36 },
+  {
+    channel: "монобанк грн",
+    currency: "UAH",
+    delta_amount: 10313,
+    amount_usd_strategy: "preserve_existing_rate",
+    date: OWNER_JUNE_CURRENT_BALANCE_DATE,
+    source: OWNER_JUNE_CURRENT_BALANCE_SOURCE,
+    comment: "Owner-confirmed 2026-06-01 Monobank correction from 2026-05-30: +10313 UAH.",
+  },
   { channel: "Яндекс руб", currency: "RUB", amount: null, amount_usd: 1376 },
   {
     channel: "Payoneer - eur",

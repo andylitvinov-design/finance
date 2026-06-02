@@ -242,7 +242,7 @@ test("provider matrix marks unsupported and stale channels with last snapshot/im
     repositoryLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual screenshot" },
+        { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual screenshot" },
         { date: "2026-05-31", channel: "приват 24-грн", currency: "UAH", amount: "93.27", amount_usd: "2.1068", source: "manual screenshot" },
         { date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", amount_usd: "129.1082", source: "manual screenshot" },
       ],
@@ -268,7 +268,7 @@ test("provider matrix marks unsupported and stale channels with last snapshot/im
   assert.equal(mono.supports_current_balance_auto_refresh, true);
   assert.equal(mono.supports_transaction_import, true);
   assert.equal(mono.last_successful_operation_import_date, "2026-05-28");
-  assert.equal(mono.last_successful_balance_refresh_date, "2026-05-28");
+  assert.equal(mono.last_successful_balance_refresh_date, "2026-06-01");
   assert.equal(mono.stale, true);
   assert.match(mono.action_required, /manual balance needed|refresh token|upload screenshot/);
 
@@ -570,7 +570,7 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
         { date: "2026-05-28", channel: "Бинанс spot", currency: "USDT", amount: "1162", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "Бинанс spot", currency: "USDC", amount: "0", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", source: "manual_fact", sourceSheet: "Остатки" },
-        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "Яндекс руб", currency: "RUB", amount: "104862.88", amount_usd: "1376", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-06-01", channel: "Payoneer - eur", currency: "EUR", amount: "1008.19", amount_usd: "1175.3751", source: "payoneer_derived_balance", sourceSheet: "Авто Остатки" },
         { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "35.30", amount_usd: "12.07", source: "paypal_derived_balance", sourceSheet: "Авто Остатки" },
@@ -610,7 +610,7 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
     "Бинанс spot|USDC|0",
     "Бинанс spot|USDT|1162",
     "Яндекс руб|RUB|104862.88",
-    "монобанк грн|UAH|1333",
+    "монобанк грн|UAH|11646",
     "пейпал дол|USD|86.89",
   ]);
   assert.deepEqual(selectedRows, [
@@ -621,7 +621,7 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
     "Бинанс spot|USDC|0|confirmed",
     "Бинанс spot|USDT|1162|confirmed",
     "Яндекс руб|RUB|104862.88|confirmed",
-    "монобанк грн|UAH|1333|confirmed",
+    "монобанк грн|UAH|11646|confirmed",
     "пейпал дол|USD|86.89|confirmed",
   ]);
   const rows = new Map(snapshot.balance_snapshots.selected_date_rows.map((row) => [`${row.channel}|${row.currency}`, row]));
@@ -713,7 +713,7 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
       balances: [
         { date: "2026-03-10", channel: "деп24-дол", currency: "USD", amount: "0" },
         { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
-        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36" },
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
         { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425" },
         { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "1689", amount_usd: "1689" },
@@ -733,8 +733,8 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
   assert.equal(snapshot.balance_snapshots.selected_date_source, "latest_known");
   assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount, 10538);
   assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount_usd, 7798);
-  assert.equal(selected.get("монобанк грн|UAH").amount, 1333);
-  assert.equal(selected.get("монобанк грн|UAH").amount_usd, 31.36);
+  assert.equal(selected.get("монобанк грн|UAH").amount, 10916);
+  assert.equal(selected.get("монобанк грн|UAH").amount_usd, 567.7044);
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
   assert.equal(selected.get("binance save|USDT").amount, 5412);
   assert.equal(selected.get("binance save|USDT").amount_usd, 5412);
@@ -760,7 +760,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
       ok: true,
       balances: [
         { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
-        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36" },
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42" },
         { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
         { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523" },
@@ -804,7 +804,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
   assert.equal(selected.get("Бинанс spot|USDT").amount_usd, 1162);
   assert.equal(selected.get("Бинанс spot|USDC").amount_usd, 0);
   assert.equal(selected.has("binance save|USD"), false);
-  assert.equal(Number(total.toFixed(4)), 21978.4516);
+  assert.equal(Number(total.toFixed(4)), 22514.796);
 });
 
 test("balance snapshots selected date does not apply May current overrides after the May carry-forward window", async () => {
