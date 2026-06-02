@@ -561,25 +561,31 @@ test("balance snapshots selected date does not trust stale current-only historic
 
 test("balance snapshots selected date carries owner-confirmed May 28 rows over stale derived current rows", async () => {
   const snapshot = await buildBalanceSnapshotsSnapshot({
-    query: { from: "2026-05-28", to: "2026-05-31" },
+    query: { from: "2026-05-28", to: "2026-06-01" },
     repositoryLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-05-28", channel: "binance save", currency: "USD", amount: "7432", source: "manual_fact", sourceSheet: "Остатки" },
-        { date: "2026-05-28", channel: "Бинанс spot", currency: "USD", amount: "1162", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "binance save", currency: "USDT", amount: "5412", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "binance save", currency: "USDC", amount: "2020", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "Бинанс spot", currency: "USDT", amount: "1162", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "Бинанс spot", currency: "USDC", amount: "0", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "10538", source: "manual_fact", sourceSheet: "Остатки" },
         { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", source: "manual_fact", sourceSheet: "Остатки" },
-        { date: "2026-05-28", channel: "приват 24-грн", currency: "UAH", amount: "1376", source: "manual_fact", sourceSheet: "Остатки" },
+        { date: "2026-05-28", channel: "Яндекс руб", currency: "RUB", amount: "104862.88", amount_usd: "1376", source: "manual_fact", sourceSheet: "Остатки" },
       ],
       warnings: [],
     }),
     autoBalanceLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-05-31", channel: "binance save", currency: "USD", amount: "7425", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
-        { date: "2026-05-31", channel: "Бинанс spot", currency: "USD", amount: "1689", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
-        { date: "2026-05-31", channel: "БАНК КАНАДА cad CAD", currency: "CAD", amount: "7351", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
-        { date: "2026-05-31", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: "345", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "binance save", currency: "USD", amount: "7425", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "binance save", currency: "USDC", amount: "2020.0001", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "Бинанс spot", currency: "USD", amount: "1689", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "Бинанс spot", currency: "USDC", amount: "50", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "БАНК КАНАДА cad CAD", currency: "CAD", amount: "7351", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+        { date: "2026-06-01", channel: "legacy_combined_binance_spot_funding", currency: "USDT", amount: "345", source: "provider_auto", status: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
       ],
       warnings: [],
     }),
@@ -592,26 +598,34 @@ test("balance snapshots selected date carries owner-confirmed May 28 rows over s
     selected_date_rows: snapshot.balance_snapshots.selected_date_rows,
   });
 
-  assert.equal(snapshot.balance_snapshots.selected_date, "2026-05-31");
+  assert.equal(snapshot.balance_snapshots.selected_date, "2026-06-01");
   assert.equal(snapshot.balance_snapshots.selected_date_source, "latest_known");
   assert.deepEqual(selectedDateRows, [
-    "binance save|USD|7432",
+    "binance save|USDC|2020",
+    "binance save|USDT|5412",
     "БАНК КАНАДА cad|CAD|10538",
-    "Бинанс spot|USD|1162",
+    "Бинанс spot|USDC|0",
+    "Бинанс spot|USDT|1162",
+    "Яндекс руб|RUB|104862.88",
     "монобанк грн|UAH|1333",
-    "приват 24-грн|UAH|1376",
   ]);
   assert.deepEqual(selectedRows, [
-    "binance save|USD|7432|confirmed",
+    "binance save|USDC|2020|confirmed",
+    "binance save|USDT|5412|confirmed",
     "БАНК КАНАДА cad|CAD|10538|confirmed",
-    "Бинанс spot|USD|1162|confirmed",
+    "Бинанс spot|USDC|0|confirmed",
+    "Бинанс spot|USDT|1162|confirmed",
+    "Яндекс руб|RUB|104862.88|confirmed",
     "монобанк грн|UAH|1333|confirmed",
-    "приват 24-грн|UAH|1376|confirmed",
   ]);
   assert.equal(selectedText.includes("7425"), false);
   assert.equal(selectedText.includes("1689"), false);
   assert.equal(selectedText.includes("7351"), false);
   assert.equal(selectedText.includes("legacy_combined_binance_spot_funding"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDT"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDC"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Бинанс spot|USDT"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Бинанс spot|USDC"), false);
 });
 
 test("balance snapshots May coverage detects missing dates from trusted merged coverage", async () => {
@@ -711,11 +725,21 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
   assert.equal(selected.get("монобанк грн|UAH").amount, 1333);
   assert.equal(selected.get("монобанк грн|UAH").amount_usd, 31.36);
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
-  assert.equal(selected.get("binance save|USD").amount_usd, 7432);
-  assert.equal(selected.get("Бинанс spot|USD").amount_usd, 1162);
+  assert.equal(selected.get("binance save|USDT").amount, 5412);
+  assert.equal(selected.get("binance save|USDT").amount_usd, 5412);
+  assert.equal(selected.get("binance save|USDC").amount, 2020);
+  assert.equal(selected.get("binance save|USDC").amount_usd, 2020);
+  assert.equal(selected.get("Бинанс spot|USDT").amount, 1162);
+  assert.equal(selected.get("Бинанс spot|USDT").amount_usd, 1162);
+  assert.equal(selected.get("Бинанс spot|USDC").amount, 0);
+  assert.equal(selected.get("Бинанс spot|USDC").amount_usd, 0);
   assert.equal(selected.has("legacy_combined_binance_spot_funding|USDT"), false);
-  assert.equal(selected.has("binance save|USDT"), false);
-  assert.equal(selected.has("Бинанс spot|USDT"), false);
+  assert.equal(selected.has("binance save|USD"), false);
+  assert.equal(selected.has("Бинанс spot|USD"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDT"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("binance save|USDC"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Бинанс spot|USDT"), false);
+  assert.equal(snapshot.balance_snapshots.selected_date_coverage.missing_channels.includes("Бинанс spot|USDC"), false);
 });
 
 test("balance snapshots selected date hydrates USD from canonical reconciliation values", async () => {
@@ -764,10 +788,11 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
   assert.equal(selected.get("Payoneer - eur|EUR").amount_usd, 1169.5004);
   assert.equal(selected.get("пейпал дол|USD").amount_usd, 12.07);
-  assert.equal(selected.get("binance save|USD").amount_usd, 7432);
-  assert.equal(selected.has("binance save|USDC"), false);
-  assert.equal(selected.has("binance save|USDT"), false);
-  assert.equal(selected.has("Бинанс spot|USDT"), false);
+  assert.equal(selected.get("binance save|USDT").amount_usd, 5412);
+  assert.equal(selected.get("binance save|USDC").amount_usd, 2020);
+  assert.equal(selected.get("Бинанс spot|USDT").amount_usd, 1162);
+  assert.equal(selected.get("Бинанс spot|USDC").amount_usd, 0);
+  assert.equal(selected.has("binance save|USD"), false);
   assert.equal(Number(total.toFixed(4)), 21427.7996);
 });
 
