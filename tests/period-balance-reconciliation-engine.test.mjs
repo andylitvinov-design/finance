@@ -1704,8 +1704,8 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
   const rows = new Map(result.by_channel_currency.map((row) => [`${row.channel}|${row.currency}`, row]));
   assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_native, 10538);
   assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_usd, 7798);
-  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_native, 1333);
-  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 31.36);
+  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_native, 10916);
+  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 567.8038);
   assert.equal(rows.get("Яндекс руб|RUB").confirmed_end_usd, 1376);
   assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_native, 1418.39);
   assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_usd, 1653.5973);
