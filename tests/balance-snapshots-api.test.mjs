@@ -242,7 +242,7 @@ test("provider matrix marks unsupported and stale channels with last snapshot/im
     repositoryLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-05-28", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual screenshot" },
+        { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "1333", amount_usd: "31.36", source: "manual screenshot" },
         { date: "2026-05-31", channel: "приват 24-грн", currency: "UAH", amount: "93.27", amount_usd: "2.1068", source: "manual screenshot" },
         { date: "2026-05-31", channel: "REVOLUT евро", currency: "EUR", amount: "110.74", amount_usd: "129.1082", source: "manual screenshot" },
       ],
@@ -268,7 +268,7 @@ test("provider matrix marks unsupported and stale channels with last snapshot/im
   assert.equal(mono.supports_current_balance_auto_refresh, true);
   assert.equal(mono.supports_transaction_import, true);
   assert.equal(mono.last_successful_operation_import_date, "2026-05-28");
-  assert.equal(mono.last_successful_balance_refresh_date, "2026-05-28");
+  assert.equal(mono.last_successful_balance_refresh_date, "2026-06-01");
   assert.equal(mono.stale, true);
   assert.match(mono.action_required, /manual balance needed|refresh token|upload screenshot/);
 
@@ -713,7 +713,7 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
       balances: [
         { date: "2026-03-10", channel: "деп24-дол", currency: "USD", amount: "0" },
         { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
-        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36" },
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
         { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425" },
         { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "1689", amount_usd: "1689" },
@@ -734,7 +734,7 @@ test("balance snapshots selected date applies owner-confirmed May current snapsh
   assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount, 10538);
   assert.equal(selected.get("БАНК КАНАДА cad|CAD").amount_usd, 7798);
   assert.equal(selected.get("монобанк грн|UAH").amount, 10916);
-  assert.equal(selected.get("монобанк грн|UAH").amount_usd, 567.8038);
+  assert.equal(selected.get("монобанк грн|UAH").amount_usd, 567.7044);
   assert.equal(selected.get("Яндекс руб|RUB").amount_usd, 1376);
   assert.equal(selected.get("binance save|USDT").amount, 5412);
   assert.equal(selected.get("binance save|USDT").amount_usd, 5412);
@@ -760,7 +760,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
       ok: true,
       balances: [
         { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
-        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+        { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36" },
         { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42" },
         { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722" },
         { date: "2026-05-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523" },
@@ -804,7 +804,7 @@ test("balance snapshots selected date hydrates USD from canonical reconciliation
   assert.equal(selected.get("Бинанс spot|USDT").amount_usd, 1162);
   assert.equal(selected.get("Бинанс spot|USDC").amount_usd, 0);
   assert.equal(selected.has("binance save|USD"), false);
-  assert.equal(Number(total.toFixed(4)), 21947.0916);
+  assert.equal(Number(total.toFixed(4)), 22514.796);
 });
 
 test("balance snapshots selected date does not apply May current overrides after the May carry-forward window", async () => {

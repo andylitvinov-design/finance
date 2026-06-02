@@ -1684,7 +1684,7 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
     operations: [],
     balanceRows: [
       { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351" },
-      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603" },
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36" },
       { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528" },
       { date: "2026-05-01", channel: "binance save", currency: "USD", amount: "7425", amount_usd: "7425" },
       { date: "2026-05-01", channel: "Бинанс spot", currency: "USD", amount: "1689", amount_usd: "1689" },
@@ -1692,7 +1692,7 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
     ],
     calculatedBalanceRows: [
       { date: "2026-06-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", balanceSource: "calculated_balance" },
-      { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "603", balanceSource: "calculated_balance" },
+      { date: "2026-06-01", channel: "монобанк грн", currency: "UAH", amount: "603", amount_usd: "31.36", balanceSource: "calculated_balance" },
       { date: "2026-06-01", channel: "Яндекс руб", currency: "RUB", amount: "107403.42", amount_usd: "1270.1528", balanceSource: "provider_auto" },
       { date: "2026-06-01", channel: "binance save", currency: "USDT", amount: "5413.0775", amount_usd: "5413.0775", balanceSource: "provider_auto" },
       { date: "2026-06-01", channel: "Бинанс spot", currency: "USDT", amount: "1262.1523", amount_usd: "1262.1523", balanceSource: "provider_auto" },
@@ -1705,7 +1705,7 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
   assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_native, 10538);
   assert.equal(rows.get("БАНК КАНАДА cad|CAD").confirmed_end_usd, 7798);
   assert.equal(rows.get("монобанк грн|UAH").confirmed_end_native, 10916);
-  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 567.8038);
+  assert.equal(rows.get("монобанк грн|UAH").confirmed_end_usd, 567.7044);
   assert.equal(rows.get("Яндекс руб|RUB").confirmed_end_usd, 1376);
   assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_native, 1418.39);
   assert.equal(rows.get("Payoneer - eur|EUR").confirmed_end_usd, 1653.5973);
