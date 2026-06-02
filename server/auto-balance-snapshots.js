@@ -344,10 +344,12 @@ async function collectMonobankBalanceRows({ date, currentDate, env, fetchImpl })
     const accounts = collectMonobankRawAccounts(clientInfo.rawClient);
     const rows = buildExpectedProviderRows({ provider, date, status: "missing_provider_balance" });
     const skipped_rows = [];
-    for (const account of accounts) {
-      const mapped = mapMonobankAccountToSnapshotRow(account, date);
-      if (mapped) replaceExpectedRow(rows, mapped);
-      else skipped_rows.push({ provider, reason: "missing_real_balance_or_supported_channel" });
+    const aggregated = aggregateMonobankAccountsToSnapshotRows(accounts, date);
+    for (const row of aggregated.rows) {
+      replaceExpectedRow(rows, row);
+    }
+    for (const skipped of aggregated.skipped_rows) {
+      skipped_rows.push(skipped);
     }
     return { provider, provider_current_balance_status: "available", rows, skipped_rows };
   } catch (error) {
@@ -864,20 +866,77 @@ function collectMonobankRawAccounts(clientInfo) {
   ];
 }
 
+function aggregateMonobankAccountsToSnapshotRows(accounts = [], date) {
+  const aggregates = new Map();
+  const skipped_rows = [];
+
+  for (const account of accounts || []) {
+    if (!Object.prototype.hasOwnProperty.call(account || {}, "balance")) {
+      skipped_rows.push({ provider: "monobank", reason: "missing_real_balance_or_supported_channel" });
+      continue;
+    }
+    const currency = monobankCurrencyByCode(account?.currencyCode);
+    const expected = findExpectedProviderBalance("monobank", currency);
+    const balanceCents = Number(account.balance);
+    const creditLimitCents = account.creditLimit === undefined || account.creditLimit === null || account.creditLimit === ""
+      ? 0
+      : Number(account.creditLimit);
+    if (!expected || !Number.isFinite(balanceCents) || !Number.isFinite(creditLimitCents)) {
+      skipped_rows.push({ provider: "monobank", currency, reason: "missing_real_balance_or_supported_channel" });
+      continue;
+    }
+
+    const key = makeProviderBalanceKey(expected.channel, expected.currency);
+    const existing = aggregates.get(key) || {
+      expected,
+      ownFundsCents: 0,
+      accountCount: 0,
+      accountIds: [],
+    };
+    existing.ownFundsCents += balanceCents - creditLimitCents;
+    existing.accountCount += 1;
+    existing.accountIds.push(String(account.id || `monobank:${currency}:${existing.accountCount}`).trim());
+    aggregates.set(key, existing);
+  }
+
+  return {
+    rows: [...aggregates.values()].map((aggregate) => {
+      const amount = Math.round((aggregate.ownFundsCents / 100) * 10000) / 10000;
+      return buildSnapshotRow({
+        ...aggregate.expected,
+        date,
+        amount,
+        amountUsd: "",
+        rawSourceId: `monobank:${aggregate.expected.currency}:all-accounts`,
+        status: amount === 0 ? "zero_balance" : "ok",
+        comment: [
+          `${SNAPSHOT_COMMENT}; combined ${aggregate.accountCount} Monobank account(s); creditLimit-adjusted own funds`,
+          `accounts=${aggregate.accountIds.join(",")}`,
+        ].join(" | "),
+      });
+    }).filter(Boolean),
+    skipped_rows,
+  };
+}
+
 function mapMonobankAccountToSnapshotRow(account, date) {
   if (!Object.prototype.hasOwnProperty.call(account || {}, "balance")) return null;
   const currency = monobankCurrencyByCode(account?.currencyCode);
   const expected = findExpectedProviderBalance("monobank", currency);
   if (!expected) return null;
-  const amount = Math.round((Number(account.balance) / 100) * 10000) / 10000;
+  const creditLimit = account.creditLimit === undefined || account.creditLimit === null || account.creditLimit === ""
+    ? 0
+    : Number(account.creditLimit);
+  const amount = Math.round(((Number(account.balance) - creditLimit) / 100) * 10000) / 10000;
   if (!Number.isFinite(amount)) return null;
   return buildSnapshotRow({
     ...expected,
     date,
     amount,
+    amountUsd: "",
     rawSourceId: String(account.id || `monobank:${currency}`).trim(),
     status: amount === 0 ? "zero_balance" : "ok",
-    comment: SNAPSHOT_COMMENT,
+    comment: `${SNAPSHOT_COMMENT}; creditLimit-adjusted own funds`,
   });
 }
 
