@@ -300,6 +300,15 @@ function renderExpenseAccountingBlock() {
     await importExpenseStatementFile(statementInput.files?.[0] || null);
     statementInput.value = "";
   });
+  const paypalStatementInput = document.createElement("input");
+  paypalStatementInput.type = "file";
+  paypalStatementInput.accept = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
+  paypalStatementInput.disabled = state.expenseAccounting.loading || state.expenseAccounting.statementImportLoading;
+  paypalStatementInput.style.display = "none";
+  paypalStatementInput.addEventListener("change", async () => {
+    await importPayPalActivityStatementFile(paypalStatementInput.files?.[0] || null);
+    paypalStatementInput.value = "";
+  });
   const tdBankCsvInput = document.createElement("input");
   tdBankCsvInput.type = "file";
   tdBankCsvInput.accept = ".csv,text/csv";
@@ -331,9 +340,15 @@ function renderExpenseAccountingBlock() {
   const paypalButton = document.createElement("button");
   paypalButton.type = "button";
   paypalButton.className = "secondary";
-  paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
+  paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal API..." : "PayPal API (business)";
   paypalButton.disabled = state.expenseAccounting.loading || statementLoading;
   paypalButton.addEventListener("click", loadPayPalExpenseStatement);
+  const paypalCsvButton = document.createElement("button");
+  paypalCsvButton.type = "button";
+  paypalCsvButton.className = "secondary";
+  paypalCsvButton.textContent = state.expenseAccounting.statementImportLoading ? "Импортирую PayPal CSV..." : "Импорт PayPal CSV";
+  paypalCsvButton.disabled = state.expenseAccounting.loading || statementLoading;
+  paypalCsvButton.addEventListener("click", () => paypalStatementInput.click());
   const payoneerButton = document.createElement("button");
   payoneerButton.type = "button";
   payoneerButton.className = "secondary";
@@ -396,8 +411,8 @@ function renderExpenseAccountingBlock() {
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", startOrContinueTdImport);
-  actions.append(parseButton, statementImportButton, paypalButton, payoneerButton, revolutButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
-  upload.append(input, statementInput, privat24Input, payoneerInput, revolutInput, tdBankCsvInput, actions);
+  actions.append(parseButton, statementImportButton, paypalCsvButton, paypalButton, payoneerButton, revolutButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  upload.append(input, statementInput, paypalStatementInput, privat24Input, payoneerInput, revolutInput, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
   shell.appendChild(renderPayPalManualImportHelper());
@@ -420,8 +435,8 @@ function renderPayPalManualImportHelper() {
   const showBalanceForm = Boolean(state.expenseAccounting.paypalManualBalanceRequired);
   helper.innerHTML = `
     <div class="expense-helper-title">PayPal personal import</div>
-    <div class="config-note">Для personal PayPal используйте Activity/CSV export через «Загрузить выписку». API может быть недоступен без business/reporting permissions.</div>
-    <div class="config-note">Net подтверждайте только из Activity/CSV или вручную; gross не используется как net автоматически.</div>
+    <div class="config-note">Personal PayPal: экспортируйте Activity/CSV из PayPal и загрузите файл через «Импорт PayPal CSV». API обычно требует business/reporting permissions.</div>
+    <div class="config-note">Net подтверждайте только из Activity/CSV; gross не используется как net автоматически.</div>
     <div class="config-note">Введите PayPal остаток один раз. После этого система будет автоматически рассчитывать следующие PayPal остатки по Ledger движениям.</div>
     <div class="expense-actions">
       <button type="button" class="secondary" data-paypal-derived-balance-run>${state.expenseAccounting.paypalDerivedBalanceLoading ? "Рассчитываю..." : "Рассчитать PayPal остатки автоматически"}</button>
@@ -2588,6 +2603,14 @@ function getPayPalManualImportMessage(payload = {}) {
   if (phase === "oauth" && providerStatus === "auth_failed") {
     return `PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env.${details ? ` ${details}` : ""}`;
   }
+  if (
+    payload?.error === "paypal_manual_import_required"
+    || providerStatus === "permission_denied"
+    || phase === "transaction_search"
+    || providerStatus === "mcp_grant_not_found"
+  ) {
+    return `Для personal PayPal используйте Импорт PayPal CSV. API доступен только при business/reporting permissions. Net подтверждайте только из Activity/CSV; gross не используется как net автоматически.${details ? ` ${details}` : ""}`;
+  }
   return `PayPal API не доступен для этого аккаунта/permissions. Для personal PayPal используйте импорт Activity/CSV или ручное подтверждение net.${details ? ` ${details}` : ""}`;
 }
 
@@ -3039,6 +3062,15 @@ async function importExpenseStatementFile(file) {
     state.expenseAccounting.statementImportLoading = false;
     renderTabs();
   }
+}
+
+async function importPayPalActivityStatementFile(file) {
+  if (!file) {
+    setExpenseAccountingStatus("Выберите PayPal Activity CSV/XLSX.", true);
+    renderTabs();
+    return;
+  }
+  await importExpenseStatementFile(file);
 }
 
 async function importRevolutStatementFile(file) {

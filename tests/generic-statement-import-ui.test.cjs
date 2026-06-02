@@ -273,6 +273,9 @@ test("generic PayPal CSV does not treat Gross as a saveable amount when Net is m
   assert.equal(result.entries[0].localAmount, 120);
   assert.equal(result.entries[0].channel, "");
   assert.equal(result.entries[0].review_status, "needs_review");
+  assert.equal(Object.hasOwn(result.entries[0], "amount_net"), false);
+  assert.equal(Object.hasOwn(result.entries[0], "amountNet"), false);
+  assert.equal(Object.hasOwn(result.entries[0], "netAmount"), false);
   assert.match(result.entries[0].rawMetadata, /PayPal net missing; gross used for review only/);
 });
 

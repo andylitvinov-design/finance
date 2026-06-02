@@ -144,10 +144,37 @@ test("getPayPalManualImportMessage shows manual guidance instead of generic bad 
     shortExcerpt: "PayPal MCP tool list_transactions returned non-JSON: No transactions found"
   });
 
-  assert.match(message, /PayPal API не доступен/);
+  assert.match(message, /Импорт PayPal CSV/);
   assert.match(message, /Activity\/CSV/);
   assert.match(message, /personal PayPal/);
+  assert.match(message, /business\/reporting permissions/);
   assert.doesNotMatch(message, /плохой запрос|Bad Request|вернул ошибку \(400\)/i);
+});
+
+test("PayPal permission failures point personal accounts to CSV import", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    provider: "paypal",
+    error: "paypal_manual_import_required",
+    phase: "transaction_search",
+    providerStatus: "permission_denied",
+    canUseManualImport: true,
+    shortExcerpt: "Transaction search requires reporting permissions"
+  });
+
+  assert.match(message, /Импорт PayPal CSV/);
+  assert.match(message, /personal PayPal/);
+  assert.match(message, /business\/reporting permissions/);
+  assert.doesNotMatch(message, /Bad Request|Unexpected token|плохой запрос/i);
+});
+
+test("expense UI makes PayPal CSV import the personal-account route", () => {
+  assert.match(uiJs, /Импорт PayPal CSV/);
+  assert.match(uiJs, /PayPal API \(business\)/);
+  assert.match(uiJs, /importPayPalActivityStatementFile/);
+  assert.match(uiJs, /paypalStatementInput\.click\(\)/);
+  assert.match(uiJs, /accept = "\.csv,\.xlsx,\.xls,text\/csv,application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet,application\/vnd\.ms-excel"/);
 });
 
 test("PayPal manual import UI exposes manual balance action and fields", () => {
