@@ -2,15 +2,18 @@ export const OWNER_MAY_CURRENT_BALANCE_DATE = "2026-05-28";
 export const OWNER_MAY_CURRENT_BALANCE_SOURCE = "manual_owner_confirmed_2026_05_28";
 
 export const OWNER_MAY_CURRENT_BALANCE_CORRECTIONS = [
-  { channel: "binance save", currency: "USD", amount: 7432, amount_usd: 7432 },
-  { channel: "Бинанс spot", currency: "USD", amount: 1162, amount_usd: 1162 },
+  { channel: "binance save", currency: "USDT", amount: 5412, amount_usd: 5412 },
+  { channel: "binance save", currency: "USDC", amount: 2020, amount_usd: 2020 },
+  { channel: "Бинанс spot", currency: "USDT", amount: 1162, amount_usd: 1162 },
+  { channel: "Бинанс spot", currency: "USDC", amount: 0, amount_usd: 0 },
   { channel: "БАНК КАНАДА cad", currency: "CAD", amount: 10538, amount_usd: 7798 },
   { channel: "монобанк грн", currency: "UAH", amount: 1333, amount_usd: 31.36 },
   { channel: "Яндекс руб", currency: "RUB", amount: null, amount_usd: 1376 },
 ];
 
-const CURRENT_TOTAL_CHANNELS = new Set(["binance save", "Бинанс spot"]);
 const RETIRED_CURRENT_KEYS = new Set([
+  balanceKey("binance save", "USD"),
+  balanceKey("Бинанс spot", "USD"),
   balanceKey("legacy_combined_binance_spot_funding", "USDT"),
 ]);
 
@@ -31,7 +34,6 @@ export function applyOwnerMayCurrentBalanceSnapshot(balanceRows = [], options = 
     const currency = normalizeCurrency(row?.currency);
     const key = balanceKey(channel, currency);
     if (RETIRED_CURRENT_KEYS.has(key)) return false;
-    if (CURRENT_TOTAL_CHANNELS.has(channel)) return false;
     if (!correctionKeys.has(key)) return true;
     if (!date || date < OWNER_MAY_CURRENT_BALANCE_DATE) return true;
     return isManualOwnerConfirmedRow(row) && date > OWNER_MAY_CURRENT_BALANCE_DATE;
