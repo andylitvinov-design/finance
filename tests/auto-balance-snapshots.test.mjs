@@ -454,6 +454,112 @@ test("Wise and Monobank balances produce complete expected provider rows, includ
   assert.equal(results.find((result) => result.provider === "wise")?.skipped_rows.length, 1);
 });
 
+test("Monobank current balance subtracts creditLimit from account balance", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-06-02",
+    currentDate: "2026-06-02",
+    env: { MONOBANK_API_TOKEN: "mono-token" },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/personal/client-info")) {
+        return jsonResponse({
+          accounts: [
+            {
+              id: "mono-black",
+              currencyCode: 980,
+              balance: 13644614,
+              creditLimit: 12500000,
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+
+  const monobankRow = results
+    .find((result) => result.provider === "monobank")
+    ?.rows.find((row) => row.channel === "монобанк грн" && row.currency === "UAH");
+
+  assert.equal(monobankRow?.amount, "11446,14");
+  assert.equal(monobankRow?.usdAmount, "");
+  assert.match(monobankRow?.comment || "", /creditLimit-adjusted own funds/);
+});
+
+test("Monobank current balance sums multiple UAH accounts into one snapshot row", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-06-02",
+    currentDate: "2026-06-02",
+    env: { MONOBANK_API_TOKEN: "mono-token" },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/personal/client-info")) {
+        return jsonResponse({
+          accounts: [
+            { id: "mono-black", currencyCode: 980, balance: 13644614, creditLimit: 12500000 },
+            { id: "mono-eaid", currencyCode: 980, balance: 5754, creditLimit: 0 },
+            { id: "mono-made-in-ukraine", currencyCode: 980, balance: 0, creditLimit: 0 },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+
+  const monobankRows = results
+    .find((result) => result.provider === "monobank")
+    ?.rows.filter((row) => row.channel === "монобанк грн" && row.currency === "UAH") || [];
+
+  assert.equal(monobankRows.length, 1);
+  assert.equal(monobankRows[0].amount, "11503,68");
+  assert.equal(monobankRows[0].rawSourceId, "monobank:UAH:all-accounts");
+  assert.match(monobankRows[0].comment, /combined 3 Monobank account/);
+});
+
+test("zero Monobank account does not overwrite non-zero same-currency row", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-06-02",
+    currentDate: "2026-06-02",
+    env: { MONOBANK_API_TOKEN: "mono-token" },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/personal/client-info")) {
+        return jsonResponse({
+          accounts: [
+            { id: "mono-main", currencyCode: 980, balance: 10000, creditLimit: 0 },
+            { id: "mono-zero", currencyCode: 980, balance: 0, creditLimit: 0 },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL ${value}`);
+    },
+  });
+
+  const monobankRow = results
+    .find((result) => result.provider === "monobank")
+    ?.rows.find((row) => row.channel === "монобанк грн" && row.currency === "UAH");
+
+  assert.equal(monobankRow?.amount, "100");
+  assert.equal(monobankRow?.status, "fx_missing");
+});
+
+test("missing MONOBANK_API_TOKEN returns needs_permission rows", async () => {
+  const results = await collectProviderBalanceRows({
+    date: "2026-06-02",
+    currentDate: "2026-06-02",
+    env: {},
+    fetchImpl: async (url) => {
+      throw new Error(`Monobank should not call provider API without token: ${url}`);
+    },
+  });
+
+  const result = results.find((row) => row.provider === "monobank");
+  assert.equal(result.provider_current_balance_status, "needs_permission");
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].status, "needs_provider_permission");
+  assert.equal(result.rows[0].amount, "");
+});
+
 test("Binance, YooMoney, and PayPal current balance APIs produce provider snapshot rows", async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
