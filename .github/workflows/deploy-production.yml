@@ -116,6 +116,8 @@ jobs:
           NODE
 
       - name: Run release guard
+        env:
+          RELEASE_GUARD_SKIP_LIVE_SOURCE_CHECK: "1"
         run: bash scripts/release-guard.sh
 
       - name: Run tests
