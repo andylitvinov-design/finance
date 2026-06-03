@@ -22,6 +22,7 @@
 - Canonical Vercel project is `ezohata-incoming-ledger`; production alias remains `ezohata-incoming-ledger.vercel.app`.
 - Vercel env transfer must cover `.env.example`.
 - Old repositories should remain deprecated read-only references only.
+- 2026-06-03: redeploy trigger after merging PR #539 so production picks up `remainders-tab.js` and the `1 число` launcher.
 
 ## Current audit focus
 
