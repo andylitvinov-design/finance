@@ -58,7 +58,7 @@ function buildResult({ liveUrl, statusUrl, response, contentType, bodyExcerpt, p
   const commitRef = text(payload?.commitRef);
   const repoSlug = text(payload?.gitRepoSlug);
   const projectName = text(payload?.vercelProjectName || payload?.service);
-  const productionUrl = text(payload?.vercel?.productionUrl);
+  const productionUrl = text(payload?.productionUrl || payload?.vercel?.productionUrl);
   const problems = [];
   const warnings = [];
 
