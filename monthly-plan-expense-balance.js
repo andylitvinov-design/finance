@@ -345,6 +345,7 @@
     buildComparisonRows,
     getInclusiveDayCount,
     getPreviousEqualPeriod,
+    mountMonthlyPlanExpenseBalance,
     normalizeIsoDate,
     renderMonthlyPlanExpenseBalance,
     summarizeExpenseBreakdown

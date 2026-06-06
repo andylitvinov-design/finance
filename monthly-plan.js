@@ -350,6 +350,9 @@
     } finally {
       monthlyPlan.loading = false;
       renderTabs();
+      if (typeof globalThis.MonthlyPlanExpenseBalance?.mountMonthlyPlanExpenseBalance === "function") {
+        globalThis.MonthlyPlanExpenseBalance.mountMonthlyPlanExpenseBalance();
+      }
     }
   }
 

@@ -266,3 +266,42 @@ test("monthly plan period builder reads saved wide-format values for totals and 
   assert.equal(plan.personalPctTotal, 100);
   assert.equal(plan.hasAnyPlan, true);
 });
+
+test("quota error during monthly plan load preserves existing rows and mounts expense balance", async () => {
+  let mountCalls = 0;
+  const existingRows = [{
+    month: "2026-05",
+    ordersIncomePlanUsd: "1000",
+    servicesIncomePlanUsd: "2000",
+    businessExpensePlanUsd: "500",
+    flatPct: "30",
+    foodPct: "25",
+    funPct: "15",
+    travelPct: "10",
+    studyPct: "10",
+    extraPct: "10",
+    comment: "existing"
+  }];
+  const context = createContext({
+    hasConfiguredManualFinanceEndpoint() { return true; },
+    ensureSheetExists: async () => {},
+    getSheetValuesByTitle: async () => {
+      throw new Error("Google Sheets quota exceeded. Retry shortly.");
+    },
+    MonthlyPlanExpenseBalance: {
+      mountMonthlyPlanExpenseBalance() {
+        mountCalls += 1;
+        return true;
+      }
+    }
+  });
+  context.state.monthlyPlan.data = { rows: existingRows.slice(), sheetName: "План" };
+
+  const result = await context.loadMonthlyPlanSheetForCurrentRange();
+
+  assert.equal(result, null);
+  assert.equal(context.state.monthlyPlan.error, true);
+  assert.equal(context.state.monthlyPlan.status, "Google Sheets quota exceeded. Retry shortly.");
+  assert.deepEqual(JSON.parse(JSON.stringify(context.state.monthlyPlan.data.rows)), existingRows);
+  assert.equal(mountCalls > 0, true);
+});
