@@ -3669,6 +3669,10 @@ function rangesOverlap(startA, endA, startB, endB) {
   return startA <= endB && startB <= endA;
 }
 
+function normalizeCell(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function extractAnalyticsTopTables(values) {
   if (!values.length) return values;
   const repeatIndex = values.findIndex((row, index) => index >= 5 && normalizeCell(row?.[0]) === "личные расходы");

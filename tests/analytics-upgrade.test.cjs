@@ -183,6 +183,7 @@ test("analytics balance and period sections use two mobile columns", () => {
 
 test("analytics top table helper is available before UI scripts run", () => {
   assert.match(indexHtml, /finance\.js[\s\S]*ui\.js[\s\S]*top-metric-services-payout-dedupe-fix\.js/);
+  assert.match(financeJs, /function normalizeCell\(value\)/);
   assert.match(financeJs, /function extractAnalyticsTopTables\(values\)/);
 });
 
