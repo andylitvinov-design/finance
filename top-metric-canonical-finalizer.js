@@ -229,7 +229,9 @@
   }
 
   function extractRemaindersWarningFallbackUsd(summary = {}) {
+    const canonical = findCanonicalTotal(summary);
     const candidates = [
+      canonical?.selected_date_total_usd,
       summary?.selectedDateSnapshot?.total_usd,
       summary?.selectedDateSnapshot?.canonical_total_usd,
       summary?.selectedDateSnapshot?.closing_usd,
@@ -239,6 +241,7 @@
       summary?.periodReconciliation?.total_usd_row?.end_usd,
       summary?.visibleUsdTotals?.closingUsd,
       summary?.totals?.closingUsd,
+      canonical?.canonical_total_usd,
     ];
     for (const candidate of candidates) {
       const parsed = parseOptionalNumber(candidate);
