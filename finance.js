@@ -3669,6 +3669,12 @@ function rangesOverlap(startA, endA, startB, endB) {
   return startA <= endB && startB <= endA;
 }
 
+function extractAnalyticsTopTables(values) {
+  if (!values.length) return values;
+  const repeatIndex = values.findIndex((row, index) => index >= 5 && normalizeCell(row?.[0]) === "личные расходы");
+  return repeatIndex === -1 ? values : values.slice(0, repeatIndex);
+}
+
 
 // ============================================================
 // MANUAL FINANCE

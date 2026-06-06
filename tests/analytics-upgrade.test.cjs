@@ -181,6 +181,11 @@ test("analytics balance and period sections use two mobile columns", () => {
   assert.match(styleCss, /\.mobile-table table \{ min-width: unset; width: 100%; \}/);
 });
 
+test("analytics top table helper is available before UI scripts run", () => {
+  assert.match(indexHtml, /finance\.js[\s\S]*ui\.js[\s\S]*top-metric-services-payout-dedupe-fix\.js/);
+  assert.match(financeJs, /function extractAnalyticsTopTables\(values\)/);
+});
+
 test("analytics renderer can rebuild visible sections from aggregated manual rows", () => {
   assert.match(uiJs, /function getAggregatedManualAnalyticsSections\(sourceValues\)/);
   assert.match(uiJs, /buildFullRangeBasedAnalyticsValuesFromClosedFact/);
