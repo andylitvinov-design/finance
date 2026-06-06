@@ -305,3 +305,37 @@ test("quota error during monthly plan load preserves existing rows and mounts ex
   assert.deepEqual(JSON.parse(JSON.stringify(context.state.monthlyPlan.data.rows)), existingRows);
   assert.equal(mountCalls > 0, true);
 });
+
+test("loadMonthlyPlanSheetForCurrentRange concurrent load guard prevents double fetch", async () => {
+  let fetchCount = 0;
+  const context = createContext({
+    hasConfiguredManualFinanceEndpoint: () => true,
+    ensureSheetExists: async () => { fetchCount += 1; await new Promise((resolve) => setTimeout(resolve, 10)); },
+    getSheetValuesByTitle: async () => [],
+  });
+
+  const [result1, result2] = await Promise.all([
+    context.loadMonthlyPlanSheetForCurrentRange(),
+    context.loadMonthlyPlanSheetForCurrentRange(),
+  ]);
+
+  assert.ok(fetchCount <= 1, "should not fetch more than once when already loading");
+  assert.ok(result1 !== undefined || result2 !== undefined);
+});
+
+test("loadMonthlyPlanSheetForCurrentRange quota error does not overwrite data with empty rows", async () => {
+  const QUOTA_ERROR = "Google Sheets quota exceeded. Retry shortly.";
+  const context = createContext({
+    hasConfiguredManualFinanceEndpoint: () => true,
+    ensureSheetExists: async () => { throw new Error(QUOTA_ERROR); },
+  });
+  context.state.monthlyPlan.data = {
+    sheetName: "План",
+    rows: [{ month: "2026-04", ordersIncomePlanUsd: "500", servicesIncomePlanUsd: "100", businessExpensePlanUsd: "200", flatPct: "", foodPct: "", funPct: "", travelPct: "", studyPct: "", extraPct: "", comment: "" }]
+  };
+
+  await context.loadMonthlyPlanSheetForCurrentRange();
+
+  assert.equal(context.state.monthlyPlan.data.rows.length, 1, "rows must not be cleared on quota error");
+  assert.equal(context.state.monthlyPlan.data.rows[0].month, "2026-04");
+});

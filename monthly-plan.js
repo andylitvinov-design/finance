@@ -321,6 +321,7 @@
   async function loadMonthlyPlanSheetForCurrentRange() {
     const monthlyPlan = ensureMonthlyPlanState();
     if (!monthlyPlan) return null;
+    if (monthlyPlan.loading) return null;
     monthlyPlan.loading = true;
     monthlyPlan.error = false;
     monthlyPlan.status = "Загружаю План...";
@@ -518,6 +519,9 @@
     renderTabs = function patchedRenderTabs() {
       if (state?.activeTab === MONTHLY_PLAN_TAB_ID) {
         renderMonthlyPlanTabShell();
+        if (typeof globalThis?.MonthlyPlanExpenseBalance?.mountMonthlyPlanExpenseBalance === "function") {
+          setTimeout(globalThis.MonthlyPlanExpenseBalance.mountMonthlyPlanExpenseBalance, 0);
+        }
         return;
       }
       originalRenderTabs();

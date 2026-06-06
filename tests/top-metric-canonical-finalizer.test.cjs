@@ -162,7 +162,7 @@ test("May acceptance keeps live remainders canonical and does not pin 41,2922", 
   assert.notEqual(context.nodes.metricRemainders.textContent, "Остатки: 41,2922");
 });
 
-test("canonical top metric finalizer renders red warning for untrusted remainders total", async () => {
+test("canonical top metric finalizer shows numeric remainder with warning when selectedDateSnapshot total is available", async () => {
   const context = makeContext({
     EzohataRemaindersSummaryPopup: {
       buildRemaindersSummary: () => ({
@@ -198,10 +198,51 @@ test("canonical top metric finalizer renders red warning for untrusted remainder
   flushTimers(context);
   await flushPromises();
 
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 7985,2535");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "7985,2535");
+  assert.match(context.nodes.metricRemainders.className, /needs-verification/);
+  assert.match(context.nodes.metricRemainders.title, /selected-date 7985\.2535 vs period 27322\.5439/i);
+});
+
+test("canonical top metric finalizer shows needs verification text when no numeric fallback exists", async () => {
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({
+        periodReconciliation: {
+          canonical_total: {
+            source: "needs_verification",
+            selected_date_total_usd: null,
+            period_total_usd: null,
+            canonical_total_usd: null,
+            delta_usd: null,
+            totals_match: false,
+            status: "mismatch",
+          },
+        },
+      }),
+      buildLiveRemaindersSummary: () => Promise.resolve({
+        periodReconciliation: {
+          canonical_total: {
+            source: "needs_verification",
+            selected_date_total_usd: null,
+            period_total_usd: null,
+            canonical_total_usd: null,
+            delta_usd: null,
+            totals_match: false,
+            status: "mismatch",
+          },
+        },
+      }),
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  flushTimers(context);
+  await flushPromises();
+
   assert.equal(context.nodes.metricRemainders.textContent, "Остатки: needs verification");
   assert.equal(context.nodes.metricRemaindersValue.textContent, "needs verification");
   assert.match(context.nodes.metricRemainders.className, /needs-verification/);
-  assert.match(context.nodes.metricRemainders.title, /selected-date 7985\.2535 vs period 27322\.5439/i);
 });
 
 test("live remainders zero does not overwrite an existing non-zero top badge", async () => {
@@ -502,4 +543,32 @@ test("canonical remainders warning shows literal needs verification when no nume
   assert.equal(context.nodes.metricRemainders.textContent, "Остатки: needs verification");
   assert.equal(context.nodes.metricRemaindersValue.textContent, "needs verification");
   assert.match(context.nodes.metricRemainders.title, /canonical total needs verification/);
+});
+
+test("canonical remainders warning prefers selected_date_total_usd over canonical_total_usd when status=mismatch", async () => {
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({}),
+      async buildLiveRemaindersSummary() {
+        return {
+          canonical_total: {
+            status: "mismatch",
+            totals_match: false,
+            canonical_total_usd: 999,
+            selected_date_total_usd: 12345.6789,
+            period_total_usd: 12000,
+            delta_usd: 345.6789,
+          },
+        };
+      },
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  await flushPromises();
+
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 12345,6789", "should show selected_date_total_usd, not canonical_total_usd");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "12345,6789");
+  assert.match(context.nodes.metricRemainders.title, /canonical total needs verification/);
+  assert.match(context.nodes.metricRemainders.className, /needs-verification/);
 });

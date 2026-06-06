@@ -347,6 +347,7 @@
     getPreviousEqualPeriod,
     mountMonthlyPlanExpenseBalance,
     normalizeIsoDate,
+    mountMonthlyPlanExpenseBalance,
     renderMonthlyPlanExpenseBalance,
     summarizeExpenseBreakdown
   };

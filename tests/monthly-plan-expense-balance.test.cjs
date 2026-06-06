@@ -103,6 +103,11 @@ test("buildComparisonRows calculates current vs previous category deltas", () =>
   assert.equal(byCategory.get("house").delta, -100);
 });
 
+test("mountMonthlyPlanExpenseBalance is exported on MonthlyPlanExpenseBalance API", () => {
+  const api = loadApi();
+  assert.equal(typeof api.mountMonthlyPlanExpenseBalance, "function", "mountMonthlyPlanExpenseBalance must be exported for patchMonthlyPlanUi to call");
+});
+
 test("renderMonthlyPlanExpenseBalance renders pie, legend, total, and comparison table", () => {
   const created = [];
   function createElement(tagName) {
@@ -154,4 +159,26 @@ test("renderMonthlyPlanExpenseBalance renders pie, legend, total, and comparison
   assert.ok(all.some((node) => String(node.className).includes("expense-pie-total")));
   assert.equal(all.filter((node) => String(node.className).includes("monthly-plan-expense-balance-table")).length, 2);
   assert.ok(all.some((node) => String(node.textContent).includes("Сравнение с предыдущим равным периодом")));
+});
+
+test("monthly plan expense balance pie chart and legend render with provider expense breakdown", () => {
+  const api = loadApi();
+  const summary = api.summarizeExpenseBreakdown(
+    { startDate: "2026-05-01", endDate: "2026-05-31" },
+    {
+      breakdownByChannel: {
+        "трансервайз дол": { total: 1200, byCategory: { business: 900, house: 200, food: 100 } },
+      },
+    }
+  );
+
+  assert.equal(summary.total, 1200);
+  assert.ok(summary.categoryRows.length >= 3, "should have at least 3 category rows");
+  const byCategory = new Map(summary.categoryRows.map((row) => [row.category, row]));
+  assert.equal(byCategory.get("business").amount, 900);
+  assert.equal(byCategory.get("business").percent, 75);
+  assert.equal(byCategory.get("house").amount, 200);
+  assert.equal(byCategory.get("food").amount, 100);
+  assert.equal(summary.channelRows.length, 1);
+  assert.equal(summary.channelRows[0].channel, "трансервайз дол");
 });
