@@ -102,3 +102,56 @@ test("buildComparisonRows calculates current vs previous category deltas", () =>
   assert.equal(byCategory.get("house").amount, 0);
   assert.equal(byCategory.get("house").delta, -100);
 });
+
+test("renderMonthlyPlanExpenseBalance renders pie, legend, total, and comparison table", () => {
+  const created = [];
+  function createElement(tagName) {
+    const node = {
+      tagName,
+      id: "",
+      className: "",
+      textContent: "",
+      innerHTML: "",
+      children: [],
+      style: { setProperty(name, value) { this[name] = value; } },
+      attributes: {},
+      appendChild(child) {
+        this.children.push(child);
+        return child;
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    };
+    created.push(node);
+    return node;
+  }
+  const api = loadApi({
+    document: { createElement },
+    elements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-05-31" },
+    },
+    getExpenseAnalysisProviderExpenseBreakdownByChannel(_rateLookup, period) {
+      if (period.startDate === "2026-05-01") {
+        return {
+          Wise: { total: 300, byCategory: { business: 250, food: 50 } },
+          PayPal: { total: 100, byCategory: { house: 100 } },
+        };
+      }
+      return {
+        Wise: { total: 200, byCategory: { business: 100, house: 100 } },
+      };
+    },
+  });
+
+  const section = api.renderMonthlyPlanExpenseBalance();
+  const all = [section, ...created];
+
+  assert.equal(section.id, "monthly-plan-expense-balance");
+  assert.ok(all.some((node) => String(node.className).includes("monthly-plan-expense-balance-chart")));
+  assert.ok(all.some((node) => String(node.className).includes("expense-pie-legend")));
+  assert.ok(all.some((node) => String(node.className).includes("expense-pie-total")));
+  assert.equal(all.filter((node) => String(node.className).includes("monthly-plan-expense-balance-table")).length, 2);
+  assert.ok(all.some((node) => String(node.textContent).includes("Сравнение с предыдущим равным периодом")));
+});

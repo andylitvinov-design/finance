@@ -59,9 +59,15 @@ if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
   exit 1
 fi
 
-project_name="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(".vercel/project.json","utf8")); process.stdout.write(p.projectName || "");')"
+project_name="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("ops/deployment-manifest.json","utf8")); process.stdout.write(p.deploy && p.deploy.projectName || "");')"
+project_id="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(".vercel/project.json","utf8")); process.stdout.write(p.projectId || "");')"
+manifest_project_id="$(node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("ops/deployment-manifest.json","utf8")); process.stdout.write(p.deploy && p.deploy.projectId || "");')"
 if [[ "$project_name" != "ezohata-incoming-ledger" ]]; then
-  echo "release-guard: .vercel/project.json must point to ezohata-incoming-ledger." >&2
+  echo "release-guard: ops/deployment-manifest.json must point to ezohata-incoming-ledger." >&2
+  exit 1
+fi
+if [[ -z "$project_id" || "$project_id" != "$manifest_project_id" ]]; then
+  echo "release-guard: .vercel/project.json projectId must match ops/deployment-manifest.json." >&2
   exit 1
 fi
 
@@ -102,7 +108,7 @@ else
 
   alias_status="$(curl -fsS https://ezohata-incoming-ledger.vercel.app/api/status)"
   alias_project="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.vercelProjectName || j.service || ""); });')"
-  alias_production_url="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write((j.vercel && j.vercel.productionUrl) || ""); });')"
+  alias_production_url="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.productionUrl || (j.vercel && j.vercel.productionUrl) || ""); });')"
   alias_repo_slug="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.gitRepoSlug || ""); });')"
   alias_commit_sha="$(printf '%s' "$alias_status" | node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j=JSON.parse(s); process.stdout.write(j.commitSha || ""); });')"
   if [[ "$alias_project" != "ezohata-incoming-ledger" ]]; then

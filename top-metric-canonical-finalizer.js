@@ -19,6 +19,12 @@
     return Number.isFinite(numeric) ? numeric : 0;
   }
 
+  function parseOptionalNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = parseNumber(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function formatNumber(value) {
     if (typeof root.formatSheetNumber === "function") return root.formatSheetNumber(value, 4);
     return Number(value || 0).toFixed(4).replace(".", ",");
@@ -200,6 +206,48 @@
     );
   }
 
+  function sumSelectedDateSnapshotUsdRows(snapshot = {}) {
+    const rows = Array.isArray(snapshot?.selected_date_rows) ? snapshot.selected_date_rows : [];
+    return rows.reduce((sum, row) => {
+      const explicitUsd = parseOptionalNumber(
+        row?.amount_usd ??
+        row?.balance_usd ??
+        row?.closing_amount_usd ??
+        row?.closingUsd ??
+        row?.end_amount_usd ??
+        row?.endUsd ??
+        row?.confirmed_end_usd
+      );
+      if (explicitUsd !== null) return sum + explicitUsd;
+      const currency = String(row?.currency || row?.balance_currency || row?.account_currency || "").trim().toUpperCase();
+      if (currency === "USD" || currency === "USDT" || currency === "USDC") {
+        const amount = parseOptionalNumber(row?.amount ?? row?.balance ?? row?.closing_amount ?? row?.closing ?? row?.value);
+        if (amount !== null) return sum + amount;
+      }
+      return sum;
+    }, 0);
+  }
+
+  function extractRemaindersWarningFallbackUsd(summary = {}) {
+    const candidates = [
+      summary?.selectedDateSnapshot?.total_usd,
+      summary?.selectedDateSnapshot?.canonical_total_usd,
+      summary?.selectedDateSnapshot?.closing_usd,
+      summary?.selectedDateSnapshot?.confirmed_end_usd,
+      summary?.periodReconciliation?.total_usd_row?.confirmed_end_usd,
+      summary?.periodReconciliation?.total_usd_row?.closing_usd,
+      summary?.periodReconciliation?.total_usd_row?.end_usd,
+      summary?.visibleUsdTotals?.closingUsd,
+      summary?.totals?.closingUsd,
+    ];
+    for (const candidate of candidates) {
+      const parsed = parseOptionalNumber(candidate);
+      if (parsed !== null) return parsed;
+    }
+    const selectedRowsTotal = sumSelectedDateSnapshotUsdRows(summary?.selectedDateSnapshot || {});
+    return Number.isFinite(selectedRowsTotal) && selectedRowsTotal !== 0 ? selectedRowsTotal : null;
+  }
+
   function findCanonicalTotal(summary = {}) {
     return summary?.canonical_total ||
       summary?.canonicalTotal ||
@@ -259,22 +307,29 @@
     return changedChip || changedValue;
   }
 
-  function applyRemaindersWarning(message) {
+  function applyRemaindersWarning(message, fallbackTotal = null, source = "topMetricCanonicalFinalizer.needsVerification") {
     if (!message) return false;
     const node = getRemaindersNode();
     const valueNode = getRemaindersValueNode();
     if (!node && !valueNode) return false;
+    let changed = false;
+    if (Number.isFinite(fallbackTotal)) {
+      changed = applyRemainders(fallbackTotal, source) || changed;
+    }
     if (node) {
       node.title = message;
       node.className = `${String(node.className || "").replace(/\bneeds-verification\b/g, "").trim()} needs-verification`.trim();
+      if (node.dataset) node.dataset.remaindersWarning = "true";
     }
     if (valueNode) {
       valueNode.title = message;
       valueNode.className = `${String(valueNode.className || "").replace(/\bneeds-verification\b/g, "").trim()} needs-verification`.trim();
+      if (valueNode.dataset) valueNode.dataset.remaindersWarning = "true";
     }
+    if (Number.isFinite(fallbackTotal)) return changed;
     const changedChip = setText(node, "Остатки: needs verification", { displaySource: "topMetricCanonicalFinalizer.needsVerification" });
     const changedValue = setText(valueNode, "needs verification", { displaySource: "topMetricCanonicalFinalizer.needsVerification" });
-    return changedChip || changedValue;
+    return changed || changedChip || changedValue;
   }
 
   function isExplicitCanonicalRemaindersSource(source) {
@@ -291,7 +346,8 @@
         if (requestId !== liveRemaindersRequestId) return;
         const warning = getRemaindersTrustWarning(summary || {});
         if (warning) {
-          applyRemaindersWarning(warning);
+          const fallback = extractRemaindersWarningFallbackUsd(summary || {});
+          applyRemaindersWarning(warning, fallback, "topMetricCanonicalFinalizer.liveRemaindersFallback");
           return;
         }
         applyRemainders(extractRemaindersClosingUsd(summary || {}), "topMetricCanonicalFinalizer.liveRemainders");
@@ -344,7 +400,8 @@
         : null;
       const localWarning = getRemaindersTrustWarning(localSummary || {});
       if (localWarning) {
-        applyRemaindersWarning(localWarning);
+        const fallback = extractRemaindersWarningFallbackUsd(localSummary || {});
+        applyRemaindersWarning(localWarning, fallback, "topMetricCanonicalFinalizer.localRemaindersFallback");
       }
       const canRefreshLiveRemainders = canBuildLiveRemaindersSummary();
       if (!localWarning && localRemainders !== null && (Math.abs(localRemainders) > 0.0001 || !canRefreshLiveRemainders)) {

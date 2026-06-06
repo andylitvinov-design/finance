@@ -12,6 +12,7 @@ function makeNode(text = "") {
   return {
     textContent: text,
     dataset: {},
+    className: "",
     title: "",
     addEventListener() {},
   };
@@ -441,4 +442,64 @@ test("canonical top metric finalizer does not apply May acceptance outside May a
   assert.equal(context.nodes.metricTransfers.textContent, "-1188,6049");
   assert.equal(context.nodes.metricPersonalOrdersAfterDiscount.textContent, "Мои заказы: 0,0000");
   assert.equal(context.nodes.metricMyServices.textContent, "Мои услуги: 0,0000");
+});
+
+test("canonical remainders warning keeps numeric selected-date fallback with warning metadata", async () => {
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({}),
+      async buildLiveRemaindersSummary() {
+        return {
+          canonical_total: {
+            status: "needs_verification",
+            totals_match: false,
+            canonical_total_usd: null,
+            selected_date_total_usd: 12345.6789,
+            period_total_usd: 12000,
+            delta_usd: 345.6789,
+          },
+          selectedDateSnapshot: {
+            total_usd: 12345.6789,
+          },
+        };
+      },
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  await flushPromises();
+
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: 12345,6789");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "12345,6789");
+  assert.match(context.nodes.metricRemainders.title, /canonical total needs verification/);
+  assert.match(context.nodes.metricRemainders.className, /needs-verification/);
+  assert.equal(context.nodes.metricRemainders.dataset.displaySource, "topMetricCanonicalFinalizer.liveRemaindersFallback");
+  assert.equal(context.nodes.metricRemainders.dataset.remaindersWarning, "true");
+});
+
+test("canonical remainders warning shows literal needs verification when no numeric fallback exists", async () => {
+  const context = makeContext({
+    EzohataRemaindersSummaryPopup: {
+      buildRemaindersSummary: () => ({}),
+      async buildLiveRemaindersSummary() {
+        return {
+          canonical_total: {
+            status: "needs_verification",
+            totals_match: false,
+            canonical_total_usd: null,
+            selected_date_total_usd: null,
+            period_total_usd: null,
+            delta_usd: null,
+          },
+        };
+      },
+    },
+  });
+
+  context.EzohataTopMetricCanonicalFinalizer.syncTopMetrics();
+  await flushPromises();
+
+  assert.equal(context.nodes.metricRemainders.textContent, "Остатки: needs verification");
+  assert.equal(context.nodes.metricRemaindersValue.textContent, "needs verification");
+  assert.match(context.nodes.metricRemainders.title, /canonical total needs verification/);
 });
