@@ -8,6 +8,7 @@ const root = path.join(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "monthly-plan-expense-balance.js"), "utf8");
 
 function loadApi(extra = {}) {
+  const { lexicalState, lexicalElements, ...globals } = extra;
   const context = {
     module: { exports: {} },
     exports: {},
@@ -19,10 +20,18 @@ function loadApi(extra = {}) {
     formatSheetNumber(value) {
       return Number(value || 0).toFixed(4).replace(".", ",");
     },
-    ...extra,
+    ...globals,
   };
   context.globalThis = context;
   vm.createContext(context);
+  if (lexicalState) {
+    context.__monthlyPlanLexicalState = lexicalState;
+    vm.runInContext("const state = globalThis.__monthlyPlanLexicalState;", context);
+  }
+  if (lexicalElements) {
+    context.__monthlyPlanLexicalElements = lexicalElements;
+    vm.runInContext("const elements = globalThis.__monthlyPlanLexicalElements;", context);
+  }
   vm.runInContext(source, context, { filename: "monthly-plan-expense-balance.js" });
   return context.module.exports;
 }
@@ -159,6 +168,57 @@ test("renderMonthlyPlanExpenseBalance renders pie, legend, total, and comparison
   assert.ok(all.some((node) => String(node.className).includes("expense-pie-total")));
   assert.equal(all.filter((node) => String(node.className).includes("monthly-plan-expense-balance-table")).length, 2);
   assert.ok(all.some((node) => String(node.textContent).includes("Сравнение с предыдущим равным периодом")));
+});
+
+test("renderMonthlyPlanExpenseBalance reads lexical app state and date elements", () => {
+  const created = [];
+  function createElement(tagName) {
+    const node = {
+      tagName,
+      id: "",
+      className: "",
+      textContent: "",
+      innerHTML: "",
+      children: [],
+      style: { setProperty(name, value) { this[name] = value; } },
+      attributes: {},
+      appendChild(child) {
+        this.children.push(child);
+        return child;
+      },
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    };
+    created.push(node);
+    return node;
+  }
+  const api = loadApi({
+    lexicalState: {
+      activeTab: "monthlyPlan",
+      data: { tabs: { movement: { values: [] } } },
+      aggregatedManualRange: { transferRows: [] },
+      manualTransfers: { data: { transferRows: [] } },
+      manualFinance: { data: { transferRows: [] } },
+    },
+    lexicalElements: {
+      startDate: { value: "2026-05-01" },
+      endDate: { value: "2026-05-31" },
+    },
+    document: { createElement },
+    getExpenseAnalysisProviderExpenseBreakdownByChannel(_rateLookup, period) {
+      assert.equal(period.startDate, "2026-05-01");
+      assert.equal(period.endDate, "2026-05-31");
+      return { Wise: { total: 100, byCategory: { business: 100 } } };
+    },
+  });
+
+  const section = api.renderMonthlyPlanExpenseBalance();
+  const all = [section, ...created];
+
+  assert.equal(section.id, "monthly-plan-expense-balance");
+  assert.ok(all.some((node) => String(node.className).includes("monthly-plan-expense-balance-chart")));
+  assert.ok(all.some((node) => String(node.textContent).includes("2026-05-01")));
 });
 
 test("monthly plan expense balance pie chart and legend render with provider expense breakdown", () => {

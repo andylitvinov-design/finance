@@ -77,9 +77,9 @@
   }
 
   function getCurrentPeriod() {
-    const elements = root.elements || {};
-    const startDate = normalizeIsoDate(elements.startDate?.value || "");
-    const endDate = normalizeIsoDate(elements.endDate?.value || startDate || "");
+    const appElements = getAppElements();
+    const startDate = normalizeIsoDate(appElements.startDate?.value || "");
+    const endDate = normalizeIsoDate(appElements.endDate?.value || startDate || "");
     return { startDate, endDate: endDate || startDate };
   }
 
@@ -93,7 +93,7 @@
   function buildRateLookup() {
     const builder = root.buildManualFinanceUsdRateLookup;
     if (typeof builder !== "function") return {};
-    const appState = root.state || {};
+    const appState = getAppState();
     return builder(
       appState.aggregatedManualRange?.transferRows ||
         appState.manualTransfers?.data?.transferRows ||
@@ -101,6 +101,26 @@
         [],
       appState.data?.tabs?.movement?.values || []
     );
+  }
+
+  function getAppState() {
+    if (root.state) return root.state;
+    try {
+      if (typeof state !== "undefined") return state;
+    } catch {
+      return {};
+    }
+    return {};
+  }
+
+  function getAppElements() {
+    if (root.elements) return root.elements;
+    try {
+      if (typeof elements !== "undefined") return elements;
+    } catch {
+      return {};
+    }
+    return {};
   }
 
   function normalizeCategory(category) {
@@ -313,7 +333,7 @@
   }
 
   function mountMonthlyPlanExpenseBalance() {
-    if (!root.document || root.state?.activeTab !== MONTHLY_PLAN_TAB_ID) return false;
+    if (!root.document || getAppState()?.activeTab !== MONTHLY_PLAN_TAB_ID) return false;
     const shell = root.document.querySelector(".tab-panel.active .finance-shell") || root.document.querySelector(".finance-shell");
     if (!shell) return false;
     const existing = shell.querySelector(`#${CONTAINER_ID}`);
