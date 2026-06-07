@@ -118,7 +118,7 @@ const context = {
   formatSheetNumber,
 };
 vm.createContext(context);
-vm.runInContext(`${normalizeLookupTextMatch[0]}\n${aliasMatch[0]}\n${canonicalChannelMatch[0]}\n${canonicalKeyMatch[0]}\n${emptyAmountsMatch[0]}\n${canonicalAmountsMatch[0]}\n${canonicalRawAmountsMatch[0]}\n${categoryMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;`, context);
+vm.runInContext(`${normalizeLookupTextMatch[0]}\n${aliasMatch[0]}\n${canonicalChannelMatch[0]}\n${canonicalKeyMatch[0]}\n${emptyAmountsMatch[0]}\n${canonicalAmountsMatch[0]}\n${canonicalRawAmountsMatch[0]}\n${categoryMatch[0]}\n${flowExpenseRowsMatch[0]}\n${entriesMatch[0]}\n${balanceEntriesMatch[0]}\n${match[0]}\n${movementRateMatch[0]}\n${financeRateMatch[0]}\n${summaryRowsMatch[0]}\n${usdPerLocalMatch[0]}\n${nowUsdMatch[0]}\n${latestNowUsdMatch[0]}\nthis.filterManualFlowExpenseRows = filterManualFlowExpenseRows;\nthis.buildLatestNowByChannel = buildLatestNowByChannel;\nthis.buildLatestNowEntriesByChannel = buildLatestNowEntriesByChannel;\nthis.buildLatestBalanceEntriesByChannel = buildLatestBalanceEntriesByChannel;\nthis.buildManualFinanceUsdRateLookup = buildManualFinanceUsdRateLookup;\nthis.buildManualFinanceSummaryRows = buildManualFinanceSummaryRows;\nthis.buildLatestNowUsdLookup = buildLatestNowUsdLookup;\nthis.getManualFinanceUsdPerLocalRate = getManualFinanceUsdPerLocalRate;\nthis.getManualFinanceNowUsdValue = getManualFinanceNowUsdValue;`, context);
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
@@ -336,4 +336,27 @@ test("server manual payload is preserved for analytics without browser OAuth", (
   assert.match(financeJs, /normalizeServerExpenseRows\(manual\?\.expenseRows \|\| \[\]\)/);
   assert.match(financeJs, /normalizeServerBalanceRows\(manual\?\.balanceRows \|\| manual\?\.balances \|\| \[\]\)/);
   assert.match(financeJs, /normalizeServerCommissionRows\(manual\?\.commissionRows \|\| \[\]\)/);
+});
+
+test("getManualFinanceUsdPerLocalRate returns 1 for USDT currency on row", () => {
+  assert.equal(context.getManualFinanceUsdPerLocalRate({ channel: "Бинанс spot", currency: "USDT" }, {}), 1);
+});
+
+test("getManualFinanceUsdPerLocalRate returns 1 for USDC currency on row", () => {
+  assert.equal(context.getManualFinanceUsdPerLocalRate({ channel: "Бинанс spot", currency: "USDC" }, {}), 1);
+});
+
+test("getManualFinanceNowUsdValue converts USDT balance 1:1 without rate lookup", () => {
+  const row = { channel: "Бинанс spot", now: "500", currency: "USDT" };
+  const result = context.getManualFinanceNowUsdValue(row, { byChannel: {}, byCurrency: {} });
+  assert.equal(parseLooseNumber(result), 500);
+});
+
+test("buildLatestBalanceEntriesByChannel preserves usdAmount from balance sheet", () => {
+  const balances = [
+    { date: "2026-06-01", channel: "БАНК КАНАДА cad", amount: "1000", currency: "CAD", rate: "1.35", usdAmount: "740.74" },
+  ];
+  const latest = context.buildLatestBalanceEntriesByChannel(balances, "2026-06-07");
+  assert.equal(latest["БАНК КАНАДА cad"]?.usdAmount, "740.74");
+  assert.equal(latest["БАНК КАНАДА cad"]?.rate, "1.35");
 });

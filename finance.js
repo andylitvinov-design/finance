@@ -89,7 +89,7 @@ function inferManualFinanceChannelCurrency(channel) {
   if (/(фунт|gbp|pound)/i.test(normalized)) return "GBP";
   if (/(франк|chf|franc)/i.test(normalized)) return "CHF";
   if (/(cad|сad|канада)/i.test(normalized)) return "CAD";
-  if (/(дол|usd|binance|payoneer - dol|revolut)/i.test(normalized)) return "USD";
+  if (/(дол|usd|usdt|usdc|binance|payoneer - dol|revolut)/i.test(normalized)) return "USD";
   return "LOCAL";
 }
 
@@ -178,8 +178,8 @@ function getManualFinanceDisplayRates(rateLookup = { byCurrency: {} }) {
 
 function getManualFinanceUsdPerLocalRate(row, rateLookup = { byChannel: {}, byCurrency: {} }) {
   const channel = getCanonicalManualChannelKey(row?.channel);
-  const currency = inferManualFinanceChannelCurrency(channel);
-  if (currency === "USD") return 1;
+  const currency = String(row?.currency || "").trim().toUpperCase() || inferManualFinanceChannelCurrency(channel);
+  if (currency === "USD" || currency === "USDT" || currency === "USDC") return 1;
   return parseLooseNumber(rateLookup.byCurrency?.[currency]) ||
     parseLooseNumber(rateLookup.byChannel?.[channel]) ||
     MANUAL_FINANCE_FALLBACK_USD_RATES[currency] ||
@@ -921,7 +921,7 @@ function buildAnalyticsManualRowsFromFactMoneyRows(moneyRows, transferRows = [])
     total: row.total,
     exchange: row.exchange,
     totalUsd: getManualFinanceTotalUsdValue(row, usdRateLookup),
-    nowUsd: getManualFinanceNowUsdValue(row, usdRateLookup)
+    nowUsd: parseLooseNumber(row.nowUsd) ? row.nowUsd : getManualFinanceNowUsdValue(row, usdRateLookup)
   }));
 }
 

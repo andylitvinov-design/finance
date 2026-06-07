@@ -48,6 +48,8 @@ const FALLBACK_USD_RATES = {
   UAH: 1 / 43.86,
   EUR: 1.16,
   CAD: 0.74,
+  USDT: 1,
+  USDC: 1,
   LOCAL: 1 / 18,
 };
 
@@ -771,10 +773,11 @@ function deriveUsdAmount(amount, currency, options = {}) {
   const numeric = parseLooseNumber(amount);
   if (!numeric) return 0;
   const normalizedCurrency = String(currency || "").trim().toUpperCase();
-  if (normalizedCurrency === "USD") return numeric;
-  if (options.usdAmount && Math.abs(options.usdAmount - numeric) > 0.0001) return options.usdAmount;
+  if (options.usdAmount && Number.isFinite(options.usdAmount) && Math.abs(options.usdAmount - numeric) > 0.0001) return options.usdAmount;
+  if (normalizedCurrency === "USD" || normalizedCurrency === "USDT" || normalizedCurrency === "USDC") return numeric;
   if (options.localPerUsd) return numeric / options.localPerUsd;
-  const rate = FALLBACK_USD_RATES[normalizedCurrency] || FALLBACK_USD_RATES.LOCAL;
+  const rate = FALLBACK_USD_RATES[normalizedCurrency];
+  if (!rate) return 0;
   return numeric * rate;
 }
 
@@ -788,7 +791,7 @@ function inferChannelCurrency(channel) {
   if (/(фунт|gbp|pound)/i.test(normalized)) return "GBP";
   if (/(франк|chf|franc)/i.test(normalized)) return "CHF";
   if (/(cad|канада)/i.test(normalized)) return "CAD";
-  if (/(дол|usd|binance|payoneer - dol|revolut)/i.test(normalized)) return "USD";
+  if (/(дол|usd|usdt|usdc|binance|payoneer - dol|revolut)/i.test(normalized)) return "USD";
   return "LOCAL";
 }
 
