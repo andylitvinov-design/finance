@@ -165,3 +165,39 @@ test("parseIncomingExpenseSheetValues keeps timestamped exchange rows for legacy
     },
   ]);
 });
+
+// --- applyLatestBalanceUsdToMoneyRows regression tests ---
+{
+  const applyFn = extractFunction(sheetsJs, "applyLatestBalanceUsdToMoneyRows");
+  const ctxApply = vm.createContext({ parseLooseNumber: context.parseLooseNumber, formatSheetNumber: context.formatSheetNumber });
+  vm.runInContext(applyFn + "\nthis.applyLatestBalanceUsdToMoneyRows = applyLatestBalanceUsdToMoneyRows;", ctxApply);
+
+  test("applyLatestBalanceUsdToMoneyRows uses explicit usdAmount from CAD balance row", () => {
+    const moneyRows = [{ channel: "БАНК КАНАДА cad", now: "1000", nowUsd: "" }];
+    const latest = { "БАНК КАНАДА cad": { value: "1000", currency: "CAD", rate: "1.35", usdAmount: "740.74" } };
+    const result = ctxApply.applyLatestBalanceUsdToMoneyRows(moneyRows, latest);
+    assert.equal(result[0].channel, "БАНК КАНАДА cad");
+    assert.ok(Math.abs(parseFloat(String(result[0].nowUsd).replace(",", ".")) - 740.74) < 0.01);
+  });
+
+  test("applyLatestBalanceUsdToMoneyRows converts EUR row with rate when no explicit usdAmount", () => {
+    const moneyRows = [{ channel: "пейпал евр", now: "100", nowUsd: "" }];
+    const latest = { "пейпал евр": { value: "100", currency: "EUR", rate: "0.86", usdAmount: "" } };
+    const result = ctxApply.applyLatestBalanceUsdToMoneyRows(moneyRows, latest);
+    assert.ok(Math.abs(parseFloat(String(result[0].nowUsd).replace(",", ".")) - (100 / 0.86)) < 0.01);
+  });
+
+  test("applyLatestBalanceUsdToMoneyRows converts USDT 1:1 without rate", () => {
+    const moneyRows = [{ channel: "Бинанс spot", now: "500", nowUsd: "" }];
+    const latest = { "Бинанс spot": { value: "500", currency: "USDT", rate: "", usdAmount: "" } };
+    const result = ctxApply.applyLatestBalanceUsdToMoneyRows(moneyRows, latest);
+    assert.equal(parseFloat(String(result[0].nowUsd).replace(",", ".")), 500);
+  });
+
+  test("applyLatestBalanceUsdToMoneyRows does not override already-set nowUsd", () => {
+    const moneyRows = [{ channel: "Бинанс spot", now: "500", nowUsd: "499,0000" }];
+    const latest = { "Бинанс spot": { value: "500", currency: "USDT", rate: "", usdAmount: "" } };
+    const result = ctxApply.applyLatestBalanceUsdToMoneyRows(moneyRows, latest);
+    assert.equal(result[0].nowUsd, "499,0000");
+  });
+}

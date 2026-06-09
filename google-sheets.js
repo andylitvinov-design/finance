@@ -1874,6 +1874,25 @@ function mergeLatestNowEntries(primary = {}, fallback = {}) {
   return { ...(fallback || {}), ...(primary || {}) };
 }
 
+function applyLatestBalanceUsdToMoneyRows(moneyRows, latestNowEntriesByChannel) {
+  return (moneyRows || []).map((row) => {
+    const entry = (latestNowEntriesByChannel || {})[row.channel];
+    if (!entry) return row;
+    if (parseLooseNumber(row.nowUsd)) return row;
+    const explicitUsd = parseLooseNumber(entry.usdAmount);
+    if (explicitUsd) return { ...row, nowUsd: formatSheetNumber(explicitUsd) };
+    const amount = parseLooseNumber(entry.value);
+    if (!amount) return row;
+    const currency = String(entry.currency || "").trim().toUpperCase();
+    if (currency === "USD" || currency === "USDT" || currency === "USDC") {
+      return { ...row, nowUsd: formatSheetNumber(amount) };
+    }
+    const rate = parseLooseNumber(entry.rate);
+    if (rate) return { ...row, nowUsd: formatSheetNumber(amount / rate) };
+    return row;
+  });
+}
+
 
 // ============================================================
 // READING SHEETS
@@ -1957,15 +1976,18 @@ async function getManualSheetDirect(startDate, endDate) {
     status: "saved",
     moneyTitle: MANUAL_FINANCE_MONEY_TITLE,
     moneyHeaders: MANUAL_FINANCE_HEADERS,
-    moneyRows: buildLegacyFactMoneyRowsFromExpenseRows(
-      flowExpenseRows.length || Object.keys(latestNowEntriesByChannel).length
-        ? normalizeManualFinanceExpenseRows(flowExpenseRows, snapshotDate, snapshotDate)
-            .concat(Object.entries(latestNowEntriesByChannel).map(([channel, entry]) => ({
-              date: entry.date || snapshotDate,
-              category: MANUAL_NOW_CATEGORY,
-              amounts: Object.fromEntries(getManualFinanceChannels().map((item) => [item, item === channel ? entry.value : ""]))
-            })))
-        : []
+    moneyRows: applyLatestBalanceUsdToMoneyRows(
+      buildLegacyFactMoneyRowsFromExpenseRows(
+        flowExpenseRows.length || Object.keys(latestNowEntriesByChannel).length
+          ? normalizeManualFinanceExpenseRows(flowExpenseRows, snapshotDate, snapshotDate)
+              .concat(Object.entries(latestNowEntriesByChannel).map(([channel, entry]) => ({
+                date: entry.date || snapshotDate,
+                category: MANUAL_NOW_CATEGORY,
+                amounts: Object.fromEntries(getManualFinanceChannels().map((item) => [item, item === channel ? entry.value : ""]))
+              })))
+          : []
+      ),
+      latestNowEntriesByChannel
     ),
     transferTitle: getManualTransfersSheetName(),
     transferHeaders: MANUAL_TRANSFER_HEADERS,
