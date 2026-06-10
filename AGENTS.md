@@ -289,7 +289,12 @@ When the user invokes `/delivery`, follow all three source-of-truth docs in orde
 2. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
 3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract (mandatory)
 
-Global master protocol: https://github.com/andylitvinov-design/agent-loops
+Local source of truth (do not fetch external loop repos — use these local docs):
+- `docs/delivery-loop-program.md`
+- `docs/delivery-loop-technical-details.md`
+- `docs/delivery-loop-source-patterns-and-live-proof.md`
+
+If any external loop definition is unavailable, use the embedded local definitions from `docs/delivery-loop-source-patterns-and-live-proof.md`.
 
 Act as a release owner, not only a coding assistant.
 

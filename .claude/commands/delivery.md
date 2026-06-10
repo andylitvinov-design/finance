@@ -7,7 +7,7 @@ Follow all three source-of-truth docs in order:
 3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract
 4. `AGENTS.md` — project adapter and command registry
 
-Global master protocol: https://github.com/andylitvinov-design/agent-loops
+These docs are the local source of truth. Do not browse or fetch external loop repos. If any external definition is unavailable, use `docs/delivery-loop-source-patterns-and-live-proof.md`.
 
 Act as release owner for this project.
 

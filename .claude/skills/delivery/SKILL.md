@@ -3,7 +3,12 @@
 This skill does not define a separate protocol.
 It points to the three source-of-truth docs that together define `/delivery` for any project.
 
-Global master protocol: https://github.com/andylitvinov-design/agent-loops
+Local source of truth (do not fetch external loop repos — use these local docs):
+- `docs/delivery-loop-program.md`
+- `docs/delivery-loop-technical-details.md`
+- `docs/delivery-loop-source-patterns-and-live-proof.md`
+
+If any external loop definition is unavailable, use the embedded local definitions from `docs/delivery-loop-source-patterns-and-live-proof.md`.
 
 Source-of-truth docs (read all three before starting):
 
