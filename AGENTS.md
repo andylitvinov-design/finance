@@ -278,3 +278,83 @@ npm run build
 ```
 
 If a command is unavailable or not run, say so explicitly.
+
+---
+
+## Agent Command Registry — /delivery
+
+When the user invokes `/delivery`, follow all three source-of-truth docs in order:
+
+1. `docs/delivery-loop-program.md` — full protocol, stop states, final report format
+2. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
+3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract (mandatory)
+
+Local source of truth (do not fetch external loop repos — use these local docs):
+- `docs/delivery-loop-program.md`
+- `docs/delivery-loop-technical-details.md`
+- `docs/delivery-loop-source-patterns-and-live-proof.md`
+
+If any external loop definition is unavailable, use the embedded local definitions from `docs/delivery-loop-source-patterns-and-live-proof.md`.
+
+Act as a release owner, not only a coding assistant.
+
+Do not stop after code changes, PR creation, green checks, merge, or deployment.
+
+Stop only with:
+
+- `STATUS: SUCCESS` — task implemented, PR/merge completed if required, deployed, and verified on live.
+- `STATUS: BLOCKED` — real external blocker with exact evidence and required user action.
+
+`SUCCESS` requires a completed live proof block:
+
+```txt
+LIVE PROOF:
+- Live URL:
+- Checked route/page:
+- Final deployed commit:
+- Expected live behavior:
+- Actual live behavior:
+- Evidence:
+```
+
+### Finance Project Adapter
+
+- Repository: `andylitvinov-design/finance`
+- Default branch: `main`
+- Target branch: `main`
+- Package manager: `npm`
+- Framework: static HTML + Vercel Functions (Node ≥20)
+- Build command: `npm run build`
+- Test command: `node --test tests/*.test.*`
+- Release guard: `bash scripts/release-guard.sh`
+- CI provider: GitHub Actions (`.github/workflows/`)
+- Deployment provider: Vercel (auto-deploy from `main`)
+- **Primary live URL: `https://ezohata-incoming-ledger.vercel.app`** ← default `/delivery` target
+- Status URL: `https://ezohata-incoming-ledger.vercel.app/api/status`
+- Deploy fallback: `.github/workflows/deploy-production.yml`
+- Verify: `npm run verify:production`
+
+**Live target rule:** Unless the user explicitly specifies another target, `/delivery` SUCCESS requires LIVE PROOF on `https://ezohata-incoming-ledger.vercel.app`. STATUS: SUCCESS after checking only a preview/fallback URL is not valid unless the user explicitly selected that target.
+
+**Cost-control rules:**
+
+- `/delivery` includes cost-control by default.
+- Do not reread or resend unchanged large context. Place stable project context (protocol docs, AGENTS.md, rules) first; place current task/diffs/logs after.
+- Prefer diffs over full files. Read only relevant files first.
+- Stop after **3 failed fix attempts** on the same issue — return `STATUS: BLOCKED` with the 3 attempts listed.
+- Never touch env vars, secrets, billing, production database, or auth-sensitive settings without explicit user approval. Stop and describe the required action; do not proceed.
+- Final report must include a `COST CONTROL` section.
+
+## /pr
+
+Create a clean, mergeable PR for the current branch. Do not merge.
+
+Verify: correct base branch (`main`), no conflicts, build and checks pass, PR description includes task and evidence.
+
+## /fix-deploy
+
+Diagnose and fix a deployment or live mismatch. See `docs/deploy-fallback.md` if present. Use `gh workflow run deploy-production.yml` as fallback.
+
+## /audit
+
+Inspect whether the task, PR, merge, deployment, and live state match the original request. Return `STATUS: SUCCESS` or `STATUS: BLOCKED` with evidence.

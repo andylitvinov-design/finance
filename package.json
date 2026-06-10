@@ -12,7 +12,11 @@
     "verify:production": "node scripts/verify-production.mjs",
     "verify:live": "node scripts/verify-production.mjs",
     "debug:bundle": "node scripts/agent-debug-bundle.mjs",
-    "balance:repair-plan": "node scripts/balance-repair-plan.mjs"
+    "balance:repair-plan": "node scripts/balance-repair-plan.mjs",
+    "delivery:checks": "bash scripts/delivery-checks.sh",
+    "delivery:status": "bash scripts/delivery-status.sh",
+    "smoke:live": "node scripts/live-smoke-test.mjs",
+    "deploy:verify": "node scripts/verify-deployment.mjs"
   },
   "engines": {
     "node": ">=20"

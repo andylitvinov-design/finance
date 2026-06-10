@@ -1,0 +1,56 @@
+{
+  "projectName": "ezohata-incoming-ledger",
+  "repository": "andylitvinov-design/finance",
+  "defaultBranch": "main",
+  "targetBranch": "main",
+  "packageManager": "npm",
+  "framework": "static-html-vercel-functions",
+  "commands": {
+    "install": "npm ci",
+    "build": "npm run build",
+    "lint": null,
+    "typecheck": null,
+    "test": "node --test tests/*.test.*",
+    "check": "bash scripts/release-guard.sh",
+    "smokeLive": "node scripts/live-smoke-test.mjs",
+    "deployVerify": "node scripts/verify-deployment.mjs"
+  },
+  "ci": {
+    "provider": "github-actions",
+    "required": true
+  },
+  "deployment": {
+    "provider": "vercel",
+    "productionUrl": "https://ezohata-incoming-ledger.vercel.app",
+    "secondaryProductionUrl": null,
+    "legacyFallbackUrl": null,
+    "previewUrl": null,
+    "requiresDashboardAccess": true,
+    "autoDeployBranch": "main",
+    "defaultDeliveryTarget": "productionUrl",
+    "fallbackWorkflow": ".github/workflows/deploy-production.yml"
+  },
+  "github": {
+    "usePullRequests": true,
+    "allowAutoMerge": false,
+    "requireHumanReview": false,
+    "branchProtectionExpected": false
+  },
+  "liveVerification": {
+    "required": true,
+    "method": "browser-or-smoke-test",
+    "defaultExpectedText": null,
+    "routes": ["/", "/api/status"]
+  },
+  "costControl": {
+    "sameIssueRetryLimit": 3,
+    "preferDiffsOverFullFiles": true,
+    "stableContextFirst": true,
+    "requireCostControlInFinalReport": true
+  },
+  "security": {
+    "neverPrintSecrets": true,
+    "blockedSecretNamesOnly": true,
+    "requireApprovalForDestructiveActions": true
+  }
+}

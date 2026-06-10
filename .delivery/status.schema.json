@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeliveryStatus",
+  "type": "object",
+  "required": [
+    "status",
+    "loop",
+    "task",
+    "projectAdapter",
+    "checks",
+    "git",
+    "deployment",
+    "liveVerification",
+    "blockers"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["SUCCESS", "BLOCKED"]
+    },
+    "loop": {
+      "type": "string",
+      "const": "PRODUCTION_DELIVERY_LOOP"
+    },
+    "task": {
+      "type": "object",
+      "required": ["originalRequest", "acceptanceCriteria"],
+      "properties": {
+        "originalRequest": { "type": "string" },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["criterion", "done", "evidence"],
+            "properties": {
+              "criterion": { "type": "string" },
+              "done": { "type": "boolean" },
+              "evidence": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "projectAdapter": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "defaultBranch": { "type": "string" },
+        "targetBranch": { "type": "string" },
+        "packageManager": { "type": "string" },
+        "framework": { "type": "string" },
+        "ciProvider": { "type": "string" },
+        "deploymentProvider": { "type": "string" },
+        "liveUrl": { "type": "string" }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "build": { "type": "string" },
+        "lint": { "type": "string" },
+        "typecheck": { "type": "string" },
+        "tests": { "type": "string" },
+        "manual": { "type": "string" }
+      }
+    },
+    "git": {
+      "type": "object",
+      "properties": {
+        "branch": { "type": "string" },
+        "prUrl": { "type": "string" },
+        "prChecks": { "type": "string" },
+        "mergeable": { "type": "string" },
+        "merged": { "type": "string" },
+        "finalCommit": { "type": "string" }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string" },
+        "deploymentUrl": { "type": "string" },
+        "status": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "liveVerification": {
+      "type": "object",
+      "properties": {
+        "checked": { "type": "boolean" },
+        "route": { "type": "string" },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" },
+        "evidence": { "type": "string" }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "blocker": { "type": "string" },
+          "evidence": { "type": "string" },
+          "requiredUserAction": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+
