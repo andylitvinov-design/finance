@@ -1,59 +1,96 @@
-# Skill: /delivery — PRODUCTION_DELIVERY_LOOP
-
-This skill does not define a separate protocol.
-It points to the three source-of-truth docs that together define `/delivery` for any project.
-
-Local source of truth (do not fetch external loop repos — use these local docs):
-- `docs/delivery-loop-program.md`
-- `docs/delivery-loop-technical-details.md`
-- `docs/delivery-loop-source-patterns-and-live-proof.md`
-
-If any external loop definition is unavailable, use the embedded local definitions from `docs/delivery-loop-source-patterns-and-live-proof.md`.
-
-Source-of-truth docs (read all three before starting):
-
-1. `docs/delivery-loop-program.md` — full protocol, stop states, final report format
-2. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
-3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract
-
-Project adapter: see `AGENTS.md` → Agent Command Registry → `/delivery`.
-
-Default live target: `https://ezohata-incoming-ledger.vercel.app`
-SUCCESS requires live proof on this URL unless another target is explicitly requested.
-Secondary and legacy URLs cannot satisfy SUCCESS for production delivery by default.
-
+---
+name: delivery
+description: Run the full safe production delivery loop for the finance project: implement, check, PR, merge if safe/permitted, Vercel deploy, and live verification. Use when Andrey invokes /delivery or asks to deliver a task to live.
+argument-hint: "[task]"
+disable-model-invocation: true
+user-invocable: true
 ---
 
-## Execution Order
+# /delivery — PRODUCTION_DELIVERY_LOOP
 
-Run the embedded loops in this order (from doc 3, section 16):
+`/delivery` is sufficient by itself.
 
-1. Project Adapter
-2. Acceptance Criteria Extraction
-3. Task Coverage Audit — initial
-4. Implementation
-5. Build Until Green
-6. Local Checks Until Clean
-7. Ship PR Until Green
-8. CI Failure Watcher (if CI fails)
-9. PR Babysitter
-10. Task Coverage Audit — pre-merge
-11. Merge Until Confirmed
-12. Deploy Verification Loop
-13. Fix Deploy (if deployment/live fails)
-14. Live Verification Loop
-15. Task Coverage Audit — live
-16. Final Evidence Report
+The user must not need to add extra wording such as "I explicitly delegate merge" or "continue to live".
 
----
+When the user invokes `/delivery`, that invocation means full safe delivery delegation for this repository:
 
-## Stop States
+```txt
+implement -> checks -> PR -> PR health -> merge if safe/permitted -> Vercel deploy -> live verification
+```
 
-### STATUS: SUCCESS
+## Local Source of Truth
 
-Allowed only when the task is implemented, merged if required, deployed to the target environment, and the requested behavior is verified live.
+Read and follow these files in order:
 
-Must include completed live proof block:
+1. `.claude/commands/delivery.md`
+2. `docs/delivery-loop-program.md`
+3. `docs/delivery-loop-technical-details.md`
+4. `docs/delivery-loop-source-patterns-and-live-proof.md`
+5. `AGENTS.md`
+6. `CLAUDE_CODE_PROMPTS.md`
+
+Do not browse or fetch external loop repos. If any external loop definition is unavailable, use the embedded local definitions from `docs/delivery-loop-source-patterns-and-live-proof.md`.
+
+## Finance Project Adapter
+
+- Repository: `andylitvinov-design/finance`
+- Default branch: `main`
+- Target branch: `main`
+- Package manager: `npm`
+- Framework: static HTML + Vercel Functions (Node ≥20)
+- Build: `npm run build`
+- Test: `node --test tests/*.test.*`
+- Release guard: `bash scripts/release-guard.sh`
+- CI: GitHub Actions (`.github/workflows/`)
+- Deployment: Vercel auto-deploy from `main`
+- Primary live URL: `https://ezohata-incoming-ledger.vercel.app`
+- Status URL: `https://ezohata-incoming-ledger.vercel.app/api/status`
+- Deploy fallback: `gh workflow run deploy-production.yml --ref main -f ref=main -f expected_sha=<SHA> -f reason="<reason>"`
+- Production verify: `npm run verify:production`
+
+## Required Behavior
+
+Act as release owner.
+
+Do not stop after code, PR, checks, merge, or deploy.
+
+Stop only with:
+
+- `STATUS: SUCCESS` — task implemented, checked, PR/merge completed if safe/permitted, deployed, and verified live.
+- `STATUS: BLOCKED` — exact external blocker, evidence, and required user action.
+
+## Built-In Delegation
+
+The `/delivery` command itself is the user's delegation to proceed through the full safe release path:
+
+- create branch/worktree from `origin/main`;
+- implement minimal safe patch;
+- run release guard and relevant tests/checks;
+- commit and push branch;
+- create or update PR;
+- check PR health and CI;
+- fix until green and task-complete;
+- merge to `main` if safe and permitted;
+- verify Vercel production deployment;
+- verify live behavior on the primary live URL.
+
+Do not ask the user to additionally confirm merge/deploy/live verification merely because `/delivery` was invoked.
+
+Ask or stop with `STATUS: BLOCKED` only when there is a real external blocker: missing permission, required human review, failed checks, finance-risk, missing secret/env, deployment access missing, or unsafe/destructive action required.
+
+## Finance Safety
+
+- Run `bash scripts/release-guard.sh` before every PR.
+- For production bugs, run `node scripts/production-debug-preflight.mjs` first.
+- Never change balance/gross/net/fee/source semantics without proven root cause and regression tests.
+- Do not run destructive data repair, migrations, or backfills unless explicitly requested.
+- Do not change env/secrets/billing/provider credentials.
+- Merge to `main` is allowed by `/delivery` itself only after release guard, relevant tests/checks, PR health, and task coverage pass.
+- After merge, verify with `npm run verify:production -- <SHA>` and check `/api/status`.
+
+## Final Report Requirement
+
+SUCCESS requires a completed live proof block:
 
 ```txt
 LIVE PROOF:
@@ -65,11 +102,7 @@ LIVE PROOF:
 - Evidence:
 ```
 
-### STATUS: BLOCKED
-
-Allowed only when a real external blocker prevents completion.
-
-Must include:
+BLOCKED requires:
 
 ```txt
 - Where the loop stopped:
@@ -79,50 +112,4 @@ Must include:
 - Evidence:
 - Required user action:
 - Next prompt to run after unblocking:
-```
-
----
-
-## Rules
-
-- Act as release owner, not only a coding assistant.
-- Extract acceptance criteria from the original task before coding.
-- Create a project adapter at the start of every run.
-- Run: code → local checks → PR → PR health → task coverage audit → merge if permitted → deployment verification → live verification.
-- Never claim SUCCESS from code, PR, CI, merge, or deployment alone.
-- Never say "should be live soon" as a final answer.
-- If evidence is missing, status is BLOCKED, not SUCCESS.
-- Never disable tests, bypass branch protection, or hide failed checks.
-- Never print secret values — report secret names only.
-
-## Finance-Specific Rules
-
-- Run `bash scripts/release-guard.sh` before every PR.
-- For production bugs, run `node scripts/production-debug-preflight.mjs` first.
-- Never change balance/gross/net/fee/source semantics without proven root cause and regression tests.
-- Deploy fallback: `gh workflow run deploy-production.yml --ref main -f ref=main -f expected_sha=<SHA> -f reason="<reason>"`
-- After merge, verify: `npm run verify:production -- <SHA>`
-
-## Cost-Control Rules
-
-- Use the stable source-of-truth docs as cached/stable context. Place them first. Do not duplicate the full protocol in dynamic prompts each loop step.
-- Put current task / logs / diffs / PR status after the stable protocol context.
-- Prefer diffs over full files. Read only relevant files first. Do not scan the full repository unless necessary.
-- Stop after **3 failed fix attempts** on the same issue — return `STATUS: BLOCKED` with the 3 attempts described.
-- Never touch env vars, secrets, billing, production database, or auth-sensitive settings without explicit user approval. Stop and describe the required action.
-- Use cheapest capable model/tooling for routine status checks, file listing, PR body edits, and repetitive summaries.
-- Use stronger reasoning only for architecture gate, hard debugging, security-sensitive review, or final delivery-risk review.
-- Final report must include:
-
-```txt
-COST CONTROL:
-- Stable project context reused:
-- Dynamic context separated:
-- Diffs preferred over full files:
-- Full repo scan avoided:
-- Loop attempts used:
-- Same-issue retry count:
-- Expensive reasoning used for:
-- Cost/token risk: low / medium / high
-- What was avoided to save cost:
 ```
