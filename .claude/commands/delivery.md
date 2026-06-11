@@ -1,11 +1,22 @@
 # /delivery
 
-Follow all three source-of-truth docs in order:
+`/delivery` is sufficient by itself.
+
+The user must not need to add extra wording such as "I explicitly delegate merge" or "continue to live".
+
+When the user invokes `/delivery`, that invocation means full safe delivery delegation for this repository:
+
+```txt
+implement -> checks -> PR -> PR health -> merge if safe/permitted -> Vercel deploy -> live verification
+```
+
+Follow all source-of-truth docs in order:
 
 1. `docs/delivery-loop-program.md` — full protocol, stop states, final report format
 2. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
 3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract
 4. `AGENTS.md` — project adapter and command registry
+5. `CLAUDE_CODE_PROMPTS.md` — finance-safe prompting constraints
 
 These docs are the local source of truth. Do not browse or fetch external loop repos. If any external definition is unavailable, use `docs/delivery-loop-source-patterns-and-live-proof.md`.
 
@@ -13,8 +24,18 @@ Act as release owner for this project.
 
 Input format:
 
+```txt
+/delivery [task]
+```
+
+or:
+
+```txt
+/delivery
+
 Task:
 $ARGUMENTS
+```
 
 ## Finance Project Adapter
 
@@ -37,17 +58,38 @@ SUCCESS requires live proof on the primary live URL unless another target is exp
 
 ## Required Final Status
 
-- STATUS: SUCCESS — task implemented, PR merged (or direct-to-main confirmed), deployed, and verified live.
-- STATUS: BLOCKED — exact external blocker, evidence, and required user action.
+- `STATUS: SUCCESS` — task implemented, PR merged or direct-to-main confirmed, deployed, and verified live.
+- `STATUS: BLOCKED` — exact external blocker, evidence, and required user action.
 
 Do not stop after code, PR, checks, merge, or deploy.
 
+## Built-In Delegation
+
+The `/delivery` command itself is the user's delegation to proceed through the full safe release path.
+
+That includes:
+
+- create branch/worktree from `origin/main`;
+- implement minimal safe patch;
+- run release guard and relevant tests/checks;
+- commit and push branch;
+- create or update PR;
+- check PR health and CI;
+- fix until green and task-complete;
+- merge to `main` if safe and permitted;
+- verify Vercel production deployment;
+- verify live behavior on the primary live URL.
+
+Do not ask the user to additionally confirm merge/deploy/live verification merely because `/delivery` was invoked.
+
+Ask or stop with `STATUS: BLOCKED` only when there is a real external blocker: missing permission, required human review, failed checks, finance-risk, missing secret/env, deployment access missing, or unsafe/destructive action required.
+
 ## Cost-Control Rules
 
-- Treat stable docs (1-4 above) as cached/stable context. Do not duplicate the full protocol in dynamic prompts.
+- Treat stable docs (1-5 above) as cached/stable context. Do not duplicate the full protocol in dynamic prompts.
 - Put current task / logs / diffs / PR status after stable protocol context.
 - Prefer diffs over full files. Do not scan the full repository unless necessary.
-- Stop after 3 failed fix attempts on the same issue — return STATUS: BLOCKED.
+- Stop after 3 failed fix attempts on the same issue — return `STATUS: BLOCKED`.
 - Never touch env vars, secrets, billing, production database, or auth-sensitive settings without explicit user approval.
 - Use cheapest capable model/tooling for routine status checks; use stronger reasoning only for architecture, hard debug, or final delivery-risk review.
 - Final report must include COST CONTROL section.
@@ -57,7 +99,9 @@ Do not stop after code, PR, checks, merge, or deploy.
 - Run `bash scripts/release-guard.sh` before every PR.
 - For production bugs, run `node scripts/production-debug-preflight.mjs` first.
 - Never change balance/gross/net/fee/source semantics without proven root cause and regression tests.
-- Do not merge to `main` without explicit user delegation for this task.
+- Do not run destructive data repair, migrations, or backfills unless explicitly requested.
+- Do not change env/secrets/billing/provider credentials.
+- Merge to `main` is allowed by `/delivery` itself only after release guard, relevant tests/checks, PR health, and task coverage pass.
 - After merge, verify with `npm run verify:production -- <SHA>` and check `/api/status`.
 
 SUCCESS requires a completed live proof block:
