@@ -32,6 +32,14 @@ After meaningful production work, update the relevant project memory files or ex
 
 Claude Code must treat `/delivery` as a named repository command, not as an ordinary one-shot giant prompt.
 
+`/delivery` is sufficient by itself. The user must not need to add extra wording such as "I explicitly delegate merge".
+
+When the user invokes `/delivery`, that invocation means full safe delivery delegation:
+
+```txt
+implement -> checks -> PR -> PR health -> merge if safe/permitted -> Vercel deploy -> live verification
+```
+
 When the user invokes `/delivery`, follow these local source-of-truth files in order:
 
 1. `.claude/commands/delivery.md`
@@ -49,11 +57,11 @@ The loop must still obey finance safety:
 - minimal patch only;
 - no broad repo scan unless justified;
 - no unrelated refactor;
-- no environment/secrets changes without explicit approval;
+- no environment/secrets changes without explicit user approval;
 - no destructive data repair, migrations, or backfills;
 - no balance/gross/net/fee/source semantic changes without proven root cause and regression tests;
-- do not merge to `main` unless the user explicitly delegates merge for this task;
-- stop with `STATUS: BLOCKED` if merge, deployment, or live verification needs access/approval the agent does not have.
+- merge to `main` is allowed by the `/delivery` command itself only after release guard, relevant tests/checks, PR health, and task coverage pass;
+- if merge is blocked by permissions, branch protection, required review, failed checks, finance-risk, deployment access, or live verification access, stop with `STATUS: BLOCKED` and exact evidence.
 
 Final `/delivery` status must be exactly one of:
 
@@ -74,9 +82,9 @@ When Andrey asks to create a Claude Code prompt for finance, use low-token stage
 6. Minimal patch only after the failing layer/root cause is proven.
 7. Tests and production verification are separate prompts when possible.
 
-Never create one giant Claude Code prompt that asks for diagnose + patch + tests + PR + merge + deploy + production verification together **unless the user explicitly invokes `/delivery`**.
+Never create one giant Claude Code prompt that asks for diagnose + patch + tests + PR + merge + deploy + production verification together **unless the user invokes `/delivery`**.
 
-For `/delivery`, use the staged command protocol above. It is allowed to cover the full release path only because it has strict checkpoints, finance safety rules, and `SUCCESS`/`BLOCKED` stop states.
+For `/delivery`, use the staged command protocol above. It is allowed to cover the full release path only because it has strict checkpoints, finance safety rules, and `SUCCESS`/`BLOCKED` stop states. The `/delivery` command itself is the user's delegation to proceed through safe merge, deployment verification, and live verification.
 
 ## Autonomy
 
