@@ -86,6 +86,51 @@ Never create one giant Claude Code prompt that asks for diagnose + patch + tests
 
 For `/delivery`, use the staged command protocol above. It is allowed to cover the full release path only because it has strict checkpoints, finance safety rules, and `SUCCESS`/`BLOCKED` stop states. The `/delivery` command itself is the user's delegation to proceed through safe merge, deployment verification, and live verification.
 
+## Production Debug Preflight
+
+For every production UI/runtime/API/provider/balance bug, run source-of-truth preflight before patching formulas or UI logic:
+
+```bash
+node scripts/production-debug-preflight.mjs
+```
+
+Report:
+
+1. live URL;
+2. `/api/status` HTTP status/content-type/body excerpt if failing;
+3. production project/service;
+4. production repo slug;
+5. production commit SHA;
+6. production branch/ref;
+7. relevant open PRs;
+8. classification: `source ok`, `deploy/source-of-truth mismatch`, or `needs verification`.
+
+If production does not contain the intended fix, or production is serving a stale feature branch, do not patch business formulas yet. Resolve deploy/source-of-truth mismatch first.
+
+## Agent Debug Surface
+
+For screenshot/UI aggregate discrepancies, use this read-only evidence chain before patching:
+
+1. `/api/status` — prove deployed commit/source.
+2. `/api/audit-snapshot` — prove normalized ledger, balance, provider, exchange, source, and daily-balance state.
+3. `/api/debug-ui-state` — prove server-derived UI aggregate inputs and channel breakdowns.
+4. Screenshot/user report — use only after the machine-readable evidence above.
+
+`/api/debug-ui-state` is routed through the existing `/api/index` function, so it does not add another Vercel Hobby serverless function. It is observability only and must not become a finance calculation source of truth.
+
+## Movement Table Invariant
+
+For `Движение средства`, the rendered `Итого` row under `BALANCE` must equal the sum of visible numeric `NUMBER` rows for the selected period.
+
+Known regression fixture:
+
+- period: `2026-05-05..2026-05-11`;
+- wrong total: `-340.5000`;
+- visible rows sum: `218.2244`;
+- expected total: `218.2244`.
+
+If this fails, first check production source-of-truth. Then patch the final movement aggregation/render layer.
+
 ## Autonomy
 
 Default mode: **Production Debugger Autopilot**.
