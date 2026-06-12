@@ -611,7 +611,7 @@ function parseIncomingBalanceSheetValues(values) {
     const usdAmount = normalizeManualFinancePersistedNumberInput(row[5] || "");
     const comment = String(row[6] || "").trim();
     if (!date || !channel) continue;
-    if (!String(amount || "").trim() && !String(usdAmount || "").trim()) continue;
+    if (String(amount ?? "").trim() === "" && String(usdAmount ?? "").trim() === "") continue;
     balanceRows.push({
       date,
       channel,

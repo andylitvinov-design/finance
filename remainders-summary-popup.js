@@ -653,15 +653,28 @@
       ...(Array.isArray(snapshot.rows) ? snapshot.rows : []),
       ...(Array.isArray(snapshot.selected_date_rows) ? snapshot.selected_date_rows : []),
     ];
-    const opening = new Map();
-    const closing = new Map();
+    const snapshotsByKey = new Map();
     allSnapshotRows.forEach((row) => {
       const date = String(row?.date || "").slice(0, 10);
       const amount = parseNumber(getSnapshotAmount(row));
-      if (amount === null) return;
+      if (amount === null || !date) return;
       const key = getRowKey(row);
-      if (date === periodFrom && !opening.has(key)) opening.set(key, amount);
-      if (date === periodTo) closing.set(key, amount);
+      const list = snapshotsByKey.get(key) || [];
+      list.push({ date, amount });
+      snapshotsByKey.set(key, list);
+    });
+    const opening = new Map();
+    const closing = new Map();
+    snapshotsByKey.forEach((entries, key) => {
+      const sorted = entries.slice().sort((a, b) => a.date.localeCompare(b.date));
+      if (periodFrom) {
+        const entry = sorted.filter((e) => e.date <= periodFrom).at(-1);
+        if (entry) opening.set(key, entry.amount);
+      }
+      if (periodTo) {
+        const entry = sorted.filter((e) => e.date <= periodTo).at(-1);
+        if (entry) closing.set(key, entry.amount);
+      }
     });
 
     const movement = new Map();
