@@ -3277,8 +3277,8 @@ function buildManualBalanceRowsFromAmounts(date, amounts = {}, transferRows = []
   const rateLookup = buildManualFinanceUsdRateLookup(transferRows, movementValues, { endDate: date });
   return getManualFinanceChannels().map((channel) => {
     const rawAmount = normalizeManualFinancePersistedNumberInput(amounts?.[channel]);
+    if (rawAmount === null || rawAmount === undefined || String(rawAmount).trim() === "") return null;
     const amount = parseLooseNumber(rawAmount);
-    if (!rawAmount || !amount) return null;
     const currency = inferManualFinanceChannelCurrency(channel);
     const usdAmount = currency === "USD"
       ? amount
@@ -3626,12 +3626,12 @@ function normalizeServerBalanceRows(rows) {
   return (rows || []).map((row) => ({
     date: normalizeIncomingSheetDateValue(row?.date || row?.checkDate),
     channel: canonicalManualFinanceChannel(row?.channel || row?.accountName || ""),
-    amount: normalizeManualFinancePersistedNumberInput(row?.amount || row?.balanceAmount || ""),
+    amount: normalizeManualFinancePersistedNumberInput(row?.amount ?? row?.balanceAmount ?? ""),
     currency: String(row?.currency || "").trim().toUpperCase(),
-    rate: normalizeManualFinancePersistedNumberInput(row?.rate || ""),
-    usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount || ""),
+    rate: normalizeManualFinancePersistedNumberInput(row?.rate ?? ""),
+    usdAmount: normalizeManualFinancePersistedNumberInput(row?.usdAmount ?? row?.amount_usd ?? row?.amountUsd ?? row?.usd ?? ""),
     comment: String(row?.comment || "").trim()
-  })).filter((row) => row.date && row.channel && (String(row.amount || "").trim() || String(row.usdAmount || "").trim()));
+  })).filter((row) => row.date && row.channel && (String(row.amount ?? "").trim() !== "" || String(row.usdAmount ?? "").trim() !== ""));
 }
 
 function normalizeServerCommissionRows(rows) {
