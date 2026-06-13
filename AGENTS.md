@@ -68,6 +68,10 @@ Final `/delivery` status must be exactly one of:
 - `STATUS: SUCCESS` — task implemented, checked, PR/merge completed if permitted, deployed, and verified on live.
 - `STATUS: BLOCKED` — exact blocker, evidence, and required user action.
 
+`STATUS: SUCCESS` also requires the Final Result Verification Gate from
+`.claude/commands/delivery.md`: the original request contract must be checked
+requirement by requirement, and every required item must be `PASS`.
+
 Do not stop at code, PR, green checks, merge, deploy, or “should be live soon”.
 
 ## Claude Code Prompt Rule

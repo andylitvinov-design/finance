@@ -59,6 +59,37 @@ Stop only with:
 - `STATUS: SUCCESS` — task implemented, checked, PR/merge completed if safe/permitted, deployed, and verified live.
 - `STATUS: BLOCKED` — exact external blocker, evidence, and required user action.
 
+## Final Result Verification Gate
+
+Implementation is not completion. Verification against the original request is
+completion.
+
+Before any completion claim or `STATUS: SUCCESS`:
+
+1. Reread the original user task.
+2. Extract the Original Request Contract:
+   - explicit requirements;
+   - edge cases;
+   - finance invariants and data-safety constraints;
+   - exclusions and do-not-touch rules;
+   - required live/API/sheet proof.
+3. Compare the contract with the final diff and live/API evidence.
+4. Verify every requirement in this table:
+
+| Requirement | Status | Evidence | Verification method |
+|---|---|---|---|
+
+Allowed statuses: `PASS`, `PARTIAL`, `FAIL`, `NOT VERIFIED`.
+
+Only `PASS` allows completion. If any required item is `PARTIAL`, `FAIL`, or
+`NOT VERIFIED`, do not say `done`, `fixed`, `implemented`, `ready`, or
+`ready to merge`. Say `Implemented but not verified.` or
+`Cannot verify because ...`.
+
+If the gate fails, repair and rerun it. Stop after 2 failed gate repair attempts
+and report what still fails, why it was not fixed, the next file/function to
+inspect, and any required user action.
+
 ## Built-In Delegation
 
 The `/delivery` command itself is the user's delegation to proceed through the full safe release path:

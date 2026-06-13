@@ -40,7 +40,10 @@
     "required": true,
     "method": "browser-or-smoke-test",
     "defaultExpectedText": null,
-    "routes": ["/", "/api/status"]
+    "routes": [
+      "/",
+      "/api/status"
+    ]
   },
   "costControl": {
     "sameIssueRetryLimit": 3,
@@ -52,5 +55,24 @@
     "neverPrintSecrets": true,
     "blockedSecretNamesOnly": true,
     "requireApprovalForDestructiveActions": true
+  },
+  "delivery": {
+    "final_result_verification_gate": {
+      "enabled": true,
+      "requireOriginalRequestContract": true,
+      "requireRequirementVerificationTable": true,
+      "statuses": [
+        "PASS",
+        "PARTIAL",
+        "FAIL",
+        "NOT VERIFIED"
+      ],
+      "completionBlockingStatuses": [
+        "PARTIAL",
+        "FAIL",
+        "NOT VERIFIED"
+      ],
+      "maxRepairAttempts": 2
+    }
   }
 }
