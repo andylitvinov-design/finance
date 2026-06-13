@@ -1,10 +1,10 @@
 # Universal /delivery Loop — Technical Implementation Program
 
-Status: reusable implementation program  
-Command name: `/delivery`  
-Internal name: `PRODUCTION_DELIVERY_LOOP`  
-Scope: all user software projects  
-Primary goal: eliminate manual release-management checks after an agent coding task  
+Status: reusable implementation program
+Command name: `/delivery`
+Internal name: `PRODUCTION_DELIVERY_LOOP`
+Scope: all user software projects
+Primary goal: eliminate manual release-management checks after an agent coding task
 Final result: `STATUS: SUCCESS` or `STATUS: BLOCKED`
 
 ---
@@ -42,6 +42,38 @@ STATUS: BLOCKED
 The agent must not stop at code changes, PR creation, green CI, merge, deployment, or "should be live soon".
 
 The task is complete only when the requested behavior is verified on the target live environment, or when a real external blocker prevents completion.
+
+## FINAL RESULT VERIFICATION GATE
+
+Implementation is not completion. Verification against the original request is
+completion.
+
+Every `/delivery` run must extract an Original Request Contract from the user's
+task before the final report:
+
+- explicit requirements;
+- edge cases;
+- finance invariants and data-safety constraints;
+- explicit exclusions and do-not-touch rules;
+- required live/staging/API/sheet proof.
+
+Every contract item must be verified requirement by requirement:
+
+| Requirement | Status | Evidence | Verification method |
+|---|---|---|---|
+
+Allowed statuses are `PASS`, `PARTIAL`, `FAIL`, and `NOT VERIFIED`.
+
+The agent must not say `done`, `fixed`, `implemented`, `ready`,
+`ready to merge`, or `STATUS: SUCCESS` if any required item is `PARTIAL`,
+`FAIL`, or `NOT VERIFIED`. Use `Implemented but not verified.` or
+`Cannot verify because ...` instead.
+
+After implementation, the agent must reread the original task and compare it
+with the diff, local checks, PR state, deployment state, and live/API proof. If
+a gap is found, repair and rerun the gate. After 2 failed gate repair attempts,
+stop with `STATUS: BLOCKED` and report the remaining gap, reason, next
+file/function to inspect, and any required user action.
 
 ---
 
@@ -158,28 +190,28 @@ A real permission, access, secret, CI, deployment, review, or environment blocke
 
 `/delivery` is a composite loop assembled from several known loop patterns:
 
-1. **Build Until Green**  
+1. **Build Until Green**
    Run production build, fix the first meaningful failure, repeat until successful.
 
-2. **Ship PR Until Green**  
+2. **Ship PR Until Green**
    Create/update PR, run PR checks, fix failures, repeat until PR is green and mergeable.
 
-3. **CI Failure Watcher**  
+3. **CI Failure Watcher**
    Read failed CI logs, identify root cause, fix, push, re-check.
 
-4. **PR Babysitter**  
+4. **PR Babysitter**
    Keep PR healthy: correct base, no conflicts, not stale, not behind, required checks green.
 
-5. **Deploy Verification Loop**  
+5. **Deploy Verification Loop**
    Check deployment status, inspect build/runtime logs, fix deployment failures.
 
-6. **Live Verification Loop**  
+6. **Live Verification Loop**
    Open live URL or run smoke tests and verify the requested behavior.
 
-7. **Task Coverage Audit**  
+7. **Task Coverage Audit**
    Compare implementation and live result against the original task.
 
-8. **Final Evidence Report**  
+8. **Final Evidence Report**
    Return exact proof in a fixed format.
 
 The custom part for the user's workflow is the end-to-end requirement:
@@ -1323,6 +1355,3 @@ PROJECT-SPECIFIC DELIVERY SETTINGS
 The appendix is project-specific. The `/delivery` protocol itself is universal.
 
 ---
-
-
-

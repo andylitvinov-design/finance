@@ -1,9 +1,9 @@
 # /delivery Appendix — Source Loop Patterns and Live Proof Contract
 
-Status: reusable appendix for all projects  
-Parent protocol: `docs/delivery-loop-program.md`  
-Technical companion: `docs/delivery-loop-technical-details.md`  
-Command: `/delivery`  
+Status: reusable appendix for all projects
+Parent protocol: `docs/delivery-loop-program.md`
+Technical companion: `docs/delivery-loop-technical-details.md`
+Command: `/delivery`
 Internal workflow: `PRODUCTION_DELIVERY_LOOP`
 
 ---
@@ -57,6 +57,31 @@ Which final commit is deployed?
 ```
 
 If any of these are unknown, the result is not `SUCCESS`.
+
+## FINAL RESULT VERIFICATION GATE
+
+Live proof is required, but it is not enough by itself. The agent must also
+prove that the live result matches the original user request.
+
+Before final status, extract the Original Request Contract:
+
+- explicit requirements;
+- edge cases;
+- finance invariants and data-safety constraints;
+- explicit exclusions and do-not-touch rules;
+- required live/staging/API/sheet proof.
+
+Then verify each item:
+
+| Requirement | Status | Evidence | Verification method |
+|---|---|---|---|
+
+Allowed statuses: `PASS`, `PARTIAL`, `FAIL`, `NOT VERIFIED`.
+
+If any required item is `PARTIAL`, `FAIL`, or `NOT VERIFIED`, final status is
+not `SUCCESS`. Say `Implemented but not verified.` or
+`Cannot verify because ...`, then repair if still within the 2-attempt gate
+repair limit.
 
 ---
 
@@ -790,4 +815,3 @@ If any item is missing, use `STATUS: BLOCKED` with exact evidence.
 ```txt
 /delivery succeeds only when the user can see or use the requested result live, and the final report clearly shows where and how it was verified.
 ```
-

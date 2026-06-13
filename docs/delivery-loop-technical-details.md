@@ -1,9 +1,9 @@
 # /delivery Loop — Technical Implementation Details
 
-Status: reusable technical blueprint  
-Applies to: all user software projects  
-Parent protocol: `docs/delivery-loop-program.md`  
-Command: `/delivery`  
+Status: reusable technical blueprint
+Applies to: all user software projects
+Parent protocol: `docs/delivery-loop-program.md`
+Command: `/delivery`
 Internal workflow: `PRODUCTION_DELIVERY_LOOP`
 
 ---
@@ -23,6 +23,28 @@ The parent document defines the protocol. This document defines the practical te
 - what must exist at the end for the implementation to be considered complete.
 
 The goal is to make `/delivery` operational, repeatable, and hard to fake.
+
+## FINAL RESULT VERIFICATION GATE
+
+The delivery technical layer must include result verification against the
+original request. Implementation is not completion; verification against the
+original request is completion.
+
+Minimum machine-readable fields for the added `result_verification` status
+section:
+
+- `original_request_contract`
+- `requirements`
+- `evidence`
+- `verification_method`
+- `status`
+- `not_verified_items`
+- `merge_readiness`
+- `repair_attempts`
+
+Allowed requirement statuses: `PASS`, `PARTIAL`, `FAIL`, `NOT VERIFIED`.
+`PARTIAL`, `FAIL`, and `NOT VERIFIED` block completion language and block
+`STATUS: SUCCESS`.
 
 ---
 
@@ -1262,4 +1284,3 @@ The final rule for all agents:
 ```txt
 /delivery is not done when code is written. It is done only when the requested change is proven live, or when a precise external blocker is reported.
 ```
-
