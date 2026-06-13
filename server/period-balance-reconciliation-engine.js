@@ -1392,6 +1392,7 @@ function resolveCanonicalUsdAmount({ currency, nativeAmount, usdAmount } = {}) {
   const parsedUsd = coalesceNumber(usdAmount);
   if (parsedUsd !== null) return parsedUsd;
   if (nativeAmount === null || nativeAmount === undefined) return null;
+  if (Math.abs(nativeAmount) < 0.0001) return 0;
   return isStableUsdCurrency(currency) ? round(nativeAmount) : null;
 }
 

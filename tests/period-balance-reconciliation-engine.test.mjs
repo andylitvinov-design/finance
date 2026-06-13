@@ -120,9 +120,9 @@ test("canonical report fields use opening plus Ledger movement as planned end", 
   assert.equal(cad.opening_usd, null);
   assert.equal(cad.movement_usd, null);
   assert.equal(cad.planned_end_usd, null);
-  assert.equal(cad.confirmed_end_usd, null);
+  assert.equal(cad.confirmed_end_usd, 0);
   assert.equal(cad.diff_usd, null);
-  assert.deepEqual(cad.fx_warnings, ["opening_usd_fx_missing", "movement_usd_fx_missing", "planned_end_usd_fx_missing", "confirmed_end_usd_fx_missing", "diff_usd_fx_missing"]);
+  assert.deepEqual(cad.fx_warnings, ["opening_usd_fx_missing", "movement_usd_fx_missing", "planned_end_usd_fx_missing", "diff_usd_fx_missing"]);
 
   assert.equal(chf.opening_native, 15);
   assert.equal(chf.movement_native, 0);
