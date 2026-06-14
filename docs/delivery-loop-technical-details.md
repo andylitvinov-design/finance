@@ -41,10 +41,33 @@ section:
 - `not_verified_items`
 - `merge_readiness`
 - `repair_attempts`
+- optional top-level `spiralValidatorCritic`
 
 Allowed requirement statuses: `PASS`, `PARTIAL`, `FAIL`, `NOT VERIFIED`.
 `PARTIAL`, `FAIL`, and `NOT VERIFIED` block completion language and block
 `STATUS: SUCCESS`.
+
+Optional machine-readable `spiralValidatorCritic` fields:
+
+- `loopNumber` — integer 1 through 3;
+- `verdict` — `READY_FOR_MERGE`, `READY_WITH_NOTES`, `IMPROVE`, `IMPROVE_MINOR`, `SAFETY_STOP`, or `NEEDS_HUMAN_DECISION`;
+- `requirements` — critic requirement rows with `requirement`, `status`, `evidence`, and `nextAction`;
+- `nextImprovementPlan` — concrete next patch steps for improvement verdicts;
+- `safetyRisks` — required for `SAFETY_STOP`;
+- optional `notVerified`, `missing`, and `notes`.
+
+`spiralValidatorCritic` is top-level and optional. Do not put it inside
+`result_verification`, because existing status files and
+`result_verification.additionalProperties: false` must remain compatible.
+
+Validation rules:
+
+- legacy status files without `spiralValidatorCritic` remain valid;
+- `READY_FOR_MERGE` requires all critic requirements `PASS`;
+- `READY_WITH_NOTES` may include non-`PASS` requirements only when gaps are documented and have `nextAction`;
+- `IMPROVE` and `IMPROVE_MINOR` require a non-empty `nextImprovementPlan`;
+- `SAFETY_STOP` requires non-empty `safetyRisks`;
+- `loopNumber: 3` cannot remain `IMPROVE`.
 
 ---
 
@@ -419,6 +442,8 @@ Checkpoint:
 - [ ] Script runs available checks.
 - [ ] Script does not fail only because optional scripts are missing.
 - [ ] Script fails when an actual check fails.
+- [ ] Script validates `spiralValidatorCritic` when present.
+- [ ] Script preserves legacy `.delivery/status.json` files without `spiralValidatorCritic`.
 
 ---
 
@@ -476,6 +501,8 @@ chmod +x scripts/delivery-status.sh
 Checkpoint:
 
 - [ ] Script prints branch, commits, PR, checks, and optional live URL status.
+- [ ] Script prints `Spiral Validator-Critic Status` when `spiralValidatorCritic` is present.
+- [ ] Script reports legacy status files without `spiralValidatorCritic` as not recorded, not failed.
 - [ ] Agent can use this output as final report evidence.
 
 ---

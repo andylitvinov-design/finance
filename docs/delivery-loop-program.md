@@ -15,6 +15,8 @@ Final result: `STATUS: SUCCESS` or `STATUS: BLOCKED`
 
 It is not just a prompt. It is an operating protocol that tells the agent to own the whole path from task to live verification.
 
+`/delivery` is sufficient by itself. The user must not need to add extra wording such as "I explicitly delegate merge", "continue to live", "please deploy", or "please verify live".
+
 The user should be able to write:
 
 ```txt
@@ -53,9 +55,9 @@ task before the final report:
 
 - explicit requirements;
 - edge cases;
-- finance invariants and data-safety constraints;
+- UI/API/data invariants relevant to the project adapter;
 - explicit exclusions and do-not-touch rules;
-- required live/staging/API/sheet proof.
+- required live/staging/API/sheet/mobile/desktop proof.
 
 Every contract item must be verified requirement by requirement:
 
@@ -70,10 +72,53 @@ The agent must not say `done`, `fixed`, `implemented`, `ready`,
 `Cannot verify because ...` instead.
 
 After implementation, the agent must reread the original task and compare it
-with the diff, local checks, PR state, deployment state, and live/API proof. If
-a gap is found, repair and rerun the gate. After 2 failed gate repair attempts,
+with the diff, local checks, PR state, deployment state, and live proof. If a
+gap is found, repair and rerun the gate. After 2 failed gate repair attempts,
 stop with `STATUS: BLOCKED` and report the remaining gap, reason, next
 file/function to inspect, and any required user action.
+
+---
+
+## SPIRAL VALIDATOR-CRITIC LOOP
+
+The Spiral Validator-Critic Loop is an improvement loop, not a hard blocker.
+
+Run it after implementation and local checks, before merge readiness is claimed:
+
+```txt
+implement
+-> critic review
+-> concrete improvement plan
+-> patch next loop
+-> critic review again
+```
+
+The critic must compare the implementation against the Original Request Contract requirement by requirement and output concrete next actions. The critic may run up to 3 loops.
+
+Allowed critic requirement statuses:
+
+- `PASS`
+- `IMPROVE`
+- `PARTIAL`
+- `FAIL`
+- `NOT VERIFIED`
+
+Allowed critic verdicts:
+
+- `READY_FOR_MERGE` — all critic requirements are `PASS`.
+- `READY_WITH_NOTES` — merge may proceed with documented, non-blocking notes or externally limited gaps.
+- `IMPROVE` — another improvement loop is required.
+- `IMPROVE_MINOR` — a small improvement loop is required.
+- `SAFETY_STOP` — continuing is unsafe or externally blocked.
+- `NEEDS_HUMAN_DECISION` — owner/product judgment is required.
+
+Use `SAFETY_STOP` only for dangerous or externally impossible cases such as data-loss risk, auth/security risk, missing permission, missing secret/env, destructive action, or a finance semantics risk that cannot be proven safely.
+
+Missing polish, weak evidence, or partial UI/API quality should normally become `IMPROVE`, `IMPROVE_MINOR`, or `READY_WITH_NOTES` with a concrete `nextAction`, not `BLOCKED`.
+
+Record machine-readable critic output in optional top-level `.delivery/status.json` field `spiralValidatorCritic`. Do not put it inside `result_verification`, because `result_verification` is the final request-verification gate and remains backward-compatible.
+
+Merge readiness is separate from final `STATUS: SUCCESS`: a `READY_FOR_MERGE` or `READY_WITH_NOTES` critic verdict can allow merge/PR progress, but final `SUCCESS` still requires deployment and live proof.
 
 ---
 
@@ -111,6 +156,7 @@ Task
 -> Project adapter
 -> Code implementation
 -> Local checks
+-> Spiral Validator-Critic Loop
 -> PR creation/update
 -> PR health check
 -> CI/checks until green

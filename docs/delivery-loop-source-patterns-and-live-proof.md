@@ -67,9 +67,9 @@ Before final status, extract the Original Request Contract:
 
 - explicit requirements;
 - edge cases;
-- finance invariants and data-safety constraints;
+- UI/API/data invariants relevant to the project adapter;
 - explicit exclusions and do-not-touch rules;
-- required live/staging/API/sheet proof.
+- required live/staging/API/sheet/mobile/desktop proof.
 
 Then verify each item:
 
@@ -82,6 +82,36 @@ If any required item is `PARTIAL`, `FAIL`, or `NOT VERIFIED`, final status is
 not `SUCCESS`. Say `Implemented but not verified.` or
 `Cannot verify because ...`, then repair if still within the 2-attempt gate
 repair limit.
+
+---
+
+## 2a. Spiral Validator-Critic Loop
+
+The critic is an improvement mechanism, not a default blocker.
+
+Run the critic after implementation and local checks, before merge readiness is claimed:
+
+```txt
+implement -> critic review -> concrete improvement plan -> patch next loop -> critic review again
+```
+
+The critic checks every Original Request Contract item and returns:
+
+- requirement status: `PASS`, `IMPROVE`, `PARTIAL`, `FAIL`, or `NOT VERIFIED`;
+- evidence;
+- concrete `nextAction`;
+- verdict: `READY_FOR_MERGE`, `READY_WITH_NOTES`, `IMPROVE`, `IMPROVE_MINOR`, `SAFETY_STOP`, or `NEEDS_HUMAN_DECISION`.
+
+Loop rules:
+
+- run up to 3 critic loops;
+- `READY_FOR_MERGE` requires all critic requirements `PASS`;
+- `READY_WITH_NOTES` may include non-`PASS` items only when gaps are documented and have `nextAction`;
+- `IMPROVE` and `IMPROVE_MINOR` require a non-empty next improvement plan;
+- `SAFETY_STOP` requires a non-empty safety risk list;
+- loop 3 cannot remain `IMPROVE`; choose `READY_FOR_MERGE`, `READY_WITH_NOTES`, `SAFETY_STOP`, or `NEEDS_HUMAN_DECISION`.
+
+Store the optional machine-readable result in top-level `.delivery/status.json` field `spiralValidatorCritic`. Legacy status files without this object remain valid.
 
 ---
 
@@ -673,16 +703,17 @@ The agent must run the embedded loops in this order:
 4. Implementation
 5. Build Until Green
 6. Local Checks Until Clean
-7. Ship PR Until Green
-8. CI Failure Watcher, if CI fails
-9. PR Babysitter
-10. Task Coverage Audit — pre-merge
-11. Merge Until Confirmed
-12. Deploy Verification Loop
-13. Fix Deploy, if deployment/live fails
-14. Live Verification Loop
-15. Task Coverage Audit — live
-16. Final Evidence Report
+7. Spiral Validator-Critic Loop
+8. Ship PR Until Green
+9. CI Failure Watcher, if CI fails
+10. PR Babysitter
+11. Task Coverage Audit — pre-merge
+12. Merge Until Confirmed
+13. Deploy Verification Loop
+14. Fix Deploy, if deployment/live fails
+15. Live Verification Loop
+16. Task Coverage Audit — live
+17. Final Evidence Report
 ```
 
 If one loop fails due to a fixable problem, the agent fixes it and returns to the right earlier step.

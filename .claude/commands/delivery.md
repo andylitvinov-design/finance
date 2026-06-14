@@ -7,18 +7,21 @@ The user must not need to add extra wording such as "I explicitly delegate merge
 When the user invokes `/delivery`, that invocation means full safe delivery delegation for this repository:
 
 ```txt
-implement -> checks -> PR -> PR health -> merge if safe/permitted -> Vercel deploy -> live verification
+implement -> checks -> PR -> PR health -> merge if safe/permitted -> deploy -> live verification
 ```
+
+## Local Source of Truth
 
 Follow all source-of-truth docs in order:
 
-1. `docs/delivery-loop-program.md` — full protocol, stop states, final report format
-2. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
-3. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract
-4. `AGENTS.md` — project adapter and command registry
-5. `CLAUDE_CODE_PROMPTS.md` — finance-safe prompting constraints
+1. `.claude/commands/delivery.md`
+2. `docs/delivery-loop-program.md` — full protocol, stop states, final report format
+3. `docs/delivery-loop-technical-details.md` — scripts, commands, CI/CD checks, agent decision table
+4. `docs/delivery-loop-source-patterns-and-live-proof.md` — embedded loop patterns and live proof contract
+5. `AGENTS.md` — project adapter and command registry
+6. `CLAUDE_CODE_PROMPTS.md` — finance-safe prompting constraints
 
-These docs are the local source of truth. Do not browse or fetch external loop repos. If any external definition is unavailable, use `docs/delivery-loop-source-patterns-and-live-proof.md`.
+These docs are the local source of truth. Do not browse or fetch external loop repos. If a local doc is missing, report `needs verification` and do not invent replacement rules.
 
 Act as release owner for this project.
 
@@ -118,9 +121,34 @@ Do not ask the user to additionally confirm merge/deploy/live verification merel
 
 Ask or stop with `STATUS: BLOCKED` only when there is a real external blocker: missing permission, required human review, failed checks, finance-risk, missing secret/env, deployment access missing, or unsafe/destructive action required.
 
+## Spiral Validator-Critic Loop
+
+The Spiral Validator-Critic Loop is an improvement loop, not a hard blocker.
+
+Run it after implementation and local checks, before merge readiness is claimed:
+
+```txt
+implement -> critic review -> concrete improvement plan -> patch next loop -> critic review again
+```
+
+The critic must validate the Original Request Contract requirement by requirement and output concrete next actions. It may run up to 3 loops.
+
+Allowed critic verdicts:
+
+- `READY_FOR_MERGE` — all critic requirements are `PASS`.
+- `READY_WITH_NOTES` — merge may proceed with documented, non-blocking notes or externally limited gaps.
+- `IMPROVE` — another improvement loop is required.
+- `IMPROVE_MINOR` — a small improvement loop is required.
+- `SAFETY_STOP` — continuing is unsafe or externally blocked.
+- `NEEDS_HUMAN_DECISION` — owner/product judgment is required.
+
+Use `SAFETY_STOP` only for dangerous or externally impossible cases. Missing polish, weak evidence, or partial UI/API quality should normally become `IMPROVE`, `IMPROVE_MINOR`, or `READY_WITH_NOTES` with a concrete next action.
+
+Record machine-readable critic output in optional top-level `.delivery/status.json` field `spiralValidatorCritic`. Do not put it inside `result_verification`.
+
 ## Cost-Control Rules
 
-- Treat stable docs (1-5 above) as cached/stable context. Do not duplicate the full protocol in dynamic prompts.
+- Treat stable docs (1-6 above) as cached/stable context. Do not duplicate the full protocol in dynamic prompts.
 - Put current task / logs / diffs / PR status after stable protocol context.
 - Prefer diffs over full files. Do not scan the full repository unless necessary.
 - Stop after 3 failed fix attempts on the same issue — return `STATUS: BLOCKED`.
