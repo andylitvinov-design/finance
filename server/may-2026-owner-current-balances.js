@@ -46,7 +46,10 @@ const RETIRED_CURRENT_KEYS = new Set([
 ]);
 
 export function applyOwnerMayCurrentBalanceSnapshot(balanceRows = [], options = {}) {
-  if (!shouldApplyOwnerMayCurrentBalanceSnapshot(options.period || {})) {
+  if (!shouldApplyOwnerMayCurrentBalanceSnapshot({
+    ...(options.period || {}),
+    ownerOpeningSeedApplied: options.ownerOpeningSeedApplied,
+  })) {
     return { rows: balanceRows, applied: false, warnings: [] };
   }
 
@@ -81,7 +84,8 @@ export function applyOwnerMayCurrentBalanceSnapshot(balanceRows = [], options = 
 export function shouldApplyOwnerMayCurrentBalanceSnapshot(period = {}) {
   const from = normalizeDate(period.from);
   const to = normalizeDate(period.to);
-  if (!to || to < "2026-06-01") return false;
+  if (!to || to < OWNER_MAY_CURRENT_BALANCE_DATE) return false;
+  if (to < "2026-06-01" && period.ownerOpeningSeedApplied !== true) return false;
   if (from && from > OWNER_MAY_CURRENT_BALANCE_DATE) return false;
   return true;
 }

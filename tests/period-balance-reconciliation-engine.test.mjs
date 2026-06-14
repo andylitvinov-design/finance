@@ -1850,3 +1850,68 @@ test("total USD row is partial when column coverage differs and lists excluded c
   assert.equal(result.total_usd_row.finite_movement_rows, 2);
   assert.notEqual(result.total_usd_row.finite_change_rows, result.total_usd_row.finite_movement_rows);
 });
+
+test("USD-only opening facts can make no-movement non-USD rows comparable in USD totals", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "Налично -я-евр", currency: "EUR", amount: "", amount_usd: "91", sourceSheet: "Owner Confirmed" },
+      { date: "2026-05-31", channel: "Налично -я-евр", currency: "EUR", amount: "91", amount_usd: "106.063", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "Налично -я-евр");
+  assert.equal(row.opening_native, null);
+  assert.equal(row.opening_usd, 91);
+  assert.equal(row.confirmed_end_native, 91);
+  assert.equal(row.confirmed_end_usd, 106.063);
+  assert.equal(row.change_usd, 15.063);
+  assert.equal(result.total_usd_row.label, "ВСЕГО USD");
+  assert.equal(result.total_usd_row.total_coverage_status, "full");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
+});
+
+test("no-movement exact closing facts derive opening USD for comparable total coverage", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-31", channel: "карта май", currency: "UNKNOWN", amount: "0", amount_usd: "0", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "карта май");
+  assert.equal(row.opening_native, 0);
+  assert.equal(row.opening_usd, 0);
+  assert.equal(row.confirmed_end_native, 0);
+  assert.equal(row.confirmed_end_usd, 0);
+  assert.equal(row.change_usd, 0);
+  assert.equal(result.total_usd_row.total_coverage_status, "full");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
+});
+
+test("May owner current corrections can supply May 31 Binance Save USDC closing fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "пейпал дол", currency: "USD", amount: "435", amount_usd: "435", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "приват 24-грн", currency: "UAH", amount: "11239", amount_usd: "254", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "монобанк грн", currency: "UAH", amount: "26670", amount_usd: "603", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "7351", amount_usd: "7351", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDT", amount: "5411.6278", amount_usd: "5411.6278", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Яндекс руб", currency: "RUB", amount_usd: "1722", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "Payoneer - eur", currency: "EUR", amount_usd: "1284", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "трансервайз дол", currency: "USD", amount: "2639", amount_usd: "2639", sourceSheet: "Остатки" },
+      { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722", amount_usd: "3107.3722", sourceSheet: "Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "binance save" && item.currency === "USDC");
+  assert.equal(row.opening_usd, 3107.3722);
+  assert.equal(row.confirmed_end_native, 2020);
+  assert.equal(row.confirmed_end_usd, 2020);
+  assert.equal(row.manual_provider_closing_balance_date, "2026-05-31");
+  assert.equal(result.total_usd_row.excluded_channels.includes("binance save USDC"), false);
+});

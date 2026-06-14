@@ -52,6 +52,7 @@ export function buildPeriodBalanceReconciliation({
   ], {
     period,
     rowDate: period?.to,
+    ownerOpeningSeedApplied: ownerMayOpeningSeed.applied,
   });
   const effectiveBalanceRows = ownerMayCurrentSnapshot.rows || ownerMayOpeningSeed.rows || balanceRows;
   const effectiveCalculatedBalanceRows = ownerMayCurrentSnapshot.applied ? [] : calculatedBalanceRows;
@@ -180,8 +181,6 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
   const providerAdjustmentsUsd = round(real?.provider_adjustments_usd || 0);
   const missingAmountNetRows = Number(real?.missing_amount_net_rows || 0);
 
-  const calculatedClosing = opening === null ? null : round(opening + realDelta);
-  const plannedClosing = opening === null ? null : round(opening + plannedDelta);
   let factBalance = resolveFactBalance({
     channel,
     currency,
@@ -194,7 +193,6 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
   const canCarryForwardClosing = !closingSnapshot
     && !hasMovement
     && !missingAmountNetRows
-    && calculatedClosing !== null
     && lastObservedClosingSnapshot;
   const carriedForwardClosing = canCarryForwardClosing ? lastObservedClosingSnapshot.amount : null;
   let displayedFactClosing = isCalculatedFact ? factBalance.amount : manualProviderClosing;
@@ -213,6 +211,23 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
       comment: ownerEvidence.reason,
     };
   }
+  if (
+    opening === null
+    && openingAmountUsd === null
+    && !hasMovement
+    && !hasPlan
+    && !missingAmountNetRows
+    && displayedFactClosing !== null
+    && factBalance.amount_usd !== null
+    && factBalance.amount_usd !== undefined
+  ) {
+    opening = displayedFactClosing;
+    openingAmountUsd = factBalance.amount_usd;
+    openingBalanceDate = factBalance.date || to || from;
+    openingBalanceSource = "derived_no_movement_from_closing";
+  }
+  const calculatedClosing = opening === null ? null : round(opening + realDelta);
+  const plannedClosing = opening === null ? null : round(opening + plannedDelta);
   const factSource = factBalance.status === "confirmed"
     ? "manual"
     : factBalance.status === "derived_pending"
@@ -738,8 +753,9 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       });
       statusByKey.set(key, statusRows);
     }
-    if (!date || !channel || !currency || amount === null) continue;
     const snapshotUsd = resolveSnapshotUsd(row, amount, currency, { date, fxRateLookup });
+    if (!date || !channel || !currency) continue;
+    if (amount === null && snapshotUsd.amount_usd === null) continue;
     const rows = byKey.get(key) || [];
     rows.push({
       date,
