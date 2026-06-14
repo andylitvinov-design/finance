@@ -326,13 +326,15 @@ test("total USD row sums only available frozen USD equivalents", () => {
     ],
   });
 
-  assert.equal(result.total_usd_row.label, "ВСЕГО USD");
+  assert.equal(result.total_usd_row.label, "ВСЕГО USD (partial)");
   assert.equal(result.total_usd_row.opening_usd, 100);
   assert.equal(result.total_usd_row.movement_usd, 25);
   assert.equal(result.total_usd_row.planned_end_usd, 125);
   assert.equal(result.total_usd_row.confirmed_end_usd, 125);
   assert.equal(result.total_usd_row.diff_usd, 0);
   assert.equal(result.total_usd_row.excluded_fx_missing_rows, 1);
+  assert.equal(result.total_usd_row.total_coverage_status, "partial");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 1);
   assert.match(result.warnings.join("\n"), /fx_missing/);
   assert.deepEqual(result.reconciliation_report_summary.total_usd_row, result.total_usd_row);
 });
@@ -1723,4 +1725,112 @@ test("May current owner-confirmed snapshot wins over stale current rows in perio
   assert.equal(rows.has("legacy_combined_binance_spot_funding|USDT"), false);
   assert.equal(rows.has("binance save|USD"), false);
   assert.equal(rows.has("Бинанс spot|USD"), false);
+});
+
+test("closing non-USD amount_usd reaches canonical confirmed_end_usd", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "трансервайз евро", currency: "EUR", amount: "100", amount_usd: "110" },
+      { date: "2026-05-31", channel: "трансервайз евро", currency: "EUR", amount: "90", amount_usd: "99" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "трансервайз евро");
+  assert.equal(row.confirmed_end_native, 90);
+  assert.equal(row.confirmed_end_usd, 99);
+  assert.equal(row.change_usd, -11);
+  assert.ok(!row.fx_warnings.includes("confirmed_end_usd_fx_missing"));
+});
+
+test("closing non-USD rate_to_usd derives canonical confirmed_end_usd", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "100", amount_usd: "72" },
+      { date: "2026-05-31", channel: "БАНК КАНАДА cad", currency: "CAD", amount: "120", rate_to_usd: "0.75" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "БАНК КАНАДА cad");
+  assert.equal(row.confirmed_end_usd, 90);
+  assert.equal(row.manual_provider_closing_balance_fx_rate_to_usd, 0.75);
+  assert.equal(row.manual_provider_closing_balance_fx_source, "snapshot_rate");
+  assert.ok(!row.fx_warnings.includes("confirmed_end_usd_fx_missing"));
+});
+
+test("USDC closing native amount resolves to finite USD without fx_missing", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "binance save", currency: "USDC", amount: "3107.3722" },
+      { date: "2026-05-31", channel: "binance save", currency: "USDC", amount: "2020" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "binance save" && item.currency === "USDC");
+  assert.equal(row.opening_usd, 3107.3722);
+  assert.equal(row.confirmed_end_usd, 2020);
+  assert.deepEqual(row.fx_warnings, []);
+});
+
+test("true missing FX keeps native values visible and reports date/currency diagnostics", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-01", channel: "нал-мам-евро", currency: "EUR", amount: "580", amount_usd: "676.0062", sourceSheet: "Остатки", sourceRow: 10 },
+      { date: "2026-05-31", channel: "нал-мам-евро", currency: "EUR", amount: "580", sourceSheet: "Остатки", sourceRow: 20 },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "нал-мам-евро");
+  assert.equal(row.confirmed_end_native, 580);
+  assert.equal(row.confirmed_end_usd, null);
+  assert.ok(row.fx_warnings.includes("confirmed_end_usd_fx_missing"));
+  assert.match(row.fx_diagnostics.join(" | "), /missing FX rate: EUR on 2026-05-31/);
+  assert.match(row.fx_diagnostics.join(" | "), /Остатки row #20/);
+});
+
+test("total USD row is partial when column coverage differs and lists excluded channels", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-10",
+        fromChannel: "cash eur",
+        currency: "EUR",
+        amountNet: "10",
+        amountUsd: "11",
+        balanceAmount: -10,
+        ledgerV2: {
+          date: "2026-05-10",
+          operation: "expense",
+          from_channel: "cash eur",
+          currency: "EUR",
+          amount_net: "10",
+          amount_usd: "11",
+          balance_amount: -10,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-01", channel: "wise usd", currency: "USD", amount: "100" },
+      { date: "2026-05-31", channel: "wise usd", currency: "USD", amount: "120" },
+      { date: "2026-05-01", channel: "cash eur", currency: "EUR", amount: "50", amount_usd: "55" },
+      { date: "2026-05-31", channel: "cash eur", currency: "EUR", amount: "40" },
+    ],
+  });
+
+  assert.equal(result.total_usd_row.label, "ВСЕГО USD (partial)");
+  assert.equal(result.total_usd_row.total_coverage_status, "partial");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 1);
+  assert.deepEqual(result.total_usd_row.excluded_channels, ["cash eur EUR"]);
+  assert.equal(result.total_usd_row.finite_start_rows, 2);
+  assert.equal(result.total_usd_row.finite_end_rows, 1);
+  assert.equal(result.total_usd_row.finite_movement_rows, 2);
+  assert.notEqual(result.total_usd_row.finite_change_rows, result.total_usd_row.finite_movement_rows);
 });

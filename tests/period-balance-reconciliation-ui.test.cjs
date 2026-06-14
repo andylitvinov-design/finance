@@ -457,7 +457,7 @@ test("period balance UI renders explicit fx_missing cells and final total USD ro
       },
     ],
     total_usd_row: {
-      label: "ВСЕГО USD",
+      label: "ВСЕГО USD (partial)",
       currency: "USD",
       opening_usd: 100,
       movement_usd: 25,
@@ -465,19 +465,28 @@ test("period balance UI renders explicit fx_missing cells and final total USD ro
       confirmed_end_usd: 125,
       diff_usd: 0,
       excluded_fx_missing_rows: 1,
+      total_coverage_status: "partial",
+      rows_excluded_from_usd_total: 1,
+      finite_start_rows: 1,
+      finite_end_rows: 1,
+      finite_change_rows: 1,
+      finite_movement_rows: 1,
+      finite_diff_rows: 1,
+      excluded_channels: ["cash cad CAD"],
     },
     actionable_rows: [],
   }));
   const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   const wise = rows.find((row) => row[0] === "wise usd");
   const cad = rows.find((row) => row[0] === "cash cad");
-  const total = rows.find((row) => row[0] === "ВСЕГО USD");
+  const total = rows.find((row) => row[0] === "ВСЕГО USD (partial)");
 
   assert.deepEqual(rows[0], USD_TABLE_HEADER);
   assert.deepEqual(wise, ["wise usd", "100", "125", "25", "25", "0"]);
   assert.deepEqual(cad, ["cash cad", "fx_missing", "fx_missing", "fx_missing", "fx_missing", "fx_missing"]);
-  assert.deepEqual(total, ["ВСЕГО USD", "100", "125", "25", "25", "0"]);
+  assert.deepEqual(total, ["ВСЕГО USD (partial)", "100", "125", "25", "25", "0"]);
   assert.match(block.textContent, /fx_missing: 1 row/);
+  assert.match(block.textContent, /ВСЕГО USD is partial/);
 });
 
 test("period balance total USD row displays column-wise change and diff from API totals", () => {
@@ -505,7 +514,7 @@ test("period balance total USD row displays column-wise change and diff from API
       },
     ],
     total_usd_row: {
-      label: "ВСЕГО USD",
+      label: "ВСЕГО USD (partial)",
       currency: "USD",
       opening_usd: 7451,
       confirmed_end_usd: 120,
@@ -515,14 +524,75 @@ test("period balance total USD row displays column-wise change and diff from API
       excluded_fx_missing_rows: 1,
       fx_missing_end_rows: 1,
       fx_missing_diff_rows: 1,
+      total_coverage_status: "partial",
+      rows_excluded_from_usd_total: 1,
+      finite_start_rows: 2,
+      finite_end_rows: 1,
+      finite_change_rows: 1,
+      finite_movement_rows: 2,
+      finite_diff_rows: 1,
+      excluded_channels: ["БАНК КАНАДА cad CAD"],
     },
     actionable_rows: [],
   }));
 
   const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad"), ["БАНК КАНАДА cad", "7351", "fx_missing", "fx_missing", "0", "fx_missing"]);
-  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), ["ВСЕГО USD", "7451", "120", "20", "15", "5"]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "7451", "120", "20", "15", "5"]);
   assert.match(block.textContent, /fx_missing: end=1, diff=1/);
+  assert.match(block.textContent, /finite row coverage differs/);
+});
+
+test("period balance total USD row warns when coverage differs without fx_missing", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "wise usd",
+        currency: "USD",
+        opening_usd: 100,
+        confirmed_end_usd: 120,
+        change_usd: 20,
+        movement_usd: 15,
+        diff_usd: 5,
+        status: "ok",
+      },
+      {
+        channel: "cash eur",
+        currency: "EUR",
+        opening_usd: 55,
+        confirmed_end_usd: null,
+        change_usd: null,
+        movement_usd: 11,
+        diff_usd: null,
+        status: "ok",
+      },
+    ],
+    total_usd_row: {
+      label: "ВСЕГО USD (partial)",
+      currency: "USD",
+      opening_usd: 155,
+      confirmed_end_usd: 120,
+      change_usd: 20,
+      movement_usd: 26,
+      diff_usd: 5,
+      excluded_fx_missing_rows: 0,
+      total_coverage_status: "partial",
+      rows_excluded_from_usd_total: 1,
+      finite_start_rows: 2,
+      finite_end_rows: 1,
+      finite_change_rows: 1,
+      finite_movement_rows: 2,
+      finite_diff_rows: 1,
+      excluded_channels: ["cash eur EUR"],
+    },
+    actionable_rows: [],
+  }));
+
+  const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "155", "120", "20", "26", "5"]);
+  assert.match(block.textContent, /ВСЕГО USD is partial/);
+  assert.match(block.textContent, /Excluded: cash eur EUR/);
 });
 
 test("period balance main table uses payment channel rows and preserves mismatch statuses", () => {

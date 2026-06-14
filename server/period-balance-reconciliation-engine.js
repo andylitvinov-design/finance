@@ -235,6 +235,13 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     confirmedNative: displayedFactClosing,
     confirmedUsd: factBalance.amount_usd,
   });
+  const fxDiagnostics = buildFxDiagnostics({
+    canonical,
+    currency,
+    openingSnapshot,
+    factBalance,
+    to,
+  });
 
   let status = STATUS.OK;
   if (missingAmountNetRows) {
@@ -273,8 +280,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     movement_usd: canonical.movement_usd,
     planned_end_usd: canonical.planned_end_usd,
     confirmed_end_usd: canonical.confirmed_end_usd,
+    change_usd: canonical.change_usd,
     diff_usd: canonical.diff_usd,
     fx_warnings: canonical.fx_warnings,
+    fx_diagnostics: fxDiagnostics,
     opening_fact_balance: roundedOpening,
     opening_balance: roundedOpening,
     opening_amount_usd: openingAmountUsd,
@@ -360,9 +369,9 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     planned_rows: Number(planned?.rows || 0),
     missing_amount_net_rows: missingAmountNetRows,
     fx_source: factBalance.fx_source || openingSnapshot?.fx_source || null,
-    fx_rate_to_usd: factBalance.fx_rate_to_usd ?? openingSnapshot?.fx_rate_to_usd ?? null,
-    fx_rate_date: factBalance.fx_rate_date || openingSnapshot?.fx_rate_date || null,
-    fx_status: factBalance.fx_status || openingSnapshot?.fx_status || null,
+    fx_rate_to_usd: factBalance.fx_source ? (factBalance.fx_rate_to_usd ?? null) : (openingSnapshot?.fx_rate_to_usd ?? null),
+    fx_rate_date: factBalance.fx_source ? (factBalance.fx_rate_date || null) : (openingSnapshot?.fx_rate_date || null),
+    fx_status: factBalance.fx_source || factBalance.fx_status ? (factBalance.fx_status || null) : (openingSnapshot?.fx_status || null),
     needs_fx_rate: (canonical.fx_warnings || []).length > 0,
     status,
     diagnostics: buildDiagnostics({
@@ -961,9 +970,30 @@ function buildTotalUsdRow(rows = []) {
   const finiteCounts = Object.fromEntries(fields.map((field) => [field, 0]));
   const fxMissingCounts = Object.fromEntries(fields.map((field) => [field, 0]));
   let excludedFxMissingRows = 0;
+  let comparableUsdRows = 0;
+  const rowsExcludedFromUsdTotal = [];
   for (const row of excludeLegacyBinanceRowsWhenSplitRowsExist(rows) || []) {
     const warnings = row.fx_warnings || [];
     if (warnings.length) excludedFxMissingRows += 1;
+    const comparableValues = {
+      opening_usd: coalesceNumber(row?.opening_usd),
+      confirmed_end_usd: coalesceNumber(row?.confirmed_end_usd),
+      change_usd: getRowChangeUsd(row),
+      movement_usd: coalesceNumber(row?.movement_usd),
+      diff_usd: coalesceNumber(row?.diff_usd),
+    };
+    if (Object.values(comparableValues).every((value) => value !== null)) {
+      comparableUsdRows += 1;
+    } else {
+      rowsExcludedFromUsdTotal.push({
+        channel: row.channel,
+        currency: row.currency,
+        missing_fields: Object.entries(comparableValues)
+          .filter(([, value]) => value === null)
+          .map(([field]) => field),
+        fx_warnings: warnings,
+      });
+    }
     for (const field of fields) {
       const value = field === "change_usd" ? getRowChangeUsd(row) : coalesceNumber(row?.[field]);
       if (value !== null) {
@@ -974,9 +1004,14 @@ function buildTotalUsdRow(rows = []) {
       }
     }
   }
+  const comparableFields = ["opening_usd", "confirmed_end_usd", "change_usd", "movement_usd", "diff_usd"];
+  const comparableCounts = comparableFields.map((field) => finiteCounts[field]);
+  const hasMixedCoverage = new Set(comparableCounts).size > 1 || rowsExcludedFromUsdTotal.length > 0;
+  const partial = excludedFxMissingRows > 0 || hasMixedCoverage;
+  const label = partial ? "ВСЕГО USD (partial)" : "ВСЕГО USD";
   return {
-    label: "ВСЕГО USD",
-    channel: "ВСЕГО USD",
+    label,
+    channel: label,
     currency: "USD",
     ...totals,
     excluded_fx_missing_rows: excludedFxMissingRows,
@@ -990,7 +1025,12 @@ function buildTotalUsdRow(rows = []) {
     finite_change_rows: finiteCounts.change_usd,
     finite_movement_rows: finiteCounts.movement_usd,
     finite_diff_rows: finiteCounts.diff_usd,
-    status: excludedFxMissingRows ? "fx_missing" : STATUS.OK,
+    comparable_usd_rows: comparableUsdRows,
+    rows_excluded_from_usd_total: rowsExcludedFromUsdTotal.length,
+    excluded_channels: rowsExcludedFromUsdTotal.map((row) => `${row.channel} ${row.currency}`.trim()),
+    total_coverage_status: partial ? "partial" : "full",
+    partial,
+    status: excludedFxMissingRows ? "fx_missing" : (partial ? "partial" : STATUS.OK),
   };
 }
 
@@ -1026,6 +1066,43 @@ function hasUsdFxWarning(row, field) {
     return warnings.some((warning) => String(warning || "").includes("opening_usd") || String(warning || "").includes("confirmed_end_usd"));
   }
   return warnings.some((warning) => String(warning || "").includes(field));
+}
+
+function buildFxDiagnostics({ canonical, currency, openingSnapshot, factBalance, to } = {}) {
+  const warnings = canonical?.fx_warnings || [];
+  if (!warnings.length) return [];
+  const diagnostics = [];
+  if (warnings.some((warning) => String(warning || "").includes("opening_usd"))) {
+    diagnostics.push(buildMissingFxDiagnostic({
+      field: "opening_usd",
+      currency,
+      snapshot: openingSnapshot,
+      fallbackDate: openingSnapshot?.date,
+    }));
+  }
+  if (warnings.some((warning) => String(warning || "").includes("confirmed_end_usd"))) {
+    diagnostics.push(buildMissingFxDiagnostic({
+      field: "confirmed_end_usd",
+      currency,
+      snapshot: factBalance,
+      fallbackDate: to,
+    }));
+  }
+  if (warnings.some((warning) => String(warning || "").includes("movement_usd"))) {
+    diagnostics.push(`missing FX rate for movement_usd: ${currency || "unknown currency"} in selected period`);
+  }
+  return Array.from(new Set(diagnostics.filter(Boolean)));
+}
+
+function buildMissingFxDiagnostic({ field, currency, snapshot, fallbackDate } = {}) {
+  const date = normalizeDate(snapshot?.fx_rate_date || snapshot?.date || fallbackDate) || "selected date";
+  const sourceSheet = snapshot?.sourceSheet || snapshot?.source_sheet || "";
+  const sourceRow = snapshot?.sourceRow || snapshot?.source_row || null;
+  const source = sourceSheet ? ` in ${sourceSheet}${sourceRow ? ` row #${sourceRow}` : ""}` : "";
+  if (snapshot?.amount !== null && snapshot?.amount !== undefined) {
+    return `missing FX rate: ${currency || "unknown currency"} on ${date} for ${field}${source}`;
+  }
+  return `missing amount_usd for ${field}${source || ` on ${date}`}`;
 }
 
 function buildReconciliationReport(rows = [], balanceIndex, { period = {}, operations = [], balanceRows = [] } = {}) {
