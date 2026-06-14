@@ -73,3 +73,34 @@ if (blocked.length) {
 }
 NODE
 fi
+
+echo ""
+echo "== Spiral Validator-Critic Status =="
+if [[ ! -f "$status_file" ]]; then
+  echo "No .delivery/status.json found."
+else
+  node - "$status_file" <<'NODE'
+const fs = require('fs');
+const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const critic = status.spiralValidatorCritic;
+if (!critic) {
+  console.log('Not recorded.');
+  process.exit(0);
+}
+const requirements = Array.isArray(critic.requirements) ? critic.requirements : [];
+const counts = requirements.reduce((acc, item) => {
+  acc[item.status] = (acc[item.status] || 0) + 1;
+  return acc;
+}, {});
+console.log(`Loop: ${critic.loopNumber || 'unknown'}`);
+console.log(`Verdict: ${critic.verdict || 'unknown'}`);
+console.log(`Requirements: ${requirements.length}`);
+for (const key of ['PASS', 'IMPROVE', 'PARTIAL', 'FAIL', 'NOT VERIFIED']) console.log(`${key}: ${counts[key] || 0}`);
+const plan = Array.isArray(critic.nextImprovementPlan) ? critic.nextImprovementPlan.filter(Boolean) : [];
+const risks = Array.isArray(critic.safetyRisks) ? critic.safetyRisks.filter(Boolean) : [];
+console.log(`Next improvement steps: ${plan.length}`);
+for (const item of plan) console.log(`- ${item}`);
+console.log(`Safety risks: ${risks.length}`);
+for (const item of risks) console.log(`- ${item}`);
+NODE
+fi
