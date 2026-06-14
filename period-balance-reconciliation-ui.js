@@ -541,6 +541,7 @@
   }
 
   function formatFxMissingTotals(row) {
+    if (!row) return "";
     const entries = [
       ["start", row?.fx_missing_start_rows],
       ["end", row?.fx_missing_end_rows],
@@ -550,9 +551,36 @@
     ]
       .map(([label, value]) => [label, Number(value || 0)])
       .filter(([, value]) => value > 0);
-    if (entries.length) return `fx_missing: ${entries.map(([label, value]) => `${label}=${value}`).join(", ")}.`;
+    const coverageText = formatTotalCoverage(row);
+    if (entries.length) {
+      return [`fx_missing: ${entries.map(([label, value]) => `${label}=${value}`).join(", ")}.`, coverageText]
+        .filter(Boolean)
+        .join(" ");
+    }
     const rowCount = Number(row?.excluded_fx_missing_rows || 0);
-    return rowCount ? `fx_missing: ${rowCount} row(s) excluded from ВСЕГО USD where unavailable.` : "";
+    if (rowCount) {
+      return [`fx_missing: ${rowCount} row(s) excluded from ВСЕГО USD where unavailable.`, coverageText]
+        .filter(Boolean)
+        .join(" ");
+    }
+    return coverageText;
+  }
+
+  function formatTotalCoverage(row) {
+    if (String(row?.total_coverage_status || "").trim() !== "partial" && !row?.partial) return "";
+    const excluded = Number(row?.rows_excluded_from_usd_total || 0);
+    const counts = [
+      ["start", row?.finite_start_rows],
+      ["end", row?.finite_end_rows],
+      ["change", row?.finite_change_rows],
+      ["movement", row?.finite_movement_rows],
+      ["diff", row?.finite_diff_rows],
+    ]
+      .map(([label, value]) => `${label}=${Number(value || 0)}`)
+      .join(", ");
+    const channels = (row?.excluded_channels || []).slice(0, 8).join("; ");
+    const channelText = channels ? ` Excluded: ${channels}${(row?.excluded_channels || []).length > 8 ? "; ..." : ""}.` : "";
+    return `ВСЕГО USD is partial; finite row coverage differs (${counts}); rows excluded from comparable USD total: ${excluded}.${channelText}`;
   }
 
   function roundDisplayNumber(value) {
@@ -807,6 +835,7 @@
 
   function getFactDiagnosis(row) {
     if (!row) return "—";
+    if ((row.fx_diagnostics || []).length) return row.fx_diagnostics.join(" | ");
     if (!row.manual_provider_closing_balance_date && row.nearest_manual_provider_fact_date) {
       return `Нет факта на конец периода. Есть ближайший факт: ${row.nearest_manual_provider_fact_date} ${formatNumber(row.nearest_manual_provider_fact_amount)}.`;
     }
