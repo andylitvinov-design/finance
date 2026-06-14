@@ -211,6 +211,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
       comment: ownerEvidence.reason,
     };
   }
+  const derivedNoMovementClosingUsd = factBalance.amount_usd ?? (displayedFactClosing === 0 ? 0 : null);
   if (
     opening === null
     && openingAmountUsd === null
@@ -218,13 +219,26 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     && !hasPlan
     && !missingAmountNetRows
     && displayedFactClosing !== null
-    && factBalance.amount_usd !== null
-    && factBalance.amount_usd !== undefined
+    && derivedNoMovementClosingUsd !== null
+    && derivedNoMovementClosingUsd !== undefined
   ) {
     opening = displayedFactClosing;
-    openingAmountUsd = factBalance.amount_usd;
+    openingAmountUsd = derivedNoMovementClosingUsd;
     openingBalanceDate = factBalance.date || to || from;
     openingBalanceSource = "derived_no_movement_from_closing";
+  }
+  if (
+    opening === null
+    && openingAmountUsd === null
+    && isStableUsdCurrency(currency)
+    && displayedFactClosing === 0
+    && factBalance.amount_usd === 0
+    && !missingAmountNetRows
+  ) {
+    opening = 0;
+    openingAmountUsd = 0;
+    openingBalanceDate = from || factBalance.date || to;
+    openingBalanceSource = "derived_zero_opening_from_zero_closing";
   }
   const calculatedClosing = opening === null ? null : round(opening + realDelta);
   const plannedClosing = opening === null ? null : round(opening + plannedDelta);

@@ -1891,6 +1891,62 @@ test("no-movement exact closing facts derive opening USD for comparable total co
   assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
 });
 
+test("no-movement native zero closing derives USD zero even without explicit USD amount", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-05-31", channel: "карта май", currency: "UNKNOWN", amount: "0", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "карта май");
+  assert.equal(row.opening_native, 0);
+  assert.equal(row.opening_usd, 0);
+  assert.equal(row.confirmed_end_native, 0);
+  assert.equal(row.confirmed_end_usd, 0);
+  assert.equal(row.change_usd, 0);
+  assert.equal(result.total_usd_row.total_coverage_status, "full");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
+});
+
+test("stable zero closing facts can keep movement rows comparable without hiding mismatch", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-31" },
+    operations: [
+      {
+        date: "2026-05-08",
+        operation: "income",
+        toChannel: "Binance funding",
+        currency: "USDT",
+        balanceAmount: 415.5,
+        ledgerV2: {
+          date: "2026-05-08",
+          operation: "income",
+          to_channel: "Binance funding",
+          currency: "USDT",
+          amount_net: "415.5",
+          amount_usd: "415.5",
+          balance_amount: 415.5,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-05-31", channel: "Binance funding", currency: "USDT", amount: "0", amount_usd: "0", source: "derived_from_confirmed_balance", sourceSheet: "Авто Остатки" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((item) => item.channel === "Binance funding");
+  assert.equal(row.opening_native, 0);
+  assert.equal(row.opening_usd, 0);
+  assert.equal(row.movement_usd, 415.5);
+  assert.equal(row.confirmed_end_usd, 0);
+  assert.equal(row.diff_usd, -415.5);
+  assert.equal(row.status, "mismatch");
+  assert.equal(result.total_usd_row.total_coverage_status, "full");
+  assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
+});
+
 test("May owner current corrections can supply May 31 Binance Save USDC closing fact", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-31" },
