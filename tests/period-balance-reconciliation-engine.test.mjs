@@ -1829,6 +1829,22 @@ test("total USD row is partial when column coverage differs and lists excluded c
   assert.equal(result.total_usd_row.total_coverage_status, "partial");
   assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 1);
   assert.deepEqual(result.total_usd_row.excluded_channels, ["cash eur EUR"]);
+  assert.deepEqual(result.total_usd_row.excluded_rows.map((row) => ({
+    channel: row.channel,
+    currency: row.currency,
+    missing_fields: row.missing_fields,
+    sourceSheet: row.sourceSheet,
+    sourceRow: row.sourceRow,
+    reason: row.reason,
+  })), [{
+    channel: "cash eur",
+    currency: "EUR",
+    missing_fields: ["confirmed_end_usd", "change_usd", "diff_usd"],
+    sourceSheet: "Остатки",
+    sourceRow: null,
+    reason: "missing USD equivalent",
+  }]);
+  assert.match(result.total_usd_row.excluded_rows[0].suggested_repair_action, /Backfill amount_usd/);
   assert.equal(result.total_usd_row.finite_start_rows, 2);
   assert.equal(result.total_usd_row.finite_end_rows, 1);
   assert.equal(result.total_usd_row.finite_movement_rows, 2);

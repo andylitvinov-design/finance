@@ -992,6 +992,25 @@ function buildTotalUsdRow(rows = []) {
           .filter(([, value]) => value === null)
           .map(([field]) => field),
         fx_warnings: warnings,
+        date: row.manual_provider_closing_balance_date || row.factual_closing_balance_date || row.fact_date || row.opening_balance_date || null,
+        sourceSheet: row.sourceSheet || row.source_sheet || null,
+        sourceRow: row.sourceRow || row.source_row || null,
+        opening_balance_date: row.opening_balance_date || null,
+        opening_native: row.opening_native ?? null,
+        opening_usd: row.opening_usd ?? null,
+        opening_amount_usd: row.opening_amount_usd ?? null,
+        opening_fx_rate_to_usd: row.opening_fx_rate_to_usd ?? null,
+        confirmed_end_native: row.confirmed_end_native ?? null,
+        confirmed_end_usd: row.confirmed_end_usd ?? null,
+        manual_provider_closing_balance_usd: row.manual_provider_closing_balance_usd ?? null,
+        manual_provider_closing_balance_fx_rate_to_usd: row.manual_provider_closing_balance_fx_rate_to_usd ?? null,
+        fx_rate_to_usd: row.fx_rate_to_usd ?? null,
+        fx_rate_date: row.fx_rate_date || null,
+        fx_status: row.fx_status || null,
+        status: row.status || null,
+        balanceSource: row.balanceSource || row.balance_source || null,
+        reason: buildUsdTotalExclusionReason(row, comparableValues, warnings),
+        suggested_repair_action: buildUsdTotalRepairAction(row, comparableValues, warnings),
       });
     }
     for (const field of fields) {
@@ -1028,10 +1047,40 @@ function buildTotalUsdRow(rows = []) {
     comparable_usd_rows: comparableUsdRows,
     rows_excluded_from_usd_total: rowsExcludedFromUsdTotal.length,
     excluded_channels: rowsExcludedFromUsdTotal.map((row) => `${row.channel} ${row.currency}`.trim()),
+    excluded_rows: rowsExcludedFromUsdTotal,
     total_coverage_status: partial ? "partial" : "full",
     partial,
     status: excludedFxMissingRows ? "fx_missing" : (partial ? "partial" : STATUS.OK),
   };
+}
+
+function buildUsdTotalExclusionReason(row = {}, comparableValues = {}, warnings = []) {
+  if ((warnings || []).length) return "missing USD equivalent";
+  const missingFields = Object.entries(comparableValues || {})
+    .filter(([, value]) => value === null)
+    .map(([field]) => field);
+  const missingOpening = missingFields.includes("opening_usd");
+  const missingClosing = missingFields.includes("confirmed_end_usd");
+  if (missingOpening && row.opening_native === null) return "missing opening balance fact";
+  if (missingClosing && row.confirmed_end_native === null) return "missing closing balance fact";
+  if (missingClosing) return "missing closing USD equivalent";
+  if (missingOpening) return "missing opening USD equivalent";
+  return missingFields.length ? `missing comparable USD fields: ${missingFields.join(", ")}` : "not comparable in USD total";
+}
+
+function buildUsdTotalRepairAction(row = {}, comparableValues = {}, warnings = []) {
+  if ((warnings || []).length) {
+    const date = row.manual_provider_closing_balance_date || row.opening_balance_date || row.fact_date || "";
+    const currency = String(row.currency || "").trim().toUpperCase();
+    return `Backfill amount_usd from row rate or FX Rates for ${date}/${currency}; if FX Rates is missing, add that frozen historical rate first.`;
+  }
+  if (comparableValues.confirmed_end_usd === null && row.confirmed_end_native === null) {
+    return "Enter or confirm the period-end balance fact; USD cannot be derived without native balance.";
+  }
+  if (comparableValues.opening_usd === null && row.opening_native === null) {
+    return "Enter or confirm the opening balance fact; change/diff totals cannot be comparable without opening balance.";
+  }
+  return "Review missing USD coverage fields and source row metadata.";
 }
 
 

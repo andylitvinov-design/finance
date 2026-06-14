@@ -4,16 +4,18 @@ import { inspect } from "node:util";
 import {
   AUTO_BALANCE_HEADERS,
   AUTO_BALANCE_SHEET_NAME,
+  FX_RATES_SHEET_NAME,
   MANUAL_SPREADSHEET_ID,
   SHEETS_API_BASE_URL,
   getManualGoogleSheetsAccessToken,
 } from "../server/manual-google-sheets.js";
+import { buildFxRateLookup, parseFxRateRows } from "../server/fx-rates.js";
 
 const DEFAULT_BASE_URL = "https://ezohata-incoming-ledger.vercel.app";
 const DEFAULT_FROM = "2026-05-01";
 const DEFAULT_TO = "2026-05-27";
 const SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-export const FX_REPAIR_CONFIRMATION = "repair-balance-fx-missing-zero-usd";
+export const FX_REPAIR_CONFIRMATION = "repair-balance-fx-missing-usd-equivalents";
 
 if (isCliEntrypoint()) {
   await main();
@@ -76,8 +78,9 @@ export async function buildBalanceFxMissingRepairReport(options = {}) {
     ? { ok: true, values: options.sourceValuesBySheet, warning: null }
     : await readSourceSheetsIfAvailable({ fetchImpl });
   const sourceRows = buildSourceRowIndex(sourceRead.values);
-  const fxRows = findFxMissingRows(reconciliation, sourceRows);
-  const repairs = fxRows.flatMap((row) => row.repairs).filter((repair) => repair.can_apply);
+  const fxRateLookup = buildFxRateLookup(parseFxRateRows(sourceRead.values?.[FX_RATES_SHEET_NAME] || []).rates);
+  const problemRows = findUsdCoverageProblemRows(reconciliation, sourceRows, fxRateLookup);
+  const repairs = problemRows.flatMap((row) => row.repairs).filter((repair) => repair.can_apply);
   let applyResult = { applied: false, updated_cells: [], skipped: options.apply ? "no_safe_repairs" : "dry_run" };
   if (options.apply && repairs.length) {
     applyResult = await applyRepairs(repairs, { fetchImpl, accessToken: options.accessToken });
@@ -90,25 +93,28 @@ export async function buildBalanceFxMissingRepairReport(options = {}) {
     source_tables_checked: Object.keys(sourceRead.values),
     source_read: { ok: sourceRead.ok, warning: sourceRead.warning },
     before: summarizeFxMissing(reconciliation),
-    fx_missing_rows_count: fxRows.length,
-    fx_missing_rows: fxRows,
+    fx_missing_rows_count: problemRows.filter((row) => row.fx_warnings.length).length,
+    fx_missing_rows: problemRows.filter((row) => row.fx_warnings.length),
+    usd_coverage_problem_rows_count: problemRows.length,
+    usd_coverage_problem_rows: problemRows,
     safe_repairs_count: repairs.length,
     safe_repairs: repairs,
-    needs_owner_fx_count: fxRows.filter((row) => row.repairs.some((repair) => repair.repair === "needs_owner_fx")).length,
+    needs_owner_fx_count: problemRows.filter((row) => row.repairs.some((repair) => repair.repair === "needs_owner_fx")).length,
     apply_result: applyResult,
     warnings: [
       ...(sourceRead.warning ? [sourceRead.warning] : []),
       "No live/current FX rates are used.",
-      "USD/USDT/USDC are treated as 1 only by the reconciliation engine for exact stable currency matches.",
-      "This script only writes frozen amount_usd=0 when the native balance is exactly zero; non-zero local balances remain needs_owner_fx.",
+      "USD/USDT/USDC are treated as 1 for exact stable currency matches.",
+      "This script writes only amount_usd cells for rows with a native amount and a deterministic USD equivalent from zero, stable currency, row rate, or FX Rates.",
       "Ledger/provider/env/amount_net are not modified.",
     ],
   };
 }
 
-function findFxMissingRows(reconciliation = {}, sourceRows = new Map()) {
+function findUsdCoverageProblemRows(reconciliation = {}, sourceRows = new Map(), fxRateLookup = new Map()) {
+  const excluded = new Set((reconciliation.total_usd_row?.excluded_channels || []).map((value) => normalizeText(value)));
   return (reconciliation.by_channel_currency || [])
-    .filter((row) => (row.fx_warnings || []).length)
+    .filter((row) => (row.fx_warnings || []).length || excluded.has(normalizeText(`${row.channel} ${row.currency}`.trim())))
     .map((row) => {
       const repairs = [];
       if ((row.fx_warnings || []).some((warning) => String(warning).startsWith("opening_") || String(warning).startsWith("planned_"))) {
@@ -122,6 +128,7 @@ function findFxMissingRows(reconciliation = {}, sourceRows = new Map()) {
           rate: row.opening_fx_rate_to_usd,
           fxSource: row.opening_fx_source,
           sourceRow: findSourceRow(sourceRows, row.opening_balance_date, row.channel, row.currency),
+          fxRateLookup,
         }));
       }
       if ((row.fx_warnings || []).some((warning) => String(warning).startsWith("confirmed_") || String(warning).startsWith("diff_"))) {
@@ -135,7 +142,11 @@ function findFxMissingRows(reconciliation = {}, sourceRows = new Map()) {
           rate: row.manual_provider_closing_balance_fx_rate_to_usd,
           fxSource: row.manual_provider_closing_balance_fx_source,
           sourceRow: findSourceRow(sourceRows, row.manual_provider_closing_balance_date || row.factual_closing_balance_date || row.fact_date, row.channel, row.currency) || fallbackSourceRow(row),
+          fxRateLookup,
         }));
+      }
+      if (!(row.fx_warnings || []).length) {
+        repairs.push(...buildComparableCoverageProblems(row, sourceRows, fxRateLookup));
       }
       return {
         date: row.manual_provider_closing_balance_date || row.factual_closing_balance_date || row.fact_date || row.opening_balance_date || null,
@@ -151,10 +162,60 @@ function findFxMissingRows(reconciliation = {}, sourceRows = new Map()) {
     });
 }
 
-function buildProblem({ kind, date, channel, currency, nativeAmount, amountUsd, rate, fxSource, sourceRow }) {
+function buildComparableCoverageProblems(row = {}, sourceRows = new Map(), fxRateLookup = new Map()) {
+  const problems = [];
+  if (row.opening_usd === null || row.opening_usd === undefined) {
+    problems.push(buildProblem({
+      kind: "opening",
+      date: row.opening_balance_date,
+      channel: row.channel,
+      currency: row.currency,
+      nativeAmount: row.opening_native,
+      amountUsd: row.opening_amount_usd,
+      rate: row.opening_fx_rate_to_usd,
+      fxSource: row.opening_fx_source,
+      sourceRow: findSourceRow(sourceRows, row.opening_balance_date, row.channel, row.currency),
+      fxRateLookup,
+    }));
+  }
+  if (row.confirmed_end_usd === null || row.confirmed_end_usd === undefined) {
+    problems.push(buildProblem({
+      kind: "closing",
+      date: row.manual_provider_closing_balance_date || row.factual_closing_balance_date || row.fact_date,
+      channel: row.channel,
+      currency: row.currency,
+      nativeAmount: row.confirmed_end_native,
+      amountUsd: row.manual_provider_closing_balance_usd,
+      rate: row.manual_provider_closing_balance_fx_rate_to_usd,
+      fxSource: row.manual_provider_closing_balance_fx_source,
+      sourceRow: findSourceRow(sourceRows, row.manual_provider_closing_balance_date || row.factual_closing_balance_date || row.fact_date, row.channel, row.currency) || fallbackSourceRow(row),
+      fxRateLookup,
+    }));
+  }
+  if (!problems.length && (row.change_usd === null || row.diff_usd === null)) {
+    problems.push({
+      kind: "comparable_total",
+      date: row.manual_provider_closing_balance_date || row.opening_balance_date || null,
+      channel: row.channel,
+      currency: row.currency,
+      native_amount: row.confirmed_end_native ?? row.opening_native ?? null,
+      source_sheet: row.sourceSheet || null,
+      source_row: row.sourceRow || null,
+      missing_fields: ["opening_usd or confirmed_end_usd"],
+      problem_source: "USD totals are finite, but change/diff cannot be comparable because opening or closing side is missing.",
+      repair: "needs_balance_fact",
+      suggested_repair_action: "Confirm the missing opening/closing balance fact; do not invent native balances.",
+      can_apply: false,
+    });
+  }
+  return problems;
+}
+
+function buildProblem({ kind, date, channel, currency, nativeAmount, amountUsd, rate, fxSource, sourceRow, fxRateLookup = new Map() }) {
   const amount = parseNumber(nativeAmount);
   const hasUsd = parseNumber(amountUsd) !== null || parseNumber(sourceRow?.amount_usd) !== null;
-  const hasRate = parseNumber(rate) !== null || parseNumber(sourceRow?.rate) !== null;
+  const explicitRate = parseNumber(rate) ?? parseNumber(sourceRow?.rate);
+  const hasRate = explicitRate !== null;
   const hasClosingBalance = amount !== null || parseNumber(sourceRow?.amount) !== null;
   const missing = [];
   if (!hasClosingBalance) missing.push(kind === "closing" ? "no closing balance" : "no opening balance");
@@ -162,44 +223,96 @@ function buildProblem({ kind, date, channel, currency, nativeAmount, amountUsd, 
   if (!hasRate && !hasUsd) missing.push("no rate");
   const wrongMapping = Boolean(sourceRow && (parseNumber(sourceRow.amount_usd) !== null || parseNumber(sourceRow.rate) !== null) && !hasUsd && !hasRate);
   if (wrongMapping) missing.push("wrong field mapping");
-  const canApplyZeroUsd = kind === "closing"
-    && sourceRow
-    && amount === 0
+  const sourceAmount = amount ?? parseNumber(sourceRow?.amount);
+  const resolved = resolveRepairUsd({
+    date,
+    currency,
+    amount: sourceAmount,
+    rate: explicitRate,
+    amountUsd,
+    sourceAmountUsd: sourceRow?.amount_usd,
+    fxRateLookup,
+  });
+  const canApplyAmountUsd = sourceRow
+    && resolved.can_apply
     && parseNumber(sourceRow.amount_usd) === null
     && sourceRow.amountColumn !== -1
     && sourceRow.amountUsdColumn !== -1;
-  if (canApplyZeroUsd) {
+  if (canApplyAmountUsd) {
     return {
       kind,
       date,
       channel,
       currency,
-      native_amount: amount,
+      native_amount: sourceAmount,
       source_sheet: sourceRow.sheet,
       source_row: sourceRow.rowNumber,
       missing_fields: missing,
       problem_source: missing.join(", "),
       repair: "balance_usd",
-      repair_value: 0,
-      fx_source: "zero_native_balance",
+      repair_value: resolved.amount_usd,
+      fx_source: resolved.fx_source,
+      fx_rate_to_usd: resolved.fx_rate_to_usd,
+      fx_rate_date: resolved.fx_rate_date,
+      suggested_repair_action: `write amount_usd=${resolved.amount_usd} without changing native amount`,
       can_apply: true,
-      write: { sheet: sourceRow.sheet, row: sourceRow.rowNumber, column: sourceRow.amountUsdColumn + 1, value: "0" },
+      write: { sheet: sourceRow.sheet, row: sourceRow.rowNumber, column: sourceRow.amountUsdColumn + 1, value: String(resolved.amount_usd) },
     };
   }
+  const missingFx = sourceAmount !== null && !isUnmappableCurrency(currency) && !hasUsd && !hasRate && !resolved.can_apply;
   return {
     kind,
     date,
     channel,
     currency,
-    native_amount: amount,
+    native_amount: sourceAmount,
     source_sheet: sourceRow?.sheet || null,
     source_row: sourceRow?.rowNumber || null,
     missing_fields: missing,
     problem_source: missing.join(", ") || String(fxSource || "fx_missing"),
-    repair: amount === 0 ? "balance_usd=0 requires writable source row" : "needs_owner_fx",
-    proposed_fields: amount === 0 ? { balance_usd: 0, fx_source: "zero_native_balance" } : { balance_usd: "owner_frozen_usd", fx_rate_to_usd: "owner_frozen_rate", fx_source: "owner_frozen_source" },
+    repair: !hasClosingBalance ? "needs_balance_fact" : (missingFx ? "needs_fx_rate" : "needs_owner_fx"),
+    proposed_fields: buildProposedFields({ amount: sourceAmount, currency, missingFx }),
+    missing_fx_date: missingFx ? normalizeDate(date) : null,
+    missing_fx_currency: missingFx ? String(currency || "").trim().toUpperCase() : null,
+    suggested_repair_action: buildSuggestedRepairAction({ hasClosingBalance, missingFx, date, currency }),
     can_apply: false,
   };
+}
+
+function resolveRepairUsd({ date, currency, amount, rate, amountUsd, sourceAmountUsd, fxRateLookup = new Map() } = {}) {
+  const explicitUsd = parseNumber(amountUsd) ?? parseNumber(sourceAmountUsd);
+  if (explicitUsd !== null) return { can_apply: false };
+  if (amount === null || amount === undefined) return { can_apply: false };
+  if (Number(amount) === 0) {
+    return { can_apply: true, amount_usd: 0, fx_rate_to_usd: null, fx_rate_date: normalizeDate(date) || null, fx_source: "zero_native_balance" };
+  }
+  const normalizedCurrency = String(currency || "").trim().toUpperCase();
+  if (isStableUsdCurrency(normalizedCurrency)) {
+    return { can_apply: true, amount_usd: round(amount), fx_rate_to_usd: 1, fx_rate_date: normalizeDate(date) || null, fx_source: "stable_usd_currency" };
+  }
+  const parsedRate = parseNumber(rate);
+  if (parsedRate !== null && parsedRate > 0) {
+    return { can_apply: true, amount_usd: round(Number(amount) * parsedRate), fx_rate_to_usd: parsedRate, fx_rate_date: normalizeDate(date) || null, fx_source: "snapshot_rate" };
+  }
+  const fx = fxRateLookup.get(`${normalizeDate(date)}|${normalizedCurrency}`);
+  if (fx?.ok && parseNumber(fx.rate_to_usd) !== null) {
+    const fxRate = parseNumber(fx.rate_to_usd);
+    return { can_apply: true, amount_usd: round(Number(amount) * fxRate), fx_rate_to_usd: fxRate, fx_rate_date: fx.date, fx_source: "fx_rates" };
+  }
+  return { can_apply: false };
+}
+
+function buildProposedFields({ amount, currency, missingFx }) {
+  if (amount === 0) return { balance_usd: 0, fx_source: "zero_native_balance" };
+  if (isStableUsdCurrency(currency)) return { balance_usd: "native amount", fx_rate_to_usd: 1, fx_source: "stable_usd_currency" };
+  if (missingFx) return { fx_rate_to_usd: "frozen historical FX rate", balance_usd: "native amount * fx_rate_to_usd", fx_source: "FX Rates" };
+  return { balance_usd: "owner_frozen_usd", fx_rate_to_usd: "owner_frozen_rate", fx_source: "owner_frozen_source" };
+}
+
+function buildSuggestedRepairAction({ hasClosingBalance, missingFx, date, currency }) {
+  if (!hasClosingBalance) return "Confirm the missing native balance fact first; this script will not invent balances.";
+  if (missingFx) return `Add/fetch FX Rates for ${normalizeDate(date)}/${String(currency || "").trim().toUpperCase()}, then rerun this repair.`;
+  return "Provide explicit currency mapping/rate before writing USD equivalent.";
 }
 
 function summarizeProblemSources(repairs = []) {
@@ -236,7 +349,7 @@ async function fetchReconciliation(options, { fetchImpl = fetch } = {}) {
 async function readSourceSheets({ fetchImpl = fetch, accessToken } = {}) {
   const token = accessToken || await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
   const result = {};
-  for (const sheetName of ["Остатки", AUTO_BALANCE_SHEET_NAME]) {
+  for (const sheetName of ["Остатки", AUTO_BALANCE_SHEET_NAME, FX_RATES_SHEET_NAME]) {
     result[sheetName] = await readSheetValues(sheetName, { fetchImpl, accessToken: token });
   }
   return result;
@@ -367,6 +480,21 @@ function parseNumber(value) {
   if (!normalized) return null;
   const number = Number(normalized);
   return Number.isFinite(number) ? number : null;
+}
+
+function round(value, digits = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = 10 ** digits;
+  return Math.round((number + Number.EPSILON) * factor) / factor;
+}
+
+function isStableUsdCurrency(currency = "") {
+  return ["USD", "USDT", "USDC"].includes(String(currency || "").trim().toUpperCase());
+}
+
+function isUnmappableCurrency(currency = "") {
+  return ["LOCAL", "UNKNOWN"].includes(String(currency || "").trim().toUpperCase());
 }
 
 function normalizeDate(value) {
