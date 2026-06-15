@@ -146,7 +146,7 @@ function createDateDocument({ from = "2026-05-17", to = "2026-05-17" } = {}) {
 test("index contains remainders launcher after balance launcher", () => {
   assert.match(indexHtml, /id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
   assert.match(indexHtml, /id="balanceLauncherButton"[^>]*>Баланс<\/button>\s*<button id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
-  assert.match(indexHtml, /balance-summary-popup\.js"><\/script>(?:\s*<script src="[^"]+"><\/script>)*\s*<script src="\.\/balance-payment-gap-compact\.js"><\/script>\s*<script src="\.\/remainders-summary-popup\.js"><\/script>/);
+  assert.match(indexHtml, /balance-summary-popup\.js"><\/script>(?:\s*<script src="[^"]+"><\/script>)*\s*<script src="\.\/balance-payment-gap-compact\.js"><\/script>\s*<script src="\.\/remainders-summary-popup\.js(?:\?v=[^"]*)?"><\/script>/);
 });
 
 test("missing remainders launcher is created after balance launcher", () => {
@@ -1813,5 +1813,101 @@ test("existing Balance popup behavior remains available", () => {
 
   assert.match(collectText(block), /ОСТАТОК оплатить: 630,0000/);
   assert.equal(balanceApi.BALANCE_BUTTON_ID, "balanceLauncherButton");
+  resetRemaindersModule();
+});
+
+function findSourceBadge(block) {
+  return findAll(block, (n) => n.className && n.className.split(/\s+/).includes("remainders-source-badge"))[0] || null;
+}
+
+test("issue#552: period rows render with currency suffix and a period source badge", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [
+      { channel: "Яндекс руб", currency: "RUB", openingUsd: 1, closingUsd: 1, fxMissing: true },
+    ],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [
+        { channel: "БАНК КАНАДА cad", currency: "CAD", opening_usd: 7351, confirmed_end_usd: 7798, movement_usd: 0, fx_warnings: [] },
+        { channel: "пейпал дол", currency: "USD", opening_usd: 100, confirmed_end_usd: 90, movement_usd: -10, fx_warnings: [] },
+      ],
+      total_usd_row: { label: "ВСЕГО USD (partial)", opening_usd: 7451, confirmed_end_usd: 7888, movement_usd: -10, change_usd: 437, diff_usd: 0 },
+    },
+  }, makeMockDocument());
+  const channelNames = tableRows(firstVisibleTable(block)).map((r) => r[0]);
+  assert.ok(channelNames.includes("БАНК КАНАДА cad CAD"), "period channel must include currency suffix");
+  assert.ok(channelNames.includes("пейпал дол USD"), "period channel must include currency suffix");
+  assert.ok(!channelNames.includes("Яндекс руб RUB"), "legacy fallback row must NOT be rendered when period rows exist");
+  const badge = findSourceBadge(block);
+  assert.ok(badge, "source badge must be present");
+  assert.match(badge.textContent, /source: period-balance-reconciliation/);
+  assert.ok(!badge.className.includes("needs-verification"), "period badge must not be flagged needs-verification");
+  resetRemaindersModule();
+});
+
+test("issue#552: failed period fetch shows error badge, not silent legacy table", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [
+      { channel: "Яндекс руб", currency: "RUB", openingUsd: null, closingUsd: null, fxMissing: true },
+      { channel: "пейпал дол", currency: "USD", openingUsd: null, closingUsd: null, fxMissing: true },
+    ],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: null,
+    periodReconciliationError: "period balance reconciliation returned 500",
+  }, makeMockDocument());
+  const badge = findSourceBadge(block);
+  assert.ok(badge, "source badge must be present");
+  assert.match(badge.textContent, /Period balance reconciliation failed: period balance reconciliation returned 500/);
+  assert.ok(badge.className.includes("needs-verification"), "failed-fetch badge must be flagged needs-verification");
+  resetRemaindersModule();
+});
+
+test("issue#552: empty period rows with legacy fallback are explicitly labeled legacy fallback", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [
+      { channel: "Яндекс руб", currency: "RUB", openingUsd: null, closingUsd: null, fxMissing: true },
+    ],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: { by_channel_currency: [] },
+  }, makeMockDocument());
+  const badge = findSourceBadge(block);
+  assert.ok(badge, "source badge must be present");
+  assert.match(badge.textContent, /legacy fallback/i);
+  assert.match(badge.textContent, /not reliable for USD totals/i);
+  assert.ok(badge.className.includes("needs-verification"), "fallback badge must be flagged needs-verification");
+  resetRemaindersModule();
+});
+
+test("issue#552 screenshot repro: all-fx_missing legacy rows are not presented as period truth", () => {
+  const api = loadApi();
+  const legacyChannels = [
+    "Яндекс руб", "пейпал дол", "пейпал евр", "приват 24-грн", "монобанк грн",
+    "трансервайз дол", "REVOLUT дол", "Payoneer - eur", "Payoneer - dol",
+    "Бинанс spot", "binance save", "БАНК КАНАДА cad", "нал-мам-евро", "приват 24-дол",
+  ];
+  const block = api.renderRemaindersSummaryBlock({
+    rows: legacyChannels.map((channel) => ({ channel, currency: "", openingUsd: null, closingUsd: null, fxMissing: true })),
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: null,
+    periodReconciliationError: "period balance reconciliation returned 502",
+  }, makeMockDocument());
+  const badge = findSourceBadge(block);
+  assert.ok(badge && badge.className.includes("needs-verification"), "screenshot case must surface a needs-verification badge");
+  assert.match(badge.textContent, /failed/i);
   resetRemaindersModule();
 });
