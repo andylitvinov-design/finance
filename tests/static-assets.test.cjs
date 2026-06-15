@@ -13,7 +13,7 @@ test("index.html local assets exist", () => {
   for (const match of html.matchAll(localAssetPattern)) {
     const target = match[1];
     if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
-    const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
+    const normalized = target.replace(/[?#].*$/, "").replace(/^\.\//, "").replace(/^\//, "");
     if (!fs.existsSync(path.join(root, normalized))) {
       missingAssets.push(target);
     }

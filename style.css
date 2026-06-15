@@ -98,6 +98,20 @@ button:disabled { cursor: wait; opacity: 0.6; transform: none; }
   background: #fff0ed;
   color: #7f1d1d;
 }
+.remainders-source-badge {
+  margin: 4px 0 10px;
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #e6f4ea;
+  color: #1b5e20;
+}
+.remainders-source-badge.needs-verification {
+  background: #fff0ed;
+  color: #a12216;
+}
 .remainders-summary-block {
   max-width: 100%;
   min-width: 0;

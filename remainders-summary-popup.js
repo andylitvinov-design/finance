@@ -487,22 +487,25 @@
         `${NEEDS_VERIFICATION}: balance snapshots fetch failed (${String(error?.message || error)}).`,
       ],
     }));
-    const periodReconciliation = await fetchPeriodBalanceReconciliation().catch(() => null);
+    let periodReconciliationError = null;
+    const periodReconciliation = await fetchPeriodBalanceReconciliation().catch((error) => {
+      periodReconciliationError = String(error?.message || error) || "unknown error";
+      return null;
+    });
     const periodMovementRows = periodReconciliation?.by_channel_currency || [];
+    const periodExtras = { selectedDateSnapshot, periodReconciliation, periodMovementRows, periodReconciliationError };
     if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
-      return { ...current, selectedDateSnapshot, periodReconciliation, periodMovementRows };
+      return { ...current, ...periodExtras };
     }
     try {
       const snapshot = await fetchAuditSnapshotRemainders();
-      if (!snapshot) return { ...current, selectedDateSnapshot, periodReconciliation, periodMovementRows };
+      if (!snapshot) return { ...current, ...periodExtras };
       const fetched = buildRemaindersSummary(snapshot);
-      return { ...(fetched.source ? fetched : current), selectedDateSnapshot, periodReconciliation, periodMovementRows };
+      return { ...(fetched.source ? fetched : current), ...periodExtras };
     } catch (error) {
       return {
         ...current,
-        selectedDateSnapshot,
-        periodReconciliation,
-        periodMovementRows,
+        ...periodExtras,
         diagnostics: [
           ...(current.diagnostics || []),
           `${NEEDS_VERIFICATION}: audit snapshot fetch failed (${String(error?.message || error)}).`,
@@ -887,6 +890,26 @@
     const title = doc.createElement("h4");
     title.textContent = "Остатки по каналам оплаты";
     section.appendChild(title);
+
+    // Source provenance: never silently render legacy fallback rows as if they
+    // were the current period-balance-reconciliation truth (issue #552).
+    const usingPeriodRows = periodRows.length > 0;
+    const periodFetchFailed = !summary.periodReconciliation && Boolean(summary.periodReconciliationError);
+    const usingFallbackRows = !usingPeriodRows && fallbackRows.length > 0;
+    const badge = doc.createElement("div");
+    badge.className = "remainders-source-badge";
+    if (usingPeriodRows) {
+      badge.textContent = "source: period-balance-reconciliation";
+    } else if (periodFetchFailed) {
+      badge.className += " needs-verification";
+      badge.textContent = `Period balance reconciliation failed: ${summary.periodReconciliationError}`;
+    } else if (usingFallbackRows) {
+      badge.className += " needs-verification";
+      badge.textContent = "source: legacy fallback / needs verification — Legacy fallback — not reliable for USD totals";
+    } else {
+      badge.textContent = "source: period-balance-reconciliation";
+    }
+    section.appendChild(badge);
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";

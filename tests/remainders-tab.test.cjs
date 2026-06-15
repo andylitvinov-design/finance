@@ -106,7 +106,7 @@ function makeDocument(nodes = {}) {
 
 test("index wires remainders tab script after remainders popup", () => {
   assert.match(indexHtml, /id="remaindersLauncherButton"[^>]*>Остатки<\/button>/);
-  assert.match(indexHtml, /remainders-summary-popup\.js"><\/script>\s*<script src="\.\/remainders-tab\.js"><\/script>/);
+  assert.match(indexHtml, /remainders-summary-popup\.js(?:\?v=[^"]*)?"><\/script>\s*<script src="\.\/remainders-tab\.js"><\/script>/);
 });
 
 test("month-start button replaces popup launcher and sets current month start", () => {

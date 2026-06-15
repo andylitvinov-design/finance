@@ -59,7 +59,7 @@ export async function main() {
     for (const match of html.matchAll(localAssetPattern)) {
       const target = match[1];
       if (!target || /^(https?:|data:|mailto:|#)/i.test(target)) continue;
-      const normalized = target.replace(/^\.\//, "").replace(/^\//, "");
+      const normalized = target.replace(/[?#].*$/, "").replace(/^\.\//, "").replace(/^\//, "");
       try {
         await access(path.join(root, normalized));
       } catch {
