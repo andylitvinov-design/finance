@@ -110,7 +110,8 @@
         openingUsd: parseNumber(row.opening_usd),
         closingUsd: parseNumber(row.confirmed_end_usd),
         movementUsd: parseNumber(row.movement_usd),
-        fxMissing: Array.isArray(row.fx_warnings) && row.fx_warnings.length > 0,
+        fxMissing: parseNumber(row.opening_usd) === null && parseNumber(row.confirmed_end_usd) === null && parseNumber(row.movement_usd) === null,
+        fx_warnings: Array.isArray(row.fx_warnings) ? row.fx_warnings : [],
       }));
     return rows;
   }
@@ -195,10 +196,21 @@
       ? periodRawRows.filter((row) => getFxWarnings(row).length > 0)
       : localFxMissingRows;
     if (fxRows.length) {
-      diagnostics.push(`fx_missing rows: ${fxRows.map((row) => {
+      const seenKeys = new Set();
+      const dedupedFxRows = fxRows.filter((row) => {
+        const key = `${formatChannelCurrency(row)}|${getFxWarnings(row).join(",")}`;
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+      const maxDisplay = 20;
+      const displayRows = dedupedFxRows.slice(0, maxDisplay);
+      const extra = dedupedFxRows.length - displayRows.length;
+      const suffix = extra > 0 ? `; ... +${extra} more` : "";
+      diagnostics.push(`fx_missing rows: ${displayRows.map((row) => {
         const warnings = getFxWarnings(row);
         return `${formatChannelCurrency(row)}${warnings.length ? ` (${warnings.join(", ")})` : ""}`;
-      }).join("; ")}`);
+      }).join("; ")}${suffix}`);
     }
     const mismatchRows = periodRawRows
       .map((row) => ({
@@ -861,7 +873,7 @@
       : [];
     const allPrimaryRowsWereFxMissing = allPeriodRowsWereFxMissing ||
       (!periodRows.length && fallbackRows.length > 0 && localFxMissingRows.length === fallbackRows.length);
-    const rows = sortDisplayRows(allPrimaryRowsWereFxMissing ? [] : primaryRows);
+    const rows = sortDisplayRows(primaryRows);
     const fxMissingCount = Number(periodTotals?.fxMissingCount || summary.periodReconciliation?.total_usd_row?.excluded_fx_missing_rows || 0);
     const fallbackTotals = hasNonZeroConfirmedTotal(periodTotals)
       ? periodTotals
@@ -910,7 +922,9 @@
     const total = doc.createElement("tr");
     total.className = "balance-income-channel-total";
     if (buildCanonicalTotalWarning(summary)) total.className += " needs-verification";
-    total.appendChild(renderCell(doc, "ВСЕГО USD"));
+    const totalLabel = summary.periodReconciliation?.total_usd_row?.label ||
+      (summary.periodReconciliation?.total_coverage_status === "partial" ? "ВСЕГО USD (partial)" : "ВСЕГО USD");
+    total.appendChild(renderCell(doc, totalLabel));
     total.appendChild(renderCell(doc, formatMoney(totals?.openingUsd), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(totals?.closingUsd), "numeric"));
     total.appendChild(renderCell(doc, formatMoney(totals?.changeUsd), "numeric"));

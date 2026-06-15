@@ -846,7 +846,7 @@ test("remainders table does not render authoritative zero total when all visible
   const rows = tableRows(firstVisibleTable(block));
   const labels = rows.map((row) => row[0]);
 
-  assert.ok(!labels.includes("Яндекс руб RUB"), "all-fx_missing rows should move out of primary table");
+  assert.ok(labels.includes("Яндекс руб RUB"), "all-fx_missing rows now render with fx_missing cells per issue#552 fix");
   assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD"), [
     "ВСЕГО USD",
     "24993,0000",
@@ -910,7 +910,7 @@ test("remainders table uses selected-date canonical USD total when period rows a
     "0,0000",
     "19255,2484",
   ]);
-  assert.doesNotMatch(JSON.stringify(rows), /Яндекс руб RUB/);
+  assert.match(JSON.stringify(rows), /Яндекс руб RUB/, "all-fx_missing rows render with fx_missing cells per issue#552 fix");
   assert.match(collectText(block), /USD table is incomplete/);
   resetRemaindersModule();
 });
@@ -1597,6 +1597,197 @@ test("collapsed remainders diagnostics table keeps horizontal scroll controls", 
     { left: 240, behavior: "auto" },
     { left: -240, behavior: "auto" },
   ]);
+  resetRemaindersModule();
+});
+
+test("issue#552: row with finite opening_usd+movement_usd but confirmed_end_usd_fx_missing still renders as a row", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [
+        {
+          channel: "пейпал дол",
+          currency: "USD",
+          opening_usd: 100,
+          confirmed_end_usd: null,
+          movement_usd: 50,
+          fx_warnings: ["confirmed_end_usd_fx_missing"],
+        },
+      ],
+    },
+  }, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const channelRow = rows.find((row) => row[0] === "пейпал дол USD");
+  assert.ok(channelRow, "channel row must be present, not hidden");
+  assert.equal(channelRow[1], "100,0000", "opening_usd should render");
+  assert.equal(channelRow[2], "fx_missing", "closing must show fx_missing");
+  assert.equal(channelRow[4], "50,0000", "movement_usd should render");
+  resetRemaindersModule();
+});
+
+test("issue#552: all rows with some fx_warnings but finite USD fields must all render (not collapsed to ВСЕГО USD only)", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [
+        {
+          channel: "Яндекс руб",
+          currency: "RUB",
+          opening_usd: 10,
+          confirmed_end_usd: null,
+          movement_usd: 5,
+          fx_warnings: ["confirmed_end_usd_fx_missing"],
+        },
+        {
+          channel: "пейпал дол",
+          currency: "USD",
+          opening_usd: 200,
+          confirmed_end_usd: null,
+          movement_usd: 100,
+          fx_warnings: ["confirmed_end_usd_fx_missing"],
+        },
+      ],
+    },
+  }, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const channelNames = rows.map((r) => r[0]);
+  assert.ok(channelNames.includes("Яндекс руб RUB"), "Яндекс руб RUB must be visible");
+  assert.ok(channelNames.includes("пейпал дол USD"), "пейпал дол USD must be visible");
+  resetRemaindersModule();
+});
+
+test("issue#552: total label is ВСЕГО USD (partial) when server total_usd_row.label says so", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [],
+      total_usd_row: {
+        label: "ВСЕГО USD (partial)",
+        opening_usd: 0,
+        confirmed_end_usd: 1703,
+        movement_usd: 0,
+        change_usd: 1703,
+        diff_usd: 1703,
+        excluded_fx_missing_rows: 3,
+      },
+    },
+  }, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const totalRow = rows.find((r) => r[0] && r[0].includes("ВСЕГО USD"));
+  assert.ok(totalRow, "total row must be present");
+  assert.equal(totalRow[0], "ВСЕГО USD (partial)", "total label must be from server");
+  resetRemaindersModule();
+});
+
+test("issue#552: total label is ВСЕГО USD (partial) when total_coverage_status is partial", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [],
+      total_coverage_status: "partial",
+    },
+  }, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const totalRow = rows.find((r) => r[0] && r[0].includes("ВСЕГО USD"));
+  assert.ok(totalRow, "total row must be present");
+  assert.equal(totalRow[0], "ВСЕГО USD (partial)");
+  resetRemaindersModule();
+});
+
+test("issue#552: diagnostics dedupe repeated channel entries", () => {
+  const api = loadApi();
+  const repeatedRow = {
+    channel: "Яндекс руб",
+    currency: "RUB",
+    opening_usd: null,
+    confirmed_end_usd: null,
+    movement_usd: null,
+    fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing"],
+  };
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [repeatedRow, repeatedRow, repeatedRow, repeatedRow, repeatedRow],
+    },
+  }, makeMockDocument());
+  const diagNodes = findAll(block, (n) => n.className && n.className.includes("balance-summary-diagnostics"));
+  const diagText = diagNodes.map((n) => n.textContent).join(" ");
+  const count = (diagText.match(/Яндекс руб RUB/g) || []).length;
+  assert.equal(count, 1, `diagnostics must mention "Яндекс руб RUB" only once (deduped), got ${count}`);
+  resetRemaindersModule();
+});
+
+test("issue#552: diagnostics limit long list and append +N more", () => {
+  const api = loadApi();
+  const manyRows = Array.from({ length: 30 }, (_, i) => ({
+    channel: `Channel${i}`,
+    currency: "RUB",
+    opening_usd: null,
+    confirmed_end_usd: null,
+    movement_usd: null,
+    fx_warnings: ["confirmed_end_usd_fx_missing"],
+  }));
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: { by_channel_currency: manyRows },
+  }, makeMockDocument());
+  const text = collectText(block);
+  assert.match(text, /\+10 more/, "must show '+10 more' when 30 unique rows, limit 20");
+  resetRemaindersModule();
+});
+
+test("issue#552: truly no usable rows (all fields null) still shows only total row", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [
+        {
+          channel: "Ghost",
+          currency: "USD",
+          opening_usd: null,
+          confirmed_end_usd: null,
+          movement_usd: null,
+          fx_warnings: ["opening_usd_fx_missing", "confirmed_end_usd_fx_missing", "movement_usd_fx_missing"],
+        },
+      ],
+    },
+  }, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+  const ghostRow = rows.find((r) => r[0] === "Ghost USD");
+  assert.ok(ghostRow, "ghost row is rendered even with all-null fields (per-cell fx_missing)");
   resetRemaindersModule();
 });
 
