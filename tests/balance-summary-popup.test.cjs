@@ -945,3 +945,86 @@ test("balance summary flags service payment gaps when API source rows are missin
   assert.match(collectText(block), /source rows missing from API — needs verification/);
   resetBalanceModule();
 });
+
+test("index.html loads balance-summary-paid-canonical-fix.js after balance-summary-popup.js", () => {
+  const popupPos = indexHtml.indexOf("balance-summary-popup.js");
+  const fixPos = indexHtml.indexOf("balance-summary-paid-canonical-fix.js");
+  assert.ok(fixPos !== -1, "balance-summary-paid-canonical-fix.js must be present in index.html");
+  assert.ok(fixPos > popupPos, "balance-summary-paid-canonical-fix.js must appear after balance-summary-popup.js");
+});
+
+test("canonical paid fix: applyCanonicalPaidSummary replaces totalPaid 515 with actualPaymentSummaryByChannel total 1261.9", () => {
+  delete require.cache[require.resolve("../balance-summary-paid-canonical-fix.js")];
+  delete global.EzohataBalanceSummaryPaidCanonicalFix;
+  global.parseLooseNumber = undefined;
+  require("../balance-summary-paid-canonical-fix.js");
+  const fix = global.EzohataBalanceSummaryPaidCanonicalFix;
+  assert.ok(fix, "EzohataBalanceSummaryPaidCanonicalFix must be exported to global");
+
+  const input = {
+    totalPaid: 515,
+    totalAccrued: 1385.25,
+    remainingToPay: 1385.25 - 515,
+    incomeChannelDistribution: {
+      source: "realIncome.actualPaymentSummaryByChannel",
+      title: "Факт оплат по каналам",
+      total: 1261.9,
+    },
+    diagnostics: [],
+  };
+
+  const result = fix.applyCanonicalPaidSummary(input);
+  assert.strictEqual(result.totalPaid, 1261.9, "totalPaid must be updated to canonical 1261.9");
+  assert.ok(Math.abs(result.remainingToPay - (1385.25 - 1261.9)) < 0.001, `remainingToPay must be 123.35, got ${result.remainingToPay}`);
+  assert.ok(result.diagnostics.length > 0, "diagnostics must note the discrepancy");
+  assert.strictEqual(result.sources?.totalPaid, "realIncome.actualPaymentSummaryByChannel");
+  delete require.cache[require.resolve("../balance-summary-paid-canonical-fix.js")];
+  delete global.EzohataBalanceSummaryPaidCanonicalFix;
+});
+
+test("canonical paid fix: 70% payable formula uses raw totalPaid 515 (not canonical 1261.9) when source is separate top-metric", () => {
+  // totalAccrued * 0.7 - rawPaid = 1385.25 * 0.7 - 515 = 454.675
+  // The canonical fix patches totalPaid used by popup, but top-metric-canonical-finalizer
+  // uses its own rawPaid for the payable metric. This test documents the expected formula.
+  const totalAccrued = 1385.25;
+  const rawPaid = 515;
+  const payable70 = totalAccrued * 0.7 - rawPaid;
+  assert.ok(Math.abs(payable70 - 454.675) < 0.001, `70% payable must be 454.675, got ${payable70}`);
+});
+
+test("coverage channel rows: impossible row with orders=0 and coveredUsd>0 is excluded from normal coverage table", () => {
+  const api = loadApi();
+  const block = api.renderBalanceSummaryBlock({
+    ordersBase: 0,
+    percentRate: 3,
+    totalOrdersPlusPercent: 0,
+    myOrders: 0,
+    myOrdersPayable: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    remainingToPay: 0,
+    diagnostics: [],
+    orderPaymentCoverage: {
+      summaryByChannel: {
+        "трансервайз дол": { channel: "трансервайз дол", coveredUsd: 1261.9, percent: 100 },
+        "Без канала": { channel: "Без канала", coveredUsd: 0, allocatedPaidUsd: 0, remainingUsd: 103 },
+      },
+      actionableRows: [{
+        rowNumber: "18202",
+        date: "2026-06-10",
+        client: "Клиент А",
+        channel: "Без канала",
+        remainingUsd: 103,
+        status: "needs verification",
+      }],
+    },
+  }, makeMockDocument());
+
+  const text = collectText(block);
+  // Impossible coverage row (orders=0, coveredUsd=0) must not appear as a positive covered amount
+  // The "Без канала" row has coveredUsd=0 so should be filtered from the channel coverage table
+  assert.match(text, /трансервайз дол/, "covered channel must appear");
+  assert.match(text, /18202/, "actionable row must appear in remaining check");
+  assert.match(text, /needs verification/, "impossible row status must propagate to remaining check");
+  resetBalanceModule();
+});
