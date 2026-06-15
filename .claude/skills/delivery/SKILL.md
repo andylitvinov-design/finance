@@ -130,6 +130,29 @@ The `/delivery` command itself is the user's delegation to proceed through the f
 
 Do not ask the user to additionally confirm merge/deploy/live verification merely because `/delivery` was invoked.
 
+## PR Checkpoint And Merge Policy
+
+PR creation is an intermediate checkpoint, not the final result.
+
+After PR creation, `/delivery` continues by default to PR health, the Spiral Validator-Critic review, merge, deploy, and live verification when the project adapter requires those steps.
+
+Merge happens by default when all of these allow it:
+
+- local checks and required CI pass;
+- the PR is mergeable;
+- branch policy allows merge;
+- the Spiral Validator-Critic or final review verdict is `READY_FOR_MERGE` or `READY_WITH_NOTES`;
+- project safety rules do not require an owner decision.
+
+Stop before merge only when:
+
+- the user explicitly requested PR-only, review-only, draft-only, or no-deploy mode;
+- checks, CI, mergeability, or branch protection prevent merge;
+- required human review is missing;
+- project-specific safety rules require an owner decision.
+
+Merge alone is not `STATUS: SUCCESS`; deployment and live proof still follow per the project adapter.
+
 Ask or stop with `STATUS: BLOCKED` only when there is a real external blocker: missing permission, required human review, failed checks, finance-risk, missing secret/env, deployment access missing, or unsafe/destructive action required.
 
 ## Spiral Validator-Critic Loop
