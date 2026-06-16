@@ -101,18 +101,41 @@
     });
   }
 
+  function getPeriodBalanceRows(reconciliation) {
+    const source = reconciliation?.period_balance_reconciliation || reconciliation || {};
+    return Array.isArray(source.by_channel_currency) ? source.by_channel_currency : [];
+  }
+
+  function getPeriodRowChannel(row) {
+    return String(firstDefined(row, CHANNEL_FIELDS) || "").trim();
+  }
+
+  function getPeriodRowCurrency(row) {
+    return String(firstDefined(row, CURRENCY_FIELDS) || "").trim().toUpperCase();
+  }
+
   function buildVisibleUsdRowsFromPeriodReconciliation(reconciliation) {
-    const rows = sortDisplayRows(reconciliation?.by_channel_currency || [])
-      .filter((row) => row?.channel && row.channel !== "ВСЕГО USD")
-      .map((row) => ({
-        sort_channel: row.channel || "",
-        channel: `${row.channel || ""}${row.currency ? ` ${row.currency}` : ""}`.trim(),
-        openingUsd: parseNumber(row.opening_usd),
-        closingUsd: parseNumber(row.confirmed_end_usd),
-        movementUsd: parseNumber(row.movement_usd),
-        fxMissing: parseNumber(row.opening_usd) === null && parseNumber(row.confirmed_end_usd) === null && parseNumber(row.movement_usd) === null,
-        fx_warnings: Array.isArray(row.fx_warnings) ? row.fx_warnings : [],
-      }));
+    const rows = sortDisplayRows(getPeriodBalanceRows(reconciliation))
+      .map((row) => {
+        const channel = getPeriodRowChannel(row);
+        const currency = getPeriodRowCurrency(row);
+        return { row, channel, currency };
+      })
+      .filter(({ channel }) => channel && channel !== "ВСЕГО USD")
+      .map(({ row, channel, currency }) => {
+        const openingUsd = parseNumber(row.opening_usd);
+        const closingUsd = parseNumber(row.confirmed_end_usd);
+        const movementUsd = parseNumber(row.movement_usd);
+        return {
+          sort_channel: channel,
+          channel: `${channel}${currency ? ` ${currency}` : ""}`.trim(),
+          openingUsd,
+          closingUsd,
+          movementUsd,
+          fxMissing: openingUsd === null && closingUsd === null && movementUsd === null,
+          fx_warnings: Array.isArray(row.fx_warnings) ? row.fx_warnings : [],
+        };
+      });
     return rows;
   }
 
@@ -442,13 +465,27 @@
   async function fetchPeriodBalanceReconciliation() {
     if (typeof root.fetch !== "function") return null;
     const url = buildPeriodBalanceReconciliationUrl();
-    const response = await root.fetch(url.toString(), { cache: "no-store" });
+    url.searchParams.set("_ts", String(Date.now()));
+    const periodReconciliationUrl = url.toString();
+    const response = await root.fetch(periodReconciliationUrl, { cache: "no-store" });
+    const contentType = response?.headers?.get?.("content-type") || response?.headers?.get?.("Content-Type") || "";
     if (!response?.ok) throw new Error(`period balance reconciliation returned ${response?.status || "unknown status"}`);
     const payload = await response.json();
     const reconciliation = payload?.period_balance_reconciliation || payload || null;
-    if (!Array.isArray(reconciliation?.by_channel_currency)) {
-      throw new Error(`period balance reconciliation payload has no by_channel_currency rows (${url.toString()})`);
+    const rawRows = getPeriodBalanceRows(reconciliation);
+    root.console?.info?.("[remainders-summary-popup] period reconciliation fetch", {
+      periodReconciliationUrl,
+      status: response?.status || null,
+      contentType,
+      payloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : [],
+      hasPeriodBalanceReconciliation: Boolean(payload?.period_balance_reconciliation),
+      rawByChannelCurrencyLength: rawRows.length,
+      firstByChannelCurrencyRow: rawRows[0] ? JSON.stringify(rawRows[0]).slice(0, 500) : null,
+    });
+    if (!Array.isArray(rawRows)) {
+      throw new Error(`period balance reconciliation payload has no by_channel_currency rows (${periodReconciliationUrl})`);
     }
+    if (reconciliation && typeof reconciliation === "object") reconciliation.__periodReconciliationUrl = periodReconciliationUrl;
     return reconciliation;
   }
 
@@ -497,13 +534,13 @@
       periodReconciliationError = String(error?.message || error) || "unknown error";
       return null;
     });
-    const periodMovementRows = periodReconciliation?.by_channel_currency || [];
+    const periodMovementRows = getPeriodBalanceRows(periodReconciliation);
     const periodExtras = {
       selectedDateSnapshot,
       periodReconciliation,
       periodMovementRows,
       periodReconciliationError,
-      periodReconciliationUrl: buildPeriodBalanceReconciliationUrl().toString(),
+      periodReconciliationUrl: periodReconciliation?.__periodReconciliationUrl || buildPeriodBalanceReconciliationUrl().toString(),
     };
     if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
       return { ...current, ...periodExtras };
@@ -879,7 +916,8 @@
     const selectedDateTotals = buildVisibleUsdTotalFromSelectedDateSnapshot(summary.selectedDateSnapshot);
     const fallbackRows = summary.rows || [];
     const primaryRows = periodRows;
-    const allPeriodRowsWereFxMissing = Boolean(summary.periodReconciliation?.by_channel_currency?.length) &&
+    const rawPeriodRows = getPeriodBalanceRows(summary.periodReconciliation);
+    const allPeriodRowsWereFxMissing = Boolean(rawPeriodRows.length) &&
       periodInputRows.length > 0 &&
       periodInputRows.every((row) => row.fxMissing);
     const localFxMissingRows = !periodRows.length
@@ -922,13 +960,32 @@
     }
     section.appendChild(badge);
 
+    const countDiagnostics = doc.createElement("div");
+    countDiagnostics.className = "balance-summary-diagnostics remainders-period-row-diagnostics";
+    countDiagnostics.textContent = `period rows raw=${rawPeriodRows.length}, rendered=${periodRows.length}, fallback=${fallbackRows.length}`;
+    section.appendChild(countDiagnostics);
+    root.console?.info?.("[remainders-summary-popup] period reconciliation render", {
+      rawPeriodRowsLength: rawPeriodRows.length,
+      periodRowsLength: periodRows.length,
+      fallbackRowsLength: fallbackRows.length,
+    });
+
+    if (rawPeriodRows.length > 0 && periodRows.length === 0) {
+      const mappingError = doc.createElement("div");
+      mappingError.className = "balance-summary-diagnostics needs-verification";
+      mappingError.textContent = `UI mapping error: period rows exist but were filtered out; period rows raw=${rawPeriodRows.length}, rendered=0`;
+      section.appendChild(mappingError);
+    }
+
     if (!usingPeriodRows) {
       const note = doc.createElement("div");
       note.className = "balance-summary-diagnostics needs-verification";
       const apiUrl = summary.periodReconciliationUrl ? ` API: ${summary.periodReconciliationUrl}` : "";
       note.textContent = periodFetchFailed
         ? `Остатки не загружены из period-balance-reconciliation. Старый fallback скрыт, потому что он не является source of truth.${apiUrl}`
-        : `period-balance-reconciliation вернул 0 строк. Старый fallback скрыт из основной таблицы; он доступен только в диагностике.${apiUrl}`;
+        : (rawPeriodRows.length > 0
+          ? `UI mapping error: period rows exist but were filtered out; period rows raw=${rawPeriodRows.length}, rendered=0.${apiUrl}`
+          : `period-balance-reconciliation вернул 0 строк. Старый fallback скрыт из основной таблицы; он доступен только в диагностике.${apiUrl}`);
       section.appendChild(note);
     }
 
@@ -1334,6 +1391,8 @@
     buildRemaindersSummary,
     buildLiveRemaindersSummary,
     buildPeriodBalanceChangeRows,
+    buildVisibleUsdRowsFromPeriodReconciliation,
+    buildPeriodBalanceReconciliationUrl,
     getSnapshotAmount,
     runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
