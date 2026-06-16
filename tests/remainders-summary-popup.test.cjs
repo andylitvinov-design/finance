@@ -373,7 +373,7 @@ test("buildLiveRemaindersSummary fetches selected-date balance snapshots for ÐžÑ
     /\/api\/balance-snapshots\?from=2026-05-01&to=2026-05-17$/.test(url)
   ));
   assert.ok(requestedUrls.some((url) =>
-    /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-17$/.test(url)
+    /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-17&_ts=\d+$/.test(url)
   ));
   resetRemaindersModule();
   delete global.location;
@@ -422,7 +422,7 @@ test("buildLiveRemaindersSummary accepts live period reconciliation envelope and
 
   assert.equal(summary.periodReconciliation.by_channel_currency.length, 2);
   assert.equal(summary.periodMovementRows.length, 2);
-  assert.match(summary.periodReconciliationUrl, /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-31$/);
+  assert.match(summary.periodReconciliationUrl, /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-31&_ts=\d+$/);
   resetRemaindersModule();
   delete global.location;
   delete global.fetch;
@@ -1920,6 +1920,108 @@ test("issue#552: period rows render with currency suffix and a period source bad
   assert.ok(badge, "source badge must be present");
   assert.match(badge.textContent, /source: period-balance-reconciliation/);
   assert.ok(!badge.className.includes("needs-verification"), "period badge must not be flagged needs-verification");
+  assert.match(collectText(block), /period rows raw=2, rendered=2/);
+  resetRemaindersModule();
+});
+
+test("issue#552: period payload with 36 by_channel_currency rows renders 36 default table rows", () => {
+  const api = loadApi();
+  const rows = Array.from({ length: 36 }, (_, index) => ({
+    channel: `channel ${index + 1}`,
+    currency: "USD",
+    opening_usd: index + 1,
+    confirmed_end_usd: index + 2,
+    movement_usd: 1,
+  }));
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: { by_channel_currency: rows },
+  }, makeMockDocument());
+  const bodyRows = tableRows(firstVisibleTable(block)).filter((row) => /^channel \d+ USD$/.test(row[0]));
+  assert.equal(bodyRows.length, 36);
+  assert.match(collectText(block), /period rows raw=36, rendered=36/);
+  resetRemaindersModule();
+});
+
+test("issue#552: period rows with channel aliases render instead of being filtered", () => {
+  const api = loadApi();
+  const rendered = api.buildVisibleUsdRowsFromPeriodReconciliation({
+    by_channel_currency: [
+      { account: "Wise account", currency: "USD", opening_usd: 1, confirmed_end_usd: 2, movement_usd: 1 },
+      { wallet: "Binance wallet", currency: "USDT", opening_usd: 3, confirmed_end_usd: 4, movement_usd: 1 },
+      { payment_channel: "PayPal", currency: "EUR", opening_usd: 5, confirmed_end_usd: 6, movement_usd: 1 },
+      { paymentChannel: "Mono", currency: "UAH", opening_usd: 7, confirmed_end_usd: 8, movement_usd: 1 },
+    ],
+  });
+  const channelNames = rendered.map((row) => row.channel);
+  assert.ok(channelNames.includes("Wise account USD"));
+  assert.ok(channelNames.includes("Binance wallet USDT"));
+  assert.ok(channelNames.includes("PayPal EUR"));
+  assert.ok(channelNames.includes("Mono UAH"));
+  resetRemaindersModule();
+});
+
+test("issue#552: period rows with currency aliases render currency suffixes", () => {
+  const api = loadApi();
+  const rendered = api.buildVisibleUsdRowsFromPeriodReconciliation({
+    by_channel_currency: [
+      { channel: "Wise", account_currency: "USD", opening_usd: 1, confirmed_end_usd: 2, movement_usd: 1 },
+      { channel: "Bank", balance_currency: "CAD", opening_usd: 3, confirmed_end_usd: 4, movement_usd: 1 },
+    ],
+  });
+  const channelNames = rendered.map((row) => row.channel);
+  assert.ok(channelNames.includes("Wise USD"));
+  assert.ok(channelNames.includes("Bank CAD"));
+  resetRemaindersModule();
+});
+
+test("issue#552: raw rows greater than rendered rows shows mapping error", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [
+        { label: "row without channel aliases", opening_usd: 1, confirmed_end_usd: 2, movement_usd: 1 },
+      ],
+    },
+  }, makeMockDocument());
+  assert.match(collectText(block), /UI mapping error: period rows exist but were filtered out/);
+  assert.match(collectText(block), /period rows raw=1, rendered=0/);
+  resetRemaindersModule();
+});
+
+test("issue#552: selected-date snapshot rows do not force period rows to zero", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    selectedDateSnapshot: {
+      selected_date_rows: Array.from({ length: 9 }, (_, index) => ({ channel: `snapshot ${index}` })),
+    },
+    periodReconciliation: {
+      by_channel_currency: Array.from({ length: 23 }, (_, index) => ({
+        channel: `period ${index}`,
+        currency: "USD",
+        opening_usd: 1,
+        confirmed_end_usd: 2,
+        movement_usd: 1,
+      })),
+    },
+  }, makeMockDocument());
+  const bodyRows = tableRows(firstVisibleTable(block)).filter((row) => /^period \d+ USD$/.test(row[0]));
+  assert.equal(bodyRows.length, 23);
+  assert.match(collectText(block), /period rows raw=23, rendered=23/);
   resetRemaindersModule();
 });
 
