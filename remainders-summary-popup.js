@@ -441,10 +441,15 @@
 
   async function fetchPeriodBalanceReconciliation() {
     if (typeof root.fetch !== "function") return null;
-    const response = await root.fetch(buildPeriodBalanceReconciliationUrl().toString(), { cache: "no-store" });
+    const url = buildPeriodBalanceReconciliationUrl();
+    const response = await root.fetch(url.toString(), { cache: "no-store" });
     if (!response?.ok) throw new Error(`period balance reconciliation returned ${response?.status || "unknown status"}`);
     const payload = await response.json();
-    return payload?.period_balance_reconciliation || null;
+    const reconciliation = payload?.period_balance_reconciliation || payload || null;
+    if (!Array.isArray(reconciliation?.by_channel_currency)) {
+      throw new Error(`period balance reconciliation payload has no by_channel_currency rows (${url.toString()})`);
+    }
+    return reconciliation;
   }
 
   async function readJsonResponse(response, label) {
@@ -493,7 +498,13 @@
       return null;
     });
     const periodMovementRows = periodReconciliation?.by_channel_currency || [];
-    const periodExtras = { selectedDateSnapshot, periodReconciliation, periodMovementRows, periodReconciliationError };
+    const periodExtras = {
+      selectedDateSnapshot,
+      periodReconciliation,
+      periodMovementRows,
+      periodReconciliationError,
+      periodReconciliationUrl: buildPeriodBalanceReconciliationUrl().toString(),
+    };
     if (/remainders_?rows/i.test(current.source || "") && current.rows.length) {
       return { ...current, ...periodExtras };
     }
@@ -867,7 +878,7 @@
     const periodTotals = buildVisibleUsdTotalFromPeriodReconciliation(summary.periodReconciliation);
     const selectedDateTotals = buildVisibleUsdTotalFromSelectedDateSnapshot(summary.selectedDateSnapshot);
     const fallbackRows = summary.rows || [];
-    const primaryRows = periodRows.length ? periodRows : fallbackRows;
+    const primaryRows = periodRows;
     const allPeriodRowsWereFxMissing = Boolean(summary.periodReconciliation?.by_channel_currency?.length) &&
       periodInputRows.length > 0 &&
       periodInputRows.every((row) => row.fxMissing);
@@ -883,7 +894,7 @@
       : (hasNonZeroConfirmedTotal(selectedDateTotals) ? selectedDateTotals : null);
     const totals = allPrimaryRowsWereFxMissing
       ? (fallbackTotals ? { ...fallbackTotals, fxMissingCount } : null)
-      : (periodTotals || buildVisibleUsdTotals(rows));
+      : (periodTotals || (periodRows.length ? buildVisibleUsdTotals(rows) : null));
     const diagnostics = buildUsdTableDiagnostics({ summary, rows, allPrimaryRowsWereFxMissing, localFxMissingRows });
     const section = doc.createElement("section");
     section.className = "remainders-usd-balances";
@@ -905,11 +916,21 @@
       badge.textContent = `Period balance reconciliation failed: ${summary.periodReconciliationError}`;
     } else if (usingFallbackRows) {
       badge.className += " needs-verification";
-      badge.textContent = "source: legacy fallback / needs verification — Legacy fallback — not reliable for USD totals";
+      badge.textContent = "source: period-balance-reconciliation unavailable — legacy fallback hidden from main table";
     } else {
       badge.textContent = "source: period-balance-reconciliation";
     }
     section.appendChild(badge);
+
+    if (!usingPeriodRows) {
+      const note = doc.createElement("div");
+      note.className = "balance-summary-diagnostics needs-verification";
+      const apiUrl = summary.periodReconciliationUrl ? ` API: ${summary.periodReconciliationUrl}` : "";
+      note.textContent = periodFetchFailed
+        ? `Остатки не загружены из period-balance-reconciliation. Старый fallback скрыт, потому что он не является source of truth.${apiUrl}`
+        : `period-balance-reconciliation вернул 0 строк. Старый fallback скрыт из основной таблицы; он доступен только в диагностике.${apiUrl}`;
+      section.appendChild(note);
+    }
 
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap remainders-summary-table-wrap";

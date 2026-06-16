@@ -380,6 +380,54 @@ test("buildLiveRemaindersSummary fetches selected-date balance snapshots for О�
   delete global.fetch;
 });
 
+test("buildLiveRemaindersSummary accepts live period reconciliation envelope and exposes rows", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument({ from: "2026-05-01", to: "2026-05-31" });
+  global.fetch = async (url) => {
+    if (/\/api\/period-balance-reconciliation/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            ok: true,
+            period_balance_reconciliation: {
+              by_channel_currency: [
+                { channel: "БАНК КАНАДА cad", currency: "CAD", opening_usd: 7351, confirmed_end_usd: 7798, movement_usd: 0 },
+                { channel: "пейпал дол", currency: "USD", opening_usd: 100, confirmed_end_usd: 90, movement_usd: -10 },
+              ],
+              total_usd_row: { label: "ВСЕГО USD (partial)", confirmed_end_usd: 7888 },
+            },
+          };
+        },
+      };
+    }
+    if (/\/api\/balance-snapshots/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return { balance_snapshots: { selected_date_rows: [] } };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  const summary = await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.equal(summary.periodReconciliation.by_channel_currency.length, 2);
+  assert.equal(summary.periodMovementRows.length, 2);
+  assert.match(summary.periodReconciliationUrl, /\/api\/period-balance-reconciliation\?from=2026-05-01&to=2026-05-31$/);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("remainders popup renders one default USD table by channel", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
@@ -411,6 +459,12 @@ test("remainders popup renders one default USD table by channel", () => {
         { date: "2026-05-17", channel: "БАНК КАНАДА cad", currency: "CAD", amount: 7351 },
       ],
       selected_date_diagnostics: [],
+    },
+    periodReconciliation: {
+      by_channel_currency: [
+        { channel: "Wise", currency: "USD", opening_usd: 100, confirmed_end_usd: 125, movement_usd: 20 },
+        { channel: "Wise", currency: "EUR", opening_usd: 200, confirmed_end_usd: 160, movement_usd: -30 },
+      ],
     },
   }, makeMockDocument());
   const table = firstVisibleTable(block);
@@ -486,6 +540,11 @@ test("remainders popup keeps native snapshot and period diagnostics collapsed", 
       { channel: "Wise EUR", currency: "EUR", real_delta: -10 },
       { channel: "Only movement", currency: "USD", real_delta: 7 },
     ],
+    periodReconciliation: {
+      by_channel_currency: [
+        { channel: "Diagnostic row", currency: "USD", opening_usd: 100, confirmed_end_usd: 125, movement_usd: 20 },
+      ],
+    },
   }, makeMockDocument());
   const visibleText = collectText(firstVisibleTable(block));
   const diagnostics = block.children.find((child) => child.tag === "details");
@@ -678,11 +737,26 @@ test("remainders default USD table renders fx_missing and excludes missing rows 
       ],
     },
   });
+  summary.periodReconciliation = {
+    by_channel_currency: [
+      { channel: "Complete", currency: "USD", opening_usd: 10, confirmed_end_usd: 15, movement_usd: 3 },
+      { channel: "Missing FX", currency: "CAD", opening_usd: null, confirmed_end_usd: 20, movement_usd: 4, fx_warnings: ["opening_usd_fx_missing"] },
+    ],
+    total_usd_row: {
+      label: "ВСЕГО USD",
+      opening_usd: 10,
+      confirmed_end_usd: 15,
+      change_usd: 5,
+      movement_usd: 3,
+      diff_usd: 2,
+      excluded_fx_missing_rows: 1,
+    },
+  };
   const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
   const rows = tableRows(firstVisibleTable(block));
 
-  assert.deepEqual(rows.find((row) => row[0] === "Missing FX"), [
-    "Missing FX",
+  assert.deepEqual(rows.find((row) => row[0] === "Missing FX CAD"), [
+    "Missing FX CAD",
     "fx_missing",
     "20,0000",
     "fx_missing",
@@ -1867,10 +1941,14 @@ test("issue#552: failed period fetch shows error badge, not silent legacy table"
   assert.ok(badge, "source badge must be present");
   assert.match(badge.textContent, /Period balance reconciliation failed: period balance reconciliation returned 500/);
   assert.ok(badge.className.includes("needs-verification"), "failed-fetch badge must be flagged needs-verification");
+  const channelNames = tableRows(firstVisibleTable(block)).map((r) => r[0]);
+  assert.ok(!channelNames.includes("Яндекс руб"), "legacy fallback row must not be visible in the main table");
+  assert.ok(!channelNames.includes("пейпал дол"), "legacy fallback row must not be visible in the main table");
+  assert.match(collectText(block), /Старый fallback скрыт/);
   resetRemaindersModule();
 });
 
-test("issue#552: empty period rows with legacy fallback are explicitly labeled legacy fallback", () => {
+test("issue#552: empty period rows with legacy fallback hide fallback from the main table", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
     rows: [
@@ -1884,9 +1962,11 @@ test("issue#552: empty period rows with legacy fallback are explicitly labeled l
   }, makeMockDocument());
   const badge = findSourceBadge(block);
   assert.ok(badge, "source badge must be present");
-  assert.match(badge.textContent, /legacy fallback/i);
-  assert.match(badge.textContent, /not reliable for USD totals/i);
+  assert.match(badge.textContent, /period-balance-reconciliation unavailable/i);
+  assert.match(badge.textContent, /legacy fallback hidden/i);
   assert.ok(badge.className.includes("needs-verification"), "fallback badge must be flagged needs-verification");
+  const channelNames = tableRows(firstVisibleTable(block)).map((r) => r[0]);
+  assert.ok(!channelNames.includes("Яндекс руб"), "legacy fallback row must not be visible in the main table");
   resetRemaindersModule();
 });
 
@@ -1909,5 +1989,9 @@ test("issue#552 screenshot repro: all-fx_missing legacy rows are not presented a
   const badge = findSourceBadge(block);
   assert.ok(badge && badge.className.includes("needs-verification"), "screenshot case must surface a needs-verification badge");
   assert.match(badge.textContent, /failed/i);
+  const channelNames = tableRows(firstVisibleTable(block)).map((r) => r[0]);
+  for (const channel of legacyChannels) {
+    assert.ok(!channelNames.includes(channel), `${channel} legacy row must not be visible in the main table`);
+  }
   resetRemaindersModule();
 });
