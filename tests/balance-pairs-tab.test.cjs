@@ -112,7 +112,15 @@ function buildBalancePairRows(count) {
   }));
 }
 
-function setupBalancePairsHarness({ payload, from = "2026-04-01", to = "2026-04-30" }) {
+function setupBalancePairsHarness({
+  payload,
+  body,
+  statusCode = 200,
+  ok = statusCode >= 200 && statusCode < 300,
+  contentType = "application/json; charset=utf-8",
+  from = "2026-04-01",
+  to = "2026-04-30",
+}) {
   resetModule();
   const content = new TestElement("div");
   const status = new TestElement("div");
@@ -134,10 +142,15 @@ function setupBalancePairsHarness({ payload, from = "2026-04-01", to = "2026-04-
   global.fetch = async (url) => {
     assert.match(String(url), new RegExp(`/api/balance-pairs\\?from=${from}&to=${to}`));
     return {
-      ok: true,
-      status: 200,
-      async json() {
-        return payload;
+      ok,
+      status: statusCode,
+      headers: {
+        get(name) {
+          return String(name).toLowerCase() === "content-type" ? contentType : "";
+        },
+      },
+      async text() {
+        return body ?? JSON.stringify(payload);
       },
     };
   };
@@ -175,37 +188,44 @@ test("balance pairs tab renders summary, all rows, and exact cell reasons", asyn
   };
   global.fetch = async (url) => {
     assert.match(String(url), /\/api\/balance-pairs\?from=2026-06-01&to=2026-06-16/);
+    const payload = {
+      ok: true,
+      period: { from: "2026-06-01", to: "2026-06-16" },
+      summary: {
+        expected_rows: 2,
+        found_start_rows: 1,
+        found_end_rows: 1,
+        missing_start_rows: 1,
+        missing_end_rows: 1,
+        usd_complete_start: 1,
+        usd_complete_end: 0,
+        fx_missing: 1,
+      },
+      rows: [
+        {
+          channel: "пейпал дол",
+          currency: "USD",
+          start: { amount: 35.3, rate_to_usd: 1, amount_usd: 35.3, status: "ok", snapshot_date: "2026-06-01" },
+          end: { status: "missing_snapshot", message: "missing snapshot" },
+        },
+        {
+          channel: "Яндекс руб",
+          currency: "RUB",
+          start: { status: "missing_snapshot", message: "missing snapshot" },
+          end: { amount: 993.15, status: "missing_fx", message: "missing FX RUB 2026-06-16", snapshot_date: "2026-06-16" },
+        },
+      ],
+    };
     return {
       ok: true,
-      async json() {
-        return {
-          ok: true,
-          period: { from: "2026-06-01", to: "2026-06-16" },
-          summary: {
-            expected_rows: 2,
-            found_start_rows: 1,
-            found_end_rows: 1,
-            missing_start_rows: 1,
-            missing_end_rows: 1,
-            usd_complete_start: 1,
-            usd_complete_end: 0,
-            fx_missing: 1,
-          },
-          rows: [
-            {
-              channel: "пейпал дол",
-              currency: "USD",
-              start: { amount: 35.3, rate_to_usd: 1, amount_usd: 35.3, status: "ok", snapshot_date: "2026-06-01" },
-              end: { status: "missing_snapshot", message: "missing snapshot" },
-            },
-            {
-              channel: "Яндекс руб",
-              currency: "RUB",
-              start: { status: "missing_snapshot", message: "missing snapshot" },
-              end: { amount: 993.15, status: "missing_fx", message: "missing FX RUB 2026-06-16", snapshot_date: "2026-06-16" },
-            },
-          ],
-        };
+      status: 200,
+      headers: {
+        get(name) {
+          return String(name).toLowerCase() === "content-type" ? "application/json; charset=utf-8" : "";
+        },
+      },
+      async text() {
+        return JSON.stringify(payload);
       },
     };
   };
@@ -251,8 +271,12 @@ test("HTTP 200 with 37 rows renders diagnostics, summary, and table", async () =
 
   const text = collectText(content);
   assert.match(status.textContent, /balance-pairs HTTP 200 · rows 37 · summary yes/);
+  assert.match(text, /url: \/api\/balance-pairs\?from=2026-04-01&to=2026-04-30/);
+  assert.match(text, /status: 200/);
+  assert.match(text, /content-type: application\/json; charset=utf-8/);
   assert.match(text, /rows: 37/);
   assert.match(text, /summary: yes/);
+  assert.match(text, /payload keys: ok, period, summary, rows/);
   assert.match(text, /Ожидаемых строк: 37/);
   assert.match(text, /Канал/);
   assert.match(text, /Валюта/);
@@ -268,7 +292,47 @@ test("HTTP 200 with 37 rows renders diagnostics, summary, and table", async () =
   resetModule();
 });
 
-test("HTTP 200 with payload.rows missing shows payload-shape error", async () => {
+test("HTTP 200 empty body shows body diagnostics instead of generic HTTP 200", async () => {
+  const { api, content, status } = setupBalancePairsHarness({ body: "" });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows missing · summary no/);
+  assert.match(text, /url: \/api\/balance-pairs\?from=2026-04-01&to=2026-04-30/);
+  assert.match(text, /status: 200/);
+  assert.match(text, /content-type: application\/json; charset=utf-8/);
+  assert.match(text, /rows: missing/);
+  assert.match(text, /summary: no/);
+  assert.match(text, /payload keys: none/);
+  assert.match(text, /body excerpt:/);
+  assert.match(text, /render error: balance-pairs empty payload/);
+  assert.notEqual(status.textContent, "balance-pairs HTTP 200");
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("HTTP 200 HTML body shows content-type, parse error, and body excerpt", async () => {
+  const body = "<!doctype html><html><body>Not JSON from edge</body></html>";
+  const { api, content, status } = setupBalancePairsHarness({
+    body,
+    contentType: "text/html; charset=utf-8",
+  });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows missing · summary no/);
+  assert.match(text, /content-type: text\/html; charset=utf-8/);
+  assert.match(text, /parse error:/);
+  assert.match(text, /body excerpt: <!doctype html><html><body>Not JSON from edge/);
+  assert.match(text, /render error: balance-pairs parse error:/);
+  assert.notEqual(status.textContent, "balance-pairs HTTP 200");
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("HTTP 200 with payload.rows missing shows payload-shape diagnostics", async () => {
   const payload = {
     ok: true,
     period: { from: "2026-04-01", to: "2026-04-30" },
@@ -280,33 +344,47 @@ test("HTTP 200 with payload.rows missing shows payload-shape error", async () =>
   await api.loadBalancePairsTabContent(content, status);
 
   const text = collectText(content);
-  assert.match(status.textContent, /balance-pairs HTTP 200 · payload shape error/);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows missing · summary yes/);
   assert.match(text, /rows: missing/);
   assert.match(text, /summary: yes/);
   assert.match(text, /payload keys: ok, period, summary, balance_pairs/);
-  assert.match(text, /render error: payload\.rows missing/);
+  assert.match(text, /body excerpt: .*"balance_pairs"/);
+  assert.match(text, /render error: balance-pairs payload\.rows missing/);
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("HTTP 500 JSON error shows status and payload error", async () => {
+  const payload = { ok: false, error: "backend exploded" };
+  const { api, content, status } = setupBalancePairsHarness({ payload, statusCode: 500 });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 500 · rows missing · summary no/);
+  assert.match(text, /status: 500/);
+  assert.match(text, /content-type: application\/json; charset=utf-8/);
+  assert.match(text, /payload keys: ok, error/);
+  assert.match(text, /payload error: backend exploded/);
+  assert.match(text, /body excerpt: \{"ok":false,"error":"backend exploded"\}/);
+  assert.match(text, /render error: backend exploded/);
   assert.equal(content.querySelector(".balance-pairs-content"), null);
   resetModule();
 });
 
 test("HTTP 200 with render exception shows render error", async () => {
-  const badRow = {
-    currency: "USD",
-    start: { status: "ok", amount: 1, rate_to_usd: 1, amount_usd: 1 },
-    end: { status: "ok", amount: 2, rate_to_usd: 1, amount_usd: 2 },
-  };
-  Object.defineProperty(badRow, "channel", {
-    get() {
-      throw new Error("row channel exploded");
-    },
-  });
   const payload = {
     ok: true,
     period: { from: "2026-04-01", to: "2026-04-30" },
     summary: { expected_rows: 1 },
-    rows: [badRow],
+    rows: buildBalancePairRows(1),
   };
   const { api, content, status } = setupBalancePairsHarness({ payload });
+  const createElement = global.document.createElement;
+  global.document.createElement = (tag) => {
+    if (tag === "table") throw new Error("table render exploded");
+    return createElement(tag);
+  };
 
   await api.loadBalancePairsTabContent(content, status);
 
@@ -314,7 +392,7 @@ test("HTTP 200 with render exception shows render error", async () => {
   assert.match(status.textContent, /balance-pairs HTTP 200 · rows 1 · render error/);
   assert.match(text, /rows: 1/);
   assert.match(text, /summary: yes/);
-  assert.match(text, /render error: row channel exploded/);
+  assert.match(text, /render error: table render exploded/);
   assert.equal(content.querySelector(".balance-pairs-content"), null);
   resetModule();
 });
@@ -386,22 +464,29 @@ test("balance pairs tab keeps its table body and excludes services-me block", as
   global.MutationObserver = class {
     observe() {}
   };
+  const payload = {
+    ok: true,
+    period: { from: "2026-06-01", to: "2026-06-17" },
+    summary: { expected_rows: 1 },
+    rows: [
+      {
+        channel: "пейпал дол",
+        currency: "USD",
+        start: { status: "ok", amount: 25, rate_to_usd: 1, amount_usd: 25 },
+        end: { status: "ok", amount: 40, rate_to_usd: 1, amount_usd: 40 },
+      },
+    ],
+  };
   global.fetch = async () => ({
     ok: true,
-    async json() {
-      return {
-        ok: true,
-        period: { from: "2026-06-01", to: "2026-06-17" },
-        summary: { expected_rows: 1 },
-        rows: [
-          {
-            channel: "пейпал дол",
-            currency: "USD",
-            start: { status: "ok", amount: 25, rate_to_usd: 1, amount_usd: 25 },
-            end: { status: "ok", amount: 40, rate_to_usd: 1, amount_usd: 40 },
-          },
-        ],
-      };
+    status: 200,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type" ? "application/json; charset=utf-8" : "";
+      },
+    },
+    async text() {
+      return JSON.stringify(payload);
     },
   });
 
