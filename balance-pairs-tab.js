@@ -225,6 +225,7 @@
     if (Array.isArray(payload.warnings) && payload.warnings.length) {
       shell.appendChild(renderWarnings(payload.warnings));
     }
+    shell.appendChild(renderMissingSnapshotDiagnostics(payload));
     shell.appendChild(renderTable(rows));
     return shell;
   }
@@ -240,6 +241,69 @@
       wrap.appendChild(item);
     });
     return wrap;
+  }
+
+  function renderMissingSnapshotDiagnostics(payload = {}) {
+    const rows = Array.isArray(payload?.diagnostics?.missing_snapshot_rows)
+      ? payload.diagnostics.missing_snapshot_rows
+      : [];
+    const doc = root.document;
+    const wrap = doc.createElement("div");
+    wrap.className = "balance-pairs-missing-snapshots";
+    if (!rows.length) return wrap;
+
+    const title = doc.createElement("div");
+    title.className = "balance-pairs-diagnostic-title";
+    title.textContent = `Missing snapshots: ${rows.length}`;
+    wrap.appendChild(title);
+
+    const table = doc.createElement("table");
+    const tbody = doc.createElement("tbody");
+    const header = doc.createElement("tr");
+    ["channel", "currency", "missing start", "missing end", "reason"].forEach((label) => {
+      const th = doc.createElement("th");
+      th.textContent = label;
+      header.appendChild(th);
+    });
+    tbody.appendChild(header);
+    rows.forEach((row) => {
+      const tr = doc.createElement("tr");
+      [
+        row.channel || "-",
+        row.currency || "-",
+        row.missing_start ? "yes" : "no",
+        row.missing_end ? "yes" : "no",
+        row.reason || "-",
+      ].forEach((value) => {
+        const td = doc.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const copyable = String(payload?.diagnostics?.copyable_missing_snapshot_rows || "").trim();
+    if (copyable) {
+      const textarea = doc.createElement("textarea");
+      textarea.className = "balance-pairs-missing-export";
+      textarea.value = copyable;
+      textarea.textContent = copyable;
+      wrap.appendChild(textarea);
+      const button = doc.createElement("button");
+      button.type = "button";
+      button.textContent = "Copy missing rows";
+      button.addEventListener("click", () => copyText(copyable));
+      wrap.appendChild(button);
+    }
+    return wrap;
+  }
+
+  function copyText(text) {
+    const clipboard = root.navigator?.clipboard;
+    if (clipboard?.writeText) return clipboard.writeText(text).catch(() => null);
+    return null;
   }
 
   function renderSummary(payload) {
@@ -281,7 +345,7 @@
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
     const header = doc.createElement("tr");
-    ["Канал", "Валюта", "Остатки вал1", "Курс1", "Остатки usd1", "Остатки вал2", "Курс2", "Остатки usd2"].forEach((label) => {
+    ["Канал", "Валюта", "Остатки вал1", "Курс1", "Остатки usd1", "source1", "sourceRow1", "Остатки вал2", "Курс2", "Остатки usd2", "source2", "sourceRow2"].forEach((label) => {
       const th = doc.createElement("th");
       th.textContent = label;
       header.appendChild(th);
@@ -295,9 +359,13 @@
         formatNativeCell(row.start),
         formatRateCell(row.start),
         formatUsdCell(row.start),
+        formatSourceCell(row.start),
+        formatSourceRowCell(row.start),
         formatNativeCell(row.end),
         formatRateCell(row.end),
         formatUsdCell(row.end),
+        formatSourceCell(row.end),
+        formatSourceRowCell(row.end),
       ].forEach((value) => {
         const td = doc.createElement("td");
         td.textContent = value;
@@ -331,6 +399,14 @@
   function appendSnapshotNote(value, side = {}) {
     if (side.snapshot_status === "latest_before" && side.snapshot_date) return `${value} (${side.snapshot_date})`;
     return value;
+  }
+
+  function formatSourceCell(side = {}) {
+    return side.source_note || side.source_sheet || side.source || "-";
+  }
+
+  function formatSourceRowCell(side = {}) {
+    return side.source_row || "-";
   }
 
   function formatAmount(value) {
