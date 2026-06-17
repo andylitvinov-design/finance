@@ -28,13 +28,33 @@
     return String(els[id]?.value || root.document?.getElementById?.(id)?.value || fallback || "").trim();
   }
 
-  async function fetchBalancePairs() {
+  function buildBalancePairsRequestUrl() {
     const from = getDateValue("startDate", "");
     const to = getDateValue("endDate", from);
     const params = new URLSearchParams({ from, to });
-    const response = await root.fetch(`/api/balance-pairs?${params.toString()}`, { cache: "no-store" });
-    const payload = await response.json();
-    if (!response.ok || !payload?.ok) throw new Error(payload?.error || `balance-pairs HTTP ${response.status}`);
+    return `/api/balance-pairs?${params.toString()}`;
+  }
+
+  async function fetchBalancePairs() {
+    const requestUrl = buildBalancePairsRequestUrl();
+    const response = await root.fetch(requestUrl, { cache: "no-store" });
+    const status = response.status || 0;
+    const contentType = response.headers?.get?.("content-type") || "";
+    const responseText = await response.text();
+    let payload = null;
+    let parseError = "";
+    try {
+      payload = responseText ? JSON.parse(responseText) : null;
+    } catch (error) {
+      parseError = error?.message || String(error);
+    }
+    const meta = buildFetchMeta({ requestUrl, status, contentType, responseText, payload, parseError });
+    if (!response.ok) throw createBalancePairsError(payload?.error || `balance-pairs HTTP ${status}`, meta);
+    if (parseError) throw createBalancePairsError(`balance-pairs parse error: ${parseError}`, meta);
+    if (!payload) throw createBalancePairsError("balance-pairs empty payload", meta);
+    if (payload.ok !== true) throw createBalancePairsError(payload?.error || "balance-pairs payload ok=false", meta);
+    if (!Array.isArray(payload.rows)) throw createBalancePairsError("balance-pairs payload.rows missing", meta);
+    payload.__balancePairsMeta = meta;
     return payload;
   }
 
@@ -44,25 +64,27 @@
       status.className = "finance-status";
       status.textContent = "Загружаю Остатки 2...";
     }
-    const payload = await fetchBalancePairs();
-    const rows = Array.isArray(payload?.rows) ? payload.rows : null;
-    const diagnostics = renderDiagnostics({
-      rowsLength: rows ? rows.length : null,
-      summaryPresent: isObject(payload?.summary),
-      payloadKeys: getPayloadKeys(payload),
-    });
+    let payload;
+    try {
+      payload = await fetchBalancePairs();
+    } catch (error) {
+      renderBalancePairsError(container, status, error);
+      return null;
+    }
+    const rows = payload.rows;
+    const diagnostics = renderDiagnostics(payload.__balancePairsMeta || buildFetchMeta({
+      requestUrl: buildBalancePairsRequestUrl(),
+      status: 200,
+      contentType: "",
+      responseText: "",
+      payload,
+      parseError: "",
+    }));
     container.innerHTML = "";
     container.appendChild(diagnostics);
     if (status) {
       status.className = "finance-status";
-      status.textContent = rows
-        ? `balance-pairs HTTP 200 · rows ${rows.length} · summary ${isObject(payload?.summary) ? "yes" : "no"}`
-        : "balance-pairs HTTP 200 · payload shape error";
-    }
-    if (!rows) {
-      appendDiagnosticLine(diagnostics, `payload keys: ${getPayloadKeys(payload).join(", ") || "none"}`, "error");
-      appendDiagnosticLine(diagnostics, "render error: payload.rows missing", "error");
-      return payload;
+      status.textContent = `balance-pairs HTTP ${payload.__balancePairsMeta?.status || 200} · rows ${rows.length} · summary ${isObject(payload?.summary) ? "yes" : "no"}`;
     }
     try {
       container.appendChild(renderBalancePairs(payload, rows));
@@ -74,6 +96,27 @@
       }
     }
     return payload;
+  }
+
+  function buildFetchMeta({ requestUrl, status, contentType, responseText, payload, parseError }) {
+    const rows = Array.isArray(payload?.rows) ? payload.rows : null;
+    return {
+      requestUrl,
+      status,
+      contentType,
+      bodyExcerpt: String(responseText || "").slice(0, 300),
+      parseError,
+      payloadKeys: getPayloadKeys(payload),
+      payloadError: isObject(payload) ? payload.error || "" : "",
+      rowsLength: rows ? rows.length : null,
+      summaryPresent: isObject(payload?.summary),
+    };
+  }
+
+  function createBalancePairsError(message, meta) {
+    const error = new Error(message);
+    error.balancePairsMeta = meta;
+    return error;
   }
 
   function getBalancePairRows(payload) {
@@ -91,14 +134,42 @@
     return isObject(payload) ? Object.keys(payload) : [];
   }
 
-  function renderDiagnostics({ rowsLength, summaryPresent, payloadKeys }) {
+  function renderDiagnostics({ requestUrl, status, contentType, rowsLength, summaryPresent, payloadKeys, bodyExcerpt, parseError, payloadError }) {
     const doc = root.document;
     const wrap = doc.createElement("div");
     wrap.className = "balance-pairs-debug";
+    appendDiagnosticLine(wrap, `url: ${requestUrl || "missing"}`);
+    appendDiagnosticLine(wrap, `status: ${status || "unknown"}`);
+    appendDiagnosticLine(wrap, `content-type: ${contentType || "missing"}`);
     appendDiagnosticLine(wrap, `rows: ${rowsLength === null ? "missing" : rowsLength}`);
     appendDiagnosticLine(wrap, `summary: ${summaryPresent ? "yes" : "no"}`);
-    if (rowsLength === null) appendDiagnosticLine(wrap, `payload keys: ${(payloadKeys || []).join(", ") || "none"}`, "error");
+    appendDiagnosticLine(wrap, `payload keys: ${(payloadKeys || []).join(", ") || "none"}`, rowsLength === null ? "error" : "");
+    if (payloadError) appendDiagnosticLine(wrap, `payload error: ${payloadError}`, "error");
+    if (parseError) appendDiagnosticLine(wrap, `parse error: ${parseError}`, "error");
+    if (rowsLength === null || parseError || payloadError) appendDiagnosticLine(wrap, `body excerpt: ${bodyExcerpt || ""}`, "error");
     return wrap;
+  }
+
+  function renderBalancePairsError(container, status, error) {
+    const meta = error?.balancePairsMeta || {
+      requestUrl: buildBalancePairsRequestUrl(),
+      status: 0,
+      contentType: "",
+      rowsLength: null,
+      summaryPresent: false,
+      payloadKeys: [],
+      bodyExcerpt: "",
+      parseError: "",
+      payloadError: "",
+    };
+    container.innerHTML = "";
+    const diagnostics = renderDiagnostics(meta);
+    appendDiagnosticLine(diagnostics, `render error: ${error?.message || "Не удалось загрузить Остатки 2."}`, "error");
+    container.appendChild(diagnostics);
+    if (status) {
+      status.className = "finance-status error";
+      status.textContent = `balance-pairs HTTP ${meta.status || "unknown"} · rows ${meta.rowsLength === null ? "missing" : meta.rowsLength} · summary ${meta.summaryPresent ? "yes" : "no"}`;
+    }
   }
 
   function appendDiagnosticLine(wrap, text, kind = "") {
@@ -232,12 +303,7 @@
     content.className = "balance-pairs-tab-content";
     shell.appendChild(content);
     loadBalancePairsTabContent(content, status).catch((error) => {
-      status.className = "finance-status error";
-      status.textContent = error?.message || "Не удалось загрузить Остатки 2.";
-      content.innerHTML = "";
-      const diagnostics = renderDiagnostics({ rowsLength: null, summaryPresent: false, payloadKeys: [] });
-      appendDiagnosticLine(diagnostics, `render error: ${error?.message || "Не удалось загрузить Остатки 2."}`, "error");
-      content.appendChild(diagnostics);
+      renderBalancePairsError(content, status, error);
     });
     return shell;
   }
