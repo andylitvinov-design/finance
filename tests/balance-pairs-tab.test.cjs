@@ -354,6 +354,42 @@ test("HTTP 200 with payload.rows missing shows payload-shape diagnostics", async
   resetModule();
 });
 
+test("HTTP 200 with payload ok false shows warnings, error, and diagnostics", async () => {
+  const payload = {
+    ok: false,
+    status: "repository_failed",
+    error: "Manual Google Sheets overlay failed: permission denied",
+    warnings: [
+      "manual Google Sheets read failed",
+      "Auto balance sheet failed: permission denied",
+    ],
+    diagnostics: {
+      source_route: "balance-pairs",
+      manual_balances_loaded: 0,
+      auto_balances_loaded: 0,
+      env_config_missing: false,
+    },
+    period: { from: "2026-04-01", to: "2026-04-30" },
+    summary: { expected_rows: 0 },
+    rows: [],
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows 0 · summary yes/);
+  assert.match(text, /payload error: Manual Google Sheets overlay failed: permission denied/);
+  assert.match(text, /payload warning: manual Google Sheets read failed/);
+  assert.match(text, /payload warning: Auto balance sheet failed: permission denied/);
+  assert.match(text, /payload diagnostic source_route: balance-pairs/);
+  assert.match(text, /payload diagnostic manual_balances_loaded: 0/);
+  assert.match(text, /render error: Manual Google Sheets overlay failed: permission denied/);
+  assert.notEqual(status.textContent, "balance-pairs HTTP 200");
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
 test("HTTP 500 JSON error shows status and payload error", async () => {
   const payload = { ok: false, error: "backend exploded" };
   const { api, content, status } = setupBalancePairsHarness({ payload, statusCode: 500 });

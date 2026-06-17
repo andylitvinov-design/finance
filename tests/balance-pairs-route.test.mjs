@@ -90,3 +90,66 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
   assert.equal(byKey.get("missing both|EUR").start.status, "missing_snapshot");
   assert.equal(byKey.get("missing both|EUR").end.status, "missing_snapshot");
 });
+
+test("balance pairs returns partial rows from auto balances when manual repository fails", async () => {
+  const snapshot = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-01", to: "2026-06-17" },
+    repositoryLoader: async () => ({
+      ok: false,
+      warning: "Manual Google Sheets overlay failed: service account missing",
+    }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "10" },
+        { date: "2026-06-17", channel: "пейпал дол", currency: "USD", amount: "17" },
+      ],
+      warnings: [],
+    }),
+    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  });
+
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.status, "partial_source");
+  assert.equal(snapshot.rows.length, 1);
+  assert.equal(snapshot.summary.expected_rows, 1);
+  assert.equal(snapshot.summary.found_start_rows, 1);
+  assert.equal(snapshot.summary.found_end_rows, 1);
+  assert.match(snapshot.warnings.join("\n"), /manual Google Sheets read failed/);
+  assert.match(snapshot.warnings.join("\n"), /service account missing/);
+  assert.equal(snapshot.diagnostics.source_route, "balance-pairs");
+  assert.equal(snapshot.diagnostics.repository_ok, false);
+  assert.equal(snapshot.diagnostics.manual_balances_loaded, 0);
+  assert.equal(snapshot.diagnostics.auto_balances_loaded, 2);
+  assert.equal(snapshot.diagnostics.auto_balance_loader_ok, true);
+  assert.equal(snapshot.diagnostics.env_config_missing, true);
+});
+
+test("balance pairs returns ok false with diagnostics when manual and auto sources fail", async () => {
+  const snapshot = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-01", to: "2026-06-17" },
+    repositoryLoader: async () => ({
+      ok: false,
+      warning: "Manual Google Sheets overlay failed: permission denied",
+    }),
+    autoBalanceLoader: async () => ({
+      ok: false,
+      balances: [],
+      warnings: ["Auto balance sheet failed: permission denied"],
+    }),
+    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  });
+
+  assert.equal(snapshot.ok, false);
+  assert.equal(snapshot.status, "repository_failed");
+  assert.equal(snapshot.rows.length, 0);
+  assert.equal(snapshot.summary.expected_rows, 0);
+  assert.match(snapshot.error, /permission denied/);
+  assert.match(snapshot.warnings.join("\n"), /manual Google Sheets read failed/);
+  assert.match(snapshot.warnings.join("\n"), /Auto balance sheet failed/);
+  assert.equal(snapshot.diagnostics.source_route, "balance-pairs");
+  assert.equal(snapshot.diagnostics.repository_ok, false);
+  assert.equal(snapshot.diagnostics.manual_balances_loaded, 0);
+  assert.equal(snapshot.diagnostics.auto_balances_loaded, 0);
+  assert.equal(snapshot.diagnostics.auto_balance_loader_ok, false);
+});

@@ -48,21 +48,56 @@ export async function buildBalancePairsSnapshot(options = {}) {
   const generatedAt = new Date().toISOString();
   const repository = await loadRepository(options.repositoryLoader || loadManualRepositoryFromGoogleSheets);
   const warnings = [];
+  const autoBalances = Array.isArray(repository.autoBalances)
+    ? { ok: true, balances: repository.autoBalances, warnings: [] }
+    : await loadAutoBalances(options.autoBalanceLoader || loadAutoBalanceRowsFromGoogleSheets);
   if (!repository.ok) {
+    warnings.push("manual Google Sheets read failed");
+    if (repository.warning) warnings.push(toSafeWarning(repository.warning));
+    warnings.push(...(autoBalances.warnings || []).map(toSafeWarning));
+    const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+    const sourceRows = autoBalanceRows.map(normalizeBalanceRow).filter(Boolean);
+    const rows = buildRows({
+      sourceRows,
+      operations: [],
+      fxRates: [],
+      expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
+      period,
+    });
+    const diagnostics = buildRepositoryFailureDiagnostics({
+      repository,
+      autoBalances,
+      manualBalances: [],
+      autoBalanceRows,
+      sourceRoute: "balance-pairs",
+    });
+    if (sourceRows.length) {
+      return {
+        ok: true,
+        status: "partial_source",
+        generated_at: generatedAt,
+        project: PROJECT_NAME,
+        period,
+        summary: buildSummary(rows),
+        rows,
+        warnings: unique(warnings.filter(Boolean)),
+        diagnostics,
+      };
+    }
     return {
       ok: false,
+      status: "repository_failed",
       generated_at: generatedAt,
       project: PROJECT_NAME,
       period,
       summary: emptySummary(),
       rows: [],
-      warnings: unique(["manual Google Sheets read failed", repository.warning].filter(Boolean).map(toSafeWarning)),
+      warnings: unique(warnings.filter(Boolean)),
+      error: repository.warning ? toSafeWarning(repository.warning) : "manual Google Sheets read failed",
+      diagnostics,
     };
   }
 
-  const autoBalances = Array.isArray(repository.autoBalances)
-    ? { ok: true, balances: repository.autoBalances, warnings: [] }
-    : await loadAutoBalances(options.autoBalanceLoader || loadAutoBalanceRowsFromGoogleSheets);
   warnings.push(...(repository.warnings || []).map(toSafeWarning));
   warnings.push(...(autoBalances.warnings || []).map(toSafeWarning));
 
@@ -75,24 +110,12 @@ export async function buildBalancePairsSnapshot(options = {}) {
     operations: repository.operations || [],
     period,
   });
-  const sourceRows = [...mergedRows, ...calculatedRows].map(normalizeBalanceRow).filter(Boolean);
-  const fxRateLookup = buildFxRateLookup(repository.fxRates || []);
-  const expectedPairs = buildExpectedPairs({
-    expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
-    sourceRows,
+  const rows = buildRows({
+    sourceRows: [...mergedRows, ...calculatedRows].map(normalizeBalanceRow).filter(Boolean),
     operations: repository.operations || [],
+    fxRates: repository.fxRates || [],
+    expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
     period,
-  });
-
-  const rows = expectedPairs.map((pair) => {
-    const startSnapshot = findLatestSnapshot(sourceRows, pair, period.from);
-    const endSnapshot = findLatestSnapshot(sourceRows, pair, period.to);
-    return {
-      channel: pair.channel,
-      currency: pair.currency,
-      start: buildSide(startSnapshot, { requestedDate: period.from, fxRateLookup }),
-      end: buildSide(endSnapshot, { requestedDate: period.to, fxRateLookup }),
-    };
   });
 
   return {
@@ -103,6 +126,45 @@ export async function buildBalancePairsSnapshot(options = {}) {
     summary: buildSummary(rows),
     rows,
     warnings: unique(warnings.filter(Boolean)),
+  };
+}
+
+function buildRows({ sourceRows, operations, fxRates, expectedPairs, period }) {
+  const fxRateLookup = buildFxRateLookup(fxRates || []);
+  const pairs = buildExpectedPairs({
+    expectedPairs,
+    sourceRows,
+    operations,
+    period,
+  });
+  return pairs.map((pair) => {
+    const startSnapshot = findLatestSnapshot(sourceRows, pair, period.from);
+    const endSnapshot = findLatestSnapshot(sourceRows, pair, period.to);
+    return {
+      channel: pair.channel,
+      currency: pair.currency,
+      start: buildSide(startSnapshot, { requestedDate: period.from, fxRateLookup }),
+      end: buildSide(endSnapshot, { requestedDate: period.to, fxRateLookup }),
+    };
+  });
+}
+
+function buildRepositoryFailureDiagnostics({
+  repository,
+  autoBalances,
+  manualBalances,
+  autoBalanceRows,
+  sourceRoute,
+}) {
+  return {
+    source_route: sourceRoute,
+    repository_ok: Boolean(repository?.ok),
+    repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
+    manual_balances_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
+    auto_balances_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
+    auto_balance_loader_ok: Boolean(autoBalances?.ok),
+    auto_balance_warning_count: Array.isArray(autoBalances?.warnings) ? autoBalances.warnings.length : 0,
+    env_config_missing: inferEnvConfigMissing(repository?.warning),
   };
 }
 
@@ -382,6 +444,10 @@ function parseNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(String(value).trim().replace(/\s+/g, "").replace(",", "."));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inferEnvConfigMissing(warning) {
+  return /missing|not configured|credential|private[_\s-]?key|client[_\s-]?email|sheet/i.test(String(warning || ""));
 }
 
 function roundOrNull(value) {

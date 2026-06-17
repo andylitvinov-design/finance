@@ -108,6 +108,8 @@
       parseError,
       payloadKeys: getPayloadKeys(payload),
       payloadError: isObject(payload) ? payload.error || "" : "",
+      payloadWarnings: Array.isArray(payload?.warnings) ? payload.warnings : [],
+      payloadDiagnostics: isObject(payload?.diagnostics) ? payload.diagnostics : null,
       rowsLength: rows ? rows.length : null,
       summaryPresent: isObject(payload?.summary),
     };
@@ -134,7 +136,19 @@
     return isObject(payload) ? Object.keys(payload) : [];
   }
 
-  function renderDiagnostics({ requestUrl, status, contentType, rowsLength, summaryPresent, payloadKeys, bodyExcerpt, parseError, payloadError }) {
+  function renderDiagnostics({
+    requestUrl,
+    status,
+    contentType,
+    rowsLength,
+    summaryPresent,
+    payloadKeys,
+    bodyExcerpt,
+    parseError,
+    payloadError,
+    payloadWarnings,
+    payloadDiagnostics,
+  }) {
     const doc = root.document;
     const wrap = doc.createElement("div");
     wrap.className = "balance-pairs-debug";
@@ -145,8 +159,16 @@
     appendDiagnosticLine(wrap, `summary: ${summaryPresent ? "yes" : "no"}`);
     appendDiagnosticLine(wrap, `payload keys: ${(payloadKeys || []).join(", ") || "none"}`, rowsLength === null ? "error" : "");
     if (payloadError) appendDiagnosticLine(wrap, `payload error: ${payloadError}`, "error");
+    for (const warning of payloadWarnings || []) {
+      appendDiagnosticLine(wrap, `payload warning: ${warning}`, "error");
+    }
+    if (payloadDiagnostics) {
+      for (const [key, value] of Object.entries(payloadDiagnostics)) {
+        appendDiagnosticLine(wrap, `payload diagnostic ${key}: ${formatDiagnosticValue(value)}`, "error");
+      }
+    }
     if (parseError) appendDiagnosticLine(wrap, `parse error: ${parseError}`, "error");
-    if (rowsLength === null || parseError || payloadError) appendDiagnosticLine(wrap, `body excerpt: ${bodyExcerpt || ""}`, "error");
+    if (rowsLength === null || parseError || payloadError || (payloadWarnings || []).length) appendDiagnosticLine(wrap, `body excerpt: ${bodyExcerpt || ""}`, "error");
     return wrap;
   }
 
@@ -161,6 +183,8 @@
       bodyExcerpt: "",
       parseError: "",
       payloadError: "",
+      payloadWarnings: [],
+      payloadDiagnostics: null,
     };
     container.innerHTML = "";
     const diagnostics = renderDiagnostics(meta);
@@ -180,13 +204,35 @@
     return item;
   }
 
+  function formatDiagnosticValue(value) {
+    if (value === null || value === undefined) return "-";
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+
   function renderBalancePairs(payload, rows = getBalancePairRows(payload)) {
     const doc = root.document;
     const shell = doc.createElement("div");
     shell.className = "balance-pairs-content";
     shell.appendChild(renderSummary(payload));
+    if (Array.isArray(payload.warnings) && payload.warnings.length) {
+      shell.appendChild(renderWarnings(payload.warnings));
+    }
     shell.appendChild(renderTable(rows));
     return shell;
+  }
+
+  function renderWarnings(warnings = []) {
+    const doc = root.document;
+    const wrap = doc.createElement("div");
+    wrap.className = "balance-pairs-warnings";
+    warnings.forEach((warning) => {
+      const item = doc.createElement("div");
+      item.className = "balance-pairs-warning";
+      item.textContent = `warning: ${warning}`;
+      wrap.appendChild(item);
+    });
+    return wrap;
   }
 
   function renderSummary(payload) {
