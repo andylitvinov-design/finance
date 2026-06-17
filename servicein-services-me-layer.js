@@ -290,6 +290,7 @@
   }
 
   function injectServicesMeBlock() {
+    if (window.state?.activeTab !== "manualFinance") return;
     const manualPanel = Array.from(document.querySelectorAll(".tab-panel.active"))
       .find((panel) => /fact|остатки|наличные/i.test(panel.textContent || ""));
     if (!manualPanel || manualPanel.querySelector(".services-me-layer-block")) return;

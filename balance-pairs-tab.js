@@ -45,21 +45,29 @@
       status.textContent = "Загружаю Остатки 2...";
     }
     const payload = await fetchBalancePairs();
+    const rows = getBalancePairRows(payload);
     container.innerHTML = "";
-    container.appendChild(renderBalancePairs(payload));
+    container.appendChild(renderBalancePairs(payload, rows));
     if (status) {
       status.className = "finance-status";
-      status.textContent = "Остатки 2 загружены.";
+      status.textContent = `balance-pairs HTTP 200 · rows ${rows.length}`;
     }
     return payload;
   }
 
-  function renderBalancePairs(payload) {
+  function getBalancePairRows(payload) {
+    if (!Array.isArray(payload?.rows)) {
+      throw new Error("balance-pairs payload.rows missing");
+    }
+    return payload.rows;
+  }
+
+  function renderBalancePairs(payload, rows = getBalancePairRows(payload)) {
     const doc = root.document;
     const shell = doc.createElement("div");
     shell.className = "balance-pairs-content";
     shell.appendChild(renderSummary(payload));
-    shell.appendChild(renderTable(payload.rows || []));
+    shell.appendChild(renderTable(rows));
     return shell;
   }
 
@@ -92,6 +100,13 @@
     const doc = root.document;
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap balance-pairs-table-wrap";
+    if (!rows.length) {
+      const empty = doc.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Нет balance-pairs строк за выбранный период.";
+      wrap.appendChild(empty);
+      return wrap;
+    }
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
     const header = doc.createElement("tr");
@@ -162,15 +177,17 @@
     header.className = "tab-header";
     header.innerHTML = `<div><h2>${TAB_LABEL}</h2></div>`;
     shell.appendChild(header);
+    const status = doc.createElement("div");
+    status.className = "finance-status";
+    status.textContent = "Загружаю Остатки 2...";
+    shell.appendChild(status);
     const content = doc.createElement("div");
     content.className = "balance-pairs-tab-content";
     shell.appendChild(content);
-    loadBalancePairsTabContent(content).catch((error) => {
+    loadBalancePairsTabContent(content, status).catch((error) => {
+      status.className = "finance-status error";
+      status.textContent = error?.message || "Не удалось загрузить Остатки 2.";
       content.innerHTML = "";
-      const message = doc.createElement("div");
-      message.className = "finance-status error";
-      message.textContent = error?.message || "Не удалось загрузить Остатки 2.";
-      content.appendChild(message);
     });
     return shell;
   }
