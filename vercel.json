@@ -49,6 +49,10 @@
       "destination": "/api/index?action=balanceSnapshots"
     },
     {
+      "source": "/api/balance-pairs",
+      "destination": "/api/index?action=balancePairs"
+    },
+    {
       "source": "/api/backfill-daily-balance-snapshots",
       "destination": "/api/index?action=dailyBalanceBackfill"
     },

@@ -8,6 +8,7 @@ import ensureFxRatesHandler from "../server/ensure-fx-rates-route.js";
 import reconcileBalancesAndTransfersHandler from "../server/reconcile-balances-and-transfers.js";
 import payoneerTransactionsHandler from "../server/payoneer-transactions.js";
 import revolutTransactionsHandler from "../server/revolut-transactions.js";
+import balancePairsHandler from "../server/balance-pairs-route.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
@@ -30,7 +31,7 @@ import binanceTransactionsHandler, {
 } from "../server/binance-transactions.js";
 import PaymentChannelReference from "../payment-channel-reference.js";
 
-const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots"]);
+const SUPPORTED_GET_ACTIONS = new Set(["getDashboardData", "saveBalanceSnapshot", "sync", "balanceSnapshots", "balancePairs"]);
 const SUPPORTED_POST_ACTIONS = new Set(["saveBalanceSnapshot", "saveTabData"]);
 const BINANCE_TRANSACTIONS_ACTION = "binanceTransactions";
 const PERIOD_BALANCE_RECONCILIATION_ACTION = "periodBalanceReconciliation";
@@ -42,6 +43,7 @@ const RECONCILE_BALANCES_AND_TRANSFERS_ACTION = "reconcileBalancesAndTransfers";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
+const BALANCE_PAIRS_ACTION = "balancePairs";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -219,6 +221,10 @@ export default async function handler(request, response) {
 
   if (debugAction === PAYPAL_MANUAL_BALANCE_ACTION) {
     return await paypalManualBalanceHandler(request, response);
+  }
+
+  if (debugAction === BALANCE_PAIRS_ACTION) {
+    return await balancePairsHandler(request, response);
   }
 
   if (isDebugAction(debugAction)) {
