@@ -153,3 +153,57 @@ test("balance pairs returns ok false with diagnostics when manual and auto sourc
   assert.equal(snapshot.diagnostics.auto_balances_loaded, 0);
   assert.equal(snapshot.diagnostics.auto_balance_loader_ok, false);
 });
+
+test("balance pairs exposes contract-named diagnostics and source_status across all paths (issue #552)", async () => {
+  const baseFx = [{ date: "2026-06-16", currency: "CAD", base_currency: "USD", rate_to_usd: 0.74, status: "ok" }];
+
+  const complete = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-01", to: "2026-06-17" },
+    repositoryLoader: async () => ({
+      ok: true,
+      balances: [
+        { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "10" },
+        { date: "2026-06-17", channel: "пейпал дол", currency: "USD", amount: "17" },
+      ],
+      fxRates: baseFx,
+      warnings: [],
+    }),
+    autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
+    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  });
+  assert.equal(complete.source_status, "complete");
+  assert.equal(complete.diagnostics.source_status, "complete");
+  assert.equal(complete.diagnostics.manual_repository_ok, true);
+  assert.equal(complete.diagnostics.manual_repository_warning, null);
+  assert.equal(complete.diagnostics.manual_balance_rows_loaded, 2);
+  assert.equal(complete.diagnostics.auto_balance_rows_loaded, 0);
+  assert.equal(complete.diagnostics.fx_rates_rows_loaded, 1);
+
+  const partial = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-01", to: "2026-06-17" },
+    repositoryLoader: async () => ({ ok: false, warning: "Manual Google Sheets overlay failed: timeout" }),
+    autoBalanceLoader: async () => ({
+      ok: true,
+      balances: [{ date: "2026-06-17", channel: "пейпал дол", currency: "USD", amount: "17" }],
+      warnings: [],
+    }),
+    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  });
+  assert.equal(partial.source_status, "partial");
+  assert.equal(partial.diagnostics.source_status, "partial");
+  assert.equal(partial.diagnostics.manual_repository_ok, false);
+  assert.match(partial.diagnostics.manual_repository_warning, /timeout/);
+  assert.equal(partial.diagnostics.auto_balance_rows_loaded, 1);
+
+  const unavailable = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-01", to: "2026-06-17" },
+    repositoryLoader: async () => ({ ok: false, warning: "Manual Google Sheets overlay failed: 429" }),
+    autoBalanceLoader: async () => ({ ok: false, balances: [], warnings: ["Auto balance sheet failed: 503"] }),
+    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  });
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.source_status, "unavailable");
+  assert.equal(unavailable.diagnostics.source_status, "unavailable");
+  assert.equal(unavailable.diagnostics.manual_repository_ok, false);
+  assert.equal(unavailable.diagnostics.auto_balance_rows_loaded, 0);
+});
