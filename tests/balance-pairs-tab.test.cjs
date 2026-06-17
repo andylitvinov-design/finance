@@ -14,7 +14,7 @@ class TestElement {
     this.id = "";
     this.className = "";
     this.textContent = "";
-    this.innerHTML = "";
+    this._innerHTML = "";
     this.value = "";
     this.listeners = {};
     this.dataset = {};
@@ -28,6 +28,15 @@ class TestElement {
 
   addEventListener(type, listener) {
     this.listeners[type] = listener;
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = String(value || "");
+    this.children = [];
+  }
+
+  get innerHTML() {
+    return this._innerHTML;
   }
 
   querySelector(selector) {
@@ -92,6 +101,48 @@ function makeDocument(nodes = {}) {
     addEventListener() {},
     readyState: "complete",
   };
+}
+
+function buildBalancePairRows(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    channel: index === 0 ? "БАНК КАНАДА cad" : `channel ${index + 1}`,
+    currency: index === 0 ? "CAD" : "USD",
+    start: { status: "ok", amount: index + 1, rate_to_usd: 1, amount_usd: index + 1 },
+    end: { status: "ok", amount: index + 2, rate_to_usd: 1, amount_usd: index + 2 },
+  }));
+}
+
+function setupBalancePairsHarness({ payload, from = "2026-04-01", to = "2026-04-30" }) {
+  resetModule();
+  const content = new TestElement("div");
+  const status = new TestElement("div");
+  const startDate = new TestElement("input");
+  startDate.value = from;
+  const endDate = new TestElement("input");
+  endDate.value = to;
+  global.document = makeDocument({ startDate, endDate });
+  global.window = global;
+  global.state = {
+    activeTab: "balancePairs",
+    config: { tabs: [{ id: "movement", label: "Движение" }] },
+  };
+  global.elements = { startDate, endDate, tabPanels: new TestElement("div") };
+  global.renderTabs = () => null;
+  global.MutationObserver = class {
+    observe() {}
+  };
+  global.fetch = async (url) => {
+    assert.match(String(url), new RegExp(`/api/balance-pairs\\?from=${from}&to=${to}`));
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return payload;
+      },
+    };
+  };
+  const api = require("../balance-pairs-tab.js");
+  return { api, content, status };
 }
 
 test("index wires balance pairs tab script after legacy remainders tab", () => {
@@ -175,6 +226,117 @@ test("balance pairs tab renders summary, all rows, and exact cell reasons", asyn
   assert.match(text, /missing snapshot/);
   assert.match(text, /missing FX RUB 2026-06-16/);
   assert.doesNotMatch(text, /needs verification/i);
+  resetModule();
+});
+
+test("HTTP 200 with 37 rows renders diagnostics, summary, and table", async () => {
+  const payload = {
+    ok: true,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+    summary: {
+      expected_rows: 37,
+      found_start_rows: 3,
+      found_end_rows: 16,
+      missing_start_rows: 34,
+      missing_end_rows: 21,
+      usd_complete_start: 3,
+      usd_complete_end: 16,
+      fx_missing: 0,
+    },
+    rows: buildBalancePairRows(37),
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows 37 · summary yes/);
+  assert.match(text, /rows: 37/);
+  assert.match(text, /summary: yes/);
+  assert.match(text, /Ожидаемых строк: 37/);
+  assert.match(text, /Канал/);
+  assert.match(text, /Валюта/);
+  assert.match(text, /Остатки вал1/);
+  assert.match(text, /Курс1/);
+  assert.match(text, /Остатки usd1/);
+  assert.match(text, /Остатки вал2/);
+  assert.match(text, /Курс2/);
+  assert.match(text, /Остатки usd2/);
+  assert.match(text, /БАНК КАНАДА cad/);
+  assert.ok(content.querySelector(".balance-pairs-content"));
+  assert.ok(content.querySelector("table"));
+  resetModule();
+});
+
+test("HTTP 200 with payload.rows missing shows payload-shape error", async () => {
+  const payload = {
+    ok: true,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+    summary: { expected_rows: 37 },
+    balance_pairs: { rows: buildBalancePairRows(37) },
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · payload shape error/);
+  assert.match(text, /rows: missing/);
+  assert.match(text, /summary: yes/);
+  assert.match(text, /payload keys: ok, period, summary, balance_pairs/);
+  assert.match(text, /render error: payload\.rows missing/);
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("HTTP 200 with render exception shows render error", async () => {
+  const badRow = {
+    currency: "USD",
+    start: { status: "ok", amount: 1, rate_to_usd: 1, amount_usd: 1 },
+    end: { status: "ok", amount: 2, rate_to_usd: 1, amount_usd: 2 },
+  };
+  Object.defineProperty(badRow, "channel", {
+    get() {
+      throw new Error("row channel exploded");
+    },
+  });
+  const payload = {
+    ok: true,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+    summary: { expected_rows: 1 },
+    rows: [badRow],
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows 1 · render error/);
+  assert.match(text, /rows: 1/);
+  assert.match(text, /summary: yes/);
+  assert.match(text, /render error: row channel exploded/);
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("HTTP status alone is not a successful balance-pairs render", async () => {
+  const payload = {
+    ok: true,
+    period: { from: "2026-04-01", to: "2026-04-30" },
+    summary: { expected_rows: 0 },
+    rows: [],
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(status.textContent, /balance-pairs HTTP 200 · rows 0 · summary yes/);
+  assert.match(text, /rows: 0/);
+  assert.match(text, /summary: yes/);
+  assert.match(text, /Нет balance-pairs строк за выбранный период/);
+  assert.ok(content.querySelector(".balance-pairs-content"));
+  assert.ok(content.textContent !== status.textContent);
   resetModule();
 });
 
