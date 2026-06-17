@@ -390,6 +390,61 @@ test("HTTP 200 with payload ok false shows warnings, error, and diagnostics", as
   resetModule();
 });
 
+test("ok=false renders contract diagnostics and source_status (issue #552)", async () => {
+  const payload = {
+    ok: false,
+    status: "repository_failed",
+    source_status: "unavailable",
+    error: "Manual Google Sheets overlay failed: 429 rate limited",
+    warnings: ["manual Google Sheets read failed", "Auto balance sheet failed: 503"],
+    diagnostics: {
+      source_route: "balance-pairs",
+      source_status: "unavailable",
+      manual_repository_ok: false,
+      manual_repository_warning: "Manual Google Sheets overlay failed: 429 rate limited",
+      manual_balance_rows_loaded: 0,
+      auto_balance_rows_loaded: 0,
+      fx_rates_rows_loaded: 0,
+    },
+    period: { from: "2026-06-01", to: "2026-06-17" },
+    summary: { expected_rows: 0 },
+    rows: [],
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload, from: "2026-06-01", to: "2026-06-17" });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(text, /payload diagnostic source_status: unavailable/);
+  assert.match(text, /payload diagnostic manual_repository_ok: false/);
+  assert.match(text, /payload diagnostic auto_balance_rows_loaded: 0/);
+  assert.match(text, /payload diagnostic fx_rates_rows_loaded: 0/);
+  assert.match(text, /render error: Manual Google Sheets overlay failed: 429 rate limited/);
+  assert.equal(content.querySelector(".balance-pairs-content"), null);
+  resetModule();
+});
+
+test("ok=false without error field falls back to warnings, never bare payload ok=false", async () => {
+  const payload = {
+    ok: false,
+    status: "repository_failed",
+    warnings: ["manual Google Sheets read failed", "Auto balance sheet failed: 503"],
+    diagnostics: { source_status: "unavailable", manual_repository_ok: false },
+    period: { from: "2026-06-01", to: "2026-06-17" },
+    summary: {},
+    rows: [],
+  };
+  const { api, content, status } = setupBalancePairsHarness({ payload, from: "2026-06-01", to: "2026-06-17" });
+
+  await api.loadBalancePairsTabContent(content, status);
+
+  const text = collectText(content);
+  assert.match(text, /render error: balance-pairs ok=false: manual Google Sheets read failed; Auto balance sheet failed: 503/);
+  assert.doesNotMatch(text, /render error: balance-pairs payload ok=false/);
+  assert.match(text, /payload warning: manual Google Sheets read failed/);
+  resetModule();
+});
+
 test("HTTP 500 JSON error shows status and payload error", async () => {
   const payload = { ok: false, error: "backend exploded" };
   const { api, content, status } = setupBalancePairsHarness({ payload, statusCode: 500 });

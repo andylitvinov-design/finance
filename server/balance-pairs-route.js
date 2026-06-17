@@ -64,17 +64,21 @@ export async function buildBalancePairsSnapshot(options = {}) {
       expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
       period,
     });
-    const diagnostics = buildRepositoryFailureDiagnostics({
+    const sourceStatus = sourceRows.length ? "partial" : "unavailable";
+    const diagnostics = buildSnapshotDiagnostics({
       repository,
       autoBalances,
       manualBalances: [],
       autoBalanceRows,
+      fxRates: [],
+      sourceStatus,
       sourceRoute: "balance-pairs",
     });
     if (sourceRows.length) {
       return {
         ok: true,
         status: "partial_source",
+        source_status: sourceStatus,
         generated_at: generatedAt,
         project: PROJECT_NAME,
         period,
@@ -87,6 +91,7 @@ export async function buildBalancePairsSnapshot(options = {}) {
     return {
       ok: false,
       status: "repository_failed",
+      source_status: sourceStatus,
       generated_at: generatedAt,
       project: PROJECT_NAME,
       period,
@@ -103,6 +108,7 @@ export async function buildBalancePairsSnapshot(options = {}) {
 
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
+  const fxRates = Array.isArray(repository.fxRates) ? repository.fxRates : [];
   const merged = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const mergedRows = Array.isArray(merged.rows) ? merged.rows : (merged.merged || []);
   const calculatedRows = buildCalculatedRows({
@@ -113,19 +119,32 @@ export async function buildBalancePairsSnapshot(options = {}) {
   const rows = buildRows({
     sourceRows: [...mergedRows, ...calculatedRows].map(normalizeBalanceRow).filter(Boolean),
     operations: repository.operations || [],
-    fxRates: repository.fxRates || [],
+    fxRates,
     expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
     period,
   });
 
+  const diagnostics = buildSnapshotDiagnostics({
+    repository,
+    autoBalances,
+    manualBalances,
+    autoBalanceRows,
+    fxRates,
+    sourceStatus: "complete",
+    sourceRoute: "balance-pairs",
+  });
+
   return {
     ok: true,
+    status: "complete",
+    source_status: "complete",
     generated_at: generatedAt,
     project: PROJECT_NAME,
     period,
     summary: buildSummary(rows),
     rows,
     warnings: unique(warnings.filter(Boolean)),
+    diagnostics,
   };
 }
 
@@ -149,19 +168,34 @@ function buildRows({ sourceRows, operations, fxRates, expectedPairs, period }) {
   });
 }
 
-function buildRepositoryFailureDiagnostics({
+function buildSnapshotDiagnostics({
   repository,
   autoBalances,
   manualBalances,
   autoBalanceRows,
+  fxRates,
+  sourceStatus,
   sourceRoute,
 }) {
+  const repositoryOk = Boolean(repository?.ok);
+  const repositoryWarning = repository?.warning ? toSafeWarning(repository.warning) : null;
+  const manualCount = Array.isArray(manualBalances) ? manualBalances.length : 0;
+  const autoCount = Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0;
+  const fxCount = Array.isArray(fxRates) ? fxRates.length : 0;
   return {
     source_route: sourceRoute,
-    repository_ok: Boolean(repository?.ok),
-    repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
-    manual_balances_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
-    auto_balances_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
+    source_status: sourceStatus,
+    // Contract-named diagnostics (issue #552).
+    manual_repository_ok: repositoryOk,
+    manual_repository_warning: repositoryWarning,
+    manual_balance_rows_loaded: manualCount,
+    auto_balance_rows_loaded: autoCount,
+    fx_rates_rows_loaded: fxCount,
+    // Retained from PR #573 for backward compatibility.
+    repository_ok: repositoryOk,
+    repository_warning: repositoryWarning,
+    manual_balances_loaded: manualCount,
+    auto_balances_loaded: autoCount,
     auto_balance_loader_ok: Boolean(autoBalances?.ok),
     auto_balance_warning_count: Array.isArray(autoBalances?.warnings) ? autoBalances.warnings.length : 0,
     env_config_missing: inferEnvConfigMissing(repository?.warning),

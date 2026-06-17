@@ -52,7 +52,7 @@
     if (!response.ok) throw createBalancePairsError(payload?.error || `balance-pairs HTTP ${status}`, meta);
     if (parseError) throw createBalancePairsError(`balance-pairs parse error: ${parseError}`, meta);
     if (!payload) throw createBalancePairsError("balance-pairs empty payload", meta);
-    if (payload.ok !== true) throw createBalancePairsError(payload?.error || "balance-pairs payload ok=false", meta);
+    if (payload.ok !== true) throw createBalancePairsError(buildOkFalseReason(payload), meta);
     if (!Array.isArray(payload.rows)) throw createBalancePairsError("balance-pairs payload.rows missing", meta);
     payload.__balancePairsMeta = meta;
     return payload;
@@ -113,6 +113,13 @@
       rowsLength: rows ? rows.length : null,
       summaryPresent: isObject(payload?.summary),
     };
+  }
+
+  function buildOkFalseReason(payload) {
+    if (payload?.error) return String(payload.error);
+    const warnings = Array.isArray(payload?.warnings) ? payload.warnings.filter(Boolean) : [];
+    if (warnings.length) return `balance-pairs ok=false: ${warnings.join("; ")}`;
+    return "balance-pairs payload ok=false";
   }
 
   function createBalancePairsError(message, meta) {
