@@ -11,8 +11,8 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
     repositoryLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-06-09", channel: "пейпал дол", currency: "USD", amount: "35.3" },
-        { date: "2026-06-16", channel: "пейпал дол", currency: "USD", amount: "36.3" },
+        { date: "2026-06-09", channel: "пейпал дол", currency: "USD", amount: "35.3", sourceSheet: "Остатки", sourceRow: 11, source: "manual_fact" },
+        { date: "2026-06-16", channel: "пейпал дол", currency: "USD", amount: "36.3", sourceSheet: "Авто Остатки", sourceRow: 25, source: "provider_auto" },
         { date: "2026-06-10", channel: "Binance funding", currency: "USDT", amount: "7" },
         { date: "2026-06-16", channel: "Binance funding", currency: "USDT", amount: "8" },
         { date: "2026-06-10", channel: "binance save", currency: "USDC", amount: "10" },
@@ -74,6 +74,13 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
   const byKey = new Map(snapshot.rows.map((row) => [`${row.channel}|${row.currency}`, row]));
   assert.equal(byKey.get("пейпал дол|USD").start.rate_to_usd, 1);
   assert.equal(byKey.get("пейпал дол|USD").start.amount_usd, 35.3);
+  assert.equal(byKey.get("пейпал дол|USD").start.source_sheet, "Остатки");
+  assert.equal(byKey.get("пейпал дол|USD").start.source_row, 11);
+  assert.equal(byKey.get("пейпал дол|USD").start.source_note, "Остатки #11 · manual_fact");
+  assert.equal(byKey.get("пейпал дол|USD").source1, "Остатки");
+  assert.equal(byKey.get("пейпал дол|USD").sourceRow1, 11);
+  assert.equal(byKey.get("пейпал дол|USD").source2, "Авто Остатки");
+  assert.equal(byKey.get("пейпал дол|USD").sourceRow2, 25);
   assert.equal(byKey.get("Binance funding|USDT").start.rate_to_usd, 1);
   assert.equal(byKey.get("binance save|USDC").end.amount_usd, 11);
   assert.equal(byKey.get("трансервайз евро|EUR").start.amount_usd, 108.5);
@@ -89,6 +96,31 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
   assert.equal(byKey.get("Яндекс руб|RUB").end.message, "missing FX RUB 2026-06-16");
   assert.equal(byKey.get("missing both|EUR").start.status, "missing_snapshot");
   assert.equal(byKey.get("missing both|EUR").end.status, "missing_snapshot");
+  assert.deepEqual(snapshot.diagnostics.missing_snapshot_rows, [
+    {
+      channel: "auto only",
+      currency: "USD",
+      missing_start: true,
+      missing_end: false,
+      reason: "no snapshot found on or before start date",
+    },
+    {
+      channel: "missing both",
+      currency: "EUR",
+      missing_start: true,
+      missing_end: true,
+      reason: "no snapshot found on or before start/end date",
+    },
+    {
+      channel: "Payoneer - dol",
+      currency: "USD",
+      missing_start: true,
+      missing_end: false,
+      reason: "no snapshot found on or before start date",
+    },
+  ]);
+  assert.match(snapshot.diagnostics.copyable_missing_snapshot_rows, /channel\tcurrency\tmissing_start\tmissing_end\treason/);
+  assert.match(snapshot.diagnostics.copyable_missing_snapshot_rows, /missing both\tEUR\ttrue\ttrue/);
 });
 
 test("balance pairs returns partial rows from auto balances when manual repository fails", async () => {

@@ -107,8 +107,8 @@ function buildBalancePairRows(count) {
   return Array.from({ length: count }, (_, index) => ({
     channel: index === 0 ? "БАНК КАНАДА cad" : `channel ${index + 1}`,
     currency: index === 0 ? "CAD" : "USD",
-    start: { status: "ok", amount: index + 1, rate_to_usd: 1, amount_usd: index + 1 },
-    end: { status: "ok", amount: index + 2, rate_to_usd: 1, amount_usd: index + 2 },
+    start: { status: "ok", amount: index + 1, rate_to_usd: 1, amount_usd: index + 1, source_sheet: "Остатки", source_row: index + 10 },
+    end: { status: "ok", amount: index + 2, rate_to_usd: 1, amount_usd: index + 2, source_sheet: "Авто Остатки", source_row: index + 20 },
   }));
 }
 
@@ -205,16 +205,28 @@ test("balance pairs tab renders summary, all rows, and exact cell reasons", asyn
         {
           channel: "пейпал дол",
           currency: "USD",
-          start: { amount: 35.3, rate_to_usd: 1, amount_usd: 35.3, status: "ok", snapshot_date: "2026-06-01" },
+          start: { amount: 35.3, rate_to_usd: 1, amount_usd: 35.3, status: "ok", snapshot_date: "2026-06-01", source_sheet: "Остатки", source_row: 12, source: "manual_fact", source_note: "Остатки #12 · manual_fact" },
           end: { status: "missing_snapshot", message: "missing snapshot" },
         },
         {
           channel: "Яндекс руб",
           currency: "RUB",
           start: { status: "missing_snapshot", message: "missing snapshot" },
-          end: { amount: 993.15, status: "missing_fx", message: "missing FX RUB 2026-06-16", snapshot_date: "2026-06-16" },
+          end: { amount: 993.15, status: "missing_fx", message: "missing FX RUB 2026-06-16", snapshot_date: "2026-06-16", source_sheet: "Авто Остатки", source_row: 44, source: "provider_auto", source_note: "Авто Остатки #44 · provider_auto" },
         },
       ],
+      diagnostics: {
+        missing_snapshot_rows: [
+          {
+            channel: "Яндекс руб",
+            currency: "RUB",
+            missing_start: true,
+            missing_end: false,
+            reason: "no snapshot found on or before start date",
+          },
+        ],
+        copyable_missing_snapshot_rows: "channel\tcurrency\tmissing_start\tmissing_end\treason\nЯндекс руб\tRUB\ttrue\tfalse\tno snapshot found on or before start date",
+      },
     };
     return {
       ok: true,
@@ -243,6 +255,12 @@ test("balance pairs tab renders summary, all rows, and exact cell reasons", asyn
   assert.match(text, /FX missing: 1/);
   assert.match(text, /пейпал дол/);
   assert.match(text, /Яндекс руб/);
+  assert.match(text, /source1/);
+  assert.match(text, /sourceRow1/);
+  assert.match(text, /Остатки #12 · manual_fact/);
+  assert.match(text, /Авто Остатки #44 · provider_auto/);
+  assert.match(text, /Missing snapshots: 1/);
+  assert.match(text, /no snapshot found on or before start date/);
   assert.match(text, /missing snapshot/);
   assert.match(text, /missing FX RUB 2026-06-16/);
   assert.doesNotMatch(text, /needs verification/i);
@@ -283,9 +301,13 @@ test("HTTP 200 with 37 rows renders diagnostics, summary, and table", async () =
   assert.match(text, /Остатки вал1/);
   assert.match(text, /Курс1/);
   assert.match(text, /Остатки usd1/);
+  assert.match(text, /source1/);
+  assert.match(text, /sourceRow1/);
   assert.match(text, /Остатки вал2/);
   assert.match(text, /Курс2/);
   assert.match(text, /Остатки usd2/);
+  assert.match(text, /source2/);
+  assert.match(text, /sourceRow2/);
   assert.match(text, /БАНК КАНАДА cad/);
   assert.ok(content.querySelector(".balance-pairs-content"));
   assert.ok(content.querySelector("table"));
@@ -563,8 +585,8 @@ test("balance pairs tab keeps its table body and excludes services-me block", as
       {
         channel: "пейпал дол",
         currency: "USD",
-        start: { status: "ok", amount: 25, rate_to_usd: 1, amount_usd: 25 },
-        end: { status: "ok", amount: 40, rate_to_usd: 1, amount_usd: 40 },
+        start: { status: "ok", amount: 25, rate_to_usd: 1, amount_usd: 25, source_sheet: "Остатки", source_row: 7 },
+        end: { status: "ok", amount: 40, rate_to_usd: 1, amount_usd: 40, source_sheet: "Авто Остатки", source_row: 8 },
       },
     ],
   };
@@ -594,6 +616,7 @@ test("balance pairs tab keeps its table body and excludes services-me block", as
   assert.match(text, /Остатки 2/);
   assert.match(text, /Канал/);
   assert.match(text, /Остатки вал1/);
+  assert.match(text, /sourceRow2/);
   assert.match(text, /пейпал дол/);
   assert.doesNotMatch(text, /УСЛУГИ МНЕ/);
   assert.equal(activePanel.querySelector(".services-me-layer-block"), null);

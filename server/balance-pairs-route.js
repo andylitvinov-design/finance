@@ -71,6 +71,7 @@ export async function buildBalancePairsSnapshot(options = {}) {
       manualBalances: [],
       autoBalanceRows,
       fxRates: [],
+      rows,
       sourceStatus,
       sourceRoute: "balance-pairs",
     });
@@ -130,6 +131,7 @@ export async function buildBalancePairsSnapshot(options = {}) {
     manualBalances,
     autoBalanceRows,
     fxRates,
+    rows,
     sourceStatus: "complete",
     sourceRoute: "balance-pairs",
   });
@@ -159,11 +161,17 @@ function buildRows({ sourceRows, operations, fxRates, expectedPairs, period }) {
   return pairs.map((pair) => {
     const startSnapshot = findLatestSnapshot(sourceRows, pair, period.from);
     const endSnapshot = findLatestSnapshot(sourceRows, pair, period.to);
+    const start = buildSide(startSnapshot, { requestedDate: period.from, fxRateLookup });
+    const end = buildSide(endSnapshot, { requestedDate: period.to, fxRateLookup });
     return {
       channel: pair.channel,
       currency: pair.currency,
-      start: buildSide(startSnapshot, { requestedDate: period.from, fxRateLookup }),
-      end: buildSide(endSnapshot, { requestedDate: period.to, fxRateLookup }),
+      start,
+      end,
+      source1: start.source_sheet,
+      sourceRow1: start.source_row,
+      source2: end.source_sheet,
+      sourceRow2: end.source_row,
     };
   });
 }
@@ -174,6 +182,7 @@ function buildSnapshotDiagnostics({
   manualBalances,
   autoBalanceRows,
   fxRates,
+  rows,
   sourceStatus,
   sourceRoute,
 }) {
@@ -182,6 +191,7 @@ function buildSnapshotDiagnostics({
   const manualCount = Array.isArray(manualBalances) ? manualBalances.length : 0;
   const autoCount = Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0;
   const fxCount = Array.isArray(fxRates) ? fxRates.length : 0;
+  const missingSnapshotRows = buildMissingSnapshotRows(rows);
   return {
     source_route: sourceRoute,
     source_status: sourceStatus,
@@ -199,7 +209,36 @@ function buildSnapshotDiagnostics({
     auto_balance_loader_ok: Boolean(autoBalances?.ok),
     auto_balance_warning_count: Array.isArray(autoBalances?.warnings) ? autoBalances.warnings.length : 0,
     env_config_missing: inferEnvConfigMissing(repository?.warning),
+    missing_snapshot_rows: missingSnapshotRows,
+    copyable_missing_snapshot_rows: buildCopyableMissingSnapshotRows(missingSnapshotRows),
   };
+}
+
+function buildMissingSnapshotRows(rows = []) {
+  return (rows || [])
+    .filter((row) => row.start?.status === "missing_snapshot" || row.end?.status === "missing_snapshot")
+    .map((row) => {
+      const missingStart = row.start?.status === "missing_snapshot";
+      const missingEnd = row.end?.status === "missing_snapshot";
+      return {
+        channel: row.channel,
+        currency: row.currency,
+        missing_start: missingStart,
+        missing_end: missingEnd,
+        reason: missingStart && missingEnd
+          ? "no snapshot found on or before start/end date"
+          : (missingStart ? "no snapshot found on or before start date" : "no snapshot found on or before end date"),
+      };
+    });
+}
+
+function buildCopyableMissingSnapshotRows(rows = []) {
+  if (!rows.length) return "";
+  const header = ["channel", "currency", "missing_start", "missing_end", "reason"];
+  return [
+    header.join("\t"),
+    ...rows.map((row) => header.map((key) => String(row[key] ?? "")).join("\t")),
+  ].join("\n");
 }
 
 async function loadRepository(repositoryLoader) {
@@ -287,7 +326,10 @@ function buildSide(snapshot, { requestedDate, fxRateLookup }) {
       rate_to_usd: null,
       amount_usd: null,
       message: "missing snapshot",
+      source: null,
       source_sheet: null,
+      source_row: null,
+      source_note: null,
     };
   }
 
@@ -360,6 +402,9 @@ function buildSide(snapshot, { requestedDate, fxRateLookup }) {
 }
 
 function sideResult(snapshot, { snapshotStatus, status, amountUsd, rate, message, fxRateDate = null }) {
+  const sourceSheet = snapshot.sourceSheet || snapshot.source_sheet || null;
+  const sourceRow = snapshot.sourceRow || snapshot.source_row || null;
+  const source = snapshot.source || snapshot.fact_source || snapshot.balanceSource || snapshot.balance_source || snapshot.provider || null;
   return {
     status,
     snapshot_status: snapshotStatus,
@@ -369,8 +414,16 @@ function sideResult(snapshot, { snapshotStatus, status, amountUsd, rate, message
     amount_usd: roundOrNull(amountUsd),
     message,
     fx_rate_date: fxRateDate || snapshot.date,
-    source_sheet: snapshot.source_sheet || snapshot.sourceSheet || snapshot.source || null,
+    source,
+    source_sheet: sourceSheet,
+    source_row: sourceRow,
+    source_note: buildSourceNote({ sourceSheet, sourceRow, source }),
   };
+}
+
+function buildSourceNote({ sourceSheet, sourceRow, source }) {
+  const location = [sourceSheet, sourceRow ? `#${sourceRow}` : ""].filter(Boolean).join(" ");
+  return [location, source].filter(Boolean).join(" · ") || null;
 }
 
 function buildSummary(rows) {
