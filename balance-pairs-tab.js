@@ -45,12 +45,33 @@
       status.textContent = "Загружаю Остатки 2...";
     }
     const payload = await fetchBalancePairs();
-    const rows = getBalancePairRows(payload);
+    const rows = Array.isArray(payload?.rows) ? payload.rows : null;
+    const diagnostics = renderDiagnostics({
+      rowsLength: rows ? rows.length : null,
+      summaryPresent: isObject(payload?.summary),
+      payloadKeys: getPayloadKeys(payload),
+    });
     container.innerHTML = "";
-    container.appendChild(renderBalancePairs(payload, rows));
+    container.appendChild(diagnostics);
     if (status) {
       status.className = "finance-status";
-      status.textContent = `balance-pairs HTTP 200 · rows ${rows.length}`;
+      status.textContent = rows
+        ? `balance-pairs HTTP 200 · rows ${rows.length} · summary ${isObject(payload?.summary) ? "yes" : "no"}`
+        : "balance-pairs HTTP 200 · payload shape error";
+    }
+    if (!rows) {
+      appendDiagnosticLine(diagnostics, `payload keys: ${getPayloadKeys(payload).join(", ") || "none"}`, "error");
+      appendDiagnosticLine(diagnostics, "render error: payload.rows missing", "error");
+      return payload;
+    }
+    try {
+      container.appendChild(renderBalancePairs(payload, rows));
+    } catch (error) {
+      appendDiagnosticLine(diagnostics, `render error: ${error?.message || "unknown"}`, "error");
+      if (status) {
+        status.className = "finance-status error";
+        status.textContent = `balance-pairs HTTP 200 · rows ${rows.length} · render error`;
+      }
     }
     return payload;
   }
@@ -60,6 +81,32 @@
       throw new Error("balance-pairs payload.rows missing");
     }
     return payload.rows;
+  }
+
+  function isObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function getPayloadKeys(payload) {
+    return isObject(payload) ? Object.keys(payload) : [];
+  }
+
+  function renderDiagnostics({ rowsLength, summaryPresent, payloadKeys }) {
+    const doc = root.document;
+    const wrap = doc.createElement("div");
+    wrap.className = "balance-pairs-debug";
+    appendDiagnosticLine(wrap, `rows: ${rowsLength === null ? "missing" : rowsLength}`);
+    appendDiagnosticLine(wrap, `summary: ${summaryPresent ? "yes" : "no"}`);
+    if (rowsLength === null) appendDiagnosticLine(wrap, `payload keys: ${(payloadKeys || []).join(", ") || "none"}`, "error");
+    return wrap;
+  }
+
+  function appendDiagnosticLine(wrap, text, kind = "") {
+    const item = root.document.createElement("div");
+    item.className = `balance-pairs-debug-line${kind ? ` ${kind}` : ""}`;
+    item.textContent = text;
+    wrap.appendChild(item);
+    return item;
   }
 
   function renderBalancePairs(payload, rows = getBalancePairRows(payload)) {
@@ -188,6 +235,9 @@
       status.className = "finance-status error";
       status.textContent = error?.message || "Не удалось загрузить Остатки 2.";
       content.innerHTML = "";
+      const diagnostics = renderDiagnostics({ rowsLength: null, summaryPresent: false, payloadKeys: [] });
+      appendDiagnosticLine(diagnostics, `render error: ${error?.message || "Не удалось загрузить Остатки 2."}`, "error");
+      content.appendChild(diagnostics);
     });
     return shell;
   }
