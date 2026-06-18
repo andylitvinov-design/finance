@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveCommitRef } from "../server/deploy-metadata.js";
 import { probeGoogleSheetAccess } from "../server/manual-google-sheets.js";
+import { STATUS_SOURCE_PATH, buildProductionSourceOfTruth } from "../server/production-source.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -45,10 +46,20 @@ export default async function handler(request, response) {
         : buildMetaResult.error
     ) || (hasGitMetadata ? null : "commit_metadata_unavailable");
     const status = effectiveError ? "degraded" : "ok";
+    const commitRef = resolveCommitRef({ buildMeta }) || "unknown";
+    const gitRepoSlug = normalizeValue(process.env.VERCEL_GIT_REPO_SLUG || buildMeta.gitRepoSlug) || "unknown";
+    const sourceOfTruth = buildProductionSourceOfTruth({
+      repoSlug: gitRepoSlug,
+      branch: commitRef,
+      deployedSha: commitSha,
+      statusSource: STATUS_SOURCE_PATH
+    });
 
     return response.status(200).json({
       ok: true,
       status,
+      statusSource: STATUS_SOURCE_PATH,
+      sourceOfTruth,
       service: "ezohata-incoming-ledger",
       vercelProjectName: normalizeValue(process.env.VERCEL_PROJECT_NAME || vercelProject.projectName) || "ezohata-incoming-ledger",
       deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",
@@ -58,9 +69,9 @@ export default async function handler(request, response) {
       deployTime: deployTime || "unknown",
       deploymentEnvironment,
       commitSha,
-      commitRef: resolveCommitRef({ buildMeta }) || "unknown",
+      commitRef,
       gitProvider: normalizeValue(process.env.VERCEL_GIT_PROVIDER || buildMeta.gitProvider) || "unknown",
-      gitRepoSlug: normalizeValue(process.env.VERCEL_GIT_REPO_SLUG || buildMeta.gitRepoSlug) || "unknown",
+      gitRepoSlug,
       hasGoogleServiceAccountEmail: googleProbe.hasEmail,
       hasGoogleServiceAccountPrivateKey: googleProbe.hasPrivateKey,
       googleSheetConfigured: googleProbe.configured,
@@ -87,6 +98,13 @@ export default async function handler(request, response) {
     return response.status(503).json({
       ok: false,
       status: "degraded",
+      statusSource: STATUS_SOURCE_PATH,
+      sourceOfTruth: buildProductionSourceOfTruth({
+        repoSlug: "unknown",
+        branch: "unknown",
+        deployedSha: "unknown",
+        statusSource: STATUS_SOURCE_PATH
+      }),
       service: "ezohata-incoming-ledger",
       vercelProjectName: normalizeValue(process.env.VERCEL_PROJECT_NAME) || "ezohata-incoming-ledger",
       deploymentUrl: normalizeValue(process.env.VERCEL_URL) || "unknown",

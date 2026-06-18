@@ -15,6 +15,8 @@ Production redeploy trigger: 2026-05-29 after PR #483 canonical Остатки o
 This repository is the single source of truth for ezohata-incoming-ledger production.
 The older [andylitvinov-design/ezohata-incoming-ledger](https://github.com/andylitvinov-design/ezohata-incoming-ledger) repository is a stale migration artifact unless an explicit repo migration task says otherwise. Do not patch or deploy it for production bug fixes.
 
+Before any rollback or production patch, verify [production status](https://ezohata-incoming-ledger.vercel.app/api/status) and confirm the returned repo, branch, deployed SHA, and `statusSource`. `/api/status` and `/api/debug-full` expose a `sourceOfTruth` block that names the canonical repo and deprecated repo.
+
 ## Stack
 
 - static HTML/CSS/JS frontend in repo root
@@ -193,7 +195,7 @@ node scripts/verify-production.mjs "$EXPECTED_SHA"
 Check this in order after merge to `main`:
 
 - GitHub Actions: `Production Observability` must start on the merge push and finish green
-- live commit: `/api/status` must return `commitSha == origin/main`
+- live source: `/api/status` must return `sourceOfTruth.repo == andylitvinov-design/finance`, `sourceOfTruth.statusSource == /api/status`, and `commitSha == origin/main`
 - deploy metadata: `/api/status` must return `buildTime`, `deploymentEnvironment`, `appVersion`, `appBuildVersion`
 - smoke test: `/api/index?health=1` must return `ok: true`
 

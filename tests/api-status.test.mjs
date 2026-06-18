@@ -108,6 +108,13 @@ test("GET /api/status returns build metadata when generated file exists", async 
     assert.equal(response.body?.deploymentEnvironment, "production");
     assert.equal(response.body?.vercelProjectName, "ezohata-incoming-ledger");
     assert.equal(response.body?.deploymentUrl, "ezohata-incoming-ledger.vercel.app");
+    assert.equal(response.body?.sourceOfTruth?.repo, "andylitvinov-design/finance");
+    assert.equal(response.body?.sourceOfTruth?.branch, "main");
+    assert.equal(response.body?.sourceOfTruth?.deployedSha, "vercelsha789");
+    assert.equal(response.body?.sourceOfTruth?.statusSource, "/api/status");
+    assert.equal(response.body?.sourceOfTruth?.canonicalProductionRepo, "andylitvinov-design/finance");
+    assert.equal(response.body?.sourceOfTruth?.deprecatedRepo, "andylitvinov-design/ezohata-incoming-ledger");
+    assert.match(response.body?.sourceOfTruth?.rollbackPreflight || "", /verify \/api\/status/i);
     assert.equal(response.body?.vercel?.deploymentUrl, "ezohata-incoming-ledger.vercel.app");
     assert.equal(response.body?.hasGoogleServiceAccountEmail, false);
     assert.equal(response.body?.hasGoogleServiceAccountPrivateKey, false);

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveCommitRef } from "./deploy-metadata.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
+import { STATUS_SOURCE_PATH, buildProductionSourceOfTruth } from "./production-source.js";
 
 const DEBUG_ACTIONS = new Set(["debugFull", "debugAnalytics", "debugUiState"]);
 const DEBUG_TOKEN_ENV_KEYS = ["AGENT_DEBUG_TOKEN", "DEBUG_SNAPSHOT_TOKEN", "EZOHATA_DEBUG_TOKEN"];
@@ -812,6 +813,10 @@ export function composeDeployMetadata({
       buildMeta
     })
   );
+  const source = normalizeValue(
+    env.VERCEL_GIT_REPO_SLUG
+    || buildMeta.gitRepoSlug
+  ) || "andylitvinov-design/finance";
   return {
     commitSha: commitSha || "unknown",
     commitRef: commitRef || "unknown",
@@ -820,10 +825,13 @@ export function composeDeployMetadata({
       || vercelProject.projectName
       || packageJson.name
     ) || "ezohata-incoming-ledger",
-    source: normalizeValue(
-      env.VERCEL_GIT_REPO_SLUG
-      || buildMeta.gitRepoSlug
-    ) || "andylitvinov-design/finance",
+    source,
+    sourceOfTruth: buildProductionSourceOfTruth({
+      repoSlug: source,
+      branch: commitRef,
+      deployedSha: commitSha,
+      statusSource: STATUS_SOURCE_PATH
+    }),
     deploymentUrl: normalizeValue(env.VERCEL_URL) || "unknown",
     productionUrl: normalizeValue(env.VERCEL_PROJECT_PRODUCTION_URL) || "unknown",
     deploymentEnvironment: normalizeValue(env.VERCEL_ENV || buildMeta.deploymentEnvironment) || "unknown",

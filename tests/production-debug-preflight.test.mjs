@@ -12,6 +12,9 @@ test("production preflight script checks live status and source metadata", () =>
   assert.match(script, /commitSha/);
   assert.match(script, /commitRef/);
   assert.match(script, /gitRepoSlug/);
+  assert.match(script, /canonicalProductionRepo/);
+  assert.match(script, /deprecatedRepo/);
+  assert.match(script, /statusSource/);
   assert.match(script, /vercelProjectName/);
   assert.match(script, /deploy\/source-of-truth mismatch/);
 });
@@ -24,6 +27,9 @@ test("production preflight strict mode blocks non-main deployment refs", () => {
 
 test("AGENTS requires production debug preflight before production patches", () => {
   assert.match(agents, /Production Debug Preflight/);
+  assert.match(agents, /andylitvinov-design\/finance/);
+  assert.match(agents, /andylitvinov-design\/ezohata-incoming-ledger/);
+  assert.match(agents, /before rollback or patch/i);
   assert.match(agents, /production-debug-preflight\.mjs/);
   assert.match(agents, /deploy\/source-of-truth mismatch/);
   assert.match(agents, /Movement Table Invariant/);
