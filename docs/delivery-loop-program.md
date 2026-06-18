@@ -5,7 +5,7 @@ Command name: `/delivery`
 Internal name: `PRODUCTION_DELIVERY_LOOP`
 Scope: all user software projects
 Primary goal: eliminate manual release-management checks after an agent coding task
-Final result: `STATUS: SUCCESS` or `STATUS: BLOCKED`
+Final result: `STATUS: SUCCESS`, `STATUS: SUCCESS_WITH_AUTH_LIMITATION`, or `STATUS: BLOCKED`
 
 ---
 
@@ -654,6 +654,7 @@ $ARGUMENTS
 Required final status:
 
 - STATUS: SUCCESS
+- STATUS: SUCCESS_WITH_AUTH_LIMITATION
 - STATUS: BLOCKED
 
 Do not stop after code, PR, checks, merge, or deploy.
@@ -684,6 +685,7 @@ You are responsible for implementation, PR, checks, merge if permitted, deployme
 Final answer must be exactly one of:
 
 - STATUS: SUCCESS
+- STATUS: SUCCESS_WITH_AUTH_LIMITATION
 - STATUS: BLOCKED
 
 Never claim success from PR creation, merge, or deployment alone.
@@ -707,7 +709,7 @@ First read docs/delivery-loop-program.md and the project's agent/rules files.
 
 Create the project adapter.
 
-Then execute the delivery loop until STATUS: SUCCESS or STATUS: BLOCKED.
+Then execute the delivery loop until STATUS: SUCCESS, STATUS: SUCCESS_WITH_AUTH_LIMITATION, or STATUS: BLOCKED.
 ```
 
 Checkpoint: this works even when the agent does not support slash commands natively.
@@ -1087,7 +1089,7 @@ Allowed only when a real external blocker prevents completion, such as:
 The agent must always end exactly with:
 
 ```txt
-STATUS: SUCCESS or BLOCKED
+STATUS: SUCCESS, SUCCESS_WITH_AUTH_LIMITATION, or BLOCKED
 
 LOOP:
 - /delivery / PRODUCTION_DELIVERY_LOOP
@@ -1401,3 +1403,8 @@ PROJECT-SPECIFIC DELIVERY SETTINGS
 The appendix is project-specific. The `/delivery` protocol itself is universal.
 
 ---
+
+
+## Expected Auth Boundary
+
+Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.

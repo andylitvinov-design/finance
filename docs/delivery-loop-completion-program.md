@@ -658,6 +658,8 @@ LIVE PROOF:
 - Expected live behavior:
 - Actual live behavior:
 - Evidence:
+- Auth boundary: NONE / GOOGLE_OAUTH_EXPECTED / SUPABASE_AUTH_EXPECTED / PRIVATE_CABINET_EXPECTED / OWNER_SESSION_REQUIRED
+- Authenticated live proof: VERIFIED / SKIPPED_EXPECTED_AUTH_BOUNDARY / OWNER_REQUIRED / NOT_APPLICABLE
 ```
 
 ## If Deployment Is Pending
@@ -945,7 +947,7 @@ Do not deploy or merge unless this is a safe pilot task and all checks pass.
 If merge/deploy/live proof is blocked by permission, review, missing env, or tool access, return STATUS: BLOCKED with exact evidence.
 
 Final answer:
-STATUS: SUCCESS or BLOCKED
+STATUS: SUCCESS, SUCCESS_WITH_AUTH_LIMITATION, or BLOCKED
 
 PHASE RESULTS:
 1. Command discovery:
@@ -977,3 +979,8 @@ NEXT ACTION:
 ```txt
 /delivery is not done when code is written. It is done only when the requested change is quality-verified, delivered to the target environment, proven live, or precisely blocked with evidence.
 ```
+
+
+## Expected Auth Boundary
+
+Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.

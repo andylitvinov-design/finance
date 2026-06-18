@@ -72,7 +72,35 @@
         "FAIL",
         "NOT VERIFIED"
       ],
-      "maxRepairAttempts": 2
-    }
+      "maxRepairAttempts": 2,
+      "completionBlockingStatusesNote": "NOT VERIFIED blocks SUCCESS unless the only missing item is authenticated post-login proof covered by SUCCESS_WITH_AUTH_LIMITATION."
+    },
+    "final_statuses": [
+      "SUCCESS",
+      "SUCCESS_WITH_AUTH_LIMITATION",
+      "BLOCKED"
+    ],
+    "auth_boundary_status": "SUCCESS_WITH_AUTH_LIMITATION",
+    "auth_boundary_is_not_blocked": true,
+    "live_verification_modes": [
+      "PUBLIC_LIVE",
+      "PREVIEW_DEPLOYMENT",
+      "LOCAL_AUTH_SIMULATION",
+      "AUTH_BOUNDARY",
+      "OWNER_REQUIRED"
+    ],
+    "auth_boundaries": [
+      "NONE",
+      "GOOGLE_OAUTH_EXPECTED",
+      "SUPABASE_AUTH_EXPECTED",
+      "PRIVATE_CABINET_EXPECTED",
+      "OWNER_SESSION_REQUIRED"
+    ],
+    "post_login_statuses": [
+      "VERIFIED",
+      "SKIPPED_EXPECTED_AUTH_BOUNDARY",
+      "OWNER_REQUIRED",
+      "NOT_APPLICABLE"
+    ]
   }
 }

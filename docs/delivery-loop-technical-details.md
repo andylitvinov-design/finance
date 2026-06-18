@@ -128,7 +128,7 @@ Purpose:
 
 - teach the agent what `/delivery` means;
 - route the command to the delivery docs;
-- force final states: `SUCCESS` or `BLOCKED`.
+- force final states: `SUCCESS`, `SUCCESS_WITH_AUTH_LIMITATION`, or `BLOCKED`.
 
 ### Layer 2 — Project Configuration
 
@@ -1311,3 +1311,8 @@ The final rule for all agents:
 ```txt
 /delivery is not done when code is written. It is done only when the requested change is proven live, or when a precise external blocker is reported.
 ```
+
+
+## Expected Auth Boundary
+
+Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.

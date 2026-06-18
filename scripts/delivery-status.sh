@@ -56,11 +56,16 @@ else
 const fs = require('fs');
 const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const rv = status.result_verification || {};
+const liveVerification = status.liveVerification || {};
 const requirements = Array.isArray(rv.requirements) ? rv.requirements : [];
 const counts = requirements.reduce((acc, item) => {
   acc[item.status] = (acc[item.status] || 0) + 1;
   return acc;
 }, {});
+console.log(`Final status: ${status.status || 'not recorded'}`);
+console.log(`Verification mode: ${liveVerification.mode || 'not recorded'}`);
+console.log(`Auth boundary: ${liveVerification.authBoundary || 'not recorded'}`);
+console.log(`Authenticated live proof: ${liveVerification.postLoginStatus || 'not recorded'}`);
 console.log(`Original request contract: ${rv.original_request_contract ? 'present' : 'missing'}`);
 console.log(`Requirements: ${requirements.length}`);
 for (const key of ['PASS', 'PARTIAL', 'FAIL', 'NOT VERIFIED']) console.log(`${key}: ${counts[key] || 0}`);

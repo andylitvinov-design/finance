@@ -20,6 +20,7 @@ rg -qi "FINAL RESULT VERIFICATION GATE" "$root/.claude/commands/delivery.md"
 rg -q "Original Request Contract" "$root/.claude/commands/delivery.md"
 rg -q "PASS.*PARTIAL.*FAIL.*NOT VERIFIED|PARTIAL.*FAIL.*NOT VERIFIED" "$root/.claude/commands/delivery.md"
 rg -q "Implementation is not completion" "$root/docs/delivery-loop-program.md"
+rg -q "SUCCESS_WITH_AUTH_LIMITATION" "$root/docs/delivery-auth-boundary-standard.md"
 rg -q "Spiral Validator-Critic Loop" "$root/.claude/commands/delivery.md"
 rg -q "spiralValidatorCritic" "$root/docs/delivery-loop-technical-details.md"
 
@@ -29,6 +30,26 @@ if [[ -f "$status_file" ]]; then
 const fs = require('fs');
 const status = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const rv = status.result_verification;
+
+const finalStatuses = new Set(['SUCCESS', 'SUCCESS_WITH_AUTH_LIMITATION', 'BLOCKED']);
+if (status.status && !finalStatuses.has(status.status)) {
+  throw new Error('status must be SUCCESS, SUCCESS_WITH_AUTH_LIMITATION, or BLOCKED');
+}
+const liveVerification = status.liveVerification || {};
+const modes = new Set(['PUBLIC_LIVE', 'PREVIEW_DEPLOYMENT', 'LOCAL_AUTH_SIMULATION', 'AUTH_BOUNDARY', 'OWNER_REQUIRED']);
+const authBoundaries = new Set(['NONE', 'GOOGLE_OAUTH_EXPECTED', 'SUPABASE_AUTH_EXPECTED', 'PRIVATE_CABINET_EXPECTED', 'OWNER_SESSION_REQUIRED']);
+const postLoginStatuses = new Set(['VERIFIED', 'SKIPPED_EXPECTED_AUTH_BOUNDARY', 'OWNER_REQUIRED', 'NOT_APPLICABLE']);
+if (liveVerification.mode && !modes.has(liveVerification.mode)) throw new Error('liveVerification.mode is invalid');
+if (liveVerification.authBoundary && !authBoundaries.has(liveVerification.authBoundary)) throw new Error('liveVerification.authBoundary is invalid');
+if (liveVerification.postLoginStatus && !postLoginStatuses.has(liveVerification.postLoginStatus)) throw new Error('liveVerification.postLoginStatus is invalid');
+if (status.status === 'SUCCESS_WITH_AUTH_LIMITATION') {
+  if (liveVerification.postLoginStatus !== 'SKIPPED_EXPECTED_AUTH_BOUNDARY' && liveVerification.postLoginStatus !== 'OWNER_REQUIRED') {
+    throw new Error('SUCCESS_WITH_AUTH_LIMITATION requires expected auth-boundary postLoginStatus');
+  }
+  if (!liveVerification.authBoundary || liveVerification.authBoundary === 'NONE') {
+    throw new Error('SUCCESS_WITH_AUTH_LIMITATION requires a non-NONE authBoundary');
+  }
+}
 if (!rv || !Array.isArray(rv.requirements)) throw new Error('result_verification.requirements must be present');
 const allowed = new Set(['PASS', 'PARTIAL', 'FAIL', 'NOT VERIFIED']);
 const notPass = [];

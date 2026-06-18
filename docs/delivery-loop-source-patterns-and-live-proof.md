@@ -129,6 +129,8 @@ LIVE PROOF:
 - Expected live behavior:
 - Actual live behavior:
 - Evidence:
+- Auth boundary: NONE / GOOGLE_OAUTH_EXPECTED / SUPABASE_AUTH_EXPECTED / PRIVATE_CABINET_EXPECTED / OWNER_SESSION_REQUIRED
+- Authenticated live proof: VERIFIED / SKIPPED_EXPECTED_AUTH_BOUNDARY / OWNER_REQUIRED / NOT_APPLICABLE
 - Screenshot/log/smoke-test result, if available:
 ```
 
@@ -576,7 +578,7 @@ check exact route/page
 check exact requested behavior
 if behavior missing -> investigate wrong commit/domain/cache/env/route/runtime
 fix if possible -> redeploy -> recheck live
-if cannot verify -> BLOCKED
+if cannot verify because of a real failure, unsafe access need, or missing safe proof -> BLOCKED; if the only gap is an expected auth boundary with safe public/login/local/code proof -> SUCCESS_WITH_AUTH_LIMITATION
 ```
 
 ### Live verification levels
@@ -730,6 +732,7 @@ Allowed final status names:
 
 ```txt
 STATUS: SUCCESS
+STATUS: SUCCESS_WITH_AUTH_LIMITATION
 STATUS: BLOCKED
 ```
 
@@ -846,3 +849,8 @@ If any item is missing, use `STATUS: BLOCKED` with exact evidence.
 ```txt
 /delivery succeeds only when the user can see or use the requested result live, and the final report clearly shows where and how it was verified.
 ```
+
+
+## Expected Auth Boundary
+
+Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.

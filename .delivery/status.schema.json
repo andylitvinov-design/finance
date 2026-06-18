@@ -19,7 +19,8 @@
       "type": "string",
       "enum": [
         "SUCCESS",
-        "BLOCKED"
+        "BLOCKED",
+        "SUCCESS_WITH_AUTH_LIMITATION"
       ]
     },
     "loop": {
@@ -166,6 +167,35 @@
         },
         "evidence": {
           "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "PUBLIC_LIVE",
+            "PREVIEW_DEPLOYMENT",
+            "LOCAL_AUTH_SIMULATION",
+            "AUTH_BOUNDARY",
+            "OWNER_REQUIRED"
+          ]
+        },
+        "authBoundary": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "GOOGLE_OAUTH_EXPECTED",
+            "SUPABASE_AUTH_EXPECTED",
+            "PRIVATE_CABINET_EXPECTED",
+            "OWNER_SESSION_REQUIRED"
+          ]
+        },
+        "postLoginStatus": {
+          "type": "string",
+          "enum": [
+            "VERIFIED",
+            "SKIPPED_EXPECTED_AUTH_BOUNDARY",
+            "OWNER_REQUIRED",
+            "NOT_APPLICABLE"
+          ]
         }
       }
     },
