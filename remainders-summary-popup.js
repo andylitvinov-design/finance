@@ -7,6 +7,7 @@
   const REMAINDERS_BLOCK_ID = "remaindersSummaryBlock";
   const NEEDS_VERIFICATION = "needs verification";
   const RECONCILE_BUTTON_TEXT = "Обновить все остатки";
+  let reconcileInFlight = null;
 
   const CHANNEL_FIELDS = ["channel", "account", "wallet", "name", "payment_channel", "paymentChannel", "to_channel", "toChannel"];
   const CURRENCY_FIELDS = ["currency", "account_currency", "accountCurrency", "balance_currency", "balanceCurrency"];
@@ -502,19 +503,27 @@
 
   async function runBalanceReconcileWorkflow() {
     if (typeof root.fetch !== "function") throw new Error("fetch is unavailable");
+    if (reconcileInFlight) return reconcileInFlight;
     const from = getDateInputValue("startDate");
     const to = getDateInputValue("endDate");
-    const response = await root.fetch(buildReconcileUrl().toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ from, to }),
-    });
-    const payload = await readJsonResponse(response, "reconcile-balances-and-transfers");
-    if (!response?.ok || !payload?.ok) {
-      throw new Error(payload?.error || payload?.errors?.[0]?.message || `reconcile returned ${response?.status || "unknown status"}`);
+    reconcileInFlight = (async () => {
+      const response = await root.fetch(buildReconcileUrl().toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ from, to }),
+      });
+      const payload = await readJsonResponse(response, "reconcile-balances-and-transfers");
+      if (!response?.ok || !payload?.ok) {
+        throw new Error(payload?.error || payload?.errors?.[0]?.message || `reconcile returned ${response?.status || "unknown status"}`);
+      }
+      return payload;
+    })();
+    try {
+      return await reconcileInFlight;
+    } finally {
+      reconcileInFlight = null;
     }
-    return payload;
   }
 
   async function buildLiveRemaindersSummary(input, options = {}) {

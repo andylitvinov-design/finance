@@ -13,6 +13,12 @@ import {
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
+const GOOGLE_SHEETS_CACHE_TTL_MS = 120 * 1000;
+const GOOGLE_SHEETS_RETRY_AFTER_SECONDS = 60;
+const QUOTA_CACHE_WARNING = "google_sheets_quota_exceeded_using_cache";
+
+let sourceCache = null;
+let sourceInflight = null;
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -46,53 +52,87 @@ export default async function handler(request, response) {
 export async function buildBalancePairsSnapshot(options = {}) {
   const period = parsePeriod(options.query || {});
   const generatedAt = new Date().toISOString();
-  const repository = await loadRepository(options.repositoryLoader || loadManualRepositoryFromGoogleSheets);
+  const sources = await loadBalancePairsSources({
+    repositoryLoader: options.repositoryLoader || loadManualRepositoryFromGoogleSheets,
+    autoBalanceLoader: options.autoBalanceLoader || loadAutoBalanceRowsFromGoogleSheets,
+    nowMs: options.nowMs,
+  });
+  if (sources?.quotaUnavailable) {
+    return buildQuotaUnavailableSnapshot({ generatedAt, period, sourceWarning: sources.warning });
+  }
+  return buildBalancePairsSnapshotFromSources({
+    period,
+    generatedAt,
+    repository: sources.repository,
+    autoBalances: sources.autoBalances,
+    expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
+    sourceStatus: sources.staleCache ? "stale_cache" : "complete",
+    status: sources.staleCache ? "stale_cache" : "complete",
+    extraWarnings: sources.staleCache ? [QUOTA_CACHE_WARNING] : [],
+    cacheGeneratedAt: sources.cacheGeneratedAt,
+    cacheHit: sources.cacheHit,
+    staleCache: sources.staleCache,
+  });
+}
+
+function buildBalancePairsSnapshotFromSources({
+  period,
+  generatedAt,
+  repository,
+  autoBalances,
+  expectedPairs,
+  sourceStatus,
+  status,
+  extraWarnings = [],
+  cacheGeneratedAt = null,
+  cacheHit = false,
+  staleCache = false,
+}) {
   const warnings = [];
-  const autoBalances = Array.isArray(repository.autoBalances)
-    ? { ok: true, balances: repository.autoBalances, warnings: [] }
-    : await loadAutoBalances(options.autoBalanceLoader || loadAutoBalanceRowsFromGoogleSheets);
   if (!repository.ok) {
     warnings.push("manual Google Sheets read failed");
     if (repository.warning) warnings.push(toSafeWarning(repository.warning));
     warnings.push(...(autoBalances.warnings || []).map(toSafeWarning));
+    warnings.push(...extraWarnings.map(toSafeWarning));
     const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
     const sourceRows = autoBalanceRows.map(normalizeBalanceRow).filter(Boolean);
     const rows = buildRows({
       sourceRows,
       operations: [],
       fxRates: [],
-      expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
+      expectedPairs,
       period,
     });
-    const sourceStatus = sourceRows.length ? "partial" : "unavailable";
-    const diagnostics = buildSnapshotDiagnostics({
+    const diagnostics = buildRepositoryFailureDiagnostics({
       repository,
       autoBalances,
       manualBalances: [],
       autoBalanceRows,
-      fxRates: [],
-      rows,
-      sourceStatus,
       sourceRoute: "balance-pairs",
+      sourceStatus: sourceRows.length ? "partial" : "unavailable",
+      cacheGeneratedAt,
+      cacheHit,
+      staleCache,
     });
     if (sourceRows.length) {
       return {
         ok: true,
         status: "partial_source",
-        source_status: sourceStatus,
+        source_status: "partial",
         generated_at: generatedAt,
         project: PROJECT_NAME,
         period,
         summary: buildSummary(rows),
         rows,
         warnings: unique(warnings.filter(Boolean)),
+        ...(cacheGeneratedAt ? { cache_generated_at: cacheGeneratedAt } : {}),
         diagnostics,
       };
     }
     return {
       ok: false,
       status: "repository_failed",
-      source_status: sourceStatus,
+      source_status: "unavailable",
       generated_at: generatedAt,
       project: PROJECT_NAME,
       period,
@@ -100,16 +140,17 @@ export async function buildBalancePairsSnapshot(options = {}) {
       rows: [],
       warnings: unique(warnings.filter(Boolean)),
       error: repository.warning ? toSafeWarning(repository.warning) : "manual Google Sheets read failed",
+      ...(cacheGeneratedAt ? { cache_generated_at: cacheGeneratedAt } : {}),
       diagnostics,
     };
   }
 
   warnings.push(...(repository.warnings || []).map(toSafeWarning));
   warnings.push(...(autoBalances.warnings || []).map(toSafeWarning));
+  warnings.push(...extraWarnings.map(toSafeWarning));
 
   const manualBalances = Array.isArray(repository.balances) ? repository.balances : [];
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
-  const fxRates = Array.isArray(repository.fxRates) ? repository.fxRates : [];
   const merged = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
   const mergedRows = Array.isArray(merged.rows) ? merged.rows : (merged.merged || []);
   const calculatedRows = buildCalculatedRows({
@@ -120,33 +161,124 @@ export async function buildBalancePairsSnapshot(options = {}) {
   const rows = buildRows({
     sourceRows: [...mergedRows, ...calculatedRows].map(normalizeBalanceRow).filter(Boolean),
     operations: repository.operations || [],
-    fxRates,
-    expectedPairs: options.expectedPairs || EXPECTED_PROVIDER_BALANCES,
+    fxRates: repository.fxRates || [],
+    expectedPairs,
     period,
   });
-
-  const diagnostics = buildSnapshotDiagnostics({
+  const diagnostics = buildBalancePairsDiagnostics({
+    rows,
     repository,
     autoBalances,
     manualBalances,
     autoBalanceRows,
-    fxRates,
-    rows,
-    sourceStatus: "complete",
     sourceRoute: "balance-pairs",
+    sourceStatus,
+    cacheGeneratedAt,
+    cacheHit,
+    staleCache,
   });
 
   return {
     ok: true,
-    status: "complete",
-    source_status: "complete",
+    status,
+    source_status: sourceStatus,
     generated_at: generatedAt,
     project: PROJECT_NAME,
     period,
     summary: buildSummary(rows),
     rows,
     warnings: unique(warnings.filter(Boolean)),
+    ...(cacheGeneratedAt ? { cache_generated_at: cacheGeneratedAt } : {}),
     diagnostics,
+  };
+}
+
+async function loadBalancePairsSources({ repositoryLoader, autoBalanceLoader, nowMs } = {}) {
+  const currentMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  if (sourceCache && currentMs - sourceCache.savedAtMs <= GOOGLE_SHEETS_CACHE_TTL_MS) {
+    return { ...sourceCache.sources, cacheHit: true };
+  }
+  if (sourceInflight) return sourceInflight;
+
+  sourceInflight = (async () => {
+    const repository = await loadRepository(repositoryLoader);
+    const autoBalances = Array.isArray(repository.autoBalances)
+      ? { ok: true, balances: repository.autoBalances, warnings: [] }
+      : await loadAutoBalances(autoBalanceLoader);
+    const quotaWarning = findQuotaWarning(repository, autoBalances);
+    if (quotaWarning) {
+      if (sourceCache) {
+        return {
+          ...sourceCache.sources,
+          cacheHit: true,
+          staleCache: true,
+          cacheGeneratedAt: sourceCache.sources.cacheGeneratedAt,
+          quotaWarning,
+        };
+      }
+      return {
+        quotaUnavailable: true,
+        warning: quotaWarning,
+      };
+    }
+
+    const sources = {
+      repository,
+      autoBalances,
+      cacheGeneratedAt: new Date(currentMs).toISOString(),
+      cacheHit: false,
+      staleCache: false,
+    };
+    if (repository.ok) {
+      sourceCache = {
+        savedAtMs: currentMs,
+        sources,
+      };
+    }
+    return sources;
+  })();
+
+  try {
+    return await sourceInflight;
+  } finally {
+    sourceInflight = null;
+  }
+}
+
+function buildQuotaUnavailableSnapshot({ generatedAt, period, sourceWarning }) {
+  const warning = toSafeWarning(sourceWarning || "Google Sheets quota exceeded");
+  return {
+    ok: false,
+    status: "source_unavailable",
+    source_status: "unavailable",
+    generated_at: generatedAt,
+    project: PROJECT_NAME,
+    period,
+    summary: emptySummary(),
+    rows: [],
+    warnings: unique([warning]),
+    error: warning,
+    retry_after_seconds: GOOGLE_SHEETS_RETRY_AFTER_SECONDS,
+    diagnostics: {
+      source_route: "balance-pairs",
+      source_status: "unavailable",
+      manual_repository_ok: false,
+      manual_repository_warning: warning,
+      manual_balance_rows_loaded: 0,
+      auto_balance_rows_loaded: 0,
+      fx_rates_rows_loaded: 0,
+      repository_ok: false,
+      repository_warning: warning,
+      manual_balances_loaded: 0,
+      auto_balances_loaded: 0,
+      auto_balance_loader_ok: false,
+      auto_balance_warning_count: 0,
+      env_config_missing: false,
+      retry_after_seconds: GOOGLE_SHEETS_RETRY_AFTER_SECONDS,
+      cache_hit: false,
+      stale_cache: false,
+      cache_generated_at: null,
+    },
   };
 }
 
@@ -176,41 +308,71 @@ function buildRows({ sourceRows, operations, fxRates, expectedPairs, period }) {
   });
 }
 
-function buildSnapshotDiagnostics({
+function buildBalancePairsDiagnostics({
+  rows,
   repository,
   autoBalances,
   manualBalances,
   autoBalanceRows,
-  fxRates,
-  rows,
-  sourceStatus,
   sourceRoute,
+  sourceStatus,
+  cacheGeneratedAt,
+  cacheHit,
+  staleCache,
 }) {
-  const repositoryOk = Boolean(repository?.ok);
-  const repositoryWarning = repository?.warning ? toSafeWarning(repository.warning) : null;
-  const manualCount = Array.isArray(manualBalances) ? manualBalances.length : 0;
-  const autoCount = Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0;
-  const fxCount = Array.isArray(fxRates) ? fxRates.length : 0;
   const missingSnapshotRows = buildMissingSnapshotRows(rows);
   return {
     source_route: sourceRoute,
     source_status: sourceStatus,
-    // Contract-named diagnostics (issue #552).
-    manual_repository_ok: repositoryOk,
-    manual_repository_warning: repositoryWarning,
-    manual_balance_rows_loaded: manualCount,
-    auto_balance_rows_loaded: autoCount,
-    fx_rates_rows_loaded: fxCount,
-    // Retained from PR #573 for backward compatibility.
-    repository_ok: repositoryOk,
-    repository_warning: repositoryWarning,
-    manual_balances_loaded: manualCount,
-    auto_balances_loaded: autoCount,
+    manual_repository_ok: Boolean(repository?.ok),
+    manual_repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
+    manual_balance_rows_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
+    auto_balance_rows_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
+    fx_rates_rows_loaded: Array.isArray(repository?.fxRates) ? repository.fxRates.length : 0,
+    repository_ok: Boolean(repository?.ok),
+    repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
+    manual_balances_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
+    auto_balances_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
     auto_balance_loader_ok: Boolean(autoBalances?.ok),
     auto_balance_warning_count: Array.isArray(autoBalances?.warnings) ? autoBalances.warnings.length : 0,
     env_config_missing: inferEnvConfigMissing(repository?.warning),
+    cache_hit: Boolean(cacheHit),
+    stale_cache: Boolean(staleCache),
+    cache_generated_at: cacheGeneratedAt || null,
     missing_snapshot_rows: missingSnapshotRows,
     copyable_missing_snapshot_rows: buildCopyableMissingSnapshotRows(missingSnapshotRows),
+  };
+}
+
+function buildRepositoryFailureDiagnostics({
+  repository,
+  autoBalances,
+  manualBalances,
+  autoBalanceRows,
+  sourceRoute,
+  sourceStatus,
+  cacheGeneratedAt,
+  cacheHit,
+  staleCache,
+}) {
+  return {
+    source_route: sourceRoute,
+    source_status: sourceStatus,
+    manual_repository_ok: Boolean(repository?.ok),
+    manual_repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
+    manual_balance_rows_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
+    auto_balance_rows_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
+    fx_rates_rows_loaded: Array.isArray(repository?.fxRates) ? repository.fxRates.length : 0,
+    repository_ok: Boolean(repository?.ok),
+    repository_warning: repository?.warning ? toSafeWarning(repository.warning) : null,
+    manual_balances_loaded: Array.isArray(manualBalances) ? manualBalances.length : 0,
+    auto_balances_loaded: Array.isArray(autoBalanceRows) ? autoBalanceRows.length : 0,
+    auto_balance_loader_ok: Boolean(autoBalances?.ok),
+    auto_balance_warning_count: Array.isArray(autoBalances?.warnings) ? autoBalances.warnings.length : 0,
+    env_config_missing: inferEnvConfigMissing(repository?.warning),
+    cache_hit: Boolean(cacheHit),
+    stale_cache: Boolean(staleCache),
+    cache_generated_at: cacheGeneratedAt || null,
   };
 }
 
@@ -262,6 +424,28 @@ async function loadAutoBalances(autoBalanceLoader) {
       warnings: [`Auto balance sheet failed: ${String(error?.message || error)}`],
     };
   }
+}
+
+function findQuotaWarning(...sources) {
+  for (const source of sources || []) {
+    const values = [
+      source?.warning,
+      source?.error,
+      ...(Array.isArray(source?.warnings) ? source.warnings : []),
+    ];
+    const match = values.find(isGoogleSheetsQuotaWarning);
+    if (match) return toSafeWarning(match);
+  }
+  return "";
+}
+
+function isGoogleSheetsQuotaWarning(value) {
+  return /quota|rate\s*limit|too many requests|resource[_\s-]?exhausted|429/i.test(String(value || ""));
+}
+
+export function __resetBalancePairsCacheForTests() {
+  sourceCache = null;
+  sourceInflight = null;
 }
 
 function buildCalculatedRows({ rows, operations, period }) {
@@ -326,10 +510,7 @@ function buildSide(snapshot, { requestedDate, fxRateLookup }) {
       rate_to_usd: null,
       amount_usd: null,
       message: "missing snapshot",
-      source: null,
       source_sheet: null,
-      source_row: null,
-      source_note: null,
     };
   }
 
