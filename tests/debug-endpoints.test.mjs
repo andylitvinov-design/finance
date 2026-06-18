@@ -178,6 +178,12 @@ test("GET /api/debug-full returns deploy metadata and endpoint inventory", async
     assert.equal(response.body?.deploy?.commitRef, "main");
     assert.equal(response.body?.deploy?.project, "ezohata-incoming-ledger");
     assert.equal(response.body?.deploy?.source, "andylitvinov-design/finance");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.repo, "andylitvinov-design/finance");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.branch, "main");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.deployedSha, "debugsha123");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.statusSource, "/api/status");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.canonicalProductionRepo, "andylitvinov-design/finance");
+    assert.equal(response.body?.deploy?.sourceOfTruth?.deprecatedRepo, "andylitvinov-design/ezohata-incoming-ledger");
     assert.equal(response.body?.endpoints?.status?.path, "/api/status");
     assert.equal(response.body?.endpoints?.dashboardData?.path, "/api?action=getDashboardData");
     assert.equal(response.body?.endpoints?.auditSnapshot?.path, "/api/audit-snapshot");

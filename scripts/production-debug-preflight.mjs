@@ -2,6 +2,8 @@
 
 const DEFAULT_LIVE_URL = "https://ezohata-incoming-ledger.vercel.app";
 const EXPECTED_REPO_SLUGS = new Set(["finance", "andylitvinov-design/finance"]);
+const CANONICAL_PRODUCTION_REPO = "andylitvinov-design/finance";
+const DEPRECATED_PRODUCTION_REPO = "andylitvinov-design/ezohata-incoming-ledger";
 
 const args = process.argv.slice(2);
 const options = parseArgs(args);
@@ -104,6 +106,9 @@ function buildResult({ liveUrl, statusUrl, response, contentType, bodyExcerpt, p
       repoSlug: repoSlug || "unknown",
       commitRef: commitRef || "unknown",
       commitSha: commitSha || "unknown",
+      statusSource: text(payload?.sourceOfTruth?.statusSource || payload?.statusSource) || "/api/status",
+      canonicalProductionRepo: text(payload?.sourceOfTruth?.canonicalProductionRepo) || CANONICAL_PRODUCTION_REPO,
+      deprecatedRepo: text(payload?.sourceOfTruth?.deprecatedRepo) || DEPRECATED_PRODUCTION_REPO,
       productionUrl: productionUrl || "unknown",
       deploymentUrl: text(payload?.deploymentUrl || payload?.vercel?.deploymentUrl) || "unknown",
       appVersion: text(payload?.appVersion) || "unknown",

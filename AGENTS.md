@@ -103,11 +103,18 @@ Report:
 1. live URL;
 2. `/api/status` HTTP status/content-type/body excerpt if failing;
 3. production project/service;
-4. production repo slug;
-5. production commit SHA;
-6. production branch/ref;
-7. relevant open PRs;
-8. classification: `source ok`, `deploy/source-of-truth mismatch`, or `needs verification`.
+4. production repo slug and canonical production repo (`andylitvinov-design/finance`);
+5. deprecated repo marker (`andylitvinov-design/ezohata-incoming-ledger`);
+6. production commit SHA;
+7. production branch/ref;
+8. status source (`/api/status`);
+9. relevant open PRs;
+10. classification: `source ok`, `deploy/source-of-truth mismatch`, or `needs verification`.
+
+Before rollback or patch, always verify `/api/status` and confirm repo, branch/ref,
+and deployed SHA. Do not rollback, patch, deploy, or open production PRs from
+`andylitvinov-design/ezohata-incoming-ledger`; it is deprecated unless an
+explicit migration is being performed and verified end-to-end.
 
 If production does not contain the intended fix, or production is serving a stale feature branch, do not patch business formulas yet. Resolve deploy/source-of-truth mismatch first.
 
