@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  __resetBalancePairsCacheForTests,
   buildBalancePairsSnapshot,
 } from "../server/balance-pairs-route.js";
 
 test("balance pairs returns all expected rows with latest snapshots, USD conversion, and summary counts", async () => {
+  __resetBalancePairsCacheForTests();
   const snapshot = await buildBalancePairsSnapshot({
     query: { from: "2026-06-10", to: "2026-06-16" },
     repositoryLoader: async () => ({
@@ -96,6 +98,9 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
   assert.equal(byKey.get("Яндекс руб|RUB").end.message, "missing FX RUB 2026-06-16");
   assert.equal(byKey.get("missing both|EUR").start.status, "missing_snapshot");
   assert.equal(byKey.get("missing both|EUR").end.status, "missing_snapshot");
+  assert.equal(snapshot.status, "complete");
+  assert.equal(snapshot.diagnostics.source_route, "balance-pairs");
+  assert.equal(snapshot.diagnostics.source_status, "complete");
   assert.deepEqual(snapshot.diagnostics.missing_snapshot_rows, [
     {
       channel: "auto only",
@@ -124,6 +129,7 @@ test("balance pairs returns all expected rows with latest snapshots, USD convers
 });
 
 test("balance pairs returns partial rows from auto balances when manual repository fails", async () => {
+  __resetBalancePairsCacheForTests();
   const snapshot = await buildBalancePairsSnapshot({
     query: { from: "2026-06-01", to: "2026-06-17" },
     repositoryLoader: async () => ({
@@ -158,6 +164,7 @@ test("balance pairs returns partial rows from auto balances when manual reposito
 });
 
 test("balance pairs returns ok false with diagnostics when manual and auto sources fail", async () => {
+  __resetBalancePairsCacheForTests();
   const snapshot = await buildBalancePairsSnapshot({
     query: { from: "2026-06-01", to: "2026-06-17" },
     repositoryLoader: async () => ({
@@ -186,56 +193,166 @@ test("balance pairs returns ok false with diagnostics when manual and auto sourc
   assert.equal(snapshot.diagnostics.auto_balance_loader_ok, false);
 });
 
-test("balance pairs exposes contract-named diagnostics and source_status across all paths (issue #552)", async () => {
-  const baseFx = [{ date: "2026-06-16", currency: "CAD", base_currency: "USD", rate_to_usd: 0.74, status: "ok" }];
+test("balance pairs returns stale cache rows when Google Sheets quota blocks fresh reads", async () => {
+  __resetBalancePairsCacheForTests();
+  const expectedPairs = [{ channel: "cache channel", currency: "USD" }];
+  let quotaMode = false;
 
-  const complete = await buildBalancePairsSnapshot({
-    query: { from: "2026-06-01", to: "2026-06-17" },
+  const first = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-03", to: "2026-06-18" },
+    nowMs: Date.parse("2026-06-18T08:00:00.000Z"),
     repositoryLoader: async () => ({
       ok: true,
       balances: [
-        { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "10" },
-        { date: "2026-06-17", channel: "пейпал дол", currency: "USD", amount: "17" },
+        { date: "2026-06-03", channel: "cache channel", currency: "USD", amount: "10", sourceSheet: "Остатки", sourceRow: 4 },
+        { date: "2026-06-18", channel: "cache channel", currency: "USD", amount: "12", sourceSheet: "Остатки", sourceRow: 5 },
       ],
-      fxRates: baseFx,
+      operations: [],
+      fxRates: [],
       warnings: [],
     }),
     autoBalanceLoader: async () => ({ ok: true, balances: [], warnings: [] }),
-    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+    expectedPairs,
   });
-  assert.equal(complete.source_status, "complete");
-  assert.equal(complete.diagnostics.source_status, "complete");
-  assert.equal(complete.diagnostics.manual_repository_ok, true);
-  assert.equal(complete.diagnostics.manual_repository_warning, null);
-  assert.equal(complete.diagnostics.manual_balance_rows_loaded, 2);
-  assert.equal(complete.diagnostics.auto_balance_rows_loaded, 0);
-  assert.equal(complete.diagnostics.fx_rates_rows_loaded, 1);
 
-  const partial = await buildBalancePairsSnapshot({
-    query: { from: "2026-06-01", to: "2026-06-17" },
-    repositoryLoader: async () => ({ ok: false, warning: "Manual Google Sheets overlay failed: timeout" }),
-    autoBalanceLoader: async () => ({
+  assert.equal(first.ok, true);
+  assert.equal(first.rows.length, 1);
+  quotaMode = true;
+
+  const stale = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-03", to: "2026-06-18" },
+    nowMs: Date.parse("2026-06-18T08:03:01.000Z"),
+    repositoryLoader: async () => {
+      if (quotaMode) throw new Error("Google Sheets API quota exceeded");
+    },
+    autoBalanceLoader: async () => {
+      if (quotaMode) throw new Error("Google Sheets API quota exceeded");
+    },
+    expectedPairs,
+  });
+
+  assert.equal(stale.ok, true);
+  assert.equal(stale.status, "stale_cache");
+  assert.equal(stale.source_status, "stale_cache");
+  assert.equal(stale.rows.length, 1);
+  assert.match(stale.warnings.join("\n"), /google_sheets_quota_exceeded_using_cache/);
+  assert.match(stale.cache_generated_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(stale.diagnostics.source_status, "stale_cache");
+  assert.equal(stale.diagnostics.manual_repository_ok, true);
+  assert.equal(stale.diagnostics.auto_balance_rows_loaded, 0);
+});
+
+test("balance pairs returns retry_after when quota hits before cache exists", async () => {
+  __resetBalancePairsCacheForTests();
+  const snapshot = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-05", to: "2026-06-18" },
+    repositoryLoader: async () => {
+      throw new Error("Google Sheets API quota exceeded");
+    },
+    autoBalanceLoader: async () => {
+      throw new Error("Google Sheets API quota exceeded");
+    },
+    expectedPairs: [{ channel: "quota channel", currency: "USD" }],
+  });
+
+  assert.equal(snapshot.ok, false);
+  assert.equal(snapshot.status, "source_unavailable");
+  assert.equal(snapshot.source_status, "unavailable");
+  assert.equal(snapshot.rows.length, 0);
+  assert.equal(snapshot.retry_after_seconds, 60);
+  assert.equal(snapshot.diagnostics.retry_after_seconds, 60);
+});
+
+test("balance pairs reuses fresh cache within ttl without another source read", async () => {
+  __resetBalancePairsCacheForTests();
+  const expectedPairs = [{ channel: "ttl channel", currency: "USD" }];
+  let repositoryCalls = 0;
+  let autoCalls = 0;
+  const repositoryLoader = async () => {
+    repositoryCalls += 1;
+    return {
       ok: true,
-      balances: [{ date: "2026-06-17", channel: "пейпал дол", currency: "USD", amount: "17" }],
+      balances: [
+        { date: "2026-06-06", channel: "ttl channel", currency: "USD", amount: "40" },
+        { date: "2026-06-18", channel: "ttl channel", currency: "USD", amount: "45" },
+      ],
+      operations: [],
+      fxRates: [{ date: "2026-06-18", currency: "USD", rate_to_usd: 1 }],
       warnings: [],
-    }),
-    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
-  });
-  assert.equal(partial.source_status, "partial");
-  assert.equal(partial.diagnostics.source_status, "partial");
-  assert.equal(partial.diagnostics.manual_repository_ok, false);
-  assert.match(partial.diagnostics.manual_repository_warning, /timeout/);
-  assert.equal(partial.diagnostics.auto_balance_rows_loaded, 1);
+    };
+  };
+  const autoBalanceLoader = async () => {
+    autoCalls += 1;
+    return { ok: true, balances: [], warnings: [] };
+  };
 
-  const unavailable = await buildBalancePairsSnapshot({
-    query: { from: "2026-06-01", to: "2026-06-17" },
-    repositoryLoader: async () => ({ ok: false, warning: "Manual Google Sheets overlay failed: 429" }),
-    autoBalanceLoader: async () => ({ ok: false, balances: [], warnings: ["Auto balance sheet failed: 503"] }),
-    expectedPairs: [{ channel: "пейпал дол", currency: "USD" }],
+  await buildBalancePairsSnapshot({
+    query: { from: "2026-06-06", to: "2026-06-18" },
+    nowMs: Date.parse("2026-06-18T08:00:00.000Z"),
+    repositoryLoader,
+    autoBalanceLoader,
+    expectedPairs,
   });
-  assert.equal(unavailable.ok, false);
-  assert.equal(unavailable.source_status, "unavailable");
-  assert.equal(unavailable.diagnostics.source_status, "unavailable");
-  assert.equal(unavailable.diagnostics.manual_repository_ok, false);
-  assert.equal(unavailable.diagnostics.auto_balance_rows_loaded, 0);
+  const cached = await buildBalancePairsSnapshot({
+    query: { from: "2026-06-06", to: "2026-06-18" },
+    nowMs: Date.parse("2026-06-18T08:01:00.000Z"),
+    repositoryLoader,
+    autoBalanceLoader,
+    expectedPairs,
+  });
+
+  assert.equal(repositoryCalls, 1);
+  assert.equal(autoCalls, 1);
+  assert.equal(cached.ok, true);
+  assert.equal(cached.rows.length, 1);
+  assert.equal(cached.diagnostics.cache_hit, true);
+  assert.equal(cached.diagnostics.fx_rates_rows_loaded, 1);
+});
+
+test("balance pairs coalesces concurrent source reads", async () => {
+  __resetBalancePairsCacheForTests();
+  const expectedPairs = [{ channel: "coalesced channel", currency: "USD" }];
+  let repositoryCalls = 0;
+  let autoCalls = 0;
+  let releaseRepository;
+  const repositoryGate = new Promise((resolve) => {
+    releaseRepository = resolve;
+  });
+  const repositoryLoader = async () => {
+    repositoryCalls += 1;
+    await repositoryGate;
+    return {
+      ok: true,
+      balances: [
+        { date: "2026-06-04", channel: "coalesced channel", currency: "USD", amount: "20" },
+        { date: "2026-06-18", channel: "coalesced channel", currency: "USD", amount: "30" },
+      ],
+      operations: [],
+      fxRates: [],
+      warnings: [],
+    };
+  };
+  const autoBalanceLoader = async () => {
+    autoCalls += 1;
+    return { ok: true, balances: [], warnings: [] };
+  };
+
+  const first = buildBalancePairsSnapshot({
+    query: { from: "2026-06-04", to: "2026-06-18" },
+    repositoryLoader,
+    autoBalanceLoader,
+    expectedPairs,
+  });
+  const second = buildBalancePairsSnapshot({
+    query: { from: "2026-06-04", to: "2026-06-18" },
+    repositoryLoader,
+    autoBalanceLoader,
+    expectedPairs,
+  });
+  releaseRepository();
+  const snapshots = await Promise.all([first, second]);
+
+  assert.equal(repositoryCalls, 1);
+  assert.equal(autoCalls, 1);
+  assert.deepEqual(snapshots.map((snapshot) => snapshot.rows.length), [1, 1]);
 });

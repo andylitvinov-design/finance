@@ -1253,6 +1253,55 @@ test("reconcile workflow posts selected period and renders structured result", a
   delete global.fetch;
 });
 
+test("reconcile workflow coalesces simultaneous refresh-all-balance clicks", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument({ from: "2026-05-01", to: "2026-05-31" });
+  let postCount = 0;
+  let releasePost;
+  const postGate = new Promise((resolve) => {
+    releasePost = resolve;
+  });
+  global.fetch = async (url, options = {}) => {
+    if (options.method === "POST" && /\/api\/refresh-all-balances$/.test(String(url))) {
+      postCount += 1;
+      await postGate;
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            ok: true,
+            providers_checked: ["wise"],
+            balances_pulled: 1,
+            transfers_imported: 0,
+            computed_rows_count: 0,
+            provider_failures: [],
+            needs_verification_rows: [],
+          });
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  const first = api.runBalanceReconcileWorkflow();
+  const second = api.runBalanceReconcileWorkflow();
+  releasePost();
+  const results = await Promise.all([first, second]);
+
+  assert.equal(postCount, 1);
+  assert.deepEqual(results.map((result) => result.ok), [true, true]);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("reconcile button refetches selected-date balance snapshots after successful POST", async () => {
   const api = loadApi();
   global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
