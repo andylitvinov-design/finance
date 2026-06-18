@@ -363,7 +363,7 @@
     const block = renderSubsection(
       doc,
       "Остатки по каналам оплаты",
-      ["Канал", "Остатки 1 USD", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"],
+      ["Канал", "Raw 1", "Остатки 1 USD", "Raw 2", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"],
       tableRows
     );
     if (fxMissingText) {
@@ -372,6 +372,8 @@
       note.textContent = fxMissingText;
       block.appendChild(note);
     }
+    const audit = renderTotalAuditDiagnostics(doc, rows, totalUsdRow);
+    if (audit) block.appendChild(audit);
     return block;
   }
 
@@ -490,7 +492,9 @@
     const diff = getDiffUsd(row, change, movement);
     return [
       row?.channel || "—",
+      formatRawBalanceCell(row, "opening", start),
       formatUsdCell(row, "opening_usd", start),
+      formatRawBalanceCell(row, "closing", end),
       formatUsdCell(row, "confirmed_end_usd", end),
       formatDerivedUsdCell(row, ["opening_usd", "confirmed_end_usd"], change),
       formatUsdCell(row, "movement_usd", movement),
@@ -506,12 +510,187 @@
     const diff = getDiffUsd(row, change, movement);
     return [
       row?.label || "ВСЕГО USD",
+      "—",
       formatNumber(start),
+      "—",
       formatNumber(end),
       formatNumber(change),
       formatNumber(movement),
       formatNumber(diff),
     ];
+  }
+
+  function formatRawBalanceCell(row, side, usdValue = null) {
+    const native = side === "opening" ? getRawOpeningAmount(row) : getRawClosingAmount(row);
+    const currency = String(row?.currency || "").trim().toUpperCase();
+    if (native === null || !currency) return "—";
+    const parts = [`${formatNumber(native)} ${currency}`];
+    const usd = usdValue ?? (side === "opening" ? parseNumeric(row?.opening_amount_usd) : parseNumeric(row?.manual_provider_closing_balance_usd));
+    if (usd !== null && (currency !== "USD" || Math.abs(usd - native) > 0.0001)) {
+      parts[0] += ` → ${formatNumber(usd)} USD`;
+    }
+    const rate = side === "opening" ? getRawOpeningRate(row) : getRawClosingRate(row);
+    if (rate !== null) parts.push(`rate ${formatNumber(rate)}`);
+    const source = side === "opening" ? getRawOpeningSourceLabel(row) : getRawClosingSourceLabel(row);
+    if (source) parts.push(source);
+    return parts.join(" ");
+  }
+
+  function getRawOpeningAmount(row) {
+    return parseNumeric(row?.opening_native ?? row?.opening_fact_balance ?? row?.opening_balance);
+  }
+
+  function getRawClosingAmount(row) {
+    return parseNumeric(
+      row?.confirmed_end_native ??
+      row?.manual_provider_closing_balance ??
+      row?.factual_closing_balance ??
+      row?.displayed_fact_balance ??
+      row?.carried_forward_balance
+    );
+  }
+
+  function getRawOpeningRate(row) {
+    return parseNumeric(row?.opening_fx_rate_to_usd ?? row?.opening_rate ?? row?.fx_rate_to_usd);
+  }
+
+  function getRawClosingRate(row) {
+    return parseNumeric(
+      row?.manual_provider_closing_balance_fx_rate_to_usd ??
+      row?.closing_fx_rate_to_usd ??
+      row?.closing_rate ??
+      row?.fact_balance?.fx_rate_to_usd
+    );
+  }
+
+  function getRawOpeningSourceLabel(row) {
+    return formatRawSourceLabel({
+      date: row?.opening_snapshot_date ?? row?.opening_balance_date ?? row?.date,
+      sheet: row?.opening_source_sheet ?? row?.sourceSheet ?? row?.source_sheet,
+      sourceRow: row?.opening_source_row ?? row?.sourceRow ?? row?.source_row,
+    });
+  }
+
+  function getRawClosingSourceLabel(row) {
+    return formatRawSourceLabel({
+      date: row?.closing_snapshot_date ?? row?.manual_provider_closing_balance_date ?? row?.factDate ?? row?.fact_date ?? row?.fact_balance?.date,
+      sheet: row?.closing_source_sheet ?? row?.fact_balance?.sourceSheet ?? row?.sourceSheet ?? row?.source_sheet,
+      sourceRow: row?.closing_source_row ?? row?.fact_balance?.sourceRow ?? row?.sourceRow ?? row?.source_row,
+    });
+  }
+
+  function formatRawSourceLabel({ date, sheet, sourceRow } = {}) {
+    const sourceParts = [];
+    const cleanDate = String(date || "").trim();
+    const cleanSheet = String(sheet || "").trim();
+    const cleanRow = String(sourceRow || "").trim();
+    if (cleanDate) sourceParts.push(`date ${cleanDate}`);
+    if (cleanSheet && cleanRow) sourceParts.push(`${cleanSheet}#${cleanRow}`);
+    else if (cleanSheet) sourceParts.push(cleanSheet);
+    return sourceParts.length ? sourceParts.join(", ") : "";
+  }
+
+  function renderTotalAuditDiagnostics(doc, rows = [], totalUsdRow = null) {
+    if (!totalUsdRow && !(rows || []).length) return null;
+    const lines = buildTotalAuditLines(rows, totalUsdRow);
+    if (!lines.length) return null;
+    const block = doc.createElement("div");
+    block.className = "config-note period-balance-total-audit";
+    block.textContent = lines.join(" ");
+    return block;
+  }
+
+  function buildTotalAuditLines(rows = [], totalUsdRow = null) {
+    const displayTotal = parseNumeric(totalUsdRow?.confirmed_end_usd);
+    const suspectRows = collectSuspectLegacyRows(rows);
+    const suspectKeys = new Set(suspectRows.map((row) => getRowKey(row)));
+    const totalExcludingSuspects = sumRows(rows, "confirmed_end_usd", (row) => !suspectKeys.has(getRowKey(row)));
+    const manualFactTotal = sumRowsWithCount(rows, "confirmed_end_usd", isManualFactRow);
+    const includedCount = Number(totalUsdRow?.comparable_usd_rows ?? totalUsdRow?.finite_end_rows ?? countRowsWithNumber(rows, "confirmed_end_usd"));
+    const excludedRows = Array.isArray(totalUsdRow?.excluded_rows) ? totalUsdRow.excluded_rows : [];
+    const excludedCount = Number(totalUsdRow?.rows_excluded_from_usd_total ?? excludedRows.length);
+    const fxMissingCount = Number(totalUsdRow?.excluded_fx_missing_rows || 0)
+      || Number(totalUsdRow?.fx_missing_end_rows || 0);
+    const lines = [
+      `Total audit: displayed/current USD total: ${formatNumber(displayTotal)}.`,
+      `total excluding suspect legacy rows: ${formatNumber(totalExcludingSuspects)}.`,
+      `manual fact only total: ${manualFactTotal.count ? formatNumber(manualFactTotal.value) : "—"}.`,
+      `fx_missing rows: ${fxMissingCount}${fxMissingCount ? formatAuditRowList(excludedRows) : ""}.`,
+      `suspect legacy rows: ${suspectRows.length}${suspectRows.length ? `; ${suspectRows.map(formatSuspectLegacyRow).join("; ")}` : ""}.`,
+      `rows included in USD total: ${includedCount}.`,
+      `rows excluded from USD total: ${excludedCount}${formatAuditRowList(excludedRows)}.`,
+    ];
+    if (fxMissingCount > 0) {
+      lines.push("ВСЕГО USD is partial: rows with missing FX are excluded from the relevant total columns.");
+    }
+    return lines;
+  }
+
+  function collectSuspectLegacyRows(rows = []) {
+    const hasBinanceSaveCrypto = rows.some((row) => (
+      normalizeText(row?.channel) === "binance save" && ["USDT", "USDC"].includes(String(row?.currency || "").trim().toUpperCase())
+    ));
+    return (rows || []).filter((row) => {
+      const channel = normalizeText(row?.channel);
+      const currency = String(row?.currency || "").trim().toUpperCase();
+      const amount = parseNumeric(row?.confirmed_end_usd ?? row?.opening_usd ?? row?.confirmed_end_native ?? row?.opening_native);
+      if (channel === "legacy_combined_binance_spot_funding") return true;
+      if (channel !== "binance save" || currency !== "USD" || !hasBinanceSaveCrypto || amount === null) return false;
+      return amount >= 7425 && amount <= 7432;
+    });
+  }
+
+  function formatSuspectLegacyRow(row) {
+    const amount = parseNumeric(row?.confirmed_end_native ?? row?.opening_native ?? row?.confirmed_end_usd ?? row?.opening_usd);
+    const source = getRawClosingSourceLabel(row) || getRawOpeningSourceLabel(row);
+    return `suspect legacy row: ${row?.channel || "—"} ${row?.currency || "—"} ${formatNumber(amount)}${source ? `, ${source}` : ""}`;
+  }
+
+  function formatAuditRowList(rows = []) {
+    if (!rows.length) return "";
+    return ` (${rows.slice(0, 8).map((row) => `${row.channel || "—"} ${row.currency || "—"}`).join("; ")}${rows.length > 8 ? "; ..." : ""})`;
+  }
+
+  function sumRows(rows = [], field, predicate = () => true) {
+    return rows.reduce((total, row) => {
+      if (!predicate(row)) return total;
+      const value = parseNumeric(row?.[field]);
+      if (value === null) return total;
+      return total + value;
+    }, 0);
+  }
+
+  function sumRowsWithCount(rows = [], field, predicate = () => true) {
+    return rows.reduce((total, row) => {
+      if (!predicate(row)) return total;
+      const value = parseNumeric(row?.[field]);
+      if (value === null) return total;
+      return {
+        value: total.value + value,
+        count: total.count + 1,
+      };
+    }, { value: 0, count: 0 });
+  }
+
+  function countRowsWithNumber(rows = [], field) {
+    return rows.filter((row) => parseNumeric(row?.[field]) !== null).length;
+  }
+
+  function isManualFactRow(row) {
+    const source = normalizeText(row?.balanceSource || row?.balance_source || row?.fact_source_type || row?.fact_source || row?.source);
+    return source === "manual_fact" || source === "manual";
+  }
+
+  function isPartialTotal(row) {
+    return Boolean(row?.partial) || String(row?.total_coverage_status || row?.status || "").trim() === "partial";
+  }
+
+  function getRowKey(row) {
+    return `${row?.channel || ""}|${row?.currency || ""}`;
+  }
+
+  function normalizeText(value) {
+    return String(value || "").trim().toLowerCase();
   }
 
   function formatUsdCell(row, field, value) {

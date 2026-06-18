@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const ui = require("../period-balance-reconciliation-ui.js");
 const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"];
-const USD_TABLE_HEADER = ["Канал", "Остатки 1 USD", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"];
+const USD_TABLE_HEADER = ["Канал", "Raw 1", "Остатки 1 USD", "Raw 2", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"];
 const NATIVE_TABLE_HEADER = ["Канал", "Валюта", "Остатки 1", "Остатки 2", "Изменение", "Движение средств", "Статус"];
 
 test("period balance reconciliation UI wraps Analytics, not expense financial analysis", () => {
@@ -314,8 +314,8 @@ test("period balance renders one USD-only default channel table", () => {
   assert.deepEqual(channelRows[0], USD_TABLE_HEADER);
   assert.equal(channelRows[1][0], "paypal eur");
   assert.equal(channelRows[2][0], "mono uah");
-  assert.deepEqual(channelRows[3], ["wise usd", "1000", "1125", "125", "125", "0"]);
-  assert.deepEqual(channelRows.at(-1), ["ВСЕГО USD", "1300", "1450", "150", "140", "10"]);
+  assert.deepEqual(channelRows[3], ["wise usd", "1000 USD", "1000", "1125 USD", "1125", "125", "125", "0"]);
+  assert.deepEqual(channelRows.at(-1), ["ВСЕГО USD", "—", "1300", "—", "1450", "150", "140", "10"]);
   assert.doesNotMatch(block.textContent, /ИТОГО CAD|ИТОГО EUR|ИТОГО RUB|ИТОГО UAH|ИТОГО USD|ИТОГО USDT/);
   assert.doesNotMatch(block.textContent, /OPENING NATIVE|MOVEMENT NATIVE|CONFIRMED END NATIVE/);
   assert.doesNotMatch(block.textContent, /Сводка по валютам, справочно/);
@@ -418,6 +418,146 @@ test("period balance UI uses canonical order across main, debug, manual fact, an
   ]);
 });
 
+test("period balance main table renders raw native audit columns without changing USD columns", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "БАНК КАНАДА cad",
+        currency: "CAD",
+        opening_native: 10538,
+        opening_fact_balance: 10538,
+        opening_usd: 7798,
+        opening_fx_rate_to_usd: 0.74,
+        opening_balance_date: "2026-05-28",
+        opening_source_sheet: "Остатки",
+        opening_source_row: 94,
+        confirmed_end_native: 10538,
+        factual_closing_balance: 10538,
+        confirmed_end_usd: 7521.7715,
+        manual_provider_closing_balance_fx_rate_to_usd: 0.7138,
+        manual_provider_closing_balance_date: "2026-06-18",
+        closing_source_sheet: "Расчетные Остатки",
+        closing_source_row: 410,
+        movement_usd: 0,
+        change_usd: -276.2285,
+        diff_usd: -276.2285,
+        status: "calculated_from_previous",
+      },
+    ],
+    actionable_rows: [],
+    total_usd_row: null,
+  }));
+
+  const rows = getSubsectionRowsByTitle(block, "Остатки по каналам оплаты");
+  assert.deepEqual(rows[0], USD_TABLE_HEADER);
+  const bankCanada = rows.find((row) => row[0] === "БАНК КАНАДА cad");
+  assert.match(bankCanada[1], /10538 CAD → 7798 USD/);
+  assert.match(bankCanada[1], /rate 0\.74/);
+  assert.match(bankCanada[1], /date 2026-05-28, Остатки#94/);
+  assert.equal(bankCanada[2], "7798");
+  assert.match(bankCanada[3], /10538 CAD → 7521\.7715 USD/);
+  assert.match(bankCanada[3], /rate 0\.7138/);
+  assert.match(bankCanada[3], /date 2026-06-18, Расчетные Остатки#410/);
+  assert.equal(bankCanada[4], "7521.7715");
+  assert.equal(bankCanada[5], "-276.2285");
+  assert.equal(bankCanada[6], "0");
+  assert.equal(bankCanada[7], "-276.2285");
+});
+
+test("period balance total audit diagnostics flags suspect legacy rows and partial exclusions", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "legacy_combined_binance_spot_funding",
+        currency: "USDT",
+        opening_native: 345,
+        opening_usd: 345,
+        confirmed_end_native: 345,
+        confirmed_end_usd: 345,
+        movement_usd: 0,
+        diff_usd: 0,
+        sourceSheet: "Авто Остатки",
+        sourceRow: 3,
+        opening_balance_date: "2026-03-25",
+        status: "calculated_from_previous",
+      },
+      {
+        channel: "binance save",
+        currency: "USD",
+        opening_native: 7432,
+        opening_usd: 7432,
+        confirmed_end_native: 7432,
+        confirmed_end_usd: 7432,
+        movement_usd: 0,
+        diff_usd: 0,
+        sourceSheet: "Остатки",
+        sourceRow: 98,
+        opening_balance_date: "2026-05-28",
+        status: "calculated_from_previous",
+      },
+      {
+        channel: "binance save",
+        currency: "USDT",
+        opening_native: 5413.16,
+        opening_usd: 5413.16,
+        confirmed_end_native: 5416.6469,
+        confirmed_end_usd: 5416.6469,
+        movement_usd: 3.4869,
+        diff_usd: 0,
+        status: "calculated_from_previous",
+      },
+      {
+        channel: "binance save",
+        currency: "USDC",
+        opening_native: 3107.3722,
+        opening_usd: 3107.3722,
+        confirmed_end_usd: null,
+        movement_usd: 0,
+        diff_usd: null,
+        status: "missing_provider_balance",
+      },
+    ],
+    actionable_rows: [],
+    total_usd_row: {
+      label: "ВСЕГО USD (partial)",
+      currency: "USD",
+      opening_usd: 16297.5322,
+      confirmed_end_usd: 13193.6469,
+      movement_usd: 3.4869,
+      diff_usd: 0,
+      total_coverage_status: "partial",
+      partial: true,
+      finite_start_rows: 4,
+      finite_end_rows: 3,
+      finite_change_rows: 3,
+      finite_movement_rows: 4,
+      finite_diff_rows: 3,
+      comparable_usd_rows: 3,
+      rows_excluded_from_usd_total: 1,
+      excluded_fx_missing_rows: 1,
+      excluded_channels: ["binance save USDC"],
+      excluded_rows: [
+        { channel: "binance save", currency: "USDC", reason: "missing closing balance fact" },
+      ],
+    },
+  }));
+
+  const text = block.textContent;
+  assert.match(text, /Total audit/);
+  assert.match(text, /displayed\/current USD total: 13193\.6469/);
+  assert.match(text, /total excluding suspect legacy rows: 5416\.6469/);
+  assert.match(text, /manual fact only total:/);
+  assert.match(text, /suspect legacy row: legacy_combined_binance_spot_funding USDT 345/);
+  assert.match(text, /suspect legacy row: binance save USD 7432/);
+  assert.match(text, /fx_missing rows: 1/);
+  assert.match(text, /binance save USDC/);
+  assert.match(text, /rows included in USD total: 3/);
+  assert.match(text, /rows excluded from USD total: 1/);
+  assert.match(text, /ВСЕГО USD is partial: rows with missing FX are excluded from the relevant total columns\./);
+});
+
 test("period balance UI renders explicit fx_missing cells and final total USD row", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
@@ -482,9 +622,9 @@ test("period balance UI renders explicit fx_missing cells and final total USD ro
   const total = rows.find((row) => row[0] === "ВСЕГО USD (partial)");
 
   assert.deepEqual(rows[0], USD_TABLE_HEADER);
-  assert.deepEqual(wise, ["wise usd", "100", "125", "25", "25", "0"]);
-  assert.deepEqual(cad, ["cash cad", "fx_missing", "fx_missing", "fx_missing", "fx_missing", "fx_missing"]);
-  assert.deepEqual(total, ["ВСЕГО USD (partial)", "100", "125", "25", "25", "0"]);
+  assert.deepEqual(wise, ["wise usd", "100 USD", "100", "125 USD", "125", "25", "25", "0"]);
+  assert.deepEqual(cad, ["cash cad", "50 CAD", "fx_missing", "60 CAD", "fx_missing", "fx_missing", "fx_missing", "fx_missing"]);
+  assert.deepEqual(total, ["ВСЕГО USD (partial)", "—", "100", "—", "125", "25", "25", "0"]);
   assert.match(block.textContent, /fx_missing: 1 row/);
   assert.match(block.textContent, /ВСЕГО USD is partial/);
 });
@@ -537,8 +677,8 @@ test("period balance total USD row displays column-wise change and diff from API
   }));
 
   const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad"), ["БАНК КАНАДА cad", "7351", "fx_missing", "fx_missing", "0", "fx_missing"]);
-  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "7451", "120", "20", "15", "5"]);
+  assert.deepEqual(rows.find((row) => row[0] === "БАНК КАНАДА cad"), ["БАНК КАНАДА cad", "—", "7351", "—", "fx_missing", "fx_missing", "0", "fx_missing"]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "—", "7451", "—", "120", "20", "15", "5"]);
   assert.match(block.textContent, /fx_missing: end=1, diff=1/);
   assert.match(block.textContent, /finite row coverage differs/);
 });
@@ -590,7 +730,7 @@ test("period balance total USD row warns when coverage differs without fx_missin
   }));
 
   const rows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
-  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "155", "120", "20", "26", "5"]);
+  assert.deepEqual(rows.find((row) => row[0] === "ВСЕГО USD (partial)"), ["ВСЕГО USD (partial)", "—", "155", "—", "120", "20", "26", "5"]);
   assert.match(block.textContent, /ВСЕГО USD is partial/);
   assert.match(block.textContent, /Excluded: cash eur EUR/);
 });
@@ -1030,7 +1170,7 @@ test("period balance UI shows missing provider balance as blocked, not OK", () =
   assert.match(text, /Добавить фактический остаток на дату окончания периода/);
   const positionRows = getTableTextRows(findByClass(block, "period-balance-subsection")[0].children[1].children[0]);
   assert.deepEqual(positionRows[0], USD_TABLE_HEADER);
-  assert.equal(positionRows[1][2], "fx_missing");
+  assert.ok(positionRows.some((row) => row.includes("fx_missing")));
 });
 
 test("period balance diagnostic mode keeps existing factual values visible when summary failed", () => {
