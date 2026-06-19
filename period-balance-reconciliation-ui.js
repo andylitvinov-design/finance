@@ -1103,18 +1103,29 @@
     section.appendChild(title);
     const wrap = doc.createElement("div");
     wrap.className = "table-wrap period-balance-table-wrap";
-    wrap.appendChild(renderTable(doc, [header, ...rows]));
+    wrap.appendChild(renderTable(doc, [header, ...rows], getPeriodBalanceTableColumnClasses(header)));
     section.appendChild(wrap);
     return section;
   }
 
-  function renderTable(doc, values) {
+  function getPeriodBalanceTableColumnClasses(header = []) {
+    return header.map((label) => {
+      const normalized = String(label || "").trim().toLowerCase();
+      return normalized === "raw 1" || normalized === "raw 2"
+        ? { header: "period-balance-raw-header", cell: "period-balance-raw-cell" }
+        : null;
+    });
+  }
+
+  function renderTable(doc, values, columnClasses = []) {
     const table = doc.createElement("table");
     const tbody = doc.createElement("tbody");
     values.forEach((row, index) => {
       const tr = doc.createElement("tr");
-      row.forEach((cell) => {
+      row.forEach((cell, cellIndex) => {
         const node = doc.createElement(index === 0 ? "th" : "td");
+        const className = index === 0 ? columnClasses[cellIndex]?.header : columnClasses[cellIndex]?.cell;
+        if (className) node.className = className;
         node.textContent = String(cell ?? "");
         tr.appendChild(node);
       });

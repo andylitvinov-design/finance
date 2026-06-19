@@ -323,6 +323,21 @@ test("period balance renders one USD-only default channel table", () => {
   assert.doesNotMatch(block.textContent, /Итоги по всем каналам/);
 });
 
+test("period balance raw columns expose stable CSS hooks", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot());
+  const table = findTag(findByClass(block, "period-balance-subsection")[0], "TABLE")[0];
+  const header = table.children[0].children[0].children;
+  const firstDataRow = table.children[0].children[1].children;
+
+  assert.equal(header[1].textContent, "Raw 1");
+  assert.equal(header[1].className, "period-balance-raw-header");
+  assert.equal(firstDataRow[1].className, "period-balance-raw-cell");
+  assert.equal(header[3].textContent, "Raw 2");
+  assert.equal(header[3].className, "period-balance-raw-header");
+  assert.equal(firstDataRow[3].className, "period-balance-raw-cell");
+});
+
 test("period balance UI uses canonical order across main, debug, manual fact, and action tables", () => {
   const doc = createTestDocument();
   const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
