@@ -97,6 +97,15 @@
     z-index: auto;
   }
 
+  .period-balance-table-wrap .period-balance-raw-header,
+  .period-balance-table-wrap .period-balance-raw-cell {
+    min-width: 220px;
+    max-width: 260px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .expense-pie-section,
   .expense-pie-body,
   .expense-pie-legend {

@@ -50,3 +50,8 @@ test("new analytics balance tables do not inherit sticky first-column mobile beh
   assert.match(overrideBlock, /left: auto;/);
   assert.match(overrideBlock, /z-index: auto;/);
 });
+
+test("period balance raw columns stay readable on mobile instead of inheriting nowrap", () => {
+  assert.match(styleCss, /\.period-balance-table-wrap \.period-balance-raw-header,\s*\.period-balance-table-wrap \.period-balance-raw-cell \{\s*min-width: 220px;\s*max-width: 260px;\s*white-space: normal;\s*overflow-wrap: anywhere;\s*word-break: break-word;\s*\}/);
+  assert.match(mobileScrollCss, /\.period-balance-table-wrap \.period-balance-raw-header,\s*\.period-balance-table-wrap \.period-balance-raw-cell \{\s*min-width: 220px;\s*max-width: 260px;\s*white-space: normal;\s*overflow-wrap: anywhere;\s*word-break: break-word;\s*\}/);
+});

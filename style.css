@@ -532,6 +532,14 @@ tr:nth-child(even) td { background: #fffcf7; }
   font-size: 12px;
   vertical-align: top;
 }
+.period-balance-table-wrap .period-balance-raw-header,
+.period-balance-table-wrap .period-balance-raw-cell {
+  min-width: 220px;
+  max-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .period-balance-total-wrap table tr > :first-child {
   min-width: 220px;
   white-space: normal;
