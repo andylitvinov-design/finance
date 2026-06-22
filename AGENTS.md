@@ -88,7 +88,7 @@ When Andrey asks to create a Claude Code prompt for finance, use low-token stage
 
 Never create one giant Claude Code prompt that asks for diagnose + patch + tests + PR + merge + deploy + production verification together **unless the user invokes `/delivery`**.
 
-For `/delivery`, use the staged command protocol above. It is allowed to cover the full release path only because it has strict checkpoints, finance safety rules, and `SUCCESS`/`BLOCKED` stop states. The `/delivery` command itself is the user's delegation to proceed through safe merge, deployment verification, and live verification.
+For `/delivery`, use the staged command protocol above. It is allowed to cover the full release path only because it has strict checkpoints, finance safety rules, and `SUCCESS`/`SUCCESS_WITH_AUTH_LIMITATION`/`BLOCKED` stop states. The `/delivery` command itself is the user's delegation to proceed through safe merge, deployment verification, and live verification.
 
 ## Production Debug Preflight
 
@@ -180,3 +180,8 @@ When you cannot run a check yourself, state the exact blocker, for example: no l
 Codex prompts must ask for implementation work, not only verification. A good Codex prompt should include the intended code/data-report change, target files, failing layer to prove first, regression tests to add or update, commands to run, and live verification. Avoid using Codex as a substitute for work the assistant could already perform directly.
 
 If using Codex after partial assistant work, include what was already checked, what was already changed, what remains unverified, and the exact expected patch or data-repair output. Codex should continue from that state, not restart with generic investigation.
+
+
+## Expected Auth Boundary
+
+Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.
