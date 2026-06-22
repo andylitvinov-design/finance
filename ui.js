@@ -340,7 +340,7 @@ function renderExpenseAccountingBlock() {
   const paypalButton = document.createElement("button");
   paypalButton.type = "button";
   paypalButton.className = "secondary";
-  paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal API..." : "PayPal API (business)";
+  paypalButton.textContent = state.expenseAccounting.paypalLoading ? "Загружаю PayPal..." : "Подтянуть PayPal";
   paypalButton.disabled = state.expenseAccounting.loading || statementLoading;
   paypalButton.addEventListener("click", loadPayPalExpenseStatement);
   const paypalCsvButton = document.createElement("button");
@@ -411,7 +411,7 @@ function renderExpenseAccountingBlock() {
   tdBankButton.textContent = state.expenseAccounting.tdBankLoading ? "Импортирую TD Bank..." : "Начать TD импорт";
   tdBankButton.disabled = state.expenseAccounting.loading || statementLoading;
   tdBankButton.addEventListener("click", startOrContinueTdImport);
-  actions.append(parseButton, statementImportButton, paypalCsvButton, paypalButton, payoneerButton, revolutButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
+  actions.append(parseButton, statementImportButton, paypalButton, payoneerButton, revolutButton, wiseButton, yoomoneyButton, monobankConnectButton, monobankButton, privat24ImportButton, privatBankButton, tdBankButton);
   upload.append(input, statementInput, paypalStatementInput, privat24Input, payoneerInput, revolutInput, tdBankCsvInput, actions);
   shell.appendChild(upload);
   if (state.expenseAccounting.monobankConnectOpen) shell.appendChild(renderMonobankConnectPanel());
