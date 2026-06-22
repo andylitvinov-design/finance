@@ -169,9 +169,12 @@ test("PayPal permission failures point personal accounts to CSV import", () => {
   assert.doesNotMatch(message, /Bad Request|Unexpected token|плохой запрос/i);
 });
 
-test("expense UI makes PayPal CSV import the personal-account route", () => {
-  assert.match(uiJs, /Импорт PayPal CSV/);
-  assert.match(uiJs, /PayPal API \(business\)/);
+test("expense UI keeps PayPal pull as the primary action", () => {
+  assert.match(uiJs, /Подтянуть PayPal/);
+  assert.doesNotMatch(uiJs, /PayPal API \(business\)/);
+  assert.match(uiJs, /paypalButton\.addEventListener\("click", loadPayPalExpenseStatement\)/);
+  assert.match(uiJs, /actions\.append\(parseButton, statementImportButton, paypalButton,/);
+  assert.doesNotMatch(uiJs, /actions\.append\([^;]*paypalCsvButton[^;]*paypalButton/);
   assert.match(uiJs, /importPayPalActivityStatementFile/);
   assert.match(uiJs, /paypalStatementInput\.click\(\)/);
   assert.match(uiJs, /accept = "\.csv,\.xlsx,\.xls,text\/csv,application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet,application\/vnd\.ms-excel"/);
