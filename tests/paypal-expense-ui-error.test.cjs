@@ -115,6 +115,45 @@ test("PayPal manual import message combines REST auth rejection and MCP grant-no
   assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
 });
 
+test("PayPal manual import message combines REST permission denial and MCP grant-not-found", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    provider: "paypal",
+    error: "paypal_manual_import_required",
+    phase: "mcp_token",
+    providerStatus: "mcp_grant_not_found",
+    shortExcerpt: "PayPal MCP token refresh failed (400): Grant not found",
+    warnings: [
+      "PayPal REST import failed: PayPal transaction request failed (403): Authorization failed due to insufficient permissions."
+    ],
+    paypalRest: {
+      phase: "transaction_search",
+      providerStatus: "permission_denied",
+      environment: "sandbox",
+      hasClientId: true,
+      hasClientSecret: true,
+      maskedClientId: "Aa6d...Eb9d"
+    },
+    paypalMcp: {
+      phase: "mcp_token",
+      providerStatus: "mcp_grant_not_found",
+      hasClientId: true,
+      hasRefreshToken: true
+    }
+  });
+
+  assert.match(message, /PayPal REST не имеет reporting\/transaction permission/);
+  assert.match(message, /wrong live\/sandbox app/);
+  assert.match(message, /MCP fallback also failed: refresh grant not found/);
+  assert.match(message, /PAYPAL_CLIENT_ID\/PAYPAL_CLIENT_SECRET/);
+  assert.match(message, /business\/reporting permissions/);
+  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
+  assert.match(message, /CSV fallback remains available/);
+  assert.doesNotMatch(message, /^Для personal PayPal используйте Импорт PayPal CSV/);
+  assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
+});
+
 test("readPayPalExpenseStatementPayload converts non-JSON provider text into contextual UI error", async () => {
   const context = createContext();
 

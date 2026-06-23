@@ -2594,9 +2594,19 @@ function getPayPalManualImportMessage(payload = {}) {
   const details = [phase ? `phase: ${phase}` : "", excerpt ? `details: ${excerpt}` : ""].filter(Boolean).join(" · ");
   const warnings = Array.isArray(payload?.warnings) ? payload.warnings.join(" ") : "";
   const restStatus = String(payload?.paypalRest?.providerStatus || "").trim();
+  const restPhase = String(payload?.paypalRest?.phase || "").trim();
   const mcpStatus = String(payload?.paypalMcp?.providerStatus || providerStatus).trim();
   const restRejected = restStatus === "auth_failed" || /rest import failed: paypal oauth failed .*client authentication failed/i.test(warnings);
+  const restPermissionDenied = (
+    restStatus === "permission_denied"
+    || restStatus === "reporting_unavailable"
+    || restPhase === "transaction_search"
+    || /insufficient permissions|authorization failed|not authorized|permission_denied|permission denied|reporting permission/i.test(`${warnings} ${excerpt}`)
+  );
   const mcpGrantMissing = mcpStatus === "mcp_grant_not_found" || /grant not found/i.test(excerpt);
+  if (restPermissionDenied && mcpGrantMissing) {
+    return `PayPal REST не имеет reporting/transaction permission or wrong live/sandbox app. MCP fallback also failed: refresh grant not found. Fix Vercel PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET with business/reporting permissions or re-authorize/replace PAYPAL_MCP_REFRESH_TOKEN. CSV fallback remains available.${details ? ` ${details}` : ""}`;
+  }
   if (restRejected && mcpGrantMissing) {
     return `PayPal REST credentials rejected by PayPal: check Vercel PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET and PAYPAL_ENVIRONMENT live/sandbox. MCP fallback also failed: refresh grant not found; re-authorize PayPal MCP or replace PAYPAL_MCP_REFRESH_TOKEN. You can still import Activity/CSV and confirm net manually.${details ? ` ${details}` : ""}`;
   }
