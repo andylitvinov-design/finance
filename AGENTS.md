@@ -153,8 +153,15 @@ When the user invokes `/delivery`, follow these local source-of-truth files in o
 2. `docs/delivery-loop-program.md`
 3. `docs/delivery-loop-technical-details.md`
 4. `docs/delivery-loop-source-patterns-and-live-proof.md`
-5. `AGENTS.md`
-6. `CLAUDE_CODE_PROMPTS.md`
+5. `docs/delivery-design-quality-gate.md`
+6. `AGENTS.md`
+7. `CLAUDE_CODE_PROMPTS.md`
+
+For UI tasks, `/delivery` must also follow `docs/delivery-design-quality-gate.md`. Build/check/live/API proof is not enough for UI delivery.
+
+Before `STATUS: SUCCESS` on UI tasks, final output must include `DESIGN QUALITY GATE` and `UI POLISH / FEEL-BETTER PASS`. Use `jakubkrehel/make-interfaces-feel-better` when installed, or the fallback checklist from `docs/delivery-design-quality-gate.md` when unavailable.
+
+If any required design item is `FAIL` or `NOT VERIFIED`, `/delivery` must run another improvement loop or report an exact blocker instead of claiming success.
 
 `/delivery` is an explicit exception to the default rule against combining diagnose + patch + tests + PR + deploy + production verification in one ordinary prompt. The exception is allowed because `/delivery` is not a loose giant prompt: it is a staged, checkpointed, finance-safe release-owner loop with hard stop states.
 
