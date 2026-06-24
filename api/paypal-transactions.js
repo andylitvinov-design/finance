@@ -7,8 +7,8 @@ const PAYPAL_MCP_BASE_URL = "https://mcp.paypal.com";
 const PAYPAL_MCP_PAGE_SIZE = 100;
 const DEFAULT_PAYPAL_MCP_TOOL_NAME = "list_transactions";
 const PAYPAL_ERROR_EXCERPT_LENGTH = 300;
-const PAYPAL_MCP_FALLBACK_ACTION = "Use PayPal REST permissions or PayPal statement file import.";
-const PAYPAL_MANUAL_IMPORT_MESSAGE = "PayPal API is not available for this account or permissions. For personal PayPal accounts, use Activity/CSV manual import and confirm net only when the export proves it.";
+const PAYPAL_MCP_FALLBACK_ACTION = "Reconnect PayPal MCP/OAuth, or use PayPal statement file import as a fallback.";
+const PAYPAL_MANUAL_IMPORT_MESSAGE = "PayPal automatic import is not available with the current provider credentials. Reconnect PayPal MCP/OAuth for personal PayPal, or use Activity/CSV import as a fallback and confirm net only when the export proves it.";
 export const PAYPAL_FEE_UNAVAILABLE_WARNING = "PayPal fee unavailable due to API permissions/auth";
 const PAYPAL_EXCHANGE_EVENT_CODES = new Set(["T0200", "T1105"]);
 const PAYPAL_REFUND_EVENT_CODES = new Set(["T1107", "T1108", "T1109", "T1110", "T1111"]);
@@ -38,7 +38,9 @@ export default async function handler(request, response) {
     const mcpClientId = String(process.env.PAYPAL_MCP_CLIENT_ID || "").trim();
     const mcpRefreshToken = String(process.env.PAYPAL_MCP_REFRESH_TOKEN || "").trim();
     const environment = process.env.PAYPAL_ENVIRONMENT || DEFAULT_PAYPAL_ENVIRONMENT;
+    const importMode = normalizePayPalImportMode(payload.importMode || process.env.PAYPAL_IMPORT_MODE);
     const restConfig = { environment, clientId, clientSecret };
+    const mcpConfig = { clientId: mcpClientId, refreshToken: mcpRefreshToken };
     if (isPayPalManualImportPayload(payload)) {
       const result = parsePayPalManualActivityRows(
         payload.manualRows || payload.rows || payload.activityRows || payload.activityText || payload.text,
@@ -50,7 +52,34 @@ export default async function handler(request, response) {
       return response.status(200).json({ ok: true, ...result });
     }
     let result;
-    if (clientId && clientSecret) {
+    if (importMode === "personal_mcp") {
+      if (!mcpClientId || !mcpRefreshToken) {
+        return response.status(200).json(buildPayPalManualImportRequiredPayload(
+          "PayPal MCP credentials are not configured. Set PAYPAL_MCP_CLIENT_ID/PAYPAL_MCP_REFRESH_TOKEN.",
+          { phase: "missing_credentials", providerStatus: "credentials_missing", restConfig, mcpConfig }
+        ));
+      }
+      try {
+        result = await fetchPayPalStatementEntriesFromMcp({
+          startDate: payload.startDate,
+          endDate: payload.endDate,
+          clientId: mcpClientId,
+          refreshToken: mcpRefreshToken,
+          restClientId: clientId,
+          restClientSecret: clientSecret,
+          environment,
+          fetchImpl: fetch
+        });
+      } catch (mcpError) {
+        return response.status(200).json(buildPayPalManualImportRequiredPayload(mcpError, {
+          phase: getPayPalFailurePhase(mcpError, "mcp_fallback"),
+          providerStatus: getPayPalProviderStatus(mcpError),
+          availableMcpTools: mcpError.availableMcpTools || [],
+          restConfig,
+          mcpConfig
+        }));
+      }
+    } else if (clientId && clientSecret) {
       try {
         result = await fetchPayPalStatementEntries({
           startDate: payload.startDate,
@@ -61,6 +90,14 @@ export default async function handler(request, response) {
           fetchImpl: fetch
         });
       } catch (error) {
+        if (importMode === "business_rest") {
+          return response.status(200).json(buildPayPalManualImportRequiredPayload(error, {
+            phase: getPayPalFailurePhase(error, "provider_import"),
+            providerStatus: getPayPalProviderStatus(error),
+            warnings: [buildPayPalRestFallbackWarning(error)],
+            restConfig
+          }));
+        }
         if (!mcpClientId || !mcpRefreshToken) {
           return response.status(200).json(buildPayPalManualImportRequiredPayload(error, {
             phase: getPayPalFailurePhase(error, "missing_credentials"),
@@ -90,7 +127,7 @@ export default async function handler(request, response) {
             availableMcpTools: mcpError.availableMcpTools || [],
             restConfig,
             paypalRest: restDiagnostics,
-            mcpConfig: { clientId: mcpClientId, refreshToken: mcpRefreshToken }
+            mcpConfig
           }));
         }
         result = {
@@ -106,6 +143,12 @@ export default async function handler(request, response) {
         };
       }
     } else {
+      if (importMode === "business_rest") {
+        return response.status(200).json(buildPayPalManualImportRequiredPayload(
+          "PayPal REST credentials are not configured. Set PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET.",
+          { phase: "missing_credentials", providerStatus: "credentials_missing", restConfig }
+        ));
+      }
       if (!mcpClientId || !mcpRefreshToken) {
         return response.status(200).json(buildPayPalManualImportRequiredPayload(
           "PayPal credentials are not configured. Set PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET or PAYPAL_MCP_CLIENT_ID/PAYPAL_MCP_REFRESH_TOKEN.",
@@ -129,7 +172,7 @@ export default async function handler(request, response) {
           providerStatus: getPayPalProviderStatus(mcpError),
           availableMcpTools: mcpError.availableMcpTools || [],
           restConfig,
-          mcpConfig: { clientId: mcpClientId, refreshToken: mcpRefreshToken }
+          mcpConfig
         }));
       }
     }
@@ -709,6 +752,12 @@ function getPayPalMcpToolName() {
   return String(process.env.PAYPAL_MCP_TOOL_NAME || "").trim() || DEFAULT_PAYPAL_MCP_TOOL_NAME;
 }
 
+function normalizePayPalImportMode(value) {
+  const mode = String(value || "auto").trim().toLowerCase();
+  if (mode === "personal_mcp" || mode === "business_rest" || mode === "auto") return mode;
+  return "auto";
+}
+
 export function getPayPalSafeErrorMessage(error) {
   return getPayPalBodyExcerpt(error?.message || error) || "PayPal import failed.";
 }
@@ -744,7 +793,9 @@ function isPayPalMcpFallbackUnavailableError(error) {
 
 function buildPayPalManualImportRequiredPayload(error, options = {}) {
   const phase = String(options.phase || getPayPalFailurePhase(error, "provider_import")).trim() || "provider_import";
+  const providerStatus = String(options.providerStatus || getPayPalProviderStatus(error)).trim() || "provider_unavailable";
   const shortExcerpt = getPayPalSafeErrorMessage(error);
+  const actionRequired = getPayPalActionRequired({ providerStatus, phase, shortExcerpt });
   return {
     ok: false,
     provider: "paypal",
@@ -753,13 +804,23 @@ function buildPayPalManualImportRequiredPayload(error, options = {}) {
     message: PAYPAL_MANUAL_IMPORT_MESSAGE,
     fallback: "manual_activity_import",
     canUseManualImport: true,
-    providerStatus: String(options.providerStatus || getPayPalProviderStatus(error)).trim() || "provider_unavailable",
+    providerStatus,
+    ...(actionRequired ? { actionRequired } : {}),
+    ...(actionRequired === "reconnect_paypal_mcp" ? {
+      manualStep: "Open the PayPal MCP/OAuth connector authorization page, sign in once to the personal PayPal account, then store the new PAYPAL_MCP_REFRESH_TOKEN in Vercel Production."
+    } : {}),
     paypalRest: options.paypalRest || buildPayPalRestDiagnostics(error, options.restConfig || {}),
     ...(options.mcpConfig ? { paypalMcp: buildPayPalMcpDiagnostics(error, options.mcpConfig) } : {}),
     shortExcerpt,
     ...(Array.isArray(options.warnings) && options.warnings.length ? { warnings: uniquePayPalWarnings(options.warnings) } : {}),
     ...(Array.isArray(options.availableMcpTools) && options.availableMcpTools.length ? { availableMcpTools: options.availableMcpTools } : {})
   };
+}
+
+function getPayPalActionRequired({ providerStatus, phase, shortExcerpt }) {
+  const text = `${providerStatus || ""} ${phase || ""} ${shortExcerpt || ""}`.toLowerCase();
+  if (/mcp_grant_not_found|mcp_token|grant not found|invalid_grant/.test(text)) return "reconnect_paypal_mcp";
+  return "";
 }
 
 function maskPayPalClientId(value) {

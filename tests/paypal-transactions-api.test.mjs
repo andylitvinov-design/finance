@@ -1134,6 +1134,7 @@ test("handler classifies PayPal MCP grant-not-found refresh failures without lea
     assert.equal(response.body.ok, false);
     assert.equal(response.body.providerStatus, "mcp_grant_not_found");
     assert.equal(response.body.phase, "mcp_token");
+    assert.equal(response.body.actionRequired, "reconnect_paypal_mcp");
     assert.equal(response.body.paypalRest.providerStatus, "auth_failed");
     assert.equal(response.body.paypalRest.phase, "oauth");
     assert.equal(response.body.paypalRest.environment, "live");
@@ -1157,6 +1158,126 @@ test("handler classifies PayPal MCP grant-not-found refresh failures without lea
       } else {
         process.env[key] = value;
       }
+    }
+  }
+});
+
+test("personal_mcp import mode skips REST and uses MCP first", async () => {
+  const previousEnv = {
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
+    PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
+    PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_IMPORT_MODE: process.env.PAYPAL_IMPORT_MODE,
+  };
+  const previousFetch = global.fetch;
+  const calls = [];
+  let streamController;
+
+  process.env.PAYPAL_CLIENT_ID = "rest-client";
+  process.env.PAYPAL_CLIENT_SECRET = "rest-secret";
+  process.env.PAYPAL_MCP_CLIENT_ID = "mcp-client";
+  process.env.PAYPAL_MCP_REFRESH_TOKEN = "mcp-refresh";
+  process.env.PAYPAL_IMPORT_MODE = "personal_mcp";
+
+  try {
+    global.fetch = async (url, options = {}) => {
+      const href = String(url);
+      calls.push(href);
+      if (href === "https://mcp.paypal.com/token") {
+        return { ok: true, status: 200, async text() { return JSON.stringify({ access_token: "mcp-access" }); } };
+      }
+      if (href === "https://mcp.paypal.com/sse") {
+        return {
+          ok: true,
+          status: 200,
+          body: new ReadableStream({
+            start(controller) {
+              streamController = controller;
+              controller.enqueue(new TextEncoder().encode("event: endpoint\ndata: /sse/message?sessionId=personal\n\n"));
+            },
+            cancel() {}
+          })
+        };
+      }
+      if (href.includes("/sse/message?sessionId=personal")) {
+        const body = JSON.parse(options.body);
+        if (body.method === "initialize") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "PayPal MCP Agent" } }
+          })}\n\n`));
+        }
+        if (body.method === "tools/call") {
+          streamController.enqueue(new TextEncoder().encode(`event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { content: [{ type: "text", text: JSON.stringify({ total_pages: 1, transaction_details: [] }) }] }
+          })}\n\n`));
+        }
+        return { ok: true, status: 202, async text() { return ""; } };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "POST", body: { startDate: "2026-06-01", endDate: "2026-06-02" } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.source, "paypal-mcp");
+    assert.equal(calls.some((href) => href.includes("/v1/oauth2/token")), false);
+    assert.equal(calls.some((href) => href.includes("/v1/reporting/transactions")), false);
+  } finally {
+    global.fetch = previousFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("business_rest import mode keeps REST support without MCP fallback", async () => {
+  const previousEnv = {
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
+    PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
+    PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_IMPORT_MODE: process.env.PAYPAL_IMPORT_MODE,
+  };
+  const previousFetch = global.fetch;
+  const calls = [];
+
+  process.env.PAYPAL_CLIENT_ID = "rest-client";
+  process.env.PAYPAL_CLIENT_SECRET = "rest-secret";
+  process.env.PAYPAL_MCP_CLIENT_ID = "mcp-client";
+  process.env.PAYPAL_MCP_REFRESH_TOKEN = "mcp-refresh";
+  process.env.PAYPAL_IMPORT_MODE = "business_rest";
+
+  try {
+    global.fetch = async (url) => {
+      const href = String(url);
+      calls.push(href);
+      if (href.endsWith("/v1/oauth2/token")) {
+        return { ok: false, status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Client Authentication failed" }); } };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "POST", body: { startDate: "2026-06-01", endDate: "2026-06-02" } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.paypalRest.providerStatus, "auth_failed");
+    assert.equal(response.body.paypalMcp, undefined);
+    assert.equal(calls.some((href) => href === "https://mcp.paypal.com/token"), false);
+  } finally {
+    global.fetch = previousFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
   }
 });

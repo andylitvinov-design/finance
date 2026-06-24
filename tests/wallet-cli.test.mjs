@@ -15,13 +15,10 @@ function missingRunner() {
 
 test("listSecretStatuses reports configured status without returning values", async () => {
   const rows = await listSecretStatuses({ runCommand: configuredRunner });
-  assert.deepEqual(rows, [
-    {
-      name: "VERCEL_TOKEN",
-      status: "configured",
-      walletUrl: "http://127.0.0.1:8789/secrets"
-    }
-  ]);
+  assert.equal(rows.find((row) => row.name === "VERCEL_TOKEN")?.status, "configured");
+  assert.equal(rows.find((row) => row.name === "PAYPAL_MCP_CLIENT_ID")?.status, "configured");
+  assert.equal(rows.find((row) => row.name === "PAYPAL_MCP_REFRESH_TOKEN")?.status, "configured");
+  assert.equal(rows.some((row) => "value" in row), false);
 });
 
 test("hasSecret returns false when keychain entry is missing", async () => {
@@ -31,4 +28,6 @@ test("hasSecret returns false when keychain entry is missing", async () => {
 test("loadWalletEnv injects supported secrets into the child env", async () => {
   const env = await loadWalletEnv({ runCommand: configuredRunner });
   assert.equal(env.VERCEL_TOKEN, "secret-value");
+  assert.equal(env.PAYPAL_MCP_CLIENT_ID, "secret-value");
+  assert.equal(env.PAYPAL_MCP_REFRESH_TOKEN, "secret-value");
 });

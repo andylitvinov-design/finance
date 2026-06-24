@@ -10,6 +10,20 @@ const SECRET_DEFINITIONS = Object.freeze({
     account: "VERCEL_TOKEN",
     label: "EzoHata Ledger / Vercel - VERCEL_TOKEN",
     walletUrl: "http://127.0.0.1:8789/secrets"
+  }),
+  PAYPAL_MCP_CLIENT_ID: Object.freeze({
+    name: "PAYPAL_MCP_CLIENT_ID",
+    service: "ezohata-ledger-paypal-mcp",
+    account: "PAYPAL_MCP_CLIENT_ID",
+    label: "EzoHata Ledger / PayPal MCP - PAYPAL_MCP_CLIENT_ID",
+    walletUrl: "http://127.0.0.1:8789/secrets/paypal-mcp"
+  }),
+  PAYPAL_MCP_REFRESH_TOKEN: Object.freeze({
+    name: "PAYPAL_MCP_REFRESH_TOKEN",
+    service: "ezohata-ledger-paypal-mcp",
+    account: "PAYPAL_MCP_REFRESH_TOKEN",
+    label: "EzoHata Ledger / PayPal MCP - PAYPAL_MCP_REFRESH_TOKEN",
+    walletUrl: "http://127.0.0.1:8789/secrets/paypal-mcp"
   })
 });
 
@@ -19,7 +33,11 @@ function usage() {
       "Usage:",
       "  node scripts/wallet.mjs list",
       "  node scripts/wallet.mjs set VERCEL_TOKEN",
+      "  node scripts/wallet.mjs set PAYPAL_MCP_CLIENT_ID",
+      "  node scripts/wallet.mjs set PAYPAL_MCP_REFRESH_TOKEN",
       "  node scripts/wallet.mjs has VERCEL_TOKEN",
+      "  node scripts/wallet.mjs has PAYPAL_MCP_CLIENT_ID",
+      "  node scripts/wallet.mjs has PAYPAL_MCP_REFRESH_TOKEN",
       "  node scripts/wallet.mjs run -- <command> [args...]"
     ].join("\n") + "\n"
   );
