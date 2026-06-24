@@ -4,39 +4,17 @@
 
 Mode: diagnostic, not implementation.
 
-Use `/audit-fin` for every question about:
+Use `/audit-fin` for balances, totals, ledgers, payments, income/expense, provider/channel breakdowns, exchange/currency, movement tables, period/date ranges, reconciliation, dashboard values, charts, formulas, numeric UI mismatches, stale production data, and source-of-truth mismatch.
 
-- balances;
-- totals;
-- ledgers;
-- payments;
-- income/expense;
-- provider/channel breakdowns;
-- exchange/currency;
-- movement tables;
-- period/date ranges;
-- reconciliation;
-- dashboard values;
-- charts;
-- formulas;
-- numeric UI mismatches;
-- stale production data;
-- source-of-truth mismatch.
-
-Shared source of truth:
+Source of truth:
 
 ```txt
 https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/audit-fin-loop.md
 https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/audit-fin-failed-repair.md
 https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/ry-agent-audit-modes.md
-```
-
-Finance-local source of truth:
-
-```txt
 AGENTS.md
 CLAUDE_CODE_PROMPTS.md
-scripts/production-debug-preflight.mjs
+docs/audit-fin-deep-technical-implementation.md
 /api/status
 /api/audit-snapshot
 /api/debug-ui-state
@@ -45,12 +23,18 @@ scripts/production-debug-preflight.mjs
 Required chain:
 
 ```txt
-understand numeric target -> prove production source -> extract numeric contract -> inspect visible numbers -> inspect read-only evidence endpoints -> inspect code/data flow -> run source-layer matrix before hypotheses -> compare expected vs actual -> list problems -> generate focused hypotheses only from failing/unverified layers -> evaluate hypotheses -> choose likely root cause -> create/update GitHub issue -> return short /delivery prompt
+numeric target -> production source proof -> numeric contract -> visible value -> read-only endpoint evidence -> code/data inspection -> implementation trace -> source-layer matrix -> first divergence layer -> focused hypotheses -> issue -> /delivery prompt
+```
+
+Mandatory implementation trace:
+
+```txt
+visible value -> component -> state/selection -> read-only API proof -> data normalization -> formula/aggregation -> rendering -> styles -> tests
 ```
 
 Mandatory source-layer matrix before hypotheses:
 
-1. Production source-of-truth: repo/ref/deployed SHA.
+1. Production source-of-truth.
 2. Raw ledger/data availability.
 3. Input parsing/normalization.
 4. Provider/channel/source classification.
@@ -66,28 +50,28 @@ Mandatory source-layer matrix before hypotheses:
 14. API/debug endpoint proof.
 15. Test fixture/proof.
 
-For each layer:
+Before writing the issue, identify the first layer where expected value becomes wrong actual value.
+
+The issue must include numeric implementation trace, API/code evidence, first divergence layer, confirmed vs likely/unverified findings, implementation map, deterministic verification plan, and ready-to-run `/delivery` prompt.
+
+Use labels:
 
 ```txt
-Layer status: PASS | ISSUE | NOT VERIFIED | NOT APPLICABLE
-Problem level: NONE | LOW | MEDIUM | HIGH | BLOCKER
-Evidence:
-Gap:
-Next verification:
+CODE VERIFIED
+API VERIFIED
+RUNTIME VERIFIED
+DATA VERIFIED
+LIKELY
+NOT VERIFIED
 ```
 
 Rules:
 
-- Do not patch formulas during `/audit-fin`.
-- Do not modify production financial data during `/audit-fin`.
+- Do not patch during `/audit-fin`.
 - Do not invent missing financial values.
 - Do not treat missing data as zero unless product rules explicitly say so.
-- Do not hide real calculation/data errors behind UI empty states.
 - Do not generate a huge generic hypothesis list.
-- If previous fixes failed, run failed-repair analysis before proposing another fix.
-- If production source-of-truth is stale or wrong repo/ref is deployed, fix deployment/source mismatch before blaming formulas.
-
-Issue behavior:
+- If previous fixes failed, explain why before proposing another fix.
 
 When GitHub access is available, create or update an issue in:
 
@@ -95,10 +79,4 @@ When GitHub access is available, create or update an issue in:
 https://github.com/andylitvinov-design/finance/issues
 ```
 
-Issue title format:
-
-```txt
-[AUDIT-FIN] <area/metric>: <short numeric problem summary>
-```
-
-Final chat output must be short and include a copy-pasteable handoff prompt starting with `/delivery` as the first non-empty line. Do not start with `/audit-fin -> /delivery handoff`.
+Final chat output must be short and include a copy-pasteable handoff prompt starting with `/delivery` as the first non-empty line.
