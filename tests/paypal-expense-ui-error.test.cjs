@@ -154,6 +154,30 @@ test("PayPal manual import message combines REST permission denial and MCP grant
   assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
 });
 
+test("PayPal invalid MCP grant shows reconnect action instead of CSV-only guidance", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    provider: "paypal",
+    error: "paypal_manual_import_required",
+    actionRequired: "reconnect_paypal_mcp",
+    phase: "mcp_token",
+    providerStatus: "mcp_grant_not_found",
+    shortExcerpt: "PayPal MCP token refresh failed (400): Grant not found",
+    paypalMcp: {
+      phase: "mcp_token",
+      providerStatus: "mcp_grant_not_found",
+      hasClientId: true,
+      hasRefreshToken: true
+    }
+  });
+
+  assert.match(message, /re-authorize PayPal MCP|переподключ/i);
+  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
+  assert.match(message, /CSV fallback remains available|CSV остаётся запасным/i);
+  assert.doesNotMatch(message, /^Для personal PayPal используйте Импорт PayPal CSV/);
+});
+
 test("readPayPalExpenseStatementPayload converts non-JSON provider text into contextual UI error", async () => {
   const context = createContext();
 

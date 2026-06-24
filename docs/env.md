@@ -29,6 +29,11 @@ Required only when the corresponding provider import is used:
 - `PAYPAL_MCP_CLIENT_ID`
 - `PAYPAL_MCP_REFRESH_TOKEN`
   PayPal fallback path when REST credentials are unavailable or invalid.
+- `PAYPAL_IMPORT_MODE`
+  Optional import routing mode:
+  - `auto` (default): try PayPal REST first, then MCP fallback.
+  - `personal_mcp`: skip REST and use PayPal MCP/OAuth first for personal PayPal accounts.
+  - `business_rest`: use REST only for business/reporting-permission setups.
 - `WISE_PROFILE_ID`
   Optional if the token can access only one usable Wise profile.
 - `WISE_API_BASE`
@@ -54,6 +59,15 @@ YooMoney notes:
 - Required OAuth scope: `operation-history`.
 - Official authorization docs: [YooMoney wallet authorization](https://yoomoney.ru/docs/wallet/using-api/authorization/request-access-token)
 - Official history method docs: [operation-history](https://yoomoney.ru/docs/wallet/user-account/operation-history)
+
+PayPal personal MCP reconnect:
+
+- Run `node scripts/wallet.mjs list` to check local secret presence without printing values.
+- Run `node scripts/wallet.mjs set PAYPAL_MCP_CLIENT_ID` and `node scripts/wallet.mjs set PAYPAL_MCP_REFRESH_TOKEN` only after the user has approved/provided new values.
+- Run `node scripts/wallet.mjs run -- node scripts/paypal-mcp-health.mjs` to verify the MCP token refresh with redacted output.
+- If the report returns `providerStatus: "mcp_grant_not_found"` and `actionRequired: "reconnect_paypal_mcp"`, the stored PayPal MCP grant is stale/revoked. One user action is required: open the PayPal MCP/OAuth connector authorization page, sign in once to the personal PayPal account, and provide/store the new `PAYPAL_MCP_REFRESH_TOKEN`.
+- After a new token is approved, update Vercel Production env names only through the Vercel CLI/API; never commit token values. Re-run the health script and then verify `/api/paypal-transactions`.
+- CSV/Activity import remains a fallback only. Do not treat PayPal gross as net unless the export provides explicit fee/net proof.
 
 Monobank notes:
 
