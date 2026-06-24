@@ -8,6 +8,19 @@
 - Do not use the legacy `reconcile-v2/` folder as a new source of production commits.
 - Production URL: `https://ezohata-incoming-ledger.vercel.app/`
 
+## Global agent settings adapter
+
+This repo uses the shared global agent settings layer for `/audit`, `/audit-fin`, `/delivery`, UI polish, design quality gates, deep technical issue writing, deep numeric implementation trace, and project routing.
+
+Read these shared docs before local command docs:
+
+- `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-agent-settings.md`
+- `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-command-protocols.md`
+- `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-project-adapters.md`
+- `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-agent-skills.md`
+
+This file is the Finance local adapter. Keep finance-specific safety rules here, especially production source proof and formula/accounting do-not-touch rules, but do not duplicate the full shared command protocols in local command files.
+
 ## Project Memory
 
 Before production debugging, read the shared project memory:
