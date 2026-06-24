@@ -1,82 +1,47 @@
 # /audit-fin
 
-`/audit-fin` is sufficient by itself for this finance project.
+`/audit-fin` is diagnostic numeric/source-layer mode for Finance. It does not patch formulas, mutate production data, or change accounting semantics unless the user explicitly switches to `/delivery` and the failing layer has been proven.
 
-Mode: diagnostic, not implementation.
+## Source of truth
 
-Use `/audit-fin` for balances, totals, ledgers, payments, income/expense, provider/channel breakdowns, exchange/currency, movement tables, period/date ranges, reconciliation, dashboard values, charts, formulas, numeric UI mismatches, stale production data, and source-of-truth mismatch.
+Read in order:
 
-Source of truth:
+1. `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-agent-settings.md`
+2. `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-command-protocols.md`
+3. `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-project-adapters.md`
+4. `https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/global-agent-skills.md`
+5. `AGENTS.md` - Finance local adapter and safety rules
+6. `CLAUDE_CODE_PROMPTS.md`
+7. `docs/audit-fin-deep-technical-implementation.md`
+8. `/api/status`, `/api/audit-snapshot`, `/api/debug-ui-state` when available
 
-```txt
-https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/audit-fin-loop.md
-https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/audit-fin-failed-repair.md
-https://github.com/andylitvinov-design/reiki-yggdrasil/blob/main/docs/ry-agent-audit-modes.md
-AGENTS.md
-CLAUDE_CODE_PROMPTS.md
-docs/audit-fin-deep-technical-implementation.md
-/api/status
-/api/audit-snapshot
-/api/debug-ui-state
-```
+## Project adapter
 
-Required chain:
+- Repository: `andylitvinov-design/finance`
+- Known local folder: `/Users/andriilitvinov/projects/MYPROJECTS/finance`
+- Primary live URL: `https://ezohata-incoming-ledger.vercel.app`
+- Issue tracker: `https://github.com/andylitvinov-design/finance/issues`
+- Read-only proof endpoints: `/api/status`, `/api/audit-snapshot`, `/api/debug-ui-state`
 
-```txt
-numeric target -> production source proof -> numeric contract -> visible value -> read-only endpoint evidence -> code/data inspection -> implementation trace -> source-layer matrix -> first divergence layer -> focused hypotheses -> issue -> /delivery prompt
-```
+## Required behavior
 
-Mandatory implementation trace:
-
-```txt
-visible value -> component -> state/selection -> read-only API proof -> data normalization -> formula/aggregation -> rendering -> styles -> tests
-```
-
-Mandatory source-layer matrix before hypotheses:
-
-1. Production source-of-truth.
-2. Raw ledger/data availability.
-3. Input parsing/normalization.
-4. Provider/channel/source classification.
-5. Date range and timezone boundaries.
-6. Currency/exchange/precision.
-7. State and selection.
-8. Formula/business logic.
-9. Aggregation helper/code.
-10. Persistence/hydration/cache.
-11. Formatting/rounding/sign display.
-12. Rendering/component binding.
-13. Chart/table/card consistency.
-14. API/debug endpoint proof.
-15. Test fixture/proof.
-
-Before writing the issue, identify the first layer where expected value becomes wrong actual value.
-
-The issue must include numeric implementation trace, API/code evidence, first divergence layer, confirmed vs likely/unverified findings, implementation map, deterministic verification plan, and ready-to-run `/delivery` prompt.
-
-Use labels:
+Follow the shared `/audit-fin` trace and finance source proof:
 
 ```txt
-CODE VERIFIED
-API VERIFIED
-RUNTIME VERIFIED
-DATA VERIFIED
-LIKELY
-NOT VERIFIED
+production source proof
+-> visible value
+-> component
+-> state/selection
+-> data source/read-only endpoint
+-> parsing/normalization
+-> formula/helper
+-> aggregation
+-> hydration/cache
+-> formatting
+-> rendering/table/chart
+-> tests
 ```
 
-Rules:
+Before hypotheses, run the source-layer matrix and identify the first divergence layer. Do not blame formulas before checking production source, raw data, parsing, state, aggregation, formatting, and rendering.
 
-- Do not patch during `/audit-fin`.
-- Do not invent missing financial values.
-- Do not treat missing data as zero unless product rules explicitly say so.
-- Do not generate a huge generic hypothesis list.
-- If previous fixes failed, explain why before proposing another fix.
-
-When GitHub access is available, create or update an issue in:
-
-```txt
-https://github.com/andylitvinov-design/finance/issues
-```
-
-Final chat output must be short and include a copy-pasteable handoff prompt starting with `/delivery` as the first non-empty line.
+The issue must include the numeric contract, visible values, implementation trace, inspected files/functions/APIs, source-layer matrix, first divergence layer, rejected hypotheses when relevant, protected areas not to touch, deterministic verification plan, and ready-to-run `/delivery` prompt.
