@@ -31,6 +31,7 @@ Finance-local source of truth:
 ```txt
 AGENTS.md
 CLAUDE_CODE_PROMPTS.md
+docs/audit-deep-technical-issue-writing.md
 scripts/production-debug-preflight.mjs
 /api/status
 /api/audit-snapshot
@@ -40,8 +41,18 @@ scripts/production-debug-preflight.mjs
 Required chain:
 
 ```txt
-understand target -> prove production source when relevant -> inspect project rules -> inspect relevant code/read-only endpoints -> evaluate UX/UI/product/technical layers -> map symptoms to code-level findings -> create/update GitHub issue -> return short /delivery prompt
+understand target -> prove production source when relevant -> inspect project rules -> inspect relevant code/read-only endpoints -> trace route/component/API/data/style/test chain -> evaluate UX/UI/product/technical layers -> map symptoms to code-level findings -> create/update GitHub issue -> return short /delivery prompt
 ```
+
+Before creating the issue, run the trace from `docs/audit-deep-technical-issue-writing.md`:
+
+```txt
+route/page -> UI component -> state/selection -> read-only API proof -> data normalization -> formula/aggregation -> rendering -> styles -> tests
+```
+
+The issue must include: technical code trace, inspected files, confirmed vs suspected findings, implementation map, finance do-not-touch rules, verification plan, and a ready-to-run `/delivery` prompt.
+
+Use evidence labels: `CODE VERIFIED`, `API VERIFIED`, `RUNTIME VERIFIED`, `LIKELY`, `NOT VERIFIED`.
 
 For finance UI, always check:
 
