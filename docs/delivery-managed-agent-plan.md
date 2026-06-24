@@ -1,27 +1,46 @@
 # /delivery Managed Agent Upgrade Plan
 
-Status: documented plan (not yet implemented)
+Status: documented future plan (not yet implemented)
 Repository: `andylitvinov-design/finance`
 Parent: `docs/delivery-loop-completion-program.md`
 
 ---
 
+## Current State
+
+Finance `/delivery` already has local Codex-side automation installed on this
+machine:
+
+- `codex-delivery-loop` - scheduled local cron automation.
+- `codex-delivery-loop-now` - immediate local trigger using the same prompt.
+
+Those automations reduce the need to start the loop manually, but they still
+depend on the local Mac, local repo/worktree state, local disk/CLI health, and
+locally available credentials. They are not a managed, remote agent deployment.
+
+This document remains relevant only as a future plan for moving the same
+finance-safe `/delivery` protocol into a managed environment. It must not be
+read as replacing the installed local Codex automations or changing the
+repo-local `/delivery` command contract.
+
+---
+
 ## Purpose
 
-Local `/delivery` depends on:
+Local Codex automation can still be blocked by:
 
-- local Claude Code being open;
-- local repo being up to date;
-- local command discovery working;
-- local credentials and CLI tools present;
-- user starting the loop manually.
+- local machine availability, disk, memory, network, or app state;
+- local repo/worktree drift;
+- local command discovery issues;
+- local credentials and CLI tools;
+- stale or incomplete automation memory.
 
 Managed Agent deployment can eventually provide:
 
-- new session per run (no stale context);
+- new session per run with less stale local context;
 - env vars through a managed vault / network boundary;
 - GitHub and Vercel access via environment variables;
-- no local Mac dependency;
+- reduced dependency on the local Mac;
 - scheduled watchdog monitoring.
 
 ---
@@ -30,7 +49,8 @@ Managed Agent deployment can eventually provide:
 
 ### 1. `delivery-on-demand`
 
-Purpose: run `/delivery` for a specific finance task without requiring local Claude Code.
+Purpose: run `/delivery` for a specific finance task without requiring the
+local Codex or Claude Code app to be running.
 
 Start message:
 
@@ -49,7 +69,7 @@ SUCCESS requires live proof on https://ezohata-incoming-ledger.vercel.app.
 Purpose: scheduled check for stuck PRs, failed CI, failed Vercel deployments,
 or pending live verification.
 
-Suggested schedule: every 1–2 hours during active development.
+Suggested schedule: every 1-2 hours during active development.
 
 Start message:
 
@@ -71,8 +91,8 @@ Start message:
 
 ```txt
 Check production health for finance:
-- https://ezohata-incoming-ledger.vercel.app — primary live URL
-- https://ezohata-incoming-ledger.vercel.app/api/status — status endpoint
+- https://ezohata-incoming-ledger.vercel.app - primary live URL
+- https://ezohata-incoming-ledger.vercel.app/api/status - status endpoint
 Verify HTTP 200 and expected response. Do not mutate production data or balances.
 Report STATUS: SUCCESS or STATUS: BLOCKED.
 ```
@@ -84,19 +104,19 @@ Report STATUS: SUCCESS or STATUS: BLOCKED.
 Names only. Never commit values.
 
 ```txt
-GITHUB_TOKEN          — GitHub API access for PR/checks/merge
-VERCEL_TOKEN          — Vercel API access for deployment status
-VERCEL_ORG_ID         — Vercel org (andylitvinov-design)
-VERCEL_PROJECT_ID     — Vercel project ID for finance/ezohata
-LIVE_URL              — https://ezohata-incoming-ledger.vercel.app
-STATUS_URL            — https://ezohata-incoming-ledger.vercel.app/api/status
+GITHUB_TOKEN          - GitHub API access for PR/checks/merge
+VERCEL_TOKEN          - Vercel API access for deployment status
+VERCEL_ORG_ID         - Vercel org (andylitvinov-design)
+VERCEL_PROJECT_ID     - Vercel project ID for finance/ezohata
+LIVE_URL              - https://ezohata-incoming-ledger.vercel.app
+STATUS_URL            - https://ezohata-incoming-ledger.vercel.app/api/status
 ```
 
 Optional:
 
 ```txt
-SLACK_WEBHOOK_URL     — delivery status notifications
-ANTHROPIC_API_KEY     — for standalone agent runs outside Claude Code
+SLACK_WEBHOOK_URL     - delivery status notifications
+ANTHROPIC_API_KEY     - for standalone agent runs outside Claude Code
 ```
 
 ---
@@ -106,7 +126,8 @@ ANTHROPIC_API_KEY     — for standalone agent runs outside Claude Code
 - Never change ledger amounts, balance calculations, gross/net/fee semantics without explicit approval.
 - Never modify env vars, secrets, billing, or provider credentials.
 - Never run destructive data operations, migrations, or backfills.
-- Always run `bash scripts/release-guard.sh` before merge.
+- Always run `bash scripts/release-guard.sh` before merge when the agent changes code, config, tests, or executable scripts.
+- For docs-only changes, verify the PR file list is docs-only and run the narrowest available docs/VCS checks instead of broad ledger checks.
 - Prove failing layer before patching production.
 - Managed agent must restrict API calls to expected GitHub/Vercel/finance domains.
 
@@ -120,8 +141,19 @@ ANTHROPIC_API_KEY     — for standalone agent runs outside Claude Code
 
 ---
 
+## Relationship to Local Codex Automations
+
+- Local Codex automations are the current installed runner.
+- Managed agents are a future remote runner for the same `/delivery` protocol.
+- Both must preserve finance safety, source-of-truth checks, release guardrails, and final live verification.
+- Neither runner may change ledger, provider, env, secret, billing, or production data semantics without the explicit approvals already required by `AGENTS.md`.
+
+---
+
 ## Implementation Status
 
+- [x] Local Codex scheduled automation installed (`codex-delivery-loop`).
+- [x] Local Codex immediate automation installed (`codex-delivery-loop-now`).
 - [ ] Managed agent environment provisioned.
 - [ ] `GITHUB_TOKEN` set in agent vault.
 - [ ] `VERCEL_TOKEN` set in agent vault.
@@ -135,5 +167,5 @@ ANTHROPIC_API_KEY     — for standalone agent runs outside Claude Code
 
 ```txt
 Managed agents do not change the /delivery protocol or finance safety rules.
-They run the same loop in a persistent, non-local environment.
+They run the same loop in a managed environment when local Codex automation is not enough.
 ```
