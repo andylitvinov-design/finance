@@ -187,6 +187,22 @@ The loop must still obey finance safety:
 - no environment/secrets changes without explicit user approval;
 - no destructive data repair, migrations, or backfills;
 - no balance/gross/net/fee/source semantic changes without proven root cause and regression tests;
+- no Ledger append path may skip duplicate checks before writing rows; this
+  applies to OCR/screenshots, manual imports, CSV/statement imports, browser
+  imports, and provider imports including PayPal, Wise, Binance, Monobank,
+  Privat24, TD, Bank Canada, YooMoney/Yandex, cash/manual, and future providers;
+- duplicate checks must run before `ledger save`, using provider/native IDs
+  first, transfer group IDs second, and a stable fallback fingerprint from date,
+  direction, channels, currency, amount, counterparty/comment, and source when
+  provider IDs are missing;
+- screenshot/history imports must not treat every visible row as new. High
+  confidence duplicates must be skipped with a structured warning, medium
+  confidence matches must return `needs_review`, and data repair after a dedupe
+  bug must be dry-run-first and exact-match-only;
+- every new Ledger import path must include regression coverage for exact ID
+  duplicates, fallback fingerprint duplicates, already-present screenshot
+  history rows, genuinely new same-amount transactions, and unchanged
+  gross/net/fee/source semantics;
 - merge to `main` is allowed by the `/delivery` command itself only after release guard, relevant tests/checks, PR health, and task coverage pass;
 - if merge is blocked by permissions, branch protection, required review, failed checks, finance-risk, deployment access, or live verification access, stop with `STATUS: BLOCKED` and exact evidence.
 
