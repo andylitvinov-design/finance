@@ -328,3 +328,23 @@ If using Codex after partial assistant work, include what was already checked, w
 ## Expected Auth Boundary
 
 Follow `docs/delivery-auth-boundary-standard.md` when Google OAuth, Supabase auth, private cabinet login, or an owner-only session blocks automated post-login live verification. Expected auth boundaries are not delivery failures by themselves. Use `STATUS: SUCCESS_WITH_AUTH_LIMITATION` when safe public/login/protected-redirect/local-or-code proof passes and the only missing proof is authenticated post-login live verification.
+
+## Agent memory router
+
+Before `/delivery`, `/audit`, `/audit-fin`, `/save`, `/memory`, `/memory-review`, `/learn-pass`, or `/upgrade`:
+
+1. Read `agent-memory/active.md`.
+2. Read `agent-memory/index.md`.
+3. Identify task scope.
+4. Read only relevant topic/component files.
+5. Do not load archive unless resolving conflicts or running `/memory-review`.
+6. Do not load candidates/metrics unless running `/learn-pass`, `/memory-review`, or `/upgrade`.
+7. Do not load harness proposals/tests unless running `/upgrade`.
+
+For `/save`, use `.codex/skills/save/SKILL.md` if present.
+For `/memory`, use `.codex/skills/memory/SKILL.md` if present.
+For `/memory-review`, use `.codex/skills/memory-review/SKILL.md` if present.
+For `/learn-pass`, use `.codex/skills/learn-pass/SKILL.md` if present.
+For `/upgrade`, use `.codex/skills/upgrade/SKILL.md` if present.
+
+Do not load the whole instruction tree by default.
