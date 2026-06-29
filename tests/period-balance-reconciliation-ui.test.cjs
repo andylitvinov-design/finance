@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const ui = require("../period-balance-reconciliation-ui.js");
-const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"];
+const POSITION_TABLE_HEADER = ["КАНАЛ", "ВАЛЮТА", "OPENING NATIVE", "MOVEMENT NATIVE", "PLANNED END NATIVE", "CONFIRMED END NATIVE", "USD ЭКВИВАЛЕНТ", "ТИП ЗНАЧЕНИЯ", "DIFF NATIVE", "OPENING USD", "MOVEMENT USD", "PLANNED END USD", "CONFIRMED END USD", "DIFF USD", "ФАКТ ДАТА", "ФАКТ ИСТОЧНИК", "SOURCE ROW", "СТАТУС", "ПРИЧИНА"];
 const USD_TABLE_HEADER = ["Канал", "Raw 1", "Остатки 1 USD", "Raw 2", "Остатки 2 USD", "Изменение USD", "Движение средств USD", "Разница USD"];
 const NATIVE_TABLE_HEADER = ["Канал", "Валюта", "Остатки 1", "Остатки 2", "Изменение", "Движение средств", "Статус"];
 
@@ -206,13 +206,13 @@ test("period balance diagnostic mode clarifies closing fact date source and hide
   const yandex = rows.find((row) => row[0] === "Яндекс руб");
   const wise = rows.find((row) => row[0] === "трансервайз евро");
   assert.equal(yandex[5], "missing fact");
-  assert.equal(yandex[12], "—");
   assert.equal(yandex[14], "—");
+  assert.equal(yandex[16], "—");
   assert.match(yandex.at(-1), /Нет факта на конец периода\. Есть ближайший факт: 2026-05-05 68087\.38\./);
   assert.equal(wise[5], "158.56");
-  assert.equal(wise[12], "2026-05-19");
-  assert.equal(wise[13], "auto, needs manual confirmation");
-  assert.equal(wise[14], "Авто Остатки #13");
+  assert.equal(wise[14], "2026-05-19");
+  assert.equal(wise[15], "auto, needs manual confirmation");
+  assert.equal(wise[16], "Авто Остатки #13");
 });
 
 test("period balance reconciliation prepends Analytics container with DOM children collection", () => {
@@ -1236,9 +1236,9 @@ test("period balance diagnostic mode keeps existing factual values visible when 
   const factualRow = positionRows.find((row) => row[0] === "трансервайз дол");
   const missingRow = positionRows.find((row) => row[0] === "монобанк грн");
   assert.equal(factualRow[5], "1070.48");
-  assert.equal(factualRow[12], "—");
-  assert.equal(factualRow[13], "manual fact");
-  assert.equal(factualRow[6], "-5.77");
+  assert.equal(factualRow[14], "—");
+  assert.equal(factualRow[15], "manual fact");
+  assert.equal(factualRow[8], "-5.77");
   assert.equal(missingRow[5], "missing fact");
 });
 
@@ -1333,22 +1333,51 @@ test("period balance diagnostic mode separates manual, carried-forward, and miss
 
   assert.deepEqual(rows[0], POSITION_TABLE_HEADER);
   assert.equal(provider[5], "11.5");
-  assert.equal(provider[12], "—");
-  assert.equal(provider[13], "auto, needs manual confirmation");
+  assert.equal(provider[14], "—");
+  assert.equal(provider[15], "auto, needs manual confirmation");
   assert.equal(wise[4], "1100");
   assert.equal(wise[5], "missing fact");
-  assert.equal(wise[12], "—");
-  assert.equal(wise[13], "add manual fact balance");
+  assert.equal(wise[14], "—");
+  assert.equal(wise[15], "add manual fact balance");
   assert.equal(cash[4], "999");
   assert.equal(cash[5], "50");
-  assert.equal(cash[13], "перенесён");
-  assert.equal(cash[6], "0");
+  assert.equal(cash[15], "перенесён");
+  assert.equal(cash[8], "0");
   assert.notEqual(cash[5], "999");
-  assert.notEqual(cash[12], "999");
+  assert.notEqual(cash[14], "999");
   assert.equal(mono[5], "900");
-  assert.equal(mono[13], "calculated from previous");
   assert.equal(mono[15], "calculated from previous");
+  assert.equal(mono[17], "calculated from previous");
   assert.notEqual(mono[5], "missing fact");
+});
+
+test("period balance diagnostic mode shows USD-only native amount warning and value type", () => {
+  const doc = createTestDocument();
+  const block = ui.renderPeriodBalanceBlock(doc, buildSnapshot({
+    by_channel_currency: [
+      {
+        channel: "paypal eur",
+        currency: "EUR",
+        opening_fact_balance: 100,
+        real_delta: 20,
+        calculated_closing_balance: 120,
+        manual_provider_closing_balance: null,
+        manual_provider_fact_amount_usd: 132,
+        manual_provider_fact_value_type: "usd_only_needs_native",
+        needs_native_currency_value: true,
+        fact_source: "missing",
+        status: "missing_provider_balance",
+      },
+    ],
+    actionable_rows: [],
+  }), { showDiagnostics: true });
+
+  const rows = getSubsectionRowsByTitle(block, "Остатки по каналам оплаты (debug native)");
+  const paypal = rows.find((row) => row[0] === "paypal eur");
+  assert.equal(paypal[5], "missing fact");
+  assert.equal(paypal[6], "132");
+  assert.equal(paypal[7], "USD-only");
+  assert.equal(paypal[18], "Нужен native amount: есть только USD equivalent.");
 });
 
 test("period balance UI moves empty no-data rows out of the main table", () => {

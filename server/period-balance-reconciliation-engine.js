@@ -11,6 +11,7 @@ import {
   resolveFrozenFxRate,
 } from "./fx-rates.js";
 import { buildCanonicalBalanceTotal } from "./canonical-balance-total.js";
+import { normalizeBalanceValueContract } from "./balance-native-usd-contract.js";
 
 const STATUS = {
   OK: "ok",
@@ -145,7 +146,9 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
   if (!channel || !currency) return null;
 
   const openingSnapshot = balanceIndex.findOpening(key, { from, to });
+  const openingBalanceCandidate = openingSnapshot || balanceIndex.findOpeningAny(key, { from, to });
   const closingSnapshot = balanceIndex.findClosing(key, { from, to });
+  const exactTargetBalanceCandidate = to ? balanceIndex.findExactAny(key, to) : null;
   const nearestManualProviderFact = balanceIndex.findNearest(key, to);
   const realFrom = getMovementWindowStart(openingSnapshot?.date, from);
   const real = buildRealMovementIndex(operations, { from: realFrom, to }).byKey.get(key);
@@ -251,6 +254,21 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
       : isCalculatedFact
       ? "calculated"
       : "missing";
+  const openingFactValueType = openingSnapshot?.value_type || openingBalanceCandidate?.value_type || null;
+  const manualProviderFactValueType = closingSnapshot?.value_type || exactTargetBalanceCandidate?.value_type || null;
+  const needsNativeCurrencyValue = needsNativeFactValue({
+    openingSnapshot,
+    openingBalanceCandidate,
+    closingSnapshot,
+    exactTargetBalanceCandidate,
+  });
+  const nativeFactMissingReason = buildNativeFactMissingReason({
+    openingSnapshot,
+    openingBalanceCandidate,
+    closingSnapshot,
+    exactTargetBalanceCandidate,
+    to,
+  });
   const realDifference = displayedFactClosing !== null && calculatedClosing !== null
     ? round(displayedFactClosing - calculatedClosing)
     : null;
@@ -348,6 +366,7 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     }),
     computed_real_closing_balance: calculatedClosing,
     manual_provider_closing_balance: roundedManualProviderClosing,
+    manual_provider_fact_amount_usd: factBalance.amount_usd ?? exactTargetBalanceCandidate?.amount_usd ?? null,
     manual_provider_closing_balance_usd: factBalance.amount_usd,
     manual_provider_closing_balance_fx_rate_to_usd: factBalance.fx_rate_to_usd ?? null,
     manual_provider_closing_balance_fx_source: factBalance.fx_source || null,
@@ -385,7 +404,12 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
     factual_closing_balance_date: factBalance.date,
     closing_balance_source: closingSource,
     fact_source: factSource,
-    missing_fact_reason: factBalance.status === "missing" ? factBalance.warning : null,
+    needs_native_currency_value: needsNativeCurrencyValue,
+    opening_fact_value_type: openingFactValueType,
+    opening_fact_amount_usd: openingSnapshot?.amount_usd ?? openingBalanceCandidate?.amount_usd ?? null,
+    manual_provider_fact_value_type: manualProviderFactValueType,
+    native_fact_missing_reason: nativeFactMissingReason,
+    missing_fact_reason: nativeFactMissingReason || (factBalance.status === "missing" ? factBalance.warning : null),
     fact_warning: factBalance.warning,
     nearest_manual_provider_fact_date: nearestManualProviderFact?.date || null,
     nearest_manual_provider_fact_amount: nearestManualProviderFact?.amount ?? null,
@@ -414,6 +438,10 @@ function buildAccountRow({ key, operations, planned, balanceIndex, fxRateLookup 
       lastObservedClosingSnapshot,
       closingSnapshot,
       nearestManualProviderFact,
+      needsNativeCurrencyValue,
+      openingFactValueType,
+      manualProviderFactValueType,
+      nativeFactMissingReason,
       to,
     }),
     repair_template: buildRepairTemplate({
@@ -520,6 +548,34 @@ function buildMissingFactReason({ closingSnapshot, nearestManualProviderFact, to
     return `manual/provider fact exists for ${nearestManualProviderFact.date}, but period end is ${to}; exact date fact is missing.`;
   }
   return `manual/provider fact is missing for period end ${to}.`;
+}
+
+function needsNativeFactValue({
+  openingSnapshot,
+  openingBalanceCandidate,
+  closingSnapshot,
+  exactTargetBalanceCandidate,
+}) {
+  return Boolean(
+    (!openingSnapshot && openingBalanceCandidate?.value_type === "usd_only_needs_native") ||
+    (!closingSnapshot && exactTargetBalanceCandidate?.value_type === "usd_only_needs_native")
+  );
+}
+
+function buildNativeFactMissingReason({
+  openingSnapshot,
+  openingBalanceCandidate,
+  closingSnapshot,
+  exactTargetBalanceCandidate,
+  to,
+}) {
+  if (!openingSnapshot && openingBalanceCandidate?.value_type === "usd_only_needs_native") {
+    return "opening balance has USD equivalent only; native currency amount is required for reconciliation.";
+  }
+  if (!closingSnapshot && exactTargetBalanceCandidate?.value_type === "usd_only_needs_native") {
+    return `period end ${to || "target date"} has USD equivalent only; native currency amount is required for reconciliation.`;
+  }
+  return null;
 }
 
 function getBalanceFactSource(row) {
@@ -744,12 +800,17 @@ function buildPlannedMovementIndex(plannedRows, period) {
 
 function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceRows = [], fxRateLookup = new Map()) {
   const byKey = new Map();
+  const allByKey = new Map();
   const statusByKey = new Map();
   for (const row of normalizeBalanceRowsForPriority(balanceRows, autoBalanceRows, calculatedBalanceRows)) {
     const date = normalizeDate(row?.date);
     const channel = String(row?.channel || row?.accountName || row?.account || "").trim();
     const currency = String(row?.currency || "").trim().toUpperCase();
-    const amount = parseNumber(row?.balanceAmount ?? row?.amount);
+    const contract = normalizeBalanceValueContract(row);
+    const balanceSource = getResolvedBalanceSource(row);
+    const amount = balanceSource === "calculated_balance"
+      ? parseNumber(row?.balanceAmount ?? row?.amount)
+      : parseNumber(contract.amount_native);
     const key = makeKey(channel, currency);
     const rowStatus = normalizeProviderBalanceStatus(row?.status || row?.autoBalanceStatus || row?.auto_balance_status);
     if (date && channel && currency && rowStatus && !["ok", "zero_balance", "derived_from_confirmed_opening"].includes(rowStatus)) {
@@ -770,27 +831,34 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
     const snapshotUsd = resolveSnapshotUsd(row, amount, currency, { date, fxRateLookup });
     if (!date || !channel || !currency) continue;
     if (amount === null && snapshotUsd.amount_usd === null) continue;
-    const rows = byKey.get(key) || [];
-    rows.push({
+    const record = {
       date,
       channel,
       currency,
       amount,
-      amount_usd: snapshotUsd.amount_usd,
-      fx_rate_to_usd: snapshotUsd.fx_rate_to_usd,
+      amount_usd: contract.amount_usd ?? snapshotUsd.amount_usd,
+      fx_rate_to_usd: contract.fx_rate_to_usd ?? snapshotUsd.fx_rate_to_usd,
       fx_source: snapshotUsd.fx_source,
       fx_rate_date: snapshotUsd.fx_rate_date,
       fx_status: snapshotUsd.fx_status,
+      value_type: contract.value_type,
       source: row?.source || row?.fact_source || row?.provider || "",
-      balanceSource: getResolvedBalanceSource(row),
+      balanceSource,
       provider: row?.provider || null,
       sourceSheet: row?.sourceSheet || "",
       sourceRow: row?.sourceRow || null,
       comment: row?.comment || "",
-    });
+    };
+    const allRows = allByKey.get(key) || [];
+    allRows.push(record);
+    allByKey.set(key, allRows);
+    if (!isValidNativeBalanceFact(record)) continue;
+    const rows = byKey.get(key) || [];
+    rows.push(record);
     byKey.set(key, rows);
   }
   for (const rows of byKey.values()) rows.sort(compareBalanceSnapshots);
+  for (const rows of allByKey.values()) rows.sort(compareBalanceSnapshots);
   for (const rows of statusByKey.values()) rows.sort((left, right) => left.date.localeCompare(right.date));
 
   return {
@@ -810,6 +878,18 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       const rows = byKey.get(key) || [];
       if (to) return rows.find((row) => row.date === to) || null;
       return rows.filter((row) => (!from || row.date >= from)).at(-1) || null;
+    },
+    findOpeningAny(key, { from, to } = {}) {
+      const rows = allByKey.get(key) || [];
+      if (!from) return rows[0] || null;
+      if (from && to && from === to) return latestPreferred(rows.filter((row) => row.date < from));
+      return latestPreferred(rows.filter((row) =>
+        row.date < from || (row.date === from && getResolvedBalanceSource(row) !== "calculated_balance")
+      ));
+    },
+    findExactAny(key, date) {
+      const rows = allByKey.get(key) || [];
+      return rows.find((row) => row.date === date) || null;
     },
     findLatestBeforeOrOn(key, to) {
       const rows = byKey.get(key) || [];
@@ -838,13 +918,13 @@ function buildBalanceIndex(balanceRows, autoBalanceRows = [], calculatedBalanceR
       return rows.find((row) => row.date === to) || null;
     },
     keysBeforePeriod(from) {
-      if (!from) return Array.from(byKey.keys());
-      return Array.from(byKey.entries())
+      if (!from) return Array.from(allByKey.keys());
+      return Array.from(allByKey.entries())
         .filter(([, rows]) => rows.some((row) => row.date < from))
         .map(([key]) => key);
     },
     keysInPeriod(period) {
-      return Array.from(byKey.entries())
+      return Array.from(allByKey.entries())
         .filter(([, rows]) => rows.some((row) => isInPeriod(row.date, period)))
         .map(([key]) => key);
     },
@@ -948,6 +1028,12 @@ function isProviderLimitationStatus(status) {
     STATUS.PROVIDER_ERROR,
     STATUS.NOT_SUPPORTED_FOR_ACCOUNT,
   ].includes(String(status || "").trim());
+}
+
+function isValidNativeBalanceFact(row) {
+  if (row.amount === null) return false;
+  if (getResolvedBalanceSource(row) === "calculated_balance") return true;
+  return ["native_and_usd", "native_only", "explicit_zero"].includes(row.value_type);
 }
 
 function buildCurrencyRows(rows) {
@@ -1647,11 +1733,22 @@ function buildDiagnostics({
   lastObservedClosingSnapshot,
   closingSnapshot,
   nearestManualProviderFact,
+  needsNativeCurrencyValue,
+  openingFactValueType,
+  manualProviderFactValueType,
+  nativeFactMissingReason,
   to,
 }) {
   const categories = [];
+  const nativeDiagnostics = {
+    needs_native_currency_value: Boolean(needsNativeCurrencyValue),
+    opening_fact_value_type: openingFactValueType || null,
+    manual_provider_fact_value_type: manualProviderFactValueType || null,
+    native_fact_missing_reason: nativeFactMissingReason || null,
+  };
   if (status === STATUS.NO_DATA) {
     return {
+      ...nativeDiagnostics,
       categories,
       has_exact_provider_balance: Boolean(closingSnapshot),
       last_observed_balance_date: lastObservedClosingSnapshot?.date || null,
@@ -1669,7 +1766,9 @@ function buildDiagnostics({
   if (status === STATUS.MISSING_OPENING || opening === null) categories.push("missing opening balance");
   if (status === STATUS.MISSING_PROVIDER || displayedFactClosing === null) categories.push("missing provider balance");
   if (isProviderLimitationStatus(status)) categories.push(status);
+  if (needsNativeCurrencyValue) categories.push("missing native currency balance");
   return {
+    ...nativeDiagnostics,
     categories: Array.from(new Set(categories)),
     has_exact_provider_balance: Boolean(closingSnapshot),
     last_observed_balance_date: lastObservedClosingSnapshot?.date || null,

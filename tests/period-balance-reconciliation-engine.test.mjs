@@ -620,6 +620,63 @@ test("missing exact target-date provider balance with movements is blocked, not 
   assert.match(row.diagnosis, /Нет фактического остатка на дату/);
 });
 
+test("USD-only Остатки row is not used as native provider fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [{
+      date: "2026-05-12",
+      toChannel: "paypal eur",
+      currency: "EUR",
+      amountNet: "20",
+      balanceAmount: 20,
+      ledgerV2: { date: "2026-05-12", operation: "income", to_channel: "paypal eur", currency: "EUR", amount_net: "20", balance_amount: 20 },
+    }],
+    balanceRows: [
+      { date: "2026-05-10", channel: "paypal eur", currency: "EUR", amount_native: 100, amount_usd: 110, value_type: "native_and_usd" },
+      { date: "2026-05-15", channel: "paypal eur", currency: "EUR", amount_native: null, amount_usd: 132, value_type: "usd_only_needs_native" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "missing_provider_balance");
+  assert.equal(row.opening_fact_balance, 100);
+  assert.equal(row.calculated_closing_balance, 120);
+  assert.equal(row.manual_provider_closing_balance, null);
+  assert.equal(row.needs_native_currency_value, true);
+  assert.equal(row.opening_fact_value_type, "native_and_usd");
+  assert.equal(row.manual_provider_fact_value_type, "usd_only_needs_native");
+  assert.match(row.native_fact_missing_reason, /USD equivalent only/);
+  assert.equal(row.missing_fact_reason, row.native_fact_missing_reason);
+  assert.equal(row.diagnostics.needs_native_currency_value, true);
+  assert.equal(row.diagnostics.manual_provider_fact_value_type, "usd_only_needs_native");
+  assert.equal(row.diagnostics.native_fact_missing_reason, row.native_fact_missing_reason);
+  assert(row.diagnostics.categories.includes("missing native currency balance"));
+});
+
+test("explicit zero Остатки row is a valid native provider fact", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period,
+    operations: [{
+      date: "2026-05-12",
+      fromChannel: "paypal eur",
+      currency: "EUR",
+      amountNet: "100",
+      balanceAmount: -100,
+      ledgerV2: { date: "2026-05-12", operation: "expense", from_channel: "paypal eur", currency: "EUR", amount_net: "100", balance_amount: -100 },
+    }],
+    balanceRows: [
+      { date: "2026-05-10", channel: "paypal eur", currency: "EUR", amount: "100" },
+      { date: "2026-05-15", channel: "paypal eur", currency: "EUR", amount: "0" },
+    ],
+  });
+
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "ok");
+  assert.equal(row.manual_provider_closing_balance, 0);
+  assert.equal(row.manual_provider_fact_value_type, "explicit_zero");
+  assert.equal(row.needs_native_currency_value, false);
+});
+
 test("calculated balance fallback fills period-end fact when exact manual/provider fact is missing", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-04-22", to: "2026-05-21" },
@@ -1851,7 +1908,7 @@ test("total USD row is partial when column coverage differs and lists excluded c
   assert.notEqual(result.total_usd_row.finite_change_rows, result.total_usd_row.finite_movement_rows);
 });
 
-test("USD-only opening facts can make no-movement non-USD rows comparable in USD totals", () => {
+test("USD-only opening facts are diagnostic while no-movement rows derive comparable totals from exact closing", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-31" },
     operations: [],
@@ -1862,11 +1919,14 @@ test("USD-only opening facts can make no-movement non-USD rows comparable in USD
   });
 
   const row = result.by_channel_currency.find((item) => item.channel === "Налично -я-евр");
-  assert.equal(row.opening_native, null);
-  assert.equal(row.opening_usd, 91);
+  assert.equal(row.opening_native, 91);
+  assert.equal(row.opening_usd, 106.063);
   assert.equal(row.confirmed_end_native, 91);
   assert.equal(row.confirmed_end_usd, 106.063);
-  assert.equal(row.change_usd, 15.063);
+  assert.equal(row.change_usd, 0);
+  assert.equal(row.needs_native_currency_value, true);
+  assert.equal(row.opening_fact_value_type, "usd_only_needs_native");
+  assert.match(row.native_fact_missing_reason, /opening balance has USD equivalent only/);
   assert.equal(result.total_usd_row.label, "ВСЕГО USD");
   assert.equal(result.total_usd_row.total_coverage_status, "full");
   assert.equal(result.total_usd_row.rows_excluded_from_usd_total, 0);
