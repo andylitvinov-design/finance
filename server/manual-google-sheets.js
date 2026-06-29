@@ -15,6 +15,7 @@ import {
   isExchangeMissingAmountUsdRow,
 } from "./ledger-audit-helpers.js";
 import { FX_RATES_HEADERS as PARSED_FX_RATES_HEADERS, parseFxRateRows } from "./fx-rates.js";
+import { normalizeBalanceValueContract } from "./balance-native-usd-contract.js";
 
 export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -312,6 +313,7 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
         ...row,
         amount: formatOstatkiAmount(row.amount),
         balanceAmount: formatOstatkiAmount(row.amount),
+        usdAmount: row.currency === "USD" ? formatOstatkiAmount(row.amount) : (existing.usdAmount ?? ""),
         comment: row.comment || existing.comment || "",
       });
       updated.push(row);
@@ -1029,20 +1031,34 @@ function parseBalanceRows(values) {
       const rawChannel = String(row[channelIndex] || "").trim();
       const rawCurrency = currencyIndex === -1 ? "" : String(row[currencyIndex] || "").trim();
       const channel = normalizeBalanceChannel(rawChannel, rawCurrency);
-      const amount = String(row[amountIndex] || "").trim();
       const comment = commentIndex === -1 ? "" : String(row[commentIndex] || "").trim();
       const isIntraday = isIntradayBalanceComment(comment);
       const rawSource = sourceIndex === -1 ? "" : String(row[sourceIndex] || "").trim();
       const balanceSource = classifyBalanceSource({ source: rawSource, comment });
+      const rawAmount = String(row[amountIndex] || "").trim();
+      const rawUsdAmount = usdIndex === -1 ? "" : String(row[usdIndex] || "").trim();
+      const rawRate = rateIndex === -1 ? "" : String(row[rateIndex] || "").trim();
+      const currency = normalizeBalanceCurrency(rawCurrency, channel);
+      const contract = normalizeBalanceValueContract({
+        amount: rawAmount,
+        amount_usd: rawUsdAmount,
+        rate: rawRate,
+        currency,
+        source: balanceSource === "provider_auto" ? "provider_auto" : (rawSource || "manual-google-sheets"),
+      });
       return {
         date: normalizeDate(row[dateIndex]),
         channel,
         accountName: channel,
-        amount,
-        balanceAmount: amount,
-        currency: normalizeBalanceCurrency(rawCurrency, channel),
-        rate: rateIndex === -1 ? "" : String(row[rateIndex] || "").trim(),
-        usdAmount: usdIndex === -1 ? "" : String(row[usdIndex] || "").trim(),
+        amount: contract.amount_native,
+        balanceAmount: contract.amount_native,
+        amount_native: contract.amount_native,
+        amount_usd: contract.amount_usd,
+        fx_rate_to_usd: contract.fx_rate_to_usd,
+        value_type: contract.value_type,
+        currency,
+        rate: rawRate,
+        usdAmount: contract.amount_usd,
         comment,
         source: balanceSource === "provider_auto" ? "provider_auto" : (rawSource || "manual-google-sheets"),
         balanceSource,
@@ -1054,7 +1070,12 @@ function parseBalanceRows(values) {
         sourceRow: rowIndex + 2,
       };
     })
-    .filter((row) => row.date && row.channel && row.amount);
+    .filter((row) => row.date && row.channel && (
+      row.currency ||
+      row.amount_native !== null ||
+      row.amount_usd !== null ||
+      row.comment
+    ));
 }
 
 function parseAutoBalanceRows(values) {
