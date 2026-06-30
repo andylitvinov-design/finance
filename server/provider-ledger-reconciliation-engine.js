@@ -70,9 +70,34 @@ export function buildProviderLedgerReconciliation({
   const providerLedgerRows = ledger.filter((row) => normalizeSource(row.source) === normalizedSource);
   const manualMigrationRows = ledger.filter((row) => isManualMigration(row));
   const usedLedgerIndexes = new Set();
+  const matchedProviderIndexes = new Set();
   const providerResultRows = [];
 
+  // Phase 1: claim ledger rows by exact source_id. The provider's source_id is
+  // the authoritative identity, so it must win before amount-only matching can
+  // mis-grab a same-amount sibling. Without this, two same-amount operations
+  // (e.g. YooMoney 8713.79 on 06-29 and 06-30) let the later one steal the
+  // earlier one's ledger row, falsely reporting the earlier as missing even
+  // though the ledger holds its exact source_id.
   for (const provider of providerRows) {
+    if (!provider.source_id) continue;
+    const bySourceId = findUnused(providerLedgerRows, usedLedgerIndexes, (ledgerRow) =>
+      sameOperation(provider, ledgerRow) && ledgerRowHasSourceId(ledgerRow, provider.source_id)
+    );
+    if (!bySourceId) continue;
+    usedLedgerIndexes.add(bySourceId.index);
+    matchedProviderIndexes.add(provider.index);
+    if (provider.date === bySourceId.date) {
+      providerResultRows.push(providerResult(provider, "matched_exact", bySourceId));
+    } else {
+      providerResultRows.push(providerResult(provider, "matched_wrong_date", bySourceId, {
+        needs_source_id_confirmation: false,
+      }));
+    }
+  }
+
+  for (const provider of providerRows) {
+    if (matchedProviderIndexes.has(provider.index)) continue;
     const exact = findUnused(providerLedgerRows, usedLedgerIndexes, (ledgerRow) => sameOperation(provider, ledgerRow) && provider.date === ledgerRow.date);
     if (exact) {
       usedLedgerIndexes.add(exact.index);
@@ -293,6 +318,14 @@ function findUnused(rows, used, predicate) {
 function sameOperation(provider, ledgerRow) {
   return provider.currency === ledgerRow.currency
     && Math.abs(provider.signed_amount - ledgerRow.signed_amount) <= 0.0001;
+}
+
+function ledgerRowHasSourceId(ledgerRow, sourceId) {
+  const id = String(sourceId || "").trim();
+  if (!id) return false;
+  return [ledgerRow.raw_source_id, ledgerRow.external_id]
+    .map((value) => String(value || "").trim())
+    .includes(id);
 }
 
 function providerResult(provider, status, ledgerRow, extra = {}) {
