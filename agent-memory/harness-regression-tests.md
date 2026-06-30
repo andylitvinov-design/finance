@@ -4,6 +4,23 @@ Use this file only during `/upgrade`, `/learn-pass`, or `/memory-review`.
 
 Each check should be small, replayable, and tied to a known harness weakness.
 
+## R004 — Maintenance-file scope matches canonical router
+
+Scope: `AGENTS.md`, `agent-memory/index.md`  
+Status: active  
+Last checked: 2026-06-30
+
+Scenario:
+- Task invokes `/learn-pass`, `/memory-review`, or `/upgrade`.
+
+Expected:
+- `archive.md` is lazy-loaded except conflict resolution or `/memory-review`.
+- `candidates.md`, `metrics.md`, `harness-proposals.md`, and `harness-regression-tests.md` may be used only during `/learn-pass`, `/memory-review`, or `/upgrade`.
+- Ordinary `/delivery`, `/audit`, and `/audit-fin` do not load maintenance files.
+
+Failure signal:
+- Router says harness proposals/tests are only for `/upgrade`, blocking `/learn-pass` or `/memory-review` from seeing valid maintenance context.
+
 ## R001 — `/audit-fin` routes to finance memory without loading everything
 
 Scope: `AGENTS.md`, `agent-memory/index.md`  
