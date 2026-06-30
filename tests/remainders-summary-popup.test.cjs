@@ -428,6 +428,66 @@ test("buildLiveRemaindersSummary accepts live period reconciliation envelope and
   delete global.fetch;
 });
 
+test("prefetched period reconciliation rows are reused for the same selected period", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument({ from: "2026-06-01", to: "2026-06-30" });
+  let periodRequests = 0;
+  global.fetch = async (url) => {
+    if (/\/api\/period-balance-reconciliation/.test(url)) {
+      periodRequests += 1;
+      return {
+        ok: true,
+        headers: { get: () => "application/json; charset=utf-8" },
+        async json() {
+          if (periodRequests === 1) {
+            return {
+              ok: true,
+              period_balance_reconciliation: {
+                by_channel_currency: [
+                  { channel: "БАНК КАНАДА cad", currency: "CAD", opening_usd: 7798, confirmed_end_usd: 7421.65, movement_usd: 0 },
+                ],
+              },
+            };
+          }
+          return {
+            ok: true,
+            period_balance_reconciliation: {
+              summary: { positions_checked: 0 },
+              by_channel_currency: [],
+            },
+            warnings: ["Manual Google Sheets overlay failed: Quota exceeded for quota metric 'Read requests'."],
+          };
+        },
+      };
+    }
+    if (/\/api\/balance-snapshots/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return { balance_snapshots: { selected_date_rows: [] } };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  await api.prefetchPeriodBalanceReconciliation();
+  const summary = await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.equal(summary.periodReconciliation.by_channel_currency.length, 1);
+  assert.equal(summary.periodMovementRows.length, 1);
+  assert.equal(periodRequests, 1);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("remainders popup renders one default USD table by channel", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({

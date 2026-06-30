@@ -18,6 +18,8 @@
   const PLANNED_FIELDS = ["planned_closing_amount_usd", "plannedClosingUsd", "planned_balance_usd"];
   const SNAPSHOT_AMOUNT_FIELDS = ["amount", "balance", "amount_usd", "balance_usd", "closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "closing_balance_usd"];
   const PERIOD_MOVEMENT_FIELDS = ["real_delta", "movement", "movement_amount", "movementAmount", "balance_amount", "amount_net", "amountNet"];
+  const PERIOD_RECONCILIATION_CACHE = new Map();
+  const PERIOD_RECONCILIATION_INFLIGHT = new Map();
 
   function getRootState() {
     if (typeof state !== "undefined") return state;
@@ -466,6 +468,12 @@
   async function fetchPeriodBalanceReconciliation() {
     if (typeof root.fetch !== "function") return null;
     const url = buildPeriodBalanceReconciliationUrl();
+    const cacheKey = url.toString();
+    const cached = PERIOD_RECONCILIATION_CACHE.get(cacheKey);
+    if (cached) return cached;
+    if (PERIOD_RECONCILIATION_INFLIGHT.has(cacheKey)) return PERIOD_RECONCILIATION_INFLIGHT.get(cacheKey);
+
+    const request = (async () => {
     url.searchParams.set("_ts", String(Date.now()));
     const periodReconciliationUrl = url.toString();
     const response = await root.fetch(periodReconciliationUrl, { cache: "no-store" });
@@ -486,8 +494,33 @@
     if (!Array.isArray(rawRows)) {
       throw new Error(`period balance reconciliation payload has no by_channel_currency rows (${periodReconciliationUrl})`);
     }
+    if (!rawRows.length && cached && hasQuotaWarning(payload)) return cached;
     if (reconciliation && typeof reconciliation === "object") reconciliation.__periodReconciliationUrl = periodReconciliationUrl;
+    if (rawRows.length) PERIOD_RECONCILIATION_CACHE.set(cacheKey, reconciliation);
     return reconciliation;
+    })();
+
+    PERIOD_RECONCILIATION_INFLIGHT.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      PERIOD_RECONCILIATION_INFLIGHT.delete(cacheKey);
+    }
+  }
+
+  function hasQuotaWarning(payload) {
+    const warnings = [
+      ...(Array.isArray(payload?.warnings) ? payload.warnings : []),
+      ...(Array.isArray(payload?.period_balance_reconciliation?.warnings) ? payload.period_balance_reconciliation.warnings : []),
+    ];
+    return warnings.some((warning) => /quota|rate\s*limit|too many requests|resource[_\s-]?exhausted|429/i.test(String(warning || "")));
+  }
+
+  function prefetchPeriodBalanceReconciliation() {
+    return fetchPeriodBalanceReconciliation().catch((error) => {
+      root.console?.warn?.("[remainders-summary-popup] period reconciliation prefetch failed", error);
+      return null;
+    });
   }
 
   async function readJsonResponse(response, label) {
@@ -1379,7 +1412,24 @@
 
   function startRemaindersSummary() {
     bindRemaindersLauncherButton();
+    bindPeriodReconciliationPrefetch();
     patchRenderMetrics();
+  }
+
+  function bindPeriodReconciliationPrefetch() {
+    const doc = root.document;
+    const calculate = doc?.getElementById?.("calculateButton");
+    if (calculate && !calculate.__ezohataPeriodReconciliationPrefetchBound) {
+      calculate.__ezohataPeriodReconciliationPrefetchBound = true;
+      calculate.addEventListener("pointerdown", prefetchPeriodBalanceReconciliation, { capture: true });
+      calculate.addEventListener("click", prefetchPeriodBalanceReconciliation, { capture: true });
+    }
+    ["startDate", "endDate"].forEach((id) => {
+      const input = doc?.getElementById?.(id);
+      if (!input || input.__ezohataPeriodReconciliationPrefetchBound) return;
+      input.__ezohataPeriodReconciliationPrefetchBound = true;
+      input.addEventListener("change", prefetchPeriodBalanceReconciliation);
+    });
   }
 
   function compareDisplayRows(left, right) {
@@ -1403,6 +1453,7 @@
     buildVisibleUsdRowsFromPeriodReconciliation,
     buildPeriodBalanceReconciliationUrl,
     getSnapshotAmount,
+    prefetchPeriodBalanceReconciliation,
     runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
     renderReconcileResult,
