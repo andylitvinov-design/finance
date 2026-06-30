@@ -1173,6 +1173,43 @@ test("period-start snapshot is opening balance and same-day movement is excluded
   assert.equal(row.real_difference, 0);
 });
 
+test("period-start opening balance is matched by exact channel and currency", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-06-01", to: "2026-06-30" },
+    operations: [
+      {
+        date: "2026-06-07",
+        fromChannel: "пейпал дол",
+        currency: "RUB",
+        amountNet: "8487",
+        balanceAmount: -8487,
+        ledgerV2: {
+          date: "2026-06-07",
+          operation: "expense",
+          from_channel: "пейпал дол",
+          currency: "RUB",
+          amount_net: "8487",
+          balance_amount: -8487,
+        },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-06-01", channel: "пейпал дол", currency: "USD", amount: "35.3" },
+      { date: "2026-06-01", channel: "пейпал дол", currency: "RUB", amount: "10000" },
+      { date: "2026-06-30", channel: "пейпал дол", currency: "RUB", amount: "1513" },
+    ],
+  });
+
+  const row = result.by_channel_currency.find((entry) => entry.channel === "пейпал дол" && entry.currency === "RUB");
+  assert.equal(row.status, "ok");
+  assert.equal(row.opening_balance, 10000);
+  assert.equal(row.opening_balance_date, "2026-06-01");
+  assert.equal(row.opening_balance_source, "exact");
+  assert.equal(row.real_delta, -8487);
+  assert.equal(row.calculated_closing_balance, 1513);
+  assert.equal(row.manual_provider_fact_lookup_key, "2026-06-30|пейпал дол|RUB");
+});
+
 test("EOD opening excludes same-day Binance Pay movement after snapshot", () => {
   const result = buildPeriodBalanceReconciliation({
     period: { from: "2026-05-01", to: "2026-05-20" },
