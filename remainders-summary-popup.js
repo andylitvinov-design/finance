@@ -55,6 +55,18 @@
     return Number.isFinite(value) ? formatMoney(value) : "fx_missing";
   }
 
+  // A blocked row's USD cell can be empty for two very different reasons:
+  // a genuinely missing FX rate, or a missing native balance fact. Only the
+  // former should read "fx_missing"; balance-fact gaps get an honest label so
+  // the USD table no longer contradicts the status the engine reports.
+  function formatUsdCellForRow(value, row = {}) {
+    if (Number.isFinite(value)) return formatMoney(value);
+    if (row.hasFxWarning) return "fx_missing";
+    if (row.status === "missing_opening_balance") return "missing opening";
+    if (row.status === "missing_provider_balance") return "missing fact";
+    return "fx_missing";
+  }
+
   function computeVisibleUsdRow(row) {
     const changeUsd = Number.isFinite(row.openingUsd) && Number.isFinite(row.closingUsd)
       ? row.closingUsd - row.openingUsd
@@ -69,6 +81,8 @@
       changeUsd,
       movementUsd: row.movementUsd,
       diffUsd,
+      status: row.status || "",
+      hasFxWarning: Boolean(row.hasFxWarning),
       fxMissing: typeof row.fxMissing === "boolean"
         ? row.fxMissing
         : ![
@@ -135,6 +149,8 @@
           openingUsd,
           closingUsd,
           movementUsd,
+          status: String(row.status || ""),
+          hasFxWarning: getFxWarnings(row).length > 0 || row.needs_fx_rate === true,
           fxMissing: openingUsd === null && closingUsd === null && movementUsd === null,
           fx_warnings: Array.isArray(row.fx_warnings) ? row.fx_warnings : [],
         };
@@ -1054,11 +1070,11 @@
       const tr = doc.createElement("tr");
       if (visible.fxMissing) tr.className = "needs-verification";
       tr.appendChild(renderCell(doc, visible.channel));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.openingUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.closingUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.changeUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.movementUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.diffUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.openingUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.closingUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.changeUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.movementUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.diffUsd, visible), "numeric"));
       tbody.appendChild(tr);
     });
 
