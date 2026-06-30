@@ -1428,6 +1428,7 @@
       const input = doc?.getElementById?.(id);
       if (!input || input.__ezohataPeriodReconciliationPrefetchBound) return;
       input.__ezohataPeriodReconciliationPrefetchBound = true;
+      input.addEventListener("input", prefetchPeriodBalanceReconciliation);
       input.addEventListener("change", prefetchPeriodBalanceReconciliation);
     });
   }
