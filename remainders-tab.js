@@ -94,6 +94,14 @@
     }
   }
 
+  function makeSubtabButton(doc, label, active) {
+    const button = doc.createElement("button");
+    button.type = "button";
+    button.className = `remainders-subtab${active ? " is-active" : ""}`;
+    button.textContent = label;
+    return button;
+  }
+
   function renderRemaindersTabBlock() {
     const doc = root.document;
     const shell = doc.createElement("div");
@@ -104,6 +112,14 @@
     header.innerHTML = `<div><h2>${REMAINDERS_TAB_LABEL}</h2><div class="tab-note">Отдельная вкладка остатков: primary USD total + раскрытая диагностика выбранной даты, периода и provider matrix.</div></div>`;
     shell.appendChild(header);
 
+    const nav = doc.createElement("div");
+    nav.className = "remainders-subtab-nav";
+    const summaryButton = makeSubtabButton(doc, "Сводка", true);
+    const entryButton = makeSubtabButton(doc, "Внести остатки", false);
+    nav.appendChild(summaryButton);
+    nav.appendChild(entryButton);
+    shell.appendChild(nav);
+
     const status = doc.createElement("div");
     status.className = "finance-status";
     status.textContent = "Загружаю остатки...";
@@ -113,10 +129,39 @@
     content.className = "remainders-tab-content";
     shell.appendChild(content);
 
-    loadRemaindersTabContent(content, status).catch((error) => {
-      status.className = "finance-status error";
-      status.textContent = error?.message || "Не удалось загрузить остатки.";
-    });
+    const setActive = (active) => {
+      summaryButton.classList?.[active === "summary" ? "add" : "remove"]?.("is-active");
+      entryButton.classList?.[active === "entry" ? "add" : "remove"]?.("is-active");
+    };
+
+    const showSummary = () => {
+      setActive("summary");
+      status.className = "finance-status";
+      status.textContent = "Загружаю остатки...";
+      loadRemaindersTabContent(content, status).catch((error) => {
+        status.className = "finance-status error";
+        status.textContent = error?.message || "Не удалось загрузить остатки.";
+      });
+    };
+
+    const showEntry = () => {
+      setActive("entry");
+      status.className = "finance-status";
+      status.textContent = "Внесение остатков по скриншоту. Сохранение в БД только после подтверждения.";
+      content.innerHTML = "";
+      const entryApi = root.EzohataBalanceScreenshotEntry;
+      if (entryApi?.renderEntryPanel) {
+        const startInput = getElements().startDate || doc.getElementById?.("startDate");
+        content.appendChild(entryApi.renderEntryPanel(doc, { defaultDate: startInput?.value }));
+      } else {
+        content.textContent = "Модуль внесения остатков не загрузился.";
+      }
+    };
+
+    summaryButton.addEventListener("click", showSummary);
+    entryButton.addEventListener("click", showEntry);
+
+    showSummary();
 
     return shell;
   }
