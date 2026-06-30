@@ -40,6 +40,15 @@ test("daily balance backfill uses the consolidated api index function", () => {
   ));
 });
 
+test("debug Google route uses the consolidated api index function", () => {
+  const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
+
+  assert.ok(config.rewrites.some((rewrite) =>
+    rewrite.source === "/api/debug-google" &&
+    rewrite.destination === "/api/index?action=debugGoogle"
+  ));
+});
+
 test("FX Rates ensure uses the consolidated api index function and scheduled cron", () => {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, "vercel.json"), "utf8"));
 

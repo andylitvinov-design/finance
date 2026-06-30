@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import handler from "../api/debug-google.js";
+import handler from "../server/debug-google-route.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 

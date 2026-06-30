@@ -81,6 +81,10 @@
       "destination": "/api/index?action=paypalManualBalance"
     },
     {
+      "source": "/api/debug-google",
+      "destination": "/api/index?action=debugGoogle"
+    },
+    {
       "source": "/api/debug-full",
       "destination": "/api/index?action=debugFull"
     },

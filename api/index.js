@@ -12,6 +12,7 @@ import balancePairsHandler from "../server/balance-pairs-route.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
+import debugGoogleHandler from "../server/debug-google-route.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
 import paypalManualBalanceHandler from "../server/paypal-manual-balance.js";
 import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
@@ -44,6 +45,7 @@ const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
 const BALANCE_PAIRS_ACTION = "balancePairs";
+const DEBUG_GOOGLE_ACTION = "debugGoogle";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -225,6 +227,10 @@ export default async function handler(request, response) {
 
   if (debugAction === BALANCE_PAIRS_ACTION) {
     return await balancePairsHandler(request, response);
+  }
+
+  if (debugAction === DEBUG_GOOGLE_ACTION) {
+    return await debugGoogleHandler(request, response);
   }
 
   if (isDebugAction(debugAction)) {
