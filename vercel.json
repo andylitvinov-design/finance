@@ -45,6 +45,10 @@
       "destination": "/api/index?action=reconcileBalancesAndTransfers"
     },
     {
+      "source": "/api/parse-balance-screenshot",
+      "destination": "/api/index?action=parseBalanceScreenshot"
+    },
+    {
       "source": "/api/balance-snapshots",
       "destination": "/api/index?action=balanceSnapshots"
     },
