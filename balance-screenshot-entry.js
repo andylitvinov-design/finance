@@ -95,6 +95,7 @@
         const row = makeEmptyRow();
         row.channel = parsed.channel;
         row.amount = parsed.amount;
+        row.usdAmount = parsed.usdAmount || "";
         row.currency = parsed.currency;
         row.confidence = parsed.confidence;
         rows.push(row);
@@ -106,22 +107,41 @@
     const cleaned = normalizeOcrWhitespace(line);
     if (!cleaned) return null;
 
-    const tableMatch = cleaned.match(/^([+-]?[\d][\d\s.,]*)\s+(.+?)\s+([+-]?[\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
-    const simpleMatch = cleaned.match(/^(.+?)[\s:]+([+-]?[\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
-    const match = tableMatch || simpleMatch;
-    if (!match) return null;
+    const numberToken = "[+-]?\\d+(?:[.,]\\d+)?";
+    const channelFirstTableMatch = cleaned.match(new RegExp(`^(.+?)\\s+(${numberToken})\\s+(${numberToken})$`));
+    const leadingAmountTableMatch = cleaned.match(new RegExp(`^(${numberToken})\\s+(.+?)\\s+(${numberToken})$`));
+    const simpleMatch = cleaned.match(new RegExp(`^(.+?)[\\s:]+(${numberToken})\\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$`));
 
-    const rawLabel = tableMatch ? match[2] : match[1];
-    const rawAmount = tableMatch ? match[3] : match[2];
-    const explicitCurrency = tableMatch ? match[4] : match[3];
+    let rawLabel = "";
+    let rawAmount = "";
+    let rawUsdAmount = "";
+    let explicitCurrency = "";
+
+    if (channelFirstTableMatch) {
+      rawLabel = channelFirstTableMatch[1];
+      rawAmount = channelFirstTableMatch[2];
+      rawUsdAmount = channelFirstTableMatch[3];
+    } else if (leadingAmountTableMatch) {
+      rawLabel = leadingAmountTableMatch[2];
+      rawAmount = leadingAmountTableMatch[1];
+      rawUsdAmount = leadingAmountTableMatch[3];
+    } else if (simpleMatch) {
+      rawLabel = simpleMatch[1];
+      rawAmount = simpleMatch[2];
+      explicitCurrency = simpleMatch[3] || "";
+    } else {
+      return null;
+    }
+
     const amount = normalizeOcrAmount(rawAmount);
+    const usdAmount = normalizeOcrAmount(rawUsdAmount);
     if (!amount) return null;
 
     const channel = normalizeOcrChannelLabel(rawLabel);
     if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
 
     const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
-    return { channel, amount, currency, confidence: currency ? 0.62 : 0.38 };
+    return { channel, amount, usdAmount, currency, confidence: currency ? 0.68 : 0.42 };
   }
 
   function normalizeOcrWhitespace(value) {
@@ -163,12 +183,13 @@
 
   function inferOcrCurrencyFromLabel(label) {
     const normalized = ` ${String(label || "").toLowerCase()} `;
+    if (/youmoney|yoomoney|юмани|яндекс/.test(normalized)) return "RUB";
     if (/\busdc\b/.test(normalized)) return "USDC";
     if (/\busdt\b/.test(normalized)) return "USDT";
     if (/\busd\b|\bdol\b|\bдол\b/.test(normalized)) return "USD";
-    if (/\beur\b|\beuro\b|\bевр\b/.test(normalized)) return "EUR";
-    if (/\bcad\b|банк канада/.test(normalized)) return "CAD";
-    if (/\buah\b|грн|24-грн|монобанк/.test(normalized)) return "UAH";
+    if (/\beur\b|\beuro\b|\bевр\b|nalichno/.test(normalized)) return "EUR";
+    if (/\bcad\b|банк канада|td bank/.test(normalized)) return "CAD";
+    if (/\buah\b|грн|24-uah|24-грн|monobank|privat24|privat 24/.test(normalized)) return "UAH";
     if (/\brub\b|руб/.test(normalized)) return "RUB";
     if (/\bchf\b|франк/.test(normalized)) return "CHF";
     if (/\bgbp\b|фунт/.test(normalized)) return "GBP";
@@ -240,7 +261,6 @@
       "Загрузите скриншот остатков по каналам. AI разберёт суммы в черновик — ничего не сохраняется, пока вы не подтвердите.";
     panel.appendChild(intro);
 
-    // date row
     const dateRow = doc.createElement("div");
     dateRow.className = "balance-entry-daterow";
     const dateLabel = doc.createElement("label");
@@ -266,7 +286,6 @@
     dateRow.appendChild(todayButton);
     panel.appendChild(dateRow);
 
-    // dropzone
     const dropzone = doc.createElement("div");
     dropzone.className = "balance-entry-dropzone";
     dropzone.setAttribute("role", "button");
@@ -284,18 +303,15 @@
     dropzone.appendChild(fileInput);
     panel.appendChild(dropzone);
 
-    // thumbnails (original screenshot provenance)
     const thumbs = doc.createElement("div");
     thumbs.className = "balance-entry-thumbs";
     panel.appendChild(thumbs);
 
-    // status
     const status = doc.createElement("div");
     status.className = "balance-entry-status";
     status.setAttribute("aria-live", "polite");
     panel.appendChild(status);
 
-    // preview container
     const preview = doc.createElement("div");
     preview.className = "balance-entry-preview";
     panel.appendChild(preview);
