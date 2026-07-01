@@ -162,6 +162,30 @@ test("parseBalanceOcrText extracts labelled balances and ignores junk", () => {
   assert.equal(rows[1].currency, "USDT");
 });
 
+test("parseBalanceOcrText handles spreadsheet OCR rows with left and right numeric columns", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "429 wise usd 429",
+    "J} REVOLUT 101",
+    "2026 Бтпансе заме изас 2026",
+    "ЕКЗ Бинанс spot usdt 882",
+    "14943 БАНК КАНАДА 11058",
+    "500 600",
+  ].join("\n"));
+
+  assert.equal(rows.length, 5);
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount]),
+    [
+      ["wise usd", "USD", "429"],
+      ["REVOLUT", "", "101"],
+      ["binance save usdc", "USDC", "2026"],
+      ["Бинанс spot usdt", "USDT", "882"],
+      ["БАНК КАНАДА", "CAD", "11058"],
+    ]
+  );
+});
+
 test("normalizeOcrCurrency maps symbols and 3-letter codes", () => {
   const api = loadModule();
   assert.equal(api.normalizeOcrCurrency("$"), "USD");
