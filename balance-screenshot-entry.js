@@ -141,15 +141,15 @@
 
   function normalizeOcrChannelLabel(label) {
     let value = normalizeOcrWhitespace(label)
-      .replace(/^[\[({]?[A-ZА-ЯІЇЄЁ]{1,4}[\])}]?\s+(?=(?:binance|бинанс|б[иі]тпансе|бтпансе)\b)/i, "")
+      .replace(/^[\[({]?[A-ZА-ЯІЇЄЁ]{1,4}[\])}]?\s+(?=(?:binance|бинанс|б[иі]тпансе|бтпансе))/i, "")
       .replace(/^[^\p{L}\p{N}]+/u, "")
       .trim();
 
     value = value
-      .replace(/\b(?:б[иі]тпансе|бтпансе|бинансе)\b/gi, "binance")
-      .replace(/\b(?:заме|заве)\b/gi, "save")
-      .replace(/\b(?:изас|шзас|издс)\b/gi, "usdc")
-      .replace(/\b(?:еиг|ешг)\b/gi, "eur")
+      .replace(/(?:б[иі]тпансе|бтпансе|бинансе)/gi, "binance")
+      .replace(/(?:заме|заве)/gi, "save")
+      .replace(/(?:изас|шзас|издс)/gi, "usdc")
+      .replace(/(?:еиг|ешг)/gi, "eur")
       .replace(/\b(?:дол|dol)\b/gi, "usd")
       .replace(/\s+/g, " ")
       .trim();
