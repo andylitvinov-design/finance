@@ -90,18 +90,89 @@
       .map((line) => line.trim())
       .filter(Boolean)
       .forEach((line) => {
-        const match = line.match(/^(.+?)[\s:]+([\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
-        if (!match) return;
-        const label = match[1].trim();
-        const amount = match[2].replace(/\s+/g, "").replace(/,/g, ".").replace(/\.(?=.*\.)/g, "");
-        if (!label || !amount || !Number.isFinite(Number(amount))) return;
+        const parsed = parseBalanceOcrLine(line);
+        if (!parsed) return;
         const row = makeEmptyRow();
-        row.channel = label;
-        row.amount = amount;
-        row.currency = normalizeOcrCurrency(match[3] || "");
+        row.channel = parsed.channel;
+        row.amount = parsed.amount;
+        row.currency = parsed.currency;
+        row.confidence = parsed.confidence;
         rows.push(row);
       });
     return rows;
+  }
+
+  function parseBalanceOcrLine(line) {
+    const cleaned = normalizeOcrWhitespace(line);
+    if (!cleaned) return null;
+
+    const tableMatch = cleaned.match(/^([+-]?[\d][\d\s.,]*)\s+(.+?)\s+([+-]?[\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
+    const simpleMatch = cleaned.match(/^(.+?)[\s:]+([+-]?[\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
+    const match = tableMatch || simpleMatch;
+    if (!match) return null;
+
+    const rawLabel = tableMatch ? match[2] : match[1];
+    const rawAmount = tableMatch ? match[3] : match[2];
+    const explicitCurrency = tableMatch ? match[4] : match[3];
+    const amount = normalizeOcrAmount(rawAmount);
+    if (!amount) return null;
+
+    const channel = normalizeOcrChannelLabel(rawLabel);
+    if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
+
+    const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
+    return { channel, amount, currency, confidence: currency ? 0.62 : 0.38 };
+  }
+
+  function normalizeOcrWhitespace(value) {
+    return String(value || "")
+      .replace(/[|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeOcrAmount(value) {
+    const amount = String(value || "")
+      .replace(/\s+/g, "")
+      .replace(/,/g, ".")
+      .replace(/\.(?=.*\.)/g, "");
+    return amount && Number.isFinite(Number(amount)) ? amount : "";
+  }
+
+  function normalizeOcrChannelLabel(label) {
+    let value = normalizeOcrWhitespace(label)
+      .replace(/^[\[({]?[A-ZА-ЯІЇЄЁ]{1,4}[\])}]?\s+(?=(?:binance|бинанс|б[иі]тпансе|бтпансе))/i, "")
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .trim();
+
+    value = value
+      .replace(/(?:б[иі]тпансе|бтпансе|бинансе)/gi, "binance")
+      .replace(/(?:заме|заве)/gi, "save")
+      .replace(/(?:изас|шзас|издс)/gi, "usdc")
+      .replace(/(?:еиг|ешг)/gi, "eur")
+      .replace(/\b(?:дол|dol)\b/gi, "usd")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return value;
+  }
+
+  function isProbablyNumericOnlyLabel(label) {
+    return /^[+-]?[\d\s.,]+$/.test(String(label || "").trim());
+  }
+
+  function inferOcrCurrencyFromLabel(label) {
+    const normalized = ` ${String(label || "").toLowerCase()} `;
+    if (/\busdc\b/.test(normalized)) return "USDC";
+    if (/\busdt\b/.test(normalized)) return "USDT";
+    if (/\busd\b|\bdol\b|\bдол\b/.test(normalized)) return "USD";
+    if (/\beur\b|\beuro\b|\bевр\b/.test(normalized)) return "EUR";
+    if (/\bcad\b|банк канада/.test(normalized)) return "CAD";
+    if (/\buah\b|грн|24-грн|монобанк/.test(normalized)) return "UAH";
+    if (/\brub\b|руб/.test(normalized)) return "RUB";
+    if (/\bchf\b|франк/.test(normalized)) return "CHF";
+    if (/\bgbp\b|фунт/.test(normalized)) return "GBP";
+    return "";
   }
 
   const KNOWN_CURRENCY_CODES = new Set([
