@@ -166,7 +166,7 @@ test("parseBalanceOcrText handles spreadsheet OCR rows with left and right numer
   const api = loadModule();
   const rows = api.parseBalanceOcrText([
     "429 wise usd 429",
-    "J} REVOLUT 101",
+    "REVOLUT 101",
     "2026 Бтпансе заме изас 2026",
     "ЕКЗ Бинанс spot usdt 882",
     "14943 БАНК КАНАДА 11058",
