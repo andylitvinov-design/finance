@@ -95,6 +95,7 @@
         const row = makeEmptyRow();
         row.channel = parsed.channel;
         row.amount = parsed.amount;
+        row.rate = parsed.rate || "";
         row.usdAmount = parsed.usdAmount || "";
         row.currency = parsed.currency;
         row.confidence = parsed.confidence;
@@ -108,16 +109,29 @@
     if (!cleaned) return null;
 
     const numberToken = "[+-]?\\d+(?:[.,]\\d+)?";
+    const channelFirstRateMatch = cleaned.match(new RegExp(`^(.+?)\\s+(${numberToken})\\s+(${numberToken})\\s+(${numberToken})$`));
+    const leadingAmountRateMatch = cleaned.match(new RegExp(`^(${numberToken})\\s+(.+?)\\s+(${numberToken})\\s+(${numberToken})$`));
     const channelFirstTableMatch = cleaned.match(new RegExp(`^(.+?)\\s+(${numberToken})\\s+(${numberToken})$`));
     const leadingAmountTableMatch = cleaned.match(new RegExp(`^(${numberToken})\\s+(.+?)\\s+(${numberToken})$`));
     const simpleMatch = cleaned.match(new RegExp(`^(.+?)[\\s:]+(${numberToken})\\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$`));
 
     let rawLabel = "";
     let rawAmount = "";
+    let rawRate = "";
     let rawUsdAmount = "";
     let explicitCurrency = "";
 
-    if (channelFirstTableMatch) {
+    if (channelFirstRateMatch) {
+      rawLabel = channelFirstRateMatch[1];
+      rawAmount = channelFirstRateMatch[2];
+      rawRate = channelFirstRateMatch[3];
+      rawUsdAmount = channelFirstRateMatch[4];
+    } else if (leadingAmountRateMatch) {
+      rawLabel = leadingAmountRateMatch[2];
+      rawAmount = leadingAmountRateMatch[1];
+      rawRate = leadingAmountRateMatch[3];
+      rawUsdAmount = leadingAmountRateMatch[4];
+    } else if (channelFirstTableMatch) {
       rawLabel = channelFirstTableMatch[1];
       rawAmount = channelFirstTableMatch[2];
       rawUsdAmount = channelFirstTableMatch[3];
@@ -134,6 +148,7 @@
     }
 
     const amount = normalizeOcrAmount(rawAmount);
+    const rate = normalizeOcrAmount(rawRate);
     const usdAmount = normalizeOcrAmount(rawUsdAmount);
     if (!amount) return null;
 
@@ -141,7 +156,7 @@
     if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
 
     const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
-    return { channel, amount, usdAmount, currency, confidence: currency ? 0.68 : 0.42 };
+    return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.72 : 0.42 };
   }
 
   function normalizeOcrWhitespace(value) {
@@ -166,6 +181,7 @@
       .trim();
 
     value = value
+      .replace(/^(?:AEYOШT|AEYOЩT|AЕYOШT|АЕУОШТ)$/i, "REVOLUT")
       .replace(/(?:б[иі]тпансе|бтпансе|бинансе)/gi, "binance")
       .replace(/(?:заме|заве)/gi, "save")
       .replace(/(?:изас|шзас|издс)/gi, "usdc")
