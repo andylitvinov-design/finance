@@ -90,7 +90,6 @@ test("index wires balance-screenshot-entry after remainders-tab and before main"
   assert.ok(indexHtml.includes("./balance-screenshot-entry.js"));
   assert.ok(indexHtml.indexOf("./remainders-tab.js") < indexHtml.indexOf("./balance-screenshot-entry.js"));
   assert.ok(indexHtml.indexOf("./balance-screenshot-entry.js") < indexHtml.indexOf("./main.js"));
-  // Adjacency between popup and remainders-tab must remain intact.
   assert.match(
     indexHtml,
     /remainders-summary-popup\.js(?:\?v=[^"]*)?"><\/script>\s*<script src="\.\/remainders-tab\.js"><\/script>/
@@ -162,7 +161,37 @@ test("parseBalanceOcrText extracts labelled balances and ignores junk", () => {
   assert.equal(rows[1].currency, "USDT");
 });
 
-test("parseBalanceOcrText handles spreadsheet OCR rows with left and right numeric columns", () => {
+test("parseBalanceOcrText splits native and USD spreadsheet OCR columns", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "youmoney 21539 283",
+    "paypal usd 207.28 207.3",
+    "paypal eur 334.65 388",
+    "privat 24-uah 11319 263",
+    "monobank 19649 457",
+    "wise usd 429 429",
+    "TD BANK 14943 11058",
+    "binance save usdt 5419 5419",
+    "500 600",
+  ].join("\n"));
+
+  assert.equal(rows.length, 8);
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.usdAmount]),
+    [
+      ["youmoney", "RUB", "21539", "283"],
+      ["paypal usd", "USD", "207.28", "207.3"],
+      ["paypal eur", "EUR", "334.65", "388"],
+      ["privat 24-uah", "UAH", "11319", "263"],
+      ["monobank", "UAH", "19649", "457"],
+      ["wise usd", "USD", "429", "429"],
+      ["TD BANK", "CAD", "14943", "11058"],
+      ["binance save usdt", "USDT", "5419", "5419"],
+    ]
+  );
+});
+
+test("parseBalanceOcrText handles spreadsheet OCR rows with leading numeric column", () => {
   const api = loadModule();
   const rows = api.parseBalanceOcrText([
     "429 wise usd 429",
@@ -175,13 +204,13 @@ test("parseBalanceOcrText handles spreadsheet OCR rows with left and right numer
 
   assert.equal(rows.length, 5);
   assert.deepEqual(
-    rows.map((row) => [row.channel, row.currency, row.amount]),
+    rows.map((row) => [row.channel, row.currency, row.amount, row.usdAmount]),
     [
-      ["wise usd", "USD", "429"],
-      ["REVOLUT", "", "101"],
-      ["binance save usdc", "USDC", "2026"],
-      ["Бинанс spot usdt", "USDT", "882"],
-      ["БАНК КАНАДА", "CAD", "11058"],
+      ["wise usd", "USD", "429", "429"],
+      ["REVOLUT", "", "101", ""],
+      ["binance save usdc", "USDC", "2026", "2026"],
+      ["Бинанс spot usdt", "USDT", "882", "882"],
+      ["БАНК КАНАДА", "CAD", "14943", "11058"],
     ]
   );
 });
