@@ -11,6 +11,10 @@ function loadModule() {
   return require("../balance-screenshot-entry.js");
 }
 
+function ocrWord(text, x0, y0, x1, y1) {
+  return { text, bbox: { x0, y0, x1, y1 } };
+}
+
 class FakeNode {
   constructor(tag) {
     this.tag = String(tag || "div").toLowerCase();
@@ -203,6 +207,46 @@ test("parseBalanceOcrText splits native, rate, and USD spreadsheet OCR columns",
       ["nalichno", "EUR", "500", "0.8333", "600"],
       ["TD BANK", "CAD", "14943", "1.3514", "11058"],
       ["binance spot usdc", "USDC", "1", "1.0000", "1"],
+    ]
+  );
+});
+
+test("parseBalanceOcrWords keeps rate and USD in separate spatial columns", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrWords([
+    ocrWord("monobank", 10, 10, 90, 24), ocrWord("19649", 280, 10, 330, 24), ocrWord("43.0000", 390, 10, 455, 24), ocrWord("457", 560, 10, 590, 24),
+    ocrWord("wise", 10, 40, 45, 54), ocrWord("eur", 50, 40, 75, 54), ocrWord("252", 280, 40, 310, 54), ocrWord("0.8621", 390, 40, 455, 54), ocrWord("292", 560, 40, 590, 54),
+    ocrWord("TD", 10, 70, 30, 84), ocrWord("BANK", 36, 70, 80, 84), ocrWord("14943", 280, 70, 330, 84), ocrWord("1.3514", 390, 70, 455, 84), ocrWord("11058", 560, 70, 610, 84),
+    ocrWord("Payoneer", 10, 100, 82, 114), ocrWord("-", 88, 100, 94, 114), ocrWord("dol", 100, 100, 130, 114), ocrWord("3", 280, 100, 290, 114), ocrWord("1.0000", 390, 100, 455, 114), ocrWord("3", 560, 100, 570, 114),
+    ocrWord("0.0000", 390, 130, 455, 144), ocrWord("11259", 560, 130, 610, 144),
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.rate, row.usdAmount]),
+    [
+      ["monobank", "UAH", "19649", "43.0000", "457"],
+      ["wise eur", "EUR", "252", "0.8621", "292"],
+      ["TD BANK", "CAD", "14943", "1.3514", "11058"],
+      ["Payoneer - usd", "USD", "3", "1.0000", "3"],
+    ]
+  );
+});
+
+test("parseBalanceOcrResult prefers word coordinates over lossy text lines", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrResult({
+    text: "monobank 19649 43.0000\nwise eur 252 0.8621",
+    words: [
+      ocrWord("monobank", 10, 10, 90, 24), ocrWord("19649", 280, 10, 330, 24), ocrWord("43.0000", 390, 10, 455, 24), ocrWord("457", 560, 10, 590, 24),
+      ocrWord("wise", 10, 40, 45, 54), ocrWord("eur", 50, 40, 75, 54), ocrWord("252", 280, 40, 310, 54), ocrWord("0.8621", 390, 40, 455, 54), ocrWord("292", 560, 40, 590, 54),
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.amount, row.rate, row.usdAmount]),
+    [
+      ["monobank", "19649", "43.0000", "457"],
+      ["wise eur", "252", "0.8621", "292"],
     ]
   );
 });

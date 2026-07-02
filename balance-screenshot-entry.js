@@ -80,9 +80,15 @@
     };
   }
 
-  // Best-effort browser-OCR line parser used only when the AI provider is
-  // unavailable. It never invents amounts — unparsed lines are ignored and the
-  // user fills the table manually.
+  // Best-effort browser-OCR parser used only when the AI provider is
+  // unavailable. Prefer Tesseract word coordinates for spreadsheet columns;
+  // fall back to plain text lines when coordinates are unavailable.
+  function parseBalanceOcrResult(data = {}) {
+    const wordRows = parseBalanceOcrWords(data?.words || []);
+    if (wordRows.length) return wordRows;
+    return parseBalanceOcrText(data?.text || "");
+  }
+
   function parseBalanceOcrText(text = "") {
     const rows = [];
     String(text || "")
@@ -92,16 +98,109 @@
       .forEach((line) => {
         const parsed = parseBalanceOcrLine(line);
         if (!parsed) return;
-        const row = makeEmptyRow();
-        row.channel = parsed.channel;
-        row.amount = parsed.amount;
-        row.rate = parsed.rate || "";
-        row.usdAmount = parsed.usdAmount || "";
-        row.currency = parsed.currency;
-        row.confidence = parsed.confidence;
-        rows.push(row);
+        rows.push(toEditableOcrRow(parsed));
       });
     return rows;
+  }
+
+  function parseBalanceOcrWords(words = []) {
+    const entries = (Array.isArray(words) ? words : [])
+      .map(normalizeOcrWordEntry)
+      .filter(Boolean)
+      .sort((left, right) => left.y - right.y || left.x - right.x);
+    if (!entries.length) return [];
+
+    return groupOcrWordsIntoRows(entries)
+      .map(parseBalanceOcrWordRow)
+      .filter(Boolean)
+      .map(toEditableOcrRow);
+  }
+
+  function toEditableOcrRow(parsed) {
+    const row = makeEmptyRow();
+    row.channel = parsed.channel;
+    row.amount = parsed.amount;
+    row.rate = parsed.rate || "";
+    row.usdAmount = parsed.usdAmount || "";
+    row.currency = parsed.currency;
+    row.confidence = parsed.confidence;
+    return row;
+  }
+
+  function normalizeOcrWordEntry(word) {
+    const text = normalizeOcrWhitespace(word?.text || word?.symbol || "");
+    const box = word?.bbox || word;
+    const x0 = Number(box?.x0 ?? box?.left);
+    const y0 = Number(box?.y0 ?? box?.top);
+    const x1 = Number(box?.x1 ?? (Number.isFinite(x0) ? x0 + Number(box?.width || 0) : NaN));
+    const y1 = Number(box?.y1 ?? (Number.isFinite(y0) ? y0 + Number(box?.height || 0) : NaN));
+    if (!text || !Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) {
+      return null;
+    }
+    return {
+      text,
+      x0,
+      x1,
+      y0,
+      y1,
+      x: (x0 + x1) / 2,
+      y: (y0 + y1) / 2,
+      height: Math.max(1, y1 - y0),
+    };
+  }
+
+  function groupOcrWordsIntoRows(entries) {
+    const rows = [];
+    entries.forEach((entry) => {
+      const match = rows.find((row) => Math.abs(row.y - entry.y) <= Math.max(8, row.height * 0.72, entry.height * 0.72));
+      if (match) {
+        match.words.push(entry);
+        match.y = (match.y * (match.words.length - 1) + entry.y) / match.words.length;
+        match.height = Math.max(match.height, entry.height);
+      } else {
+        rows.push({ y: entry.y, height: entry.height, words: [entry] });
+      }
+    });
+    return rows.map((row) => row.words.sort((left, right) => left.x - right.x));
+  }
+
+  function parseBalanceOcrWordRow(words) {
+    const numeric = words
+      .map((word, index) => ({ ...word, index, amount: normalizeOcrAmount(word.text) }))
+      .filter((word) => word.amount);
+    if (!numeric.length) return null;
+
+    let rawLabel = "";
+    let rawAmount = "";
+    let rawRate = "";
+    let rawUsdAmount = "";
+
+    const firstNumberIndex = numeric[0].index;
+    const startsWithLabel = firstNumberIndex > 0;
+    if (startsWithLabel) {
+      rawLabel = words.slice(0, firstNumberIndex).map((word) => word.text).join(" ");
+      rawAmount = numeric[0].amount;
+      if (numeric.length >= 3) {
+        rawRate = numeric[1].amount;
+        rawUsdAmount = numeric[2].amount;
+      } else if (numeric.length >= 2) {
+        rawUsdAmount = numeric[1].amount;
+      }
+    } else if (numeric.length >= 2) {
+      const secondNumberIndex = numeric[1].index;
+      rawLabel = words.slice(firstNumberIndex + 1, secondNumberIndex).map((word) => word.text).join(" ");
+      rawAmount = numeric[0].amount;
+      if (numeric.length >= 3) {
+        rawRate = numeric[1].amount;
+        rawUsdAmount = numeric[2].amount;
+      } else {
+        rawUsdAmount = numeric[1].amount;
+      }
+    } else {
+      return null;
+    }
+
+    return buildParsedOcrRow({ rawLabel, rawAmount, rawRate, rawUsdAmount });
   }
 
   function parseBalanceOcrLine(line) {
@@ -147,6 +246,10 @@
       return null;
     }
 
+    return buildParsedOcrRow({ rawLabel, rawAmount, rawRate, rawUsdAmount, explicitCurrency });
+  }
+
+  function buildParsedOcrRow({ rawLabel, rawAmount, rawRate = "", rawUsdAmount = "", explicitCurrency = "" } = {}) {
     const amount = normalizeOcrAmount(rawAmount);
     const rate = normalizeOcrAmount(rawRate);
     if (!amount) return null;
@@ -157,7 +260,7 @@
     const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
     const parsedUsdAmount = normalizeOcrAmount(rawUsdAmount);
     const usdAmount = parsedUsdAmount || (isOcrUsdLikeCurrency(currency) ? amount : "");
-    return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.72 : 0.42 };
+    return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.76 : 0.46 };
   }
 
   function normalizeOcrWhitespace(value) {
@@ -535,7 +638,7 @@
       setStatus(view, `OCR в браузере: скриншот ${index + 1} из ${images.length}…`, "busy");
       try {
         const result = await root.Tesseract.recognize(image.dataUrl, "eng+rus+ukr", { logger: () => {} });
-        rows.push(...parseBalanceOcrText(result?.data?.text || ""));
+        rows.push(...parseBalanceOcrResult(result?.data || {}));
       } catch (error) {
         warnings.push(String(error?.message || error));
       }
@@ -706,7 +809,9 @@
     isRowSavable,
     buildSavePayload,
     summarizeDraft,
+    parseBalanceOcrResult,
     parseBalanceOcrText,
+    parseBalanceOcrWords,
     normalizeOcrCurrency,
     renderEntryPanel,
     EDITABLE_FIELDS,
