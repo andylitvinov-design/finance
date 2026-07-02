@@ -19,6 +19,6 @@
     "deploy:verify": "node scripts/verify-deployment.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   }
 }
