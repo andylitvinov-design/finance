@@ -289,7 +289,7 @@ function buildHeaderMap(header = []) {
   };
 }
 
-function canonicalOstatkiChannel(value) {
+export function canonicalOstatkiChannel(value) {
   const raw = String(value || "").trim();
   const normalized = normalizeLookupText(raw);
   if (!normalized) return "";
@@ -304,8 +304,13 @@ function canonicalOstatkiChannel(value) {
   return raw;
 }
 
-function buildOstatkiKey(row) {
+export function buildOstatkiKey(row) {
   return [row.date, normalizeLookupText(canonicalOstatkiChannel(row.channel)), normalizeCurrency(row.currency)].join("|");
+}
+
+export async function readOstatkiSnapshotRows({ fetchImpl = fetch } = {}) {
+  const values = await readOstatkiValues({ fetchImpl });
+  return parseOstatkiValues(values);
 }
 
 function isKnownStaleOwnerConfirmedReplacementRow(row) {

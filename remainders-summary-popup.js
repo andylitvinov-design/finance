@@ -18,6 +18,8 @@
   const PLANNED_FIELDS = ["planned_closing_amount_usd", "plannedClosingUsd", "planned_balance_usd"];
   const SNAPSHOT_AMOUNT_FIELDS = ["amount", "balance", "amount_usd", "balance_usd", "closing_amount_usd", "closingUsd", "end_amount_usd", "endUsd", "closing_balance_usd"];
   const PERIOD_MOVEMENT_FIELDS = ["real_delta", "movement", "movement_amount", "movementAmount", "balance_amount", "amount_net", "amountNet"];
+  const PERIOD_RECONCILIATION_CACHE = new Map();
+  const PERIOD_RECONCILIATION_INFLIGHT = new Map();
 
   function getRootState() {
     if (typeof state !== "undefined") return state;
@@ -53,6 +55,18 @@
     return Number.isFinite(value) ? formatMoney(value) : "fx_missing";
   }
 
+  // A blocked row's USD cell can be empty for two very different reasons:
+  // a genuinely missing FX rate, or a missing native balance fact. Only the
+  // former should read "fx_missing"; balance-fact gaps get an honest label so
+  // the USD table no longer contradicts the status the engine reports.
+  function formatUsdCellForRow(value, row = {}) {
+    if (Number.isFinite(value)) return formatMoney(value);
+    if (row.hasFxWarning) return "fx_missing";
+    if (row.status === "missing_opening_balance") return "missing opening";
+    if (row.status === "missing_provider_balance") return "missing fact";
+    return "fx_missing";
+  }
+
   function computeVisibleUsdRow(row) {
     const changeUsd = Number.isFinite(row.openingUsd) && Number.isFinite(row.closingUsd)
       ? row.closingUsd - row.openingUsd
@@ -67,6 +81,8 @@
       changeUsd,
       movementUsd: row.movementUsd,
       diffUsd,
+      status: row.status || "",
+      hasFxWarning: Boolean(row.hasFxWarning),
       fxMissing: typeof row.fxMissing === "boolean"
         ? row.fxMissing
         : ![
@@ -133,6 +149,8 @@
           openingUsd,
           closingUsd,
           movementUsd,
+          status: String(row.status || ""),
+          hasFxWarning: getFxWarnings(row).length > 0 || row.needs_fx_rate === true,
           fxMissing: openingUsd === null && closingUsd === null && movementUsd === null,
           fx_warnings: Array.isArray(row.fx_warnings) ? row.fx_warnings : [],
         };
@@ -466,6 +484,12 @@
   async function fetchPeriodBalanceReconciliation() {
     if (typeof root.fetch !== "function") return null;
     const url = buildPeriodBalanceReconciliationUrl();
+    const cacheKey = url.toString();
+    const cached = PERIOD_RECONCILIATION_CACHE.get(cacheKey);
+    if (cached) return cached;
+    if (PERIOD_RECONCILIATION_INFLIGHT.has(cacheKey)) return PERIOD_RECONCILIATION_INFLIGHT.get(cacheKey);
+
+    const request = (async () => {
     url.searchParams.set("_ts", String(Date.now()));
     const periodReconciliationUrl = url.toString();
     const response = await root.fetch(periodReconciliationUrl, { cache: "no-store" });
@@ -486,8 +510,33 @@
     if (!Array.isArray(rawRows)) {
       throw new Error(`period balance reconciliation payload has no by_channel_currency rows (${periodReconciliationUrl})`);
     }
+    if (!rawRows.length && cached && hasQuotaWarning(payload)) return cached;
     if (reconciliation && typeof reconciliation === "object") reconciliation.__periodReconciliationUrl = periodReconciliationUrl;
+    if (rawRows.length) PERIOD_RECONCILIATION_CACHE.set(cacheKey, reconciliation);
     return reconciliation;
+    })();
+
+    PERIOD_RECONCILIATION_INFLIGHT.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      PERIOD_RECONCILIATION_INFLIGHT.delete(cacheKey);
+    }
+  }
+
+  function hasQuotaWarning(payload) {
+    const warnings = [
+      ...(Array.isArray(payload?.warnings) ? payload.warnings : []),
+      ...(Array.isArray(payload?.period_balance_reconciliation?.warnings) ? payload.period_balance_reconciliation.warnings : []),
+    ];
+    return warnings.some((warning) => /quota|rate\s*limit|too many requests|resource[_\s-]?exhausted|429/i.test(String(warning || "")));
+  }
+
+  function prefetchPeriodBalanceReconciliation() {
+    return fetchPeriodBalanceReconciliation().catch((error) => {
+      root.console?.warn?.("[remainders-summary-popup] period reconciliation prefetch failed", error);
+      return null;
+    });
   }
 
   async function readJsonResponse(response, label) {
@@ -1021,11 +1070,11 @@
       const tr = doc.createElement("tr");
       if (visible.fxMissing) tr.className = "needs-verification";
       tr.appendChild(renderCell(doc, visible.channel));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.openingUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.closingUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.changeUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.movementUsd), "numeric"));
-      tr.appendChild(renderCell(doc, formatUsdCell(visible.diffUsd), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.openingUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.closingUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.changeUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.movementUsd, visible), "numeric"));
+      tr.appendChild(renderCell(doc, formatUsdCellForRow(visible.diffUsd, visible), "numeric"));
       tbody.appendChild(tr);
     });
 
@@ -1379,7 +1428,25 @@
 
   function startRemaindersSummary() {
     bindRemaindersLauncherButton();
+    bindPeriodReconciliationPrefetch();
     patchRenderMetrics();
+  }
+
+  function bindPeriodReconciliationPrefetch() {
+    const doc = root.document;
+    const calculate = doc?.getElementById?.("calculateButton");
+    if (calculate && !calculate.__ezohataPeriodReconciliationPrefetchBound) {
+      calculate.__ezohataPeriodReconciliationPrefetchBound = true;
+      calculate.addEventListener("pointerdown", prefetchPeriodBalanceReconciliation, { capture: true });
+      calculate.addEventListener("click", prefetchPeriodBalanceReconciliation, { capture: true });
+    }
+    ["startDate", "endDate"].forEach((id) => {
+      const input = doc?.getElementById?.(id);
+      if (!input || input.__ezohataPeriodReconciliationPrefetchBound) return;
+      input.__ezohataPeriodReconciliationPrefetchBound = true;
+      input.addEventListener("input", prefetchPeriodBalanceReconciliation);
+      input.addEventListener("change", prefetchPeriodBalanceReconciliation);
+    });
   }
 
   function compareDisplayRows(left, right) {
@@ -1403,6 +1470,7 @@
     buildVisibleUsdRowsFromPeriodReconciliation,
     buildPeriodBalanceReconciliationUrl,
     getSnapshotAmount,
+    prefetchPeriodBalanceReconciliation,
     runBalanceReconcileWorkflow,
     renderRemaindersSummaryBlock,
     renderReconcileResult,

@@ -304,3 +304,64 @@ test("matching provider operations keeps stale Остатки mismatch out of tr
   assert.equal(report.balance_diagnostics.copyable_rows[0].needs_provider_confirmation, true);
   assert.equal(report.balance_diagnostics.copyable_rows[0].do_not_apply_automatically, true);
 });
+
+test("source_id identity wins over amount: a same-amount sibling must not steal the matching ledger row", () => {
+  // Live 2026-06 repro: two distinct YooMoney operations of 8713.79 on
+  // adjacent days with different source_ids. The ledger holds the 06-29 one by
+  // its exact source_id. Amount-only matching let the 06-30 sibling grab ledger
+  // row 613, falsely reporting the 06-29 op (whose id the ledger literally
+  // holds) as missing_in_ledger and raising a spurious wrong-date alarm.
+  const providerEvidence = [
+    { date: "2026-06-29", signed_amount: 8713.79, description: "op 2630", source_id: "836045524568681092" },
+    { date: "2026-06-30", signed_amount: 8713.79, description: "op 2632", source_id: "836123073218572088" },
+  ];
+  const ledgerRows = [
+    ledgerRow({ sheetRowNumber: 613, date: "2026-06-29", signedAmount: 8713.79, rawSourceId: "836045524568681092", comment: "op 2630" }),
+  ];
+
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence,
+    ledgerRows,
+    period: { from: "2026-06-01", to: "2026-06-30" },
+  });
+
+  const matchedById = report.row_level.matched_exact.find((row) => row.source_id === "836045524568681092");
+  assert.ok(matchedById, "provider row whose source_id is in the ledger must be matched_exact");
+  assert.equal(matchedById.matched_ledger.sheetRowNumber, 613);
+  assert.deepEqual(
+    report.row_level.missing_in_ledger.map((row) => row.source_id),
+    ["836123073218572088"],
+    "only the genuinely absent later operation is missing",
+  );
+  assert.equal(report.row_level.matched_wrong_date.length, 0, "no false wrong-date alarm when source_id matches exactly");
+  assert.equal(report.date_alignment_status, "ok");
+});
+
+test("two same-day same-amount deposits with different source_ids stay distinct, not collapsed", () => {
+  const providerEvidence = [
+    { date: "2026-06-11", signed_amount: 4318.24, description: "Сбербанк, пополнение 2610", source_id: "834451852177142116" },
+    { date: "2026-06-11", signed_amount: 4318.24, description: "Сбербанк, пополнение 2609", source_id: "834451631214323096" },
+  ];
+  const ledgerRows = [
+    ledgerRow({ sheetRowNumber: 700, date: "2026-06-11", signedAmount: 4318.24, rawSourceId: "834451852177142116", comment: "2610" }),
+    ledgerRow({ sheetRowNumber: 701, date: "2026-06-11", signedAmount: 4318.24, rawSourceId: "834451631214323096", comment: "2609" }),
+  ];
+
+  const report = buildProviderLedgerReconciliation({
+    source: "yoomoney",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    providerEvidence,
+    ledgerRows,
+    period: { from: "2026-06-01", to: "2026-06-30" },
+  });
+
+  assert.equal(report.row_level.matched_exact.length, 2, "both distinct source_ids match their own ledger row");
+  assert.equal(report.row_level.missing_in_ledger.length, 0);
+  assert.equal(report.row_level.duplicate_in_ledger.length, 0, "distinct source_ids must not be treated as duplicates");
+  const matchedLedgerRows = report.row_level.matched_exact.map((row) => row.matched_ledger.sheetRowNumber).sort();
+  assert.deepEqual(matchedLedgerRows, [700, 701], "each provider row claims its own ledger row, no collapse");
+});

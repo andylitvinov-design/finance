@@ -428,6 +428,66 @@ test("buildLiveRemaindersSummary accepts live period reconciliation envelope and
   delete global.fetch;
 });
 
+test("prefetched period reconciliation rows are reused for the same selected period", async () => {
+  const api = loadApi();
+  global.location = { href: "https://ezohata-incoming-ledger.vercel.app/" };
+  global.document = createDateDocument({ from: "2026-06-01", to: "2026-06-30" });
+  let periodRequests = 0;
+  global.fetch = async (url) => {
+    if (/\/api\/period-balance-reconciliation/.test(url)) {
+      periodRequests += 1;
+      return {
+        ok: true,
+        headers: { get: () => "application/json; charset=utf-8" },
+        async json() {
+          if (periodRequests === 1) {
+            return {
+              ok: true,
+              period_balance_reconciliation: {
+                by_channel_currency: [
+                  { channel: "БАНК КАНАДА cad", currency: "CAD", opening_usd: 7798, confirmed_end_usd: 7421.65, movement_usd: 0 },
+                ],
+              },
+            };
+          }
+          return {
+            ok: true,
+            period_balance_reconciliation: {
+              summary: { positions_checked: 0 },
+              by_channel_currency: [],
+            },
+            warnings: ["Manual Google Sheets overlay failed: Quota exceeded for quota metric 'Read requests'."],
+          };
+        },
+      };
+    }
+    if (/\/api\/balance-snapshots/.test(url)) {
+      return {
+        ok: true,
+        async json() {
+          return { balance_snapshots: { selected_date_rows: [] } };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return { balances: { remainders_rows: [] } };
+      },
+    };
+  };
+
+  await api.prefetchPeriodBalanceReconciliation();
+  const summary = await api.buildLiveRemaindersSummary({ data: {} });
+
+  assert.equal(summary.periodReconciliation.by_channel_currency.length, 1);
+  assert.equal(summary.periodMovementRows.length, 1);
+  assert.equal(periodRequests, 1);
+  resetRemaindersModule();
+  delete global.location;
+  delete global.fetch;
+});
+
 test("remainders popup renders one default USD table by channel", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
@@ -2144,5 +2204,79 @@ test("issue#552 screenshot repro: all-fx_missing legacy rows are not presented a
   for (const channel of legacyChannels) {
     assert.ok(!channelNames.includes(channel), `${channel} legacy row must not be visible in the main table`);
   }
+  resetRemaindersModule();
+});
+
+test("blocked rows show honest balance-missing labels, not fx_missing, unless FX is truly missing", () => {
+  const api = loadApi();
+  const summary = api.buildRemaindersSummary({ balances: { remainders_rows: [] } });
+  summary.periodReconciliation = {
+    by_channel_currency: [
+      {
+        channel: "пейпал дол",
+        currency: "RUB",
+        status: "missing_opening_balance",
+        opening_usd: null,
+        confirmed_end_usd: null,
+        movement_usd: -100.371,
+        fx_warnings: [],
+        needs_fx_rate: false,
+      },
+      {
+        channel: "binance save",
+        currency: "USDC",
+        status: "missing_provider_balance",
+        opening_usd: 3107.3722,
+        confirmed_end_usd: null,
+        movement_usd: 0,
+        fx_warnings: [],
+        needs_fx_rate: false,
+      },
+      {
+        channel: "Real FX",
+        currency: "CAD",
+        status: "needs_verification",
+        opening_usd: null,
+        confirmed_end_usd: 20,
+        movement_usd: 4,
+        fx_warnings: ["opening_usd_fx_missing"],
+        needs_fx_rate: true,
+      },
+    ],
+    total_usd_row: {
+      label: "ВСЕГО USD (partial)",
+      opening_usd: 3107.3722,
+      confirmed_end_usd: 0,
+      change_usd: 0,
+      movement_usd: 0,
+      diff_usd: 0,
+      excluded_fx_missing_rows: 1,
+    },
+  };
+  const block = api.renderRemaindersSummaryBlock(summary, makeMockDocument());
+  const rows = tableRows(firstVisibleTable(block));
+
+  const paypal = rows.find((row) => row[0] === "пейпал дол RUB");
+  assert.deepEqual(paypal, [
+    "пейпал дол RUB",
+    "missing opening",
+    "missing opening",
+    "missing opening",
+    "-100,3710",
+    "missing opening",
+  ]);
+
+  const binance = rows.find((row) => row[0] === "binance save USDC");
+  assert.deepEqual(binance, [
+    "binance save USDC",
+    "3107,3722",
+    "missing fact",
+    "missing fact",
+    "0,0000",
+    "missing fact",
+  ]);
+
+  const realFx = rows.find((row) => row[0] === "Real FX CAD");
+  assert.equal(realFx[1], "fx_missing", "a genuine missing FX rate still reads fx_missing");
   resetRemaindersModule();
 });

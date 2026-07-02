@@ -12,7 +12,15 @@ import balancePairsHandler from "../server/balance-pairs-route.js";
 import { buildBalanceSnapshotsSnapshot } from "../server/balance-snapshots.js";
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
 import { handleDebugAction, isDebugAction } from "../server/debug-endpoints.js";
+import debugGoogleHandler from "../server/debug-google-route.js";
 import { createManualWorkbookHandler } from "../server/manual-workbook-route.js";
+import { readOstatkiSnapshotRows } from "./save-balance-snapshot.js";
+import {
+  buildBalanceDraftBatch,
+  parseBalanceScreenshotsToDraft,
+  shouldFallbackToBrowserOcr as shouldFallbackBalanceScreenshotToBrowserOcr,
+  validateBalanceScreenshotImages,
+} from "../server/balance-screenshot-draft.js";
 import paypalManualBalanceHandler from "../server/paypal-manual-balance.js";
 import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
@@ -44,6 +52,8 @@ const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
 const BALANCE_PAIRS_ACTION = "balancePairs";
+const DEBUG_GOOGLE_ACTION = "debugGoogle";
+const PARSE_BALANCE_SCREENSHOT_ACTION = "parseBalanceScreenshot";
 const SOURCE_SPREADSHEET_ID = "1v2ZvGdutjyMkW0FZqxJ3P0GRVuKPlNxG1lvZiUZlWvo";
 const SOURCE_SPREADSHEET_GID = "0";
 const SOURCE_SPREADSHEET_CSV_URL =
@@ -227,6 +237,14 @@ export default async function handler(request, response) {
     return await balancePairsHandler(request, response);
   }
 
+  if (debugAction === DEBUG_GOOGLE_ACTION) {
+    return await debugGoogleHandler(request, response);
+  }
+
+  if (debugAction === PARSE_BALANCE_SCREENSHOT_ACTION) {
+    return await parseBalanceScreenshotHandler(request, response);
+  }
+
   if (isDebugAction(debugAction)) {
     return await handleDebugAction(request, response, debugAction);
   }
@@ -295,6 +313,80 @@ export default async function handler(request, response) {
 function normalizeUpstreamUrl(value) {
   const raw = String(value || "").trim();
   return raw ? raw.replace(/\/+$/, "") : "";
+}
+
+// Parse a balances screenshot into a reviewable DRAFT batch. This NEVER writes
+// to the Остатки sheet — the confirmed write stays in /api/save-balance-snapshot,
+// which the UI calls only after the owner approves the preview.
+async function parseBalanceScreenshotHandler(request, response) {
+  if (request.method === "OPTIONS") {
+    return response.status(200).json({ ok: true });
+  }
+  if (request.method !== "POST") {
+    return response.status(405).json({
+      ok: false,
+      action: PARSE_BALANCE_SCREENSHOT_ACTION,
+      error: `Unsupported method: ${request.method}`,
+    });
+  }
+
+  let preparedImages = [];
+  let snapshotDate = "";
+  try {
+    const payload = typeof request.body === "string" ? JSON.parse(request.body || "{}") : request.body || {};
+    preparedImages = validateBalanceScreenshotImages(payload.images);
+    snapshotDate = String(payload.date || payload.snapshotDate || "").trim();
+    const channels = Array.isArray(payload.channels) ? payload.channels : [];
+
+    if (!process.env.OPENAI_API_KEY) {
+      return response.status(200).json({
+        ok: true,
+        source: "browser-ocr-required",
+        batch: buildBalanceDraftBatch({ images: preparedImages, rows: [], date: snapshotDate, now: new Date() }),
+        warnings: ["OPENAI_API_KEY is not configured. Falling back to browser OCR or manual entry."],
+      });
+    }
+
+    let existingRows = [];
+    try {
+      existingRows = await readOstatkiSnapshotRows();
+    } catch {
+      existingRows = [];
+    }
+
+    const batch = await parseBalanceScreenshotsToDraft(preparedImages, {
+      apiKey: process.env.OPENAI_API_KEY,
+      model: process.env.OPENAI_BALANCE_MODEL || process.env.OPENAI_EXPENSE_MODEL || undefined,
+      channels,
+      date: snapshotDate,
+      now: new Date(),
+      existingRows,
+    });
+    if (!existingRows.length) {
+      batch.warnings = [
+        ...(batch.warnings || []),
+        "Не удалось прочитать текущие Остатки для проверки дубликатов — проверьте строки вручную.",
+      ];
+    }
+    return response.status(200).json({ ok: true, source: "openai", batch });
+  } catch (error) {
+    // Recoverable provider/quota/auth failures fall back to browser OCR like the
+    // expense screenshot flow; everything else (incl. non-JSON provider output)
+    // returns a structured { ok: false, error }.
+    if (preparedImages.length && shouldFallbackBalanceScreenshotToBrowserOcr(error)) {
+      return response.status(200).json({
+        ok: true,
+        source: "browser-ocr-required",
+        batch: buildBalanceDraftBatch({ images: preparedImages, rows: [], date: snapshotDate, now: new Date() }),
+        warnings: [`${String(error?.message || error)} Falling back to browser OCR.`],
+      });
+    }
+    return response.status(400).json({
+      ok: false,
+      action: PARSE_BALANCE_SCREENSHOT_ACTION,
+      error: String(error?.message || error),
+    });
+  }
 }
 
 async function loadSnapshotPayload() {

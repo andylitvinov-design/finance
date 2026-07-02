@@ -66,6 +66,10 @@
       "destination": "/api/index?action=reconcileBalancesAndTransfers"
     },
     {
+      "source": "/api/parse-balance-screenshot",
+      "destination": "/api/index?action=parseBalanceScreenshot"
+    },
+    {
       "source": "/api/balance-snapshots",
       "destination": "/api/index?action=balanceSnapshots"
     },
@@ -100,6 +104,10 @@
     {
       "source": "/api/paypal-manual-balance",
       "destination": "/api/index?action=paypalManualBalance"
+    },
+    {
+      "source": "/api/debug-google",
+      "destination": "/api/index?action=debugGoogle"
     },
     {
       "source": "/api/debug-full",
