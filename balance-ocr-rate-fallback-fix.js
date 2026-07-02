@@ -57,9 +57,8 @@
   function formatUsdAmount(amount, rate) {
     const usd = expectedUsdValue(amount, rate);
     if (!Number.isFinite(usd)) return "";
-    const rounded = Math.round(usd);
-    if (Math.abs(usd - rounded) < 0.35) return String(rounded);
-    return String(Number(usd.toFixed(4)));
+    // The "в USD" screenshot column is always a whole number.
+    return String(Math.round(usd));
   }
 
   function isUsdConsistent(amount, rate, usdAmount) {
