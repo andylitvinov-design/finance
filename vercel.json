@@ -143,5 +143,15 @@
     }
   ],
   "cleanUrls": false,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "git": {
+    "deploymentEnabled": {
+      "codex/**": false,
+      "claude/**": false,
+      "feat/**": false,
+      "fix/**": false,
+      "chore/**": false,
+      "config/**": false
+    }
+  }
 }
