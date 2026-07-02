@@ -13,7 +13,9 @@ test("recoverLossyRateLine moves a detected rate out of USD and appends computed
   assert.equal(api.recoverLossyRateLine("monobank 19649 43.0000"), "monobank 19649 43.0000 457");
   assert.equal(api.recoverLossyRateLine("wise eur 252 0.8621"), "wise eur 252 0.8621 292");
   assert.equal(api.recoverLossyRateLine("Payoneer -usd 3 1.0000"), "Payoneer -usd 3 1.0000 3");
-  assert.equal(api.recoverLossyRateLine("TD BANK 14943 1.3514"), "TD BANK 14943 1.3514 11058");
+  // 14943 / 1.3514 = 11057.4 -> nearest whole USD is 11057 (the screenshot's
+  // 11058 only exists in the OCR USD column, not recoverable from a rate line).
+  assert.equal(api.recoverLossyRateLine("TD BANK 14943 1.3514"), "TD BANK 14943 1.3514 11057");
 });
 
 test("recoverLossyRateLine replaces OCR USD when it fails amount divided by rate", () => {

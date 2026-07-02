@@ -81,12 +81,60 @@
   }
 
   // Best-effort browser-OCR parser used only when the AI provider is
-  // unavailable. Prefer Tesseract word coordinates for spreadsheet columns;
-  // fall back to plain text lines when coordinates are unavailable.
+  // unavailable. Tesseract can return spatial `words[]` and a plain `text`
+  // blob that disagree (a dropped/merged column, a lossy rate line). Parse
+  // both candidates and keep the healthier one instead of blindly trusting
+  // word coordinates.
   function parseBalanceOcrResult(data = {}) {
     const wordRows = parseBalanceOcrWords(data?.words || []);
-    if (wordRows.length) return wordRows;
-    return parseBalanceOcrText(data?.text || "");
+    const textRows = parseBalanceOcrText(data?.text || "");
+    return pickBetterOcrCandidate(wordRows, textRows);
+  }
+
+  function pickBetterOcrCandidate(wordRows, textRows) {
+    const words = Array.isArray(wordRows) ? wordRows : [];
+    const texts = Array.isArray(textRows) ? textRows : [];
+    if (!words.length) return texts;
+    if (!texts.length) return words;
+
+    const wordScore = scoreOcrCandidate(words);
+    const textScore = scoreOcrCandidate(texts);
+    // Priority: more rows with a currency, then more rows, then more rows with
+    // a rate (the screenshot has a rate column), then fewer math
+    // inconsistencies. Word coordinates win ties for backward compatibility.
+    if (textScore.withCurrency !== wordScore.withCurrency) {
+      return textScore.withCurrency > wordScore.withCurrency ? texts : words;
+    }
+    if (textScore.total !== wordScore.total) {
+      return textScore.total > wordScore.total ? texts : words;
+    }
+    if (textScore.withRate !== wordScore.withRate) {
+      return textScore.withRate > wordScore.withRate ? texts : words;
+    }
+    if (textScore.inconsistencies !== wordScore.inconsistencies) {
+      return textScore.inconsistencies < wordScore.inconsistencies ? texts : words;
+    }
+    return words;
+  }
+
+  function scoreOcrCandidate(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    let withCurrency = 0;
+    let withRate = 0;
+    let inconsistencies = 0;
+    list.forEach((row) => {
+      if (row.currency) withCurrency += 1;
+      if (row.rate) withRate += 1;
+      if (
+        row.rate &&
+        row.usdAmount &&
+        !isOcrUsdLikeCurrency(row.currency) &&
+        !isOcrUsdConsistent(row.amount, row.rate, row.usdAmount)
+      ) {
+        inconsistencies += 1;
+      }
+    });
+    return { total: list.length, withCurrency, withRate, inconsistencies };
   }
 
   function parseBalanceOcrText(text = "") {
@@ -251,16 +299,105 @@
 
   function buildParsedOcrRow({ rawLabel, rawAmount, rawRate = "", rawUsdAmount = "", explicitCurrency = "" } = {}) {
     const amount = normalizeOcrAmount(rawAmount);
-    const rate = normalizeOcrAmount(rawRate);
     if (!amount) return null;
 
     const channel = normalizeOcrChannelLabel(rawLabel);
     if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
 
     const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
-    const parsedUsdAmount = normalizeOcrAmount(rawUsdAmount);
-    const usdAmount = parsedUsdAmount || (isOcrUsdLikeCurrency(currency) ? amount : "");
-    return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.76 : 0.46 };
+    const reconciled = reconcileOcrRateAndUsd({
+      amount,
+      currency,
+      rate: normalizeOcrAmount(rawRate),
+      usdAmount: normalizeOcrAmount(rawUsdAmount),
+    });
+    return {
+      channel,
+      amount,
+      rate: reconciled.rate,
+      usdAmount: reconciled.usdAmount,
+      currency,
+      confidence: currency ? 0.76 : 0.46,
+    };
+  }
+
+  // Canonical row-level invariant, applied to BOTH the text and words paths so
+  // the parser is self-contained (no external Tesseract wrapper required):
+  //   - a `label amount X` row where X is rate-like for the currency means X is
+  //     the курс column, not в USD -> derive USD from amount / rate;
+  //   - a native+USD row without a rate-like second number is left untouched
+  //     (`monobank 19649 457` stays amount 19649 / usd 457);
+  //   - when a rate is present, USD must be ~ amount / rate (or == amount for
+  //     USD/USDT/USDC at ~1); OCR-provided USD past tolerance is replaced.
+  function reconcileOcrRateAndUsd({ amount, currency, rate = "", usdAmount = "" }) {
+    let nextRate = rate;
+    let nextUsd = usdAmount;
+
+    // `label amount X`: the lone trailing number is a rate column, not USD.
+    if (!nextRate && nextUsd && isOcrRateLike(currency, nextUsd)) {
+      nextRate = nextUsd;
+      nextUsd = "";
+    }
+
+    if (nextRate) {
+      if (isOcrUsdLikeCurrency(currency) && isOcrRateApproxOne(nextRate)) {
+        if (!nextUsd || !isOcrUsdConsistent(amount, nextRate, nextUsd)) nextUsd = amount;
+      } else {
+        const expected = formatOcrUsd(amount, nextRate);
+        if (expected && (!nextUsd || !isOcrUsdConsistent(amount, nextRate, nextUsd))) {
+          nextUsd = expected;
+        }
+      }
+    } else if (!nextUsd && isOcrUsdLikeCurrency(currency)) {
+      nextUsd = amount;
+    }
+
+    return { rate: nextRate || "", usdAmount: nextUsd || "" };
+  }
+
+  function isOcrRateLike(currency, value) {
+    const rate = Number(normalizeOcrAmount(value));
+    if (!Number.isFinite(rate) || rate <= 0) return false;
+    const code = String(currency || "").trim().toUpperCase();
+    if (isOcrUsdLikeCurrency(code)) return rate >= 0.9 && rate <= 1.1;
+    if (code === "EUR") return rate >= 0.4 && rate <= 1.6;
+    if (code === "GBP") return rate >= 0.4 && rate <= 1.6;
+    if (code === "CHF") return rate >= 0.7 && rate <= 1.6;
+    if (code === "CAD") return rate >= 0.8 && rate <= 2.2;
+    if (code === "UAH") return rate >= 10 && rate <= 80;
+    if (code === "RUB") return rate >= 20 && rate <= 150;
+    if (code === "PLN") return rate >= 2 && rate <= 6;
+    return false;
+  }
+
+  function isOcrRateApproxOne(rate) {
+    const numeric = Number(normalizeOcrAmount(rate));
+    return Number.isFinite(numeric) && numeric >= 0.9 && numeric <= 1.1;
+  }
+
+  function expectedOcrUsd(amount, rate) {
+    const nativeAmount = Number(normalizeOcrAmount(amount));
+    const numericRate = Number(normalizeOcrAmount(rate));
+    if (!Number.isFinite(nativeAmount) || !Number.isFinite(numericRate) || numericRate === 0) {
+      return NaN;
+    }
+    return nativeAmount / numericRate;
+  }
+
+  function formatOcrUsd(amount, rate) {
+    const usd = expectedOcrUsd(amount, rate);
+    if (!Number.isFinite(usd)) return "";
+    // The "в USD" column in the source screenshot is always a whole number, so
+    // a rate-derived USD is rounded to the nearest integer.
+    return String(Math.round(usd));
+  }
+
+  function isOcrUsdConsistent(amount, rate, usdAmount) {
+    const expected = expectedOcrUsd(amount, rate);
+    const parsedUsd = Number(normalizeOcrAmount(usdAmount));
+    if (!Number.isFinite(expected) || !Number.isFinite(parsedUsd)) return false;
+    const tolerance = Math.max(0.6, Math.abs(expected) * 0.015);
+    return Math.abs(expected - parsedUsd) <= tolerance;
   }
 
   function normalizeOcrWhitespace(value) {
@@ -812,6 +949,9 @@
     parseBalanceOcrResult,
     parseBalanceOcrText,
     parseBalanceOcrWords,
+    reconcileOcrRateAndUsd,
+    isOcrRateLike,
+    isOcrUsdConsistent,
     normalizeOcrCurrency,
     renderEntryPanel,
     EDITABLE_FIELDS,

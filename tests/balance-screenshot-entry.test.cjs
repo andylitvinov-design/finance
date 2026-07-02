@@ -251,6 +251,58 @@ test("parseBalanceOcrResult prefers word coordinates over lossy text lines", () 
   );
 });
 
+test("parseBalanceOcrText enforces rate-vs-USD invariant on lossy rate-only lines", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "monobank 19649 43.0000",
+    "wise eur 252 0.8621",
+    "Payoneer -usd 3 1.0000",
+    "monobank 19649 457",
+    "monobank 19649 43.0000 427.5",
+  ].join("\n"));
+
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.rate, row.usdAmount]),
+    [
+      ["monobank", "UAH", "19649", "43.0000", "457"],
+      ["wise eur", "EUR", "252", "0.8621", "292"],
+      ["Payoneer -usd", "USD", "3", "1.0000", "3"],
+      ["monobank", "UAH", "19649", "", "457"],
+      ["monobank", "UAH", "19649", "43.0000", "457"],
+    ]
+  );
+});
+
+test("parseBalanceOcrResult chooses corrected text rows when words[] loses the rate column", () => {
+  const api = loadModule();
+  // words[] dropped the USD column so it can only see amount + USD-as-a-number,
+  // producing a rate-less row; the text line carries the full rate column.
+  const rows = api.parseBalanceOcrResult({
+    text: "monobank 19649 43.0000 457",
+    words: [
+      ocrWord("monobank", 10, 10, 90, 24),
+      ocrWord("19649", 280, 10, 330, 24),
+      ocrWord("457", 560, 10, 590, 24),
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.rate, row.usdAmount]),
+    [["monobank", "UAH", "19649", "43.0000", "457"]]
+  );
+});
+
+test("buildSavePayload preserves corrected rate and usdAmount", () => {
+  const api = loadModule();
+  const parsed = api.parseBalanceOcrText("monobank 19649 43.0000")[0];
+  const payload = api.buildSavePayload({ date: "2026-07-02", rows: [parsed] });
+  assert.equal(payload.rows.length, 1);
+  assert.equal(payload.rows[0].currency, "UAH");
+  assert.equal(payload.rows[0].amount, "19649");
+  assert.equal(payload.rows[0].rate, "43.0000");
+  assert.equal(payload.rows[0].usdAmount, "457");
+});
+
 test("parseBalanceOcrText splits native and USD spreadsheet OCR columns", () => {
   const api = loadModule();
   const rows = api.parseBalanceOcrText([
