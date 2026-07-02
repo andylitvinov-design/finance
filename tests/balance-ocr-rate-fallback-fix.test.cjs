@@ -16,6 +16,12 @@ test("recoverLossyRateLine moves a detected rate out of USD and appends computed
   assert.equal(api.recoverLossyRateLine("TD BANK 14943 1.3514"), "TD BANK 14943 1.3514 11058");
 });
 
+test("recoverLossyRateLine replaces OCR USD when it fails amount divided by rate", () => {
+  const api = loadModule();
+  assert.equal(api.recoverLossyRateLine("monobank 19649 43.0000 427.5"), "monobank 19649 43.0000 457");
+  assert.equal(api.recoverLossyRateLine("Payoneer -usd 3 1.0000 0.0"), "Payoneer -usd 3 1.0000 3");
+});
+
 test("recoverLossyRateLine preserves native plus USD rows when second number is not rate-like", () => {
   const api = loadModule();
   assert.equal(api.recoverLossyRateLine("monobank 19649 457"), "monobank 19649 457");
@@ -29,12 +35,24 @@ test("recognize wrapper normalizes Tesseract text before balance parser receives
   delete globalThis.EzohataBalanceOcrRateFallbackFix;
   globalThis.Tesseract = {
     async recognize() {
-      return { data: { text: "monobank 19649 43.0000\nwise eur 252 0.8621" } };
+      return {
+        data: {
+          text: "monobank 19649 43.0000 427.5\nwise eur 252 0.8621",
+          words: [{ text: "stale-word-row" }],
+        },
+      };
     },
   };
 
   require("../balance-ocr-rate-fallback-fix.js");
   const result = await globalThis.Tesseract.recognize("image", "eng");
   assert.equal(result.data.text, "monobank 19649 43.0000 457\nwise eur 252 0.8621 292");
+  assert.deepEqual(result.data.words, []);
   delete globalThis.Tesseract;
+});
+
+test("shouldPreferRecoveredText is false for already consistent rate rows", () => {
+  const api = loadModule();
+  assert.equal(api.shouldPreferRecoveredText("TD BANK 14943 1.3514 11058"), false);
+  assert.equal(api.shouldPreferRecoveredText("wise usd 429 1.0000 429"), false);
 });

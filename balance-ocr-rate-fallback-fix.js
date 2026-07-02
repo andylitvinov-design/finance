@@ -31,11 +31,15 @@
     return "";
   }
 
+  function isUsdLikeCurrency(currency) {
+    return ["USD", "USDT", "USDC"].includes(String(currency || "").toUpperCase());
+  }
+
   function isRateLike(currency, value) {
     const rate = Number(normalizeAmount(value));
     if (!Number.isFinite(rate) || rate <= 0) return false;
     const code = String(currency || "").toUpperCase();
-    if (["USD", "USDT", "USDC"].includes(code)) return rate >= 0.95 && rate <= 1.05;
+    if (isUsdLikeCurrency(code)) return rate >= 0.95 && rate <= 1.05;
     if (code === "EUR") return rate >= 0.4 && rate <= 1.5;
     if (code === "CAD") return rate >= 0.8 && rate <= 2.2;
     if (code === "UAH") return rate >= 10 && rate <= 80;
@@ -43,46 +47,73 @@
     return false;
   }
 
-  function formatUsdAmount(amount, rate) {
+  function expectedUsdValue(amount, rate) {
     const nativeAmount = Number(normalizeAmount(amount));
     const numericRate = Number(normalizeAmount(rate));
-    if (!Number.isFinite(nativeAmount) || !Number.isFinite(numericRate) || numericRate === 0) return "";
-    const usd = nativeAmount / numericRate;
+    if (!Number.isFinite(nativeAmount) || !Number.isFinite(numericRate) || numericRate === 0) return NaN;
+    return nativeAmount / numericRate;
+  }
+
+  function formatUsdAmount(amount, rate) {
+    const usd = expectedUsdValue(amount, rate);
+    if (!Number.isFinite(usd)) return "";
     const rounded = Math.round(usd);
     if (Math.abs(usd - rounded) < 0.35) return String(rounded);
     return String(Number(usd.toFixed(4)));
   }
 
-  function recoverLossyRateLine(line) {
+  function isUsdConsistent(amount, rate, usdAmount) {
+    const expected = expectedUsdValue(amount, rate);
+    const parsedUsd = Number(normalizeAmount(usdAmount));
+    if (!Number.isFinite(expected) || !Number.isFinite(parsedUsd)) return false;
+    const tolerance = Math.max(0.6, Math.abs(expected) * 0.015);
+    return Math.abs(expected - parsedUsd) <= tolerance;
+  }
+
+  function parseRateLine(line) {
     const cleaned = normalizeLabel(line);
-    if (!cleaned) return line;
+    if (!cleaned) return null;
 
     const numbers = Array.from(cleaned.matchAll(NUMBER_PATTERN)).map((match) => ({
       value: normalizeAmount(match[0]),
       index: match.index || 0,
       end: (match.index || 0) + match[0].length,
     }));
-    if (numbers.length !== 2) return line;
+    if (numbers.length < 2 || numbers.length > 3) return null;
 
     const first = numbers[0];
     const second = numbers[1];
     let label = normalizeLabel(cleaned.slice(0, first.index));
     let amount = first.value;
     let rate = second.value;
+    let usdAmount = numbers[2]?.value || "";
 
     if (!label) {
       label = normalizeLabel(cleaned.slice(first.end, second.index));
       amount = first.value;
       rate = second.value;
+      usdAmount = numbers[2]?.value || "";
     }
 
     const currency = inferCurrency(label);
-    if (!currency || !isRateLike(currency, rate)) return line;
+    if (!currency || !isRateLike(currency, rate)) return null;
+    return { label, currency, amount, rate, usdAmount };
+  }
 
-    const usdAmount = formatUsdAmount(amount, rate);
+  function recoverLossyRateLine(line) {
+    const parsed = parseRateLine(line);
+    if (!parsed) return line;
+
+    if (parsed.usdAmount && isUsdConsistent(parsed.amount, parsed.rate, parsed.usdAmount)) {
+      return `${parsed.label} ${parsed.amount} ${parsed.rate} ${parsed.usdAmount}`;
+    }
+
+    const usdAmount = isUsdLikeCurrency(parsed.currency)
+      ? parsed.amount
+      : formatUsdAmount(parsed.amount, parsed.rate);
     if (!usdAmount) return line;
 
-    return `${label} ${amount} ${rate} ${usdAmount}`;
+    return `${parsed.label} ${parsed.amount} ${parsed.rate} ${usdAmount}`;
   }
 
   function recoverLossyRateText(text) {
@@ -92,6 +123,15 @@
       .join("\n");
   }
 
+  function shouldPreferRecoveredText(text) {
+    return String(text || "")
+      .split(/\r?\n/)
+      .some((line) => {
+        const parsed = parseRateLine(line);
+        return parsed && (!parsed.usdAmount || !isUsdConsistent(parsed.amount, parsed.rate, parsed.usdAmount));
+      });
+  }
+
   function wrapRecognize() {
     const tesseract = root.Tesseract;
     if (!tesseract || typeof tesseract.recognize !== "function" || tesseract.__BalanceOcrRateFallbackWrapped) return false;
@@ -99,7 +139,11 @@
     tesseract.recognize = async function recognizeWithRateRecovery(...args) {
       const result = await originalRecognize(...args);
       if (result?.data?.text) {
-        result.data.text = recoverLossyRateText(result.data.text);
+        const originalText = result.data.text;
+        result.data.text = recoverLossyRateText(originalText);
+        if (shouldPreferRecoveredText(originalText)) {
+          result.data.words = [];
+        }
       }
       return result;
     };
@@ -115,6 +159,8 @@
     recoverLossyRateText,
     recoverLossyRateLine,
     isRateLike,
+    isUsdConsistent,
+    shouldPreferRecoveredText,
   };
 
   if (typeof module === "object" && module.exports) {
