@@ -149,13 +149,14 @@
 
     const amount = normalizeOcrAmount(rawAmount);
     const rate = normalizeOcrAmount(rawRate);
-    const usdAmount = normalizeOcrAmount(rawUsdAmount);
     if (!amount) return null;
 
     const channel = normalizeOcrChannelLabel(rawLabel);
     if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
 
     const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
+    const parsedUsdAmount = normalizeOcrAmount(rawUsdAmount);
+    const usdAmount = parsedUsdAmount || (isOcrUsdLikeCurrency(currency) ? amount : "");
     return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.72 : 0.42 };
   }
 
@@ -210,6 +211,10 @@
     if (/\bchf\b|франк/.test(normalized)) return "CHF";
     if (/\bgbp\b|фунт/.test(normalized)) return "GBP";
     return "";
+  }
+
+  function isOcrUsdLikeCurrency(currency) {
+    return ["USD", "USDT", "USDC"].includes(String(currency || "").trim().toUpperCase());
   }
 
   const KNOWN_CURRENCY_CODES = new Set([
