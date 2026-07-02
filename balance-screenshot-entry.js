@@ -90,18 +90,126 @@
       .map((line) => line.trim())
       .filter(Boolean)
       .forEach((line) => {
-        const match = line.match(/^(.+?)[\s:]+([\d][\d\s.,]*)\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$/);
-        if (!match) return;
-        const label = match[1].trim();
-        const amount = match[2].replace(/\s+/g, "").replace(/,/g, ".").replace(/\.(?=.*\.)/g, "");
-        if (!label || !amount || !Number.isFinite(Number(amount))) return;
+        const parsed = parseBalanceOcrLine(line);
+        if (!parsed) return;
         const row = makeEmptyRow();
-        row.channel = label;
-        row.amount = amount;
-        row.currency = normalizeOcrCurrency(match[3] || "");
+        row.channel = parsed.channel;
+        row.amount = parsed.amount;
+        row.rate = parsed.rate || "";
+        row.usdAmount = parsed.usdAmount || "";
+        row.currency = parsed.currency;
+        row.confidence = parsed.confidence;
         rows.push(row);
       });
     return rows;
+  }
+
+  function parseBalanceOcrLine(line) {
+    const cleaned = normalizeOcrWhitespace(line);
+    if (!cleaned) return null;
+
+    const numberToken = "[+-]?\\d+(?:[.,]\\d+)?";
+    const channelFirstRateMatch = cleaned.match(new RegExp(`^(.+?)\\s+(${numberToken})\\s+(${numberToken})\\s+(${numberToken})$`));
+    const leadingAmountRateMatch = cleaned.match(new RegExp(`^(${numberToken})\\s+(.+?)\\s+(${numberToken})\\s+(${numberToken})$`));
+    const channelFirstTableMatch = cleaned.match(new RegExp(`^(.+?)\\s+(${numberToken})\\s+(${numberToken})$`));
+    const leadingAmountTableMatch = cleaned.match(new RegExp(`^(${numberToken})\\s+(.+?)\\s+(${numberToken})$`));
+    const simpleMatch = cleaned.match(new RegExp(`^(.+?)[\\s:]+(${numberToken})\\s*([A-Za-zА-Яа-я$€₴₽]{1,6})?$`));
+
+    let rawLabel = "";
+    let rawAmount = "";
+    let rawRate = "";
+    let rawUsdAmount = "";
+    let explicitCurrency = "";
+
+    if (channelFirstRateMatch) {
+      rawLabel = channelFirstRateMatch[1];
+      rawAmount = channelFirstRateMatch[2];
+      rawRate = channelFirstRateMatch[3];
+      rawUsdAmount = channelFirstRateMatch[4];
+    } else if (leadingAmountRateMatch) {
+      rawLabel = leadingAmountRateMatch[2];
+      rawAmount = leadingAmountRateMatch[1];
+      rawRate = leadingAmountRateMatch[3];
+      rawUsdAmount = leadingAmountRateMatch[4];
+    } else if (channelFirstTableMatch) {
+      rawLabel = channelFirstTableMatch[1];
+      rawAmount = channelFirstTableMatch[2];
+      rawUsdAmount = channelFirstTableMatch[3];
+    } else if (leadingAmountTableMatch) {
+      rawLabel = leadingAmountTableMatch[2];
+      rawAmount = leadingAmountTableMatch[1];
+      rawUsdAmount = leadingAmountTableMatch[3];
+    } else if (simpleMatch) {
+      rawLabel = simpleMatch[1];
+      rawAmount = simpleMatch[2];
+      explicitCurrency = simpleMatch[3] || "";
+    } else {
+      return null;
+    }
+
+    const amount = normalizeOcrAmount(rawAmount);
+    const rate = normalizeOcrAmount(rawRate);
+    const usdAmount = normalizeOcrAmount(rawUsdAmount);
+    if (!amount) return null;
+
+    const channel = normalizeOcrChannelLabel(rawLabel);
+    if (!channel || isProbablyNumericOnlyLabel(channel)) return null;
+
+    const currency = normalizeOcrCurrency(explicitCurrency || inferOcrCurrencyFromLabel(channel));
+    return { channel, amount, rate, usdAmount, currency, confidence: currency ? 0.72 : 0.42 };
+  }
+
+  function normalizeOcrWhitespace(value) {
+    return String(value || "")
+      .replace(/[|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeOcrAmount(value) {
+    const amount = String(value || "")
+      .replace(/\s+/g, "")
+      .replace(/,/g, ".")
+      .replace(/\.(?=.*\.)/g, "");
+    return amount && Number.isFinite(Number(amount)) ? amount : "";
+  }
+
+  function normalizeOcrChannelLabel(label) {
+    let value = normalizeOcrWhitespace(label)
+      .replace(/^[\[({]?[A-ZА-ЯІЇЄЁ]{1,4}[\])}]?\s+(?=(?:binance|бинанс|б[иі]тпансе|бтпансе))/i, "")
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .trim();
+
+    value = value
+      .replace(/^(?:AEYOШT|AEYOЩT|AЕYOШT|АЕУОШТ)$/i, "REVOLUT")
+      .replace(/(?:б[иі]тпансе|бтпансе|бинансе)/gi, "binance")
+      .replace(/(?:заме|заве)/gi, "save")
+      .replace(/(?:изас|шзас|издс)/gi, "usdc")
+      .replace(/(?:еиг|ешг)/gi, "eur")
+      .replace(/\b(?:дол|dol)\b/gi, "usd")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return value;
+  }
+
+  function isProbablyNumericOnlyLabel(label) {
+    return /^[+-]?[\d\s.,]+$/.test(String(label || "").trim());
+  }
+
+  function inferOcrCurrencyFromLabel(label) {
+    const normalized = ` ${String(label || "").toLowerCase()} `;
+    if (/youmoney|yoomoney|юмани|яндекс/.test(normalized)) return "RUB";
+    if (/\busdc\b/.test(normalized)) return "USDC";
+    if (/\busdt\b/.test(normalized)) return "USDT";
+    if (/\busd\b|\bdol\b|\bдол\b/.test(normalized)) return "USD";
+    if (/\beur\b|\beuro\b|\bевр\b|nalichno/.test(normalized)) return "EUR";
+    if (/\bcad\b|банк канада|td bank/.test(normalized)) return "CAD";
+    if (/\buah\b|грн|24-uah|24-грн|monobank|privat24|privat 24/.test(normalized)) return "UAH";
+    if (/\brub\b|руб/.test(normalized)) return "RUB";
+    if (/\bchf\b|франк/.test(normalized)) return "CHF";
+    if (/\bgbp\b|фунт/.test(normalized)) return "GBP";
+    return "";
   }
 
   const KNOWN_CURRENCY_CODES = new Set([
@@ -169,7 +277,6 @@
       "Загрузите скриншот остатков по каналам. AI разберёт суммы в черновик — ничего не сохраняется, пока вы не подтвердите.";
     panel.appendChild(intro);
 
-    // date row
     const dateRow = doc.createElement("div");
     dateRow.className = "balance-entry-daterow";
     const dateLabel = doc.createElement("label");
@@ -195,7 +302,6 @@
     dateRow.appendChild(todayButton);
     panel.appendChild(dateRow);
 
-    // dropzone
     const dropzone = doc.createElement("div");
     dropzone.className = "balance-entry-dropzone";
     dropzone.setAttribute("role", "button");
@@ -213,18 +319,15 @@
     dropzone.appendChild(fileInput);
     panel.appendChild(dropzone);
 
-    // thumbnails (original screenshot provenance)
     const thumbs = doc.createElement("div");
     thumbs.className = "balance-entry-thumbs";
     panel.appendChild(thumbs);
 
-    // status
     const status = doc.createElement("div");
     status.className = "balance-entry-status";
     status.setAttribute("aria-live", "polite");
     panel.appendChild(status);
 
-    // preview container
     const preview = doc.createElement("div");
     preview.className = "balance-entry-preview";
     panel.appendChild(preview);

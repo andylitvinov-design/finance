@@ -90,7 +90,6 @@ test("index wires balance-screenshot-entry after remainders-tab and before main"
   assert.ok(indexHtml.includes("./balance-screenshot-entry.js"));
   assert.ok(indexHtml.indexOf("./remainders-tab.js") < indexHtml.indexOf("./balance-screenshot-entry.js"));
   assert.ok(indexHtml.indexOf("./balance-screenshot-entry.js") < indexHtml.indexOf("./main.js"));
-  // Adjacency between popup and remainders-tab must remain intact.
   assert.match(
     indexHtml,
     /remainders-summary-popup\.js(?:\?v=[^"]*)?"><\/script>\s*<script src="\.\/remainders-tab\.js"><\/script>/
@@ -160,6 +159,106 @@ test("parseBalanceOcrText extracts labelled balances and ignores junk", () => {
   assert.equal(rows[0].amount, "1234.50");
   assert.equal(rows[0].currency, "USD");
   assert.equal(rows[1].currency, "USDT");
+});
+
+test("parseBalanceOcrText splits native, rate, and USD spreadsheet OCR columns", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "youmoney 21539 76.0000 283",
+    "paypal usd 207.28 1.0000 207.3",
+    "paypal eur 334.65 0.8621 388",
+    "privat 24-uah 11319 43.0000 263",
+    "monobank 19649 43.0000 457",
+    "wise eur 252 0.8621 292",
+    "wise usd 429 1.0000 429",
+    "REVOLUT 1 1.0000 1",
+    "Payoneer - eur 5 0.8621 6",
+    "Payoneer - dol 3 1.0000 3",
+    "binance save usdc 2026 1.0000 2026",
+    "Бинанс spot usdt 882 1.0000 882",
+    "binance save usdt 5419 1.0000 5419",
+    "nalichno 500 0.8333 600",
+    "TD BANK 14943 1.3514 11058",
+    "binance spot usdc 1 1.0000 1",
+    "0.0000 11259",
+  ].join("\n"));
+
+  assert.equal(rows.length, 16);
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.rate, row.usdAmount]),
+    [
+      ["youmoney", "RUB", "21539", "76.0000", "283"],
+      ["paypal usd", "USD", "207.28", "1.0000", "207.3"],
+      ["paypal eur", "EUR", "334.65", "0.8621", "388"],
+      ["privat 24-uah", "UAH", "11319", "43.0000", "263"],
+      ["monobank", "UAH", "19649", "43.0000", "457"],
+      ["wise eur", "EUR", "252", "0.8621", "292"],
+      ["wise usd", "USD", "429", "1.0000", "429"],
+      ["REVOLUT", "", "1", "1.0000", "1"],
+      ["Payoneer - eur", "EUR", "5", "0.8621", "6"],
+      ["Payoneer - usd", "USD", "3", "1.0000", "3"],
+      ["binance save usdc", "USDC", "2026", "1.0000", "2026"],
+      ["Бинанс spot usdt", "USDT", "882", "1.0000", "882"],
+      ["binance save usdt", "USDT", "5419", "1.0000", "5419"],
+      ["nalichno", "EUR", "500", "0.8333", "600"],
+      ["TD BANK", "CAD", "14943", "1.3514", "11058"],
+      ["binance spot usdc", "USDC", "1", "1.0000", "1"],
+    ]
+  );
+});
+
+test("parseBalanceOcrText splits native and USD spreadsheet OCR columns", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "youmoney 21539 283",
+    "paypal usd 207.28 207.3",
+    "paypal eur 334.65 388",
+    "privat 24-uah 11319 263",
+    "monobank 19649 457",
+    "wise usd 429 429",
+    "TD BANK 14943 11058",
+    "binance save usdt 5419 5419",
+    "500 600",
+  ].join("\n"));
+
+  assert.equal(rows.length, 8);
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.usdAmount]),
+    [
+      ["youmoney", "RUB", "21539", "283"],
+      ["paypal usd", "USD", "207.28", "207.3"],
+      ["paypal eur", "EUR", "334.65", "388"],
+      ["privat 24-uah", "UAH", "11319", "263"],
+      ["monobank", "UAH", "19649", "457"],
+      ["wise usd", "USD", "429", "429"],
+      ["TD BANK", "CAD", "14943", "11058"],
+      ["binance save usdt", "USDT", "5419", "5419"],
+    ]
+  );
+});
+
+test("parseBalanceOcrText handles spreadsheet OCR rows with leading numeric column", () => {
+  const api = loadModule();
+  const rows = api.parseBalanceOcrText([
+    "429 wise usd 429",
+    "REVOLUT 101",
+    "2026 Бтпансе заме изас 2026",
+    "ЕКЗ Бинанс spot usdt 882",
+    "14943 БАНК КАНАДА 11058",
+    "500 600",
+  ].join("\n"));
+
+  assert.equal(rows.length, 5);
+  assert.deepEqual(
+    rows.map((row) => [row.channel, row.currency, row.amount, row.usdAmount]),
+    [
+      ["wise usd", "USD", "429", "429"],
+      ["REVOLUT", "", "101", ""],
+      ["binance save usdc", "USDC", "2026", "2026"],
+      ["Бинанс spot usdt", "USDT", "882", "882"],
+      ["БАНК КАНАДА", "CAD", "14943", "11058"],
+    ]
+  );
 });
 
 test("normalizeOcrCurrency maps symbols and 3-letter codes", () => {
