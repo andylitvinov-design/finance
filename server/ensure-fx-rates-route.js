@@ -19,9 +19,7 @@ export default async function ensureFxRatesHandler(request, response) {
     parseCurrencyList,
     readFxRateSheetValues,
   } = await loadFxRateScriptPrimitives();
-  const currentDate = normalizeIsoDate(body.currentDate || request.query?.currentDate) || todayUtcDate();
-  const from = normalizeIsoDate(body.from || request.query?.from) || currentDate;
-  const to = normalizeIsoDate(body.to || request.query?.to) || from;
+  const { currentDate, from, to } = resolveEnsureFxWindow({ body, query: request.query || {} });
   const currencies = parseCurrencyList(body.currencies || request.query?.currencies || DEFAULT_PROVIDER_FX_CURRENCIES);
   const result = await ensureFxRates({
     from,
@@ -62,4 +60,32 @@ function normalizeIsoDate(value) {
 
 function todayUtcDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Cron calls this endpoint without params; a lookback window heals FX gaps
+// left by failed daily runs instead of only fetching today's rate.
+export function resolveEnsureFxWindow({ body = {}, query = {}, todayIso = todayUtcDate() } = {}) {
+  const currentDate = normalizeIsoDate(body.currentDate || query.currentDate) || todayIso;
+  const lookbackDays = normalizeLookbackDays(body.lookbackDays ?? query.lookbackDays);
+  const explicitFrom = normalizeIsoDate(body.from || query.from);
+  const explicitTo = normalizeIsoDate(body.to || query.to);
+  const from = explicitFrom || shiftIsoDate(currentDate, -lookbackDays);
+  const to = explicitTo || (explicitFrom ? explicitFrom : currentDate);
+  return { currentDate, lookbackDays, from, to };
+}
+
+export const DEFAULT_FX_LOOKBACK_DAYS = 7;
+const MAX_FX_LOOKBACK_DAYS = 31;
+
+export function normalizeLookbackDays(value) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_FX_LOOKBACK_DAYS;
+  return Math.min(parsed, MAX_FX_LOOKBACK_DAYS);
+}
+
+export function shiftIsoDate(isoDate, deltaDays) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return date.toISOString().slice(0, 10);
 }
