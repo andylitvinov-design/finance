@@ -13,10 +13,11 @@ Read in order:
 5. `AGENTS.md` - Finance local adapter and safety rules
 6. `CLAUDE_CODE_PROMPTS.md`
 7. `docs/delivery-auth-boundary-standard.md`
-8. `docs/delivery-loop-program.md`
-9. `docs/delivery-loop-technical-details.md`
-10. `docs/delivery-loop-source-patterns-and-live-proof.md`
-11. `docs/delivery-design-quality-gate.md`
+8. `docs/global-delivery-big-protocol.md` when the task escalates to `/delivery-big`
+9. `docs/delivery-loop-program.md`
+10. `docs/delivery-loop-technical-details.md`
+11. `docs/delivery-loop-source-patterns-and-live-proof.md`
+12. `docs/delivery-design-quality-gate.md`
 
 ## Finance project adapter
 
@@ -44,6 +45,19 @@ Follow the shared `/delivery` chain and finance safety rules:
 - do not change balance/gross/net/fee/source/formula semantics without proven root cause and regression tests;
 - use read-only API/source evidence for numeric claims;
 - for UI tasks, include `DESIGN QUALITY GATE` and `UI POLISH / FEEL-BETTER PASS`.
+
+## Escalation to /delivery-big
+
+If the prompt or source issue has more than 3 independent requirements, touches
+more than 2 system areas, or asks for an autonomous/overnight repair loop,
+escalate internally to `/delivery-big` behavior. Read
+`.claude/commands/delivery-big.md` and `docs/global-delivery-big-protocol.md`,
+then use the Task Manifest, Scope Contract, Verification Matrix, and Repair Loop.
+Report the escalation explicitly:
+
+```txt
+Escalated to /delivery-big mode because: <reason>
+```
 
 Final status must be exactly one of:
 

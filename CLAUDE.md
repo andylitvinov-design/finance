@@ -13,5 +13,7 @@ Before delivery, audit, save, memory, or memory-review work:
 For `/save`, use `.claude/commands/save.md` if present.
 For `/memory`, use `.claude/commands/memory.md` if present.
 For `/memory-review`, use `.claude/commands/memory-review.md` if present.
+For `/delivery-big`, use `.claude/commands/delivery-big.md` and
+`docs/global-delivery-big-protocol.md` if present.
 
 Do not load the whole instruction tree by default.
