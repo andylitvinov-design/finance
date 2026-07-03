@@ -27,7 +27,8 @@
       return value.replace(/^(?:бинанс|binance)\s+spot\s+us\b/i, "Бинанс spot usdt");
     }
     if (/^binance\s+spot\s+[цu]\s+1(?:\s+1(?:\.0+)?\s+1)?$/i.test(value)) {
-      return value.replace(/^binance\s+spot\s+[цu]\b/i, "binance spot usdc");
+      // No \b here: JS word boundaries are ASCII-only and never match after "ц".
+      return value.replace(/^binance\s+spot\s+[цu](?=\s)/i, "binance spot usdc");
     }
 
     return line;
