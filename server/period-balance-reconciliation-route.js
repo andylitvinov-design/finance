@@ -9,6 +9,21 @@ import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js"
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 import { buildProviderLedgerReconciliation } from "./provider-ledger-reconciliation-engine.js";
 import { fetchYooMoneyStatementEntries } from "../api/yoomoney-transactions.js";
+import { canonicalOstatkiChannel } from "../api/save-balance-snapshot.js";
+
+// The reconciliation engine groups positions and looks up facts by the raw
+// balance-row channel. Fold known Остатки channel aliases (e.g. the OCR-truncated
+// "binance save uf" -> "binance save") to their canonical wallet before grouping so
+// stored facts reconcile under the right position. canonicalOstatkiChannel is a
+// non-destructive passthrough for unknown channels, so this only affects mapped aliases.
+function canonicalizeBalanceRowChannels(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const rawChannel = row?.channel ?? row?.accountName ?? row?.account ?? "";
+    const canonical = canonicalOstatkiChannel(rawChannel);
+    if (!canonical || canonical === rawChannel) return row;
+    return { ...row, channel: canonical };
+  });
+}
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
@@ -92,7 +107,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
   const autoStatusRows = autoBalanceRows.filter((row) => isAutoStatusOnlyRow(row));
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
-  const balanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
+  const balanceRows = canonicalizeBalanceRowChannels(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
   const calculatedBalances = buildDailyCalculatedBalances({
     operations: repository.operations || [],
     balanceRows,
