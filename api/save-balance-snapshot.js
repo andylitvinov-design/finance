@@ -297,6 +297,10 @@ export function canonicalOstatkiChannel(value) {
 
   if (/legacy combined binance spot funding/.test(normalized)) return "legacy_combined_binance_spot_funding";
   if (withoutTrailingCurrency === "binance save" || normalized === "binance save") return "binance save";
+  // OCR-truncated alias: the "uf" suffix is an OCR artifact of the binance save wallet
+  // (same mapping already applied at OCR-capture time in balance-ocr-channel-currency-fix.js).
+  // Fold it back so stored 2026-06-26 rows reconcile under the canonical wallet.
+  if (withoutTrailingCurrency === "binance save uf" || normalized === "binance save uf") return "binance save";
   if (withoutTrailingCurrency === "бинанс spot" || normalized === "бинанс spot") return "Бинанс spot";
   if (/банк канада cad|банк канада|bank canada|td bank/.test(withoutTrailingCurrency || normalized)) return "БАНК КАНАДА cad";
   if (/монобанк грн|monobank uah/.test(withoutTrailingCurrency || normalized)) return "монобанк грн";
