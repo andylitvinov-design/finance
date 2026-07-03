@@ -11,6 +11,7 @@
     "preflight:production": "node scripts/production-debug-preflight.mjs",
     "verify:production": "node scripts/verify-production.mjs",
     "verify:live": "node scripts/verify-production.mjs",
+    "verify:finance": "node scripts/verify-finance-live.mjs",
     "debug:bundle": "node scripts/agent-debug-bundle.mjs",
     "balance:repair-plan": "node scripts/balance-repair-plan.mjs",
     "delivery:checks": "bash scripts/delivery-checks.sh",
