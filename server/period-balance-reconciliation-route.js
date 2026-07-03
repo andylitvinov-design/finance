@@ -25,6 +25,28 @@ function canonicalizeBalanceRowChannels(rows = []) {
   });
 }
 
+const DEFERRED_OCR_ALIAS_CANDIDATES = [
+  {
+    alias: "binance save u",
+    currency: "USDT",
+    canonical: "binance save",
+    status: "needs_owner_resolution",
+  },
+  {
+    alias: "binance spot ц",
+    currency: "USDC",
+    canonical: "Бинанс spot",
+    status: "needs_owner_resolution",
+  },
+  {
+    alias: "Бинанс spot us",
+    currency: "USDT",
+    canonical: "Бинанс spot",
+    status: "possible_separate_wallet",
+    note: "possible separate Binance-US wallet",
+  },
+];
+
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
 const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
@@ -107,7 +129,9 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const autoBalanceRows = Array.isArray(autoBalances.balances) ? autoBalances.balances : [];
   const autoStatusRows = autoBalanceRows.filter((row) => isAutoStatusOnlyRow(row));
   const balanceSnapshotMerge = mergeManualAndAutoBalances(manualBalances, autoBalanceRows);
-  const balanceRows = canonicalizeBalanceRowChannels(balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || []);
+  const rawBalanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
+  const ocrAliasCollisions = buildOcrAliasCollisionDiagnostics(rawBalanceRows);
+  const balanceRows = canonicalizeBalanceRowChannels(rawBalanceRows);
   const calculatedBalances = buildDailyCalculatedBalances({
     operations: repository.operations || [],
     balanceRows,
@@ -142,6 +166,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     auto_balance_status_rows_loaded: autoStatusRows.length,
     auto_balance_status_counts: countAutoBalanceStatuses(autoStatusRows),
     balance_snapshot_rows_loaded: balanceRows.length,
+    ocr_alias_collisions: ocrAliasCollisions,
     calculated_balance_rows_built: calculatedBalanceRows.length,
     fx_rates_rows_loaded: Array.isArray(repository.fxRates) ? repository.fxRates.length : 0,
     fx_rates_status_counts: repository.fxRateDiagnostics?.status_counts || {},
@@ -151,6 +176,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   warnings.push(...(repository.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...(autoBalances.warnings || []).map(toSafeWarning).filter(Boolean));
   warnings.push(...reconciliation.warnings);
+  warnings.push(...ocrAliasCollisions.map(formatOcrAliasCollisionWarning));
   if (!plannedRows.length && plannedSourceStatus !== "available") {
     warnings.push(
       "needs verification: planned income/expense source is not connected to period balance reconciliation yet; TODO expose UI movementValues order-plan rows and manual finance planned expense rows server-side as repository.plannedRows before planned_delta can be trusted."
@@ -167,6 +193,99 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
   };
+}
+
+function buildOcrAliasCollisionDiagnostics(balanceRows = []) {
+  const rows = Array.isArray(balanceRows) ? balanceRows : [];
+  const rowsByKey = new Map();
+  rows.forEach((row) => {
+    const date = normalizeDate(row.date);
+    const currency = normalizeCurrency(row.currency);
+    const channel = normalizeLookupText(row.channel || row.accountName || row.account || "");
+    if (!date || !currency || !channel) return;
+    const key = balanceCollisionKey(date, channel, currency);
+    const existing = rowsByKey.get(key) || [];
+    existing.push(row);
+    rowsByKey.set(key, existing);
+  });
+
+  const collisions = [];
+  rows.forEach((aliasRow) => {
+    const date = normalizeDate(aliasRow.date);
+    const currency = normalizeCurrency(aliasRow.currency);
+    const channel = normalizeLookupText(aliasRow.channel || aliasRow.accountName || aliasRow.account || "");
+    if (!date || !currency || !channel) return;
+    const candidate = DEFERRED_OCR_ALIAS_CANDIDATES.find((entry) => (
+      normalizeLookupText(entry.alias) === channel && entry.currency === currency
+    ));
+    if (!candidate) return;
+
+    const canonicalRows = rowsByKey.get(
+      balanceCollisionKey(date, normalizeLookupText(candidate.canonical), currency)
+    ) || [];
+    canonicalRows.forEach((canonicalRow) => {
+      const aliasAmount = parseBalanceAmount(aliasRow);
+      const canonicalAmount = parseBalanceAmount(canonicalRow);
+      if (!Number.isFinite(aliasAmount) || !Number.isFinite(canonicalAmount)) return;
+      if (sameBalanceAmount(aliasAmount, canonicalAmount)) return;
+      collisions.push({
+        status: candidate.status,
+        date,
+        currency,
+        alias_channel: String(aliasRow.channel || aliasRow.accountName || aliasRow.account || "").trim(),
+        alias_amount: round(aliasAmount),
+        candidate_canonical_channel: candidate.canonical,
+        canonical_amount: round(canonicalAmount),
+        amount_delta: round(aliasAmount - canonicalAmount),
+        action: "keep_rows_unchanged_until_owner_resolution",
+        note: candidate.note || "same-date canonical fact has a different amount",
+        source: "manual_balance_ocr_alias_collision",
+        alias_source_sheet: aliasRow.sourceSheet || aliasRow.source_sheet || "",
+        alias_source_row: aliasRow.sourceRow || aliasRow.source_row || null,
+        canonical_source_sheet: canonicalRow.sourceSheet || canonicalRow.source_sheet || "",
+        canonical_source_row: canonicalRow.sourceRow || canonicalRow.source_row || null,
+      });
+    });
+  });
+  return collisions;
+}
+
+function formatOcrAliasCollisionWarning(item = {}) {
+  return [
+    "ocr alias collision:",
+    `${item.alias_channel}/${item.currency}`,
+    `on ${item.date}`,
+    `matches candidate ${item.candidate_canonical_channel}`,
+    `but amounts differ (${item.alias_amount} vs ${item.canonical_amount});`,
+    `status=${item.status}; rows kept unchanged`,
+  ].join(" ");
+}
+
+function balanceCollisionKey(date, channel, currency) {
+  return [date, channel, currency].join("|");
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCurrency(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseBalanceAmount(row = {}) {
+  const raw = row.amount ?? row.balanceAmount ?? row.balance_amount ?? row.value ?? "";
+  const normalized = String(raw ?? "").trim().replace(/\s+/g, "").replace(/,/g, ".").replace(/[^0-9.+-]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function sameBalanceAmount(left, right) {
+  return Math.abs(Number(left) - Number(right)) < 0.0001;
 }
 
 function annotateDailyBalanceCoverage(reconciliation, {
