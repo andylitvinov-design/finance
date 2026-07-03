@@ -72,7 +72,10 @@ When GitHub access is available, create or update issues in:
 https://github.com/andylitvinov-design/finance/issues
 ```
 
-Final chat output must include a copy-pasteable handoff prompt starting with `/delivery` as the first non-empty line. Do not start with `/audit -> /delivery handoff`.
+Final chat output must include a copy-pasteable handoff prompt starting with
+`/delivery` as the first non-empty line, or `/delivery-big` when the issue has
+more than 3 independent requirements, more than 2 system areas, or asks for an
+autonomous repair loop. Do not start with `/audit -> /delivery handoff`.
 
 ### `/audit-fin`
 
@@ -146,7 +149,10 @@ Issue title format:
 [AUDIT-FIN] <area/metric>: <short numeric problem summary>
 ```
 
-Final chat output must include a copy-pasteable handoff prompt starting with `/delivery` as the first non-empty line. Do not start with `/audit-fin -> /delivery handoff`.
+Final chat output must include a copy-pasteable handoff prompt starting with
+`/delivery` as the first non-empty line, or `/delivery-big` when the issue has
+more than 3 independent requirements, more than 2 system areas, or asks for an
+autonomous repair loop. Do not start with `/audit-fin -> /delivery handoff`.
 
 ### `/delivery`
 
@@ -163,12 +169,19 @@ implement -> checks -> PR -> PR health -> merge if safe/permitted -> Vercel depl
 When the user invokes `/delivery`, follow these local source-of-truth files in order:
 
 1. `.claude/commands/delivery.md`
-2. `docs/delivery-loop-program.md`
-3. `docs/delivery-loop-technical-details.md`
-4. `docs/delivery-loop-source-patterns-and-live-proof.md`
-5. `docs/delivery-design-quality-gate.md`
-6. `AGENTS.md`
-7. `CLAUDE_CODE_PROMPTS.md`
+2. `.claude/commands/delivery-big.md` and `docs/global-delivery-big-protocol.md` when the task escalates to `/delivery-big`
+3. `docs/delivery-loop-program.md`
+4. `docs/delivery-loop-technical-details.md`
+5. `docs/delivery-loop-source-patterns-and-live-proof.md`
+6. `docs/delivery-design-quality-gate.md`
+7. `AGENTS.md`
+8. `CLAUDE_CODE_PROMPTS.md`
+
+The user may also invoke `/delivery-big` directly. Treat it as the large-task
+delivery mode: it inherits every `/delivery` rule and adds a Task Manifest,
+Scope Contract, Verification Matrix, Repair Loop, and strict DONE gate. Codex
+discovery paths are `.codex/commands/delivery-big.md` and
+`.codex/skills/delivery-big/SKILL.md`.
 
 For UI tasks, `/delivery` must also follow `docs/delivery-design-quality-gate.md`. Build/check/live/API proof is not enough for UI delivery.
 
