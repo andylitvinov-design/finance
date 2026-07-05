@@ -8,6 +8,28 @@
 - Do not use the legacy `reconcile-v2/` folder as a new source of production commits.
 - Production URL: `https://ezohata-incoming-ledger.vercel.app/`
 
+## Codex Cloud Repo Mode
+
+Use this contract when the task is launched from ChatGPT Codex Cloud or mobile
+Cloud threads:
+
+- Repository: `andylitvinov-design/finance`
+- Base branch: `main`
+- Working branch: `codex/<task-name>`
+- Mode: Codex Cloud Repo Mode
+- Local Mac required: no
+- Output target: PR in this repository
+
+Cloud readiness checklist:
+
+1. Confirm `git remote -v` points to `andylitvinov-design/finance`.
+2. Confirm the starting branch is `main` or the selected task branch from
+   `main`.
+3. Do not use `MacBook-Air-Andrii-3.local` or any connected-host/local project
+   as a substitute for Cloud Repo Mode.
+4. If this repo is not selectable in ChatGPT mobile Cloud threads, stop and
+   report that the Codex cloud environment mapping is missing.
+
 ## Global agent settings adapter
 
 This repo uses the shared global agent settings layer for `/audit`, `/audit-fin`, `/delivery`, UI polish, design quality gates, deep technical issue writing, deep numeric implementation trace, and project routing.
