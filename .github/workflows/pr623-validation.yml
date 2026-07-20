@@ -44,10 +44,70 @@ jobs:
         run: npm install --global vercel@latest
 
       - name: Run repository tests
-        run: node --test tests/*.test.*
+        shell: bash
+        run: |
+          set +e
+          node --test tests/*.test.* > validation-tests.log 2>&1
+          code=$?
+          echo "$code" > validation-tests.exit
+          exit 0
 
       - name: Run build check
-        run: npm run build
+        shell: bash
+        run: |
+          set +e
+          npm run build > validation-build.log 2>&1
+          code=$?
+          echo "$code" > validation-build.exit
+          exit 0
 
       - name: Run release guard
-        run: bash scripts/release-guard.sh
+        shell: bash
+        run: |
+          set +e
+          bash scripts/release-guard.sh > validation-release-guard.log 2>&1
+          code=$?
+          echo "$code" > validation-release-guard.exit
+          exit 0
+
+      - name: Build concise validation summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "tests_exit=$(cat validation-tests.exit 2>/dev/null || echo missing)"
+            echo "build_exit=$(cat validation-build.exit 2>/dev/null || echo missing)"
+            echo "release_guard_exit=$(cat validation-release-guard.exit 2>/dev/null || echo missing)"
+            echo
+            echo "=== TESTS TAIL ==="
+            tail -n 40 validation-tests.log 2>/dev/null || true
+            echo
+            echo "=== BUILD TAIL ==="
+            tail -n 40 validation-build.log 2>/dev/null || true
+            echo
+            echo "=== RELEASE GUARD TAIL ==="
+            tail -n 80 validation-release-guard.log 2>/dev/null || true
+          } | tee validation-summary.txt
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr623-full-validation-${{ github.run_id }}
+          path: |
+            validation-summary.txt
+            validation-tests.log
+            validation-build.log
+            validation-release-guard.log
+          if-no-files-found: error
+
+      - name: Enforce validation result
+        if: always()
+        shell: bash
+        run: |
+          tests=$(cat validation-tests.exit 2>/dev/null || echo 99)
+          build=$(cat validation-build.exit 2>/dev/null || echo 99)
+          guard=$(cat validation-release-guard.exit 2>/dev/null || echo 99)
+          test "$tests" = 0
+          test "$build" = 0
+          test "$guard" = 0
