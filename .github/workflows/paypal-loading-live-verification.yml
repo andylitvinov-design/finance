@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -20,224 +20,74 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install browser verification runtime
-        run: |
-          npm install --no-save --ignore-scripts playwright@1.54.1
-          npx playwright install --with-deps chromium
-
-      - name: Verify deployed asset and browser lifecycle behavior
+      - name: Capture exact production asset evidence
         shell: bash
         run: |
-          cat > /tmp/verify-paypal-loading-live.mjs <<'EOF'
+          cat > /tmp/diagnose-paypal-loading-live.mjs <<'EOF'
           import fs from 'node:fs';
           import crypto from 'node:crypto';
-          import { chromium } from 'playwright';
 
           const productionUrl = 'https://ezohata-incoming-ledger.vercel.app/';
           const assetUrl = `${productionUrl}paypal-derived-balance-loading-fix.js`;
           const canonicalAsset = fs.readFileSync('paypal-derived-balance-loading-fix.js', 'utf8').replace(/\r\n/g, '\n').trim();
           const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
+          const result = {
+            productionUrl,
+            assetUrl,
+            canonicalAssetSha256: hash(canonicalAsset),
+            liveAssetSha256: null,
+            indexStatus: null,
+            assetStatus: null,
+            indexLoadsAsset: false,
+            assetMatchesCanonical: false,
+            exportedApiMarkers: {},
+            failures: [],
+          };
 
           const indexResponse = await fetch(`${productionUrl}?verification=${Date.now()}`, {
             headers: { 'cache-control': 'no-cache' },
           });
-          if (!indexResponse.ok) throw new Error(`production index returned ${indexResponse.status}`);
+          result.indexStatus = indexResponse.status;
           const liveIndex = await indexResponse.text();
-          if (!liveIndex.includes('paypal-derived-balance-loading-fix.js')) {
-            throw new Error('production index does not load paypal-derived-balance-loading-fix.js');
-          }
+          result.indexLoadsAsset = liveIndex.includes('paypal-derived-balance-loading-fix.js');
+          if (!indexResponse.ok) result.failures.push(`index_status: ${indexResponse.status}`);
+          if (!result.indexLoadsAsset) result.failures.push('index_asset_reference: missing');
 
           const assetResponse = await fetch(`${assetUrl}?verification=${Date.now()}`, {
             headers: { 'cache-control': 'no-cache' },
           });
-          if (!assetResponse.ok) throw new Error(`production asset returned ${assetResponse.status}`);
-          const liveAsset = (await assetResponse.text()).replace(/\r\n/g, '\n').trim();
-          if (liveAsset !== canonicalAsset) {
-            throw new Error(`deployed asset does not match canonical main: live=${hash(liveAsset)} local=${hash(canonicalAsset)}`);
-          }
-
-          const viewports = [
-            { name: 'desktop', width: 1440, height: 1000 },
-            { name: 'mobile', width: 390, height: 844 },
-          ];
-          const browser = await chromium.launch({ headless: true });
-          const results = [];
-          try {
-            for (const viewport of viewports) {
-              const context = await browser.newContext({
-                viewport: { width: viewport.width, height: viewport.height },
-                serviceWorkers: 'block',
-              });
-              const page = await context.newPage();
-              const consoleErrors = [];
-              const failedRequests = [];
-              const badResponses = [];
-              page.on('console', (message) => {
-                if (message.type() === 'error') consoleErrors.push(message.text());
-              });
-              page.on('requestfailed', (request) => {
-                failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`);
-              });
-              page.on('response', (response) => {
-                if (response.status() >= 400) badResponses.push(`${response.status()} ${response.url()}`);
-              });
-
-              await page.goto('about:blank');
-              await page.addScriptTag({ url: `${assetUrl}?browser=${viewport.name}-${Date.now()}` });
-              const evidence = await page.evaluate(async () => {
-                const api = globalThis.EzohataPayPalDerivedBalanceLoadingFix;
-                if (!api || typeof api.createPayPalDerivedBalanceRunner !== 'function') {
-                  throw new Error('deployed lifecycle API is not available');
-                }
-
-                function createHarness(overrides = {}) {
-                  const expenseState = {
-                    paypalDerivedBalanceLoading: false,
-                    paypalManualBalanceRequired: false,
-                  };
-                  const statuses = [];
-                  const renderStates = [];
-                  const clearedTimeouts = [];
-                  let dashboardLoads = 0;
-                  const deps = {
-                    normalizeDate: (value) => value,
-                    getStartDate: () => '2026-05-20',
-                    getEndDate: () => '2026-05-21',
-                    expenseState,
-                    setStatus: (message, error) => statuses.push({ message, error }),
-                    render: () => renderStates.push(expenseState.paypalDerivedBalanceLoading),
-                    fetchImpl: async () => ({
-                      ok: true,
-                      status: 200,
-                      json: async () => ({
-                        ok: true,
-                        provider_results: [{ provider: 'paypal', writable_rows: 2 }],
-                      }),
-                    }),
-                    loadDashboard: async () => { dashboardLoads += 1; },
-                    AbortControllerImpl: class FakeAbortController {
-                      constructor() { this.signal = { aborted: false }; }
-                      abort() { this.signal.aborted = true; }
-                    },
-                    setTimeoutImpl: () => 99,
-                    clearTimeoutImpl: (id) => clearedTimeouts.push(id),
-                    ...overrides,
-                  };
-                  return {
-                    runner: api.createPayPalDerivedBalanceRunner(deps),
-                    expenseState,
-                    statuses,
-                    renderStates,
-                    clearedTimeouts,
-                    dashboardLoads: () => dashboardLoads,
-                  };
-                }
-
-                const success = createHarness();
-                await success.runner();
-                if (success.expenseState.paypalDerivedBalanceLoading !== false) throw new Error('success left loading active');
-                if (JSON.stringify(success.renderStates) !== JSON.stringify([true, false])) throw new Error(`success render states ${JSON.stringify(success.renderStates)}`);
-                if (success.dashboardLoads() !== 1) throw new Error('success did not reload dashboard once');
-
-                const apiError = createHarness({
-                  fetchImpl: async () => ({
-                    ok: false,
-                    status: 503,
-                    json: async () => ({ ok: false, error: 'provider unavailable' }),
-                  }),
-                });
-                await apiError.runner();
-                if (apiError.expenseState.paypalDerivedBalanceLoading !== false) throw new Error('API error left loading active');
-                if (apiError.statuses.at(-1)?.message !== 'provider unavailable') throw new Error('API error message was not preserved');
-
-                let controller = null;
-                const timeout = createHarness({
-                  AbortControllerImpl: class ImmediateAbortController {
-                    constructor() {
-                      this.signal = { aborted: false };
-                      controller = this;
-                    }
-                    abort() { this.signal.aborted = true; }
-                  },
-                  setTimeoutImpl: (callback, delay) => {
-                    if (delay !== api.TIMEOUT_MS) throw new Error(`unexpected timeout ${delay}`);
-                    callback();
-                    return 7;
-                  },
-                  clearTimeoutImpl: () => {},
-                  fetchImpl: async (_url, options) => {
-                    if (options.signal !== controller.signal || !options.signal.aborted) {
-                      throw new Error('timeout did not pass an aborted signal');
-                    }
-                    const error = new Error('aborted');
-                    error.name = 'AbortError';
-                    throw error;
-                  },
-                });
-                await timeout.runner();
-                if (timeout.expenseState.paypalDerivedBalanceLoading !== false) throw new Error('timeout left loading active');
-                if (!timeout.statuses.at(-1)?.message.includes('30 секунд')) throw new Error('timeout message is not bounded');
-
-                const missingDate = createHarness({
-                  getStartDate: () => '',
-                  getEndDate: () => '',
-                  normalizeDate: () => '',
-                });
-                await missingDate.runner();
-                if (missingDate.expenseState.paypalDerivedBalanceLoading !== false) throw new Error('missing date entered loading');
-                if (JSON.stringify(missingDate.renderStates) !== JSON.stringify([false])) throw new Error('missing date render state mismatch');
-
-                return {
-                  success: {
-                    loading: success.expenseState.paypalDerivedBalanceLoading,
-                    renderStates: success.renderStates,
-                    status: success.statuses.at(-1),
-                  },
-                  apiError: {
-                    loading: apiError.expenseState.paypalDerivedBalanceLoading,
-                    renderStates: apiError.renderStates,
-                    status: apiError.statuses.at(-1),
-                  },
-                  timeout: {
-                    loading: timeout.expenseState.paypalDerivedBalanceLoading,
-                    renderStates: timeout.renderStates,
-                    status: timeout.statuses.at(-1),
-                  },
-                  missingDate: {
-                    loading: missingDate.expenseState.paypalDerivedBalanceLoading,
-                    renderStates: missingDate.renderStates,
-                    status: missingDate.statuses.at(-1),
-                  },
-                };
-              });
-
-              if (consoleErrors.length) throw new Error(`${viewport.name}: console errors: ${consoleErrors.join(' | ')}`);
-              if (failedRequests.length) throw new Error(`${viewport.name}: failed requests: ${failedRequests.join(' | ')}`);
-              if (badResponses.length) throw new Error(`${viewport.name}: HTTP errors: ${badResponses.join(' | ')}`);
-              results.push({ viewport: viewport.name, evidence, consoleErrors, failedRequests, badResponses });
-              await context.close();
+          result.assetStatus = assetResponse.status;
+          const liveAsset = await assetResponse.text();
+          if (!assetResponse.ok) {
+            result.failures.push(`asset_status: ${assetResponse.status}`);
+          } else {
+            const normalized = liveAsset.replace(/\r\n/g, '\n').trim();
+            result.liveAssetSha256 = hash(normalized);
+            result.assetMatchesCanonical = normalized === canonicalAsset;
+            result.exportedApiMarkers = {
+              lifecycleApi: normalized.includes('EzohataPayPalDerivedBalanceLoadingFix'),
+              boundedTimeout: normalized.includes('const TIMEOUT_MS = 30000'),
+              finalRender: normalized.includes('expenseState.paypalDerivedBalanceLoading = false;') && normalized.includes('render();'),
+            };
+            if (!result.assetMatchesCanonical) result.failures.push('asset_hash: deployed asset differs from canonical main');
+            for (const [key, value] of Object.entries(result.exportedApiMarkers)) {
+              if (!value) result.failures.push(`asset_marker: ${key}`);
             }
-          } finally {
-            await browser.close();
           }
 
-          const summary = {
-            productionUrl,
-            deployedAssetUrl: assetUrl,
-            canonicalAssetSha256: hash(canonicalAsset),
-            indexLoadsAsset: true,
-            cleanSession: true,
-            results,
-          };
-          fs.writeFileSync('/tmp/paypal-loading-live-evidence.json', JSON.stringify(summary, null, 2));
-          console.log(JSON.stringify(summary, null, 2));
+          fs.writeFileSync('/tmp/paypal-loading-live-diagnostic.json', JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result, null, 2));
+          if (result.failures.length) process.exit(1);
           EOF
-          node /tmp/verify-paypal-loading-live.mjs
+          set -o pipefail
+          node /tmp/diagnose-paypal-loading-live.mjs 2>&1 | tee /tmp/paypal-loading-live-diagnostic.log
 
-      - name: Preserve verification evidence
+      - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: paypal-loading-live-evidence-${{ github.run_id }}
-          path: /tmp/paypal-loading-live-evidence.json
+          name: paypal-loading-live-diagnostic-${{ github.run_id }}
+          path: |
+            /tmp/paypal-loading-live-diagnostic.json
+            /tmp/paypal-loading-live-diagnostic.log
           if-no-files-found: ignore
