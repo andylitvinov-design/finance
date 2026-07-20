@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 20
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VALIDATION_DIR: /tmp/pr623-validation
     steps:
       - name: Checkout PR head
@@ -44,19 +46,28 @@ jobs:
       - name: Install Vercel CLI required by release guard
         run: npm install --global vercel@latest
 
-      - name: Prepare Vercel project link required by release guard
+      - name: Prepare canonical Vercel project link
         shell: bash
         run: |
+          test -n "$VERCEL_TOKEN"
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
           mkdir -p .vercel
           node <<'NODE'
           const fs = require('fs');
           const manifest = JSON.parse(fs.readFileSync('ops/deployment-manifest.json', 'utf8'));
-          const projectId = manifest.deploy && manifest.deploy.projectId;
+          const expectedProjectId = manifest.deploy && manifest.deploy.projectId;
           const projectName = manifest.deploy && manifest.deploy.projectName;
-          if (!projectId || !projectName) {
+          if (!expectedProjectId || !projectName) {
             throw new Error('deployment manifest is missing deploy.projectId or deploy.projectName');
           }
-          fs.writeFileSync('.vercel/project.json', `${JSON.stringify({ projectId, projectName }, null, 2)}\n`);
+          if (process.env.VERCEL_PROJECT_ID !== expectedProjectId) {
+            throw new Error('VERCEL_PROJECT_ID does not match the canonical deployment manifest');
+          }
+          fs.writeFileSync(
+            '.vercel/project.json',
+            `${JSON.stringify({ orgId: process.env.VERCEL_ORG_ID, projectId: process.env.VERCEL_PROJECT_ID, projectName }, null, 2)}\n`
+          );
           NODE
 
       - name: Prepare validation evidence directory
