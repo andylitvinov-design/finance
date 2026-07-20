@@ -1,0 +1,53 @@
+name: PR 623 Full Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'config.js'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vercel.json'
+      - 'ops/**'
+      - '.vercel/**'
+      - '.github/workflows/pr623-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event.pull_request.number == 623
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI required by release guard
+        run: npm install --global vercel@latest
+
+      - name: Run repository tests
+        run: node --test tests/*.test.*
+
+      - name: Run build check
+        run: npm run build
+
+      - name: Run release guard
+        run: bash scripts/release-guard.sh
