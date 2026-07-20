@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 20
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VALIDATION_DIR: ${{ runner.temp }}/pr623-validation
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
@@ -43,31 +44,34 @@ jobs:
       - name: Install Vercel CLI required by release guard
         run: npm install --global vercel@latest
 
+      - name: Prepare validation evidence directory
+        run: mkdir -p "$VALIDATION_DIR"
+
       - name: Run repository tests
         shell: bash
         run: |
           set +e
-          node --test tests/*.test.* > validation-tests.log 2>&1
+          node --test tests/*.test.* > "$VALIDATION_DIR/tests.log" 2>&1
           code=$?
-          echo "$code" > validation-tests.exit
+          echo "$code" > "$VALIDATION_DIR/tests.exit"
           exit 0
 
       - name: Run build check
         shell: bash
         run: |
           set +e
-          npm run build > validation-build.log 2>&1
+          npm run build > "$VALIDATION_DIR/build.log" 2>&1
           code=$?
-          echo "$code" > validation-build.exit
+          echo "$code" > "$VALIDATION_DIR/build.exit"
           exit 0
 
       - name: Run release guard
         shell: bash
         run: |
           set +e
-          bash scripts/release-guard.sh > validation-release-guard.log 2>&1
+          bash scripts/release-guard.sh > "$VALIDATION_DIR/release-guard.log" 2>&1
           code=$?
-          echo "$code" > validation-release-guard.exit
+          echo "$code" > "$VALIDATION_DIR/release-guard.exit"
           exit 0
 
       - name: Build concise validation summary
@@ -75,39 +79,35 @@ jobs:
         shell: bash
         run: |
           {
-            echo "tests_exit=$(cat validation-tests.exit 2>/dev/null || echo missing)"
-            echo "build_exit=$(cat validation-build.exit 2>/dev/null || echo missing)"
-            echo "release_guard_exit=$(cat validation-release-guard.exit 2>/dev/null || echo missing)"
+            echo "tests_exit=$(cat "$VALIDATION_DIR/tests.exit" 2>/dev/null || echo missing)"
+            echo "build_exit=$(cat "$VALIDATION_DIR/build.exit" 2>/dev/null || echo missing)"
+            echo "release_guard_exit=$(cat "$VALIDATION_DIR/release-guard.exit" 2>/dev/null || echo missing)"
             echo
             echo "=== TESTS TAIL ==="
-            tail -n 40 validation-tests.log 2>/dev/null || true
+            tail -n 40 "$VALIDATION_DIR/tests.log" 2>/dev/null || true
             echo
             echo "=== BUILD TAIL ==="
-            tail -n 40 validation-build.log 2>/dev/null || true
+            tail -n 40 "$VALIDATION_DIR/build.log" 2>/dev/null || true
             echo
             echo "=== RELEASE GUARD TAIL ==="
-            tail -n 80 validation-release-guard.log 2>/dev/null || true
-          } | tee validation-summary.txt
+            tail -n 80 "$VALIDATION_DIR/release-guard.log" 2>/dev/null || true
+          } | tee "$VALIDATION_DIR/summary.txt"
 
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pr623-full-validation-${{ github.run_id }}
-          path: |
-            validation-summary.txt
-            validation-tests.log
-            validation-build.log
-            validation-release-guard.log
+          path: ${{ runner.temp }}/pr623-validation/
           if-no-files-found: error
 
       - name: Enforce validation result
         if: always()
         shell: bash
         run: |
-          tests=$(cat validation-tests.exit 2>/dev/null || echo 99)
-          build=$(cat validation-build.exit 2>/dev/null || echo 99)
-          guard=$(cat validation-release-guard.exit 2>/dev/null || echo 99)
+          tests=$(cat "$VALIDATION_DIR/tests.exit" 2>/dev/null || echo 99)
+          build=$(cat "$VALIDATION_DIR/build.exit" 2>/dev/null || echo 99)
+          guard=$(cat "$VALIDATION_DIR/release-guard.exit" 2>/dev/null || echo 99)
           test "$tests" = 0
           test "$build" = 0
           test "$guard" = 0
