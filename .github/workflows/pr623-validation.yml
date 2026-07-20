@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VALIDATION_DIR: ${{ runner.temp }}/pr623-validation
+      VALIDATION_DIR: /tmp/pr623-validation
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
@@ -98,7 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pr623-full-validation-${{ github.run_id }}
-          path: ${{ runner.temp }}/pr623-validation/
+          path: /tmp/pr623-validation/
           if-no-files-found: error
 
       - name: Enforce validation result
