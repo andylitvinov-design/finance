@@ -44,6 +44,21 @@ jobs:
       - name: Install Vercel CLI required by release guard
         run: npm install --global vercel@latest
 
+      - name: Prepare Vercel project link required by release guard
+        shell: bash
+        run: |
+          mkdir -p .vercel
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('ops/deployment-manifest.json', 'utf8'));
+          const projectId = manifest.deploy && manifest.deploy.projectId;
+          const projectName = manifest.deploy && manifest.deploy.projectName;
+          if (!projectId || !projectName) {
+            throw new Error('deployment manifest is missing deploy.projectId or deploy.projectName');
+          }
+          fs.writeFileSync('.vercel/project.json', `${JSON.stringify({ projectId, projectName }, null, 2)}\n`);
+          NODE
+
       - name: Prepare validation evidence directory
         run: mkdir -p "$VALIDATION_DIR"
 
