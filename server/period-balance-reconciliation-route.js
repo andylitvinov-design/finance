@@ -111,6 +111,38 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
       period,
       includeDailyBalances,
     });
+    reconciliation.source_status = "needs_verification";
+    reconciliation.summary = {
+      ...(reconciliation.summary || {}),
+      status: "needs_verification",
+    };
+    reconciliation.total_usd_row = {
+      ...(reconciliation.total_usd_row || {}),
+      total_coverage_status: "unavailable",
+      partial: true,
+      status: "needs_verification",
+    };
+    reconciliation.reconciliation_report_summary = {
+      ...(reconciliation.reconciliation_report_summary || {}),
+      total_usd_row: reconciliation.total_usd_row,
+    };
+    reconciliation.canonical_total = {
+      ...(reconciliation.canonical_total || {}),
+      source: "needs_verification",
+      canonical_total_usd: null,
+      totals_match: false,
+      status: "needs_verification",
+      explanation: "Manual balance and Ledger sources are unavailable; zero values are not financial facts.",
+    };
+    reconciliation.canonical_total_usd_row = {
+      ...(reconciliation.canonical_total_usd_row || {}),
+      total_coverage_status: "unavailable",
+      partial: true,
+      status: "needs_verification",
+      source: "needs_verification",
+      canonical_total_usd: null,
+      totals_match: false,
+    };
     return {
       ok: true,
       generated_at: new Date().toISOString(),

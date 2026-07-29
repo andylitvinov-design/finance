@@ -2003,6 +2003,41 @@ function findSourceBadge(block) {
   return findAll(block, (n) => n.className && n.className.split(/\s+/).includes("remainders-source-badge"))[0] || null;
 }
 
+test("screenshot reconciliation fixture preserves change and movement sign conventions", () => {
+  const api = loadApi();
+  const block = api.renderRemaindersSummaryBlock({
+    rows: [],
+    totals: { openingUsd: 0, closingUsd: 0, deltaUsd: 0 },
+    plannedTotals: { movementUsd: 0, plannedClosingUsd: 0 },
+    needsVerificationCount: 0,
+    diagnostics: [],
+    periodReconciliation: {
+      by_channel_currency: [{
+        channel: "screenshot total",
+        currency: "USD",
+        opening_usd: 37541.6535,
+        confirmed_end_usd: 33744.6926,
+        movement_usd: 659.9701,
+        fx_warnings: [],
+      }],
+    },
+  }, makeMockDocument());
+
+  const rows = tableRows(firstVisibleTable(block));
+  const dataRow = rows.find((row) => row[0] === "screenshot total USD");
+  const totalRow = rows.find((row) => row[0] === "ВСЕГО USD");
+
+  assert.deepEqual(dataRow.slice(1, 6), [
+    "37541,6535",
+    "33744,6926",
+    "-3796,9609",
+    "659,9701",
+    "-4456,9310",
+  ]);
+  assert.deepEqual(totalRow.slice(1, 6), dataRow.slice(1, 6));
+  resetRemaindersModule();
+});
+
 test("issue#552: period rows render with currency suffix and a period source badge", () => {
   const api = loadApi();
   const block = api.renderRemaindersSummaryBlock({
