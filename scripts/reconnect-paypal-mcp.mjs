@@ -158,10 +158,13 @@ function run(command, args, input = "") {
   });
 }
 
-export async function storePayPalMcpRefreshToken(refreshToken, runCommand = run) {
-  const value = required(refreshToken, "PayPal MCP refresh token");
+export async function storePayPalMcpProductionCredentials({ clientId, refreshToken }, runCommand = run) {
+  const publicClientId = required(clientId, "PayPal MCP client id");
+  const refreshGrant = required(refreshToken, "PayPal MCP refresh token");
+  await runCommand("npx", ["--yes", "vercel", "env", "rm", "PAYPAL_MCP_CLIENT_ID", "production", "--yes"]);
+  await runCommand("npx", ["--yes", "vercel", "env", "add", "PAYPAL_MCP_CLIENT_ID", "production"], `${publicClientId}\n`);
   await runCommand("npx", ["--yes", "vercel", "env", "rm", "PAYPAL_MCP_REFRESH_TOKEN", "production", "--yes"]);
-  await runCommand("npx", ["--yes", "vercel", "env", "add", "PAYPAL_MCP_REFRESH_TOKEN", "production"], `${value}\n`);
+  await runCommand("npx", ["--yes", "vercel", "env", "add", "PAYPAL_MCP_REFRESH_TOKEN", "production"], `${refreshGrant}\n`);
 }
 
 function getPort() {
@@ -184,7 +187,7 @@ async function main() {
     onCallback: async (params) => {
       const { code } = validatePayPalMcpReconnectCallback(params, session.state);
       const { refreshToken } = await exchangePayPalMcpCode({ clientId, redirectUri, code, codeVerifier: session.codeVerifier });
-      await storePayPalMcpRefreshToken(refreshToken);
+      await storePayPalMcpProductionCredentials({ clientId, refreshToken });
     }
   });
   try {
