@@ -176,7 +176,7 @@ test("balance snapshots API returns input rows for active ledger channels missin
   const inputRows = snapshot.balance_snapshots.input_rows;
   assert.ok(inputRows.some((row) =>
     row.date === "2026-05-15"
-    && row.channel === "wise usd"
+    && row.channel === "Wise USD"
     && row.currency === "USD"
     && row.sheet === "Остатки"
     && row.amount_required === true
@@ -187,7 +187,7 @@ test("balance snapshots API returns input rows for active ledger channels missin
   ));
   assert.ok(inputRows.some((row) =>
     row.date === "2026-05-15"
-    && row.channel === "paypal eur"
+    && row.channel === "PayPal EUR"
     && row.currency === "EUR"
     && row.sheet === "Остатки"
     && row.amount_required === true
@@ -197,7 +197,7 @@ test("balance snapshots API returns input rows for active ledger channels missin
     && row.status === "needs_input"
   ));
   assert.equal(
-    inputRows.filter((row) => row.date === "2026-05-15" && row.channel === "wise usd" && row.currency === "USD").length,
+    inputRows.filter((row) => row.date === "2026-05-15" && row.channel === "Wise USD" && row.currency === "USD").length,
     1
   );
 });
@@ -727,7 +727,7 @@ test("balance snapshots input rows use selected to date as target date", () => {
 
   assert.ok(summary.input_rows.length > 0);
   assert.ok(summary.input_rows.every((row) => row.date === "2026-05-31"));
-  assert.ok(summary.input_rows.some((row) => row.channel === "wise usd" && row.needs_input === true));
+  assert.ok(summary.input_rows.some((row) => row.channel === "Wise USD" && row.needs_input === true));
 });
 
 test("balance snapshots API returns safe empty snapshot when repository access fails", async () => {
