@@ -48,6 +48,58 @@ export function createPayPalMcpPkceSession(random = randomBytes) {
   return { state, codeVerifier, codeChallenge };
 }
 
+export async function startPayPalMcpCallbackListener({ port = 43110, host = "127.0.0.1", onCallback } = {}) {
+  const callback = typeof onCallback === "function"
+    ? onCallback
+    : async () => { throw new Error("PayPal callback handler is not ready."); };
+  const server = createServer(async (request, response) => {
+    const requestUrl = new URL(request.url || "/", `http://${host}`);
+    if (requestUrl.pathname === "/health") {
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({ ok: true, status: "listening" }));
+      return;
+    }
+    if (requestUrl.pathname !== "/callback") {
+      response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Not found.");
+      return;
+    }
+    try {
+      await callback(requestUrl.searchParams);
+      response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("PayPal reconnected. You may close this tab.");
+    } catch (error) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("PayPal reconnect failed. Return to the terminal for the safe error message.");
+      process.stderr.write(`${error?.message || error}\n`);
+      process.exitCode = 1;
+    } finally {
+      server.close();
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  const boundPort = typeof address === "object" && address ? address.port : port;
+  return {
+    origin: `http://${host}:${boundPort}`,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function verifyPayPalMcpCallbackListener(origin, fetchImpl = fetch) {
+  const response = await fetchImpl(`${origin}/health`);
+  const payload = await parseJsonResponse(response, "PayPal MCP callback listener");
+  if (!response.ok || payload?.ok !== true || payload?.status !== "listening") {
+    throw new Error("PayPal MCP callback listener health check failed.");
+  }
+}
+
 async function parseJsonResponse(response, context) {
   const text = await response.text().catch(() => "");
   try {
@@ -126,28 +178,24 @@ async function main() {
   const port = getPort();
   const redirectUri = `http://127.0.0.1:${port}/callback`;
   const session = createPayPalMcpPkceSession();
-  const { clientId } = await registerPayPalMcpPublicClient({ redirectUri });
-  const authorizationUrl = buildPayPalMcpAuthorizationUrl({ clientId, redirectUri, ...session });
-  const server = createServer(async (request, response) => {
-    try {
-      if (request.url?.split("?")[0] !== "/callback") throw new Error("Unexpected callback path.");
-      const params = new URL(request.url, redirectUri).searchParams;
+  let clientId = "";
+  const listener = await startPayPalMcpCallbackListener({
+    port,
+    onCallback: async (params) => {
       const { code } = validatePayPalMcpReconnectCallback(params, session.state);
       const { refreshToken } = await exchangePayPalMcpCode({ clientId, redirectUri, code, codeVerifier: session.codeVerifier });
       await storePayPalMcpRefreshToken(refreshToken);
-      response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end("PayPal reconnected. You may close this tab.");
-    } catch (error) {
-      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end("PayPal reconnect failed. Return to the terminal for the safe error message.");
-      process.stderr.write(`${error?.message || error}\n`);
-      process.exitCode = 1;
-    } finally {
-      server.close();
     }
   });
-  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  process.stdout.write(`Open:\n${authorizationUrl}\n\nAction:\nSign in to the same personal PayPal account and approve access.\n`);
+  try {
+    await verifyPayPalMcpCallbackListener(listener.origin);
+    ({ clientId } = await registerPayPalMcpPublicClient({ redirectUri }));
+    const authorizationUrl = buildPayPalMcpAuthorizationUrl({ clientId, redirectUri, ...session });
+    process.stdout.write(`Callback listener: healthy at ${listener.origin}/health\nOpen:\n${authorizationUrl}\n\nAction:\nSign in to the same personal PayPal account and approve access.\n`);
+  } catch (error) {
+    await listener.close();
+    throw error;
+  }
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
