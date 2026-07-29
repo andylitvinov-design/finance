@@ -128,7 +128,7 @@ async function runHandler(fetchImpl) {
   }
 }
 
-test("REST failure plus missing MCP list_transactions returns actionable structured JSON", async () => {
+test("personal MCP missing list_transactions returns actionable structured JSON", async () => {
   await withEnv({
     PAYPAL_CLIENT_ID: "rest-client",
     PAYPAL_CLIENT_SECRET: "rest-secret",
@@ -150,7 +150,7 @@ test("REST failure plus missing MCP list_transactions returns actionable structu
     assert.equal(response.body.canUseManualImport, true);
     assert.equal(response.body.fallback, "manual_activity_import");
     assert.match(response.body.shortExcerpt, /PayPal MCP tool list_transactions/);
-    assert.match(response.body.warnings.join(" | "), /PayPal REST import failed/);
+    assert.equal(response.body.warnings, undefined);
     const serialized = JSON.stringify(response.body);
     assert.doesNotMatch(serialized, /rest-secret|mcp-refresh-token|mcp-access-token|access_token=rest-token|client_secret=rest-secret/);
     assert.doesNotMatch(serialized, /SyntaxError|Unexpected token/);
@@ -177,12 +177,13 @@ test("MCP tool-not-found requests tools/list and returns available MCP tool name
   });
 });
 
-test("REST success does not call PayPal MCP token or SSE endpoints", async () => {
+test("business REST mode does not call PayPal MCP token or SSE endpoints", async () => {
   await withEnv({
     PAYPAL_CLIENT_ID: "rest-client",
     PAYPAL_CLIENT_SECRET: "rest-secret",
     PAYPAL_MCP_CLIENT_ID: "mcp-client",
     PAYPAL_MCP_REFRESH_TOKEN: "mcp-refresh-token",
+    PAYPAL_IMPORT_MODE: "business_rest",
   }, async () => {
     const calls = [];
     const fetchImpl = async (url) => {

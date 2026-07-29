@@ -106,13 +106,8 @@ test("PayPal manual import message combines REST auth rejection and MCP grant-no
     }
   });
 
-  assert.match(message, /PayPal REST credentials rejected by PayPal/);
-  assert.match(message, /PAYPAL_CLIENT_ID\/PAYPAL_CLIENT_SECRET/);
-  assert.match(message, /PAYPAL_ENVIRONMENT live\/sandbox/);
-  assert.match(message, /MCP fallback also failed: refresh grant not found/);
-  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
-  assert.match(message, /Activity\/CSV/);
-  assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
+  assert.match(message, /^Подключение PayPal больше не действует\./);
+  assert.doesNotMatch(message, /PAYPAL_|Vercel|Grant not found|mcp_token|auth_failed/i);
 });
 
 test("PayPal manual import message combines REST permission denial and MCP grant-not-found", () => {
@@ -143,15 +138,8 @@ test("PayPal manual import message combines REST permission denial and MCP grant
     }
   });
 
-  assert.match(message, /PayPal REST не имеет reporting\/transaction permission/);
-  assert.match(message, /wrong live\/sandbox app/);
-  assert.match(message, /MCP fallback also failed: refresh grant not found/);
-  assert.match(message, /PAYPAL_CLIENT_ID\/PAYPAL_CLIENT_SECRET/);
-  assert.match(message, /business\/reporting permissions/);
-  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
-  assert.match(message, /CSV fallback remains available/);
-  assert.doesNotMatch(message, /^Для personal PayPal используйте Импорт PayPal CSV/);
-  assert.doesNotMatch(message, /Unexpected token|Bad Request|плохой запрос/i);
+  assert.match(message, /^Подключение PayPal больше не действует\./);
+  assert.doesNotMatch(message, /PAYPAL_|Vercel|Grant not found|mcp_token|permission_denied/i);
 });
 
 test("PayPal invalid MCP grant shows reconnect action instead of CSV-only guidance", () => {
@@ -172,10 +160,26 @@ test("PayPal invalid MCP grant shows reconnect action instead of CSV-only guidan
     }
   });
 
-  assert.match(message, /re-authorize PayPal MCP|переподключ/i);
-  assert.match(message, /PAYPAL_MCP_REFRESH_TOKEN/);
-  assert.match(message, /CSV fallback remains available|CSV остаётся запасным/i);
-  assert.doesNotMatch(message, /^Для personal PayPal используйте Импорт PayPal CSV/);
+  assert.match(message, /^Подключение PayPal больше не действует\./);
+  assert.match(message, /Повторно подключите личный PayPal/);
+  assert.doesNotMatch(message, /PAYPAL_|Vercel|Grant not found|mcp_token/i);
+});
+
+test("PayPal invalid MCP grant shows safe Russian reconnect copy without operator diagnostics", () => {
+  const context = createContext();
+  const message = context.getPayPalManualImportMessage({
+    ok: false,
+    actionRequired: "reconnect_paypal_mcp",
+    phase: "mcp_token",
+    providerStatus: "mcp_grant_not_found",
+    shortExcerpt: "PayPal MCP token refresh failed (400): Grant not found"
+  });
+
+  assert.equal(
+    message,
+    "Подключение PayPal больше не действует. Повторно подключите личный PayPal, чтобы восстановить автоматическую загрузку. Пока можно загрузить CSV-выписку. Сохранённые операции и баланс не изменены."
+  );
+  assert.doesNotMatch(message, /PAYPAL_MCP_REFRESH_TOKEN|Vercel|Grant not found|mcp_token|mcp_grant_not_found/i);
 });
 
 test("readPayPalExpenseStatementPayload converts non-JSON provider text into contextual UI error", async () => {
