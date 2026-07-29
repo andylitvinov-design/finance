@@ -40,6 +40,7 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
   if (!from || !to) throw new Error("from and to must be YYYY-MM-DD.");
   const now = options.now || new Date();
   const timestamp = normalizeTimestamp(now);
+  const batchId = `daily-balance-backfill:${from}:${to}:${timestamp}`;
   const repositoryLoader = options.repositoryLoader || loadManualRepositoryFromGoogleSheets;
   const autoBalanceLoader = options.autoBalanceLoader || loadAutoBalanceRowsFromGoogleSheets;
   const saveRows = options.saveRows || saveAutoBalanceSnapshotRows;
@@ -80,14 +81,32 @@ export async function buildBackfillDailyBalanceSnapshotsReport(options = {}) {
     .map((row) => toAutoBalanceBackfillRow(row, timestamp));
   const missingAnchors = buildMissingAnchorRows({ operations, balanceRows, from, to });
 
-  let save = { rowCount: 0, skipped: options.apply ? "no_rows" : "dry_run" };
+  let save = {
+    rowCount: 0,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+    applied: false,
+    batch_id: batchId,
+    skip_reason: options.apply ? "no_rows" : "dry_run",
+  };
   if (options.apply && plannedRows.length) {
-    save = await saveRows(plannedRows);
+    const write = await saveRows(plannedRows);
+    save = {
+      ...write,
+      inserted: Number(write?.inserted ?? plannedRows.length),
+      updated: Number(write?.updated || 0),
+      skipped: Number(write?.skipped || 0),
+      applied: write?.applied ?? true,
+      batch_id: batchId,
+    };
   }
 
   return {
     ok: true,
     dryRun: !options.apply,
+    applied: Boolean(options.apply && save.applied),
+    batch_id: batchId,
     target_sheet: TARGET_SHEET,
     period: { from, to },
     planned_rows: plannedRows,

@@ -1063,14 +1063,25 @@ function buildSnapshotRow({
 
 export async function saveAutoBalanceSnapshotRows(rows, { fetchImpl = fetch } = {}) {
   const snapshotRows = normalizeSnapshotRows(rows);
-  if (!snapshotRows.length) return { rowCount: 0, savedAt: new Date().toISOString() };
+  if (!snapshotRows.length) return { rowCount: 0, inserted: 0, updated: 0, skipped: 0, applied: false, savedAt: new Date().toISOString() };
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
   await ensureBalanceSheetExists({ accessToken, fetchImpl });
   const existingValues = await getBalanceSheetValues({ accessToken, fetchImpl });
   const existingRows = parseBalanceSheetValues(existingValues);
-  const mergedRows = mergeBalanceRowsByDateChannelCurrency(existingRows, snapshotRows);
-  await putBalanceSheetValues(buildBalanceSheetValues(mergedRows), { accessToken, fetchImpl });
-  return { rowCount: snapshotRows.length, savedAt: new Date().toISOString(), sheetName: AUTO_BALANCE_SHEET_NAME };
+  const write = classifyAutoBalanceSnapshotWrite(existingRows, snapshotRows);
+  if (write.rows_to_write.length) {
+    const mergedRows = mergeBalanceRowsByDateChannelCurrency(existingRows, write.rows_to_write);
+    await putBalanceSheetValues(buildBalanceSheetValues(mergedRows), { accessToken, fetchImpl });
+  }
+  return {
+    rowCount: write.rows_to_write.length,
+    inserted: write.inserted,
+    updated: write.updated,
+    skipped: write.skipped,
+    applied: write.rows_to_write.length > 0,
+    savedAt: new Date().toISOString(),
+    sheetName: AUTO_BALANCE_SHEET_NAME,
+  };
 }
 
 export function buildPayPalManualBalanceRows(input = {}) {
@@ -1379,6 +1390,32 @@ export function mergeBalanceRowsByDateChannelCurrency(existingRows = [], replace
     ...(existingRows || []).filter((row) => !replacementKeys.has(balanceRowKey(row))),
     ...(replacementRows || []),
   ];
+}
+
+export function classifyAutoBalanceSnapshotWrite(existingRows = [], replacementRows = []) {
+  const existingByKey = new Map((existingRows || []).map((row) => [balanceRowKey(row), row]));
+  const rows_to_write = [];
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const replacement of replacementRows || []) {
+    const existing = existingByKey.get(balanceRowKey(replacement));
+    if (!existing) {
+      inserted += 1;
+      rows_to_write.push(replacement);
+    } else if (isSemanticallySameAutoBalanceRow(existing, replacement)) {
+      skipped += 1;
+    } else {
+      updated += 1;
+      rows_to_write.push(replacement);
+    }
+  }
+  return { rows_to_write, inserted, updated, skipped };
+}
+
+function isSemanticallySameAutoBalanceRow(left = {}, right = {}) {
+  return ["date", "provider", "channel", "amount", "currency", "rate", "usdAmount", "source", "rawSourceId", "status", "comment"]
+    .every((field) => String(left?.[field] ?? "").trim() === String(right?.[field] ?? "").trim());
 }
 
 function balanceRowKey(row) {

@@ -67,6 +67,28 @@ test("daily balance backfill route allows confirmed May 2026 apply", async () =>
   assert.equal(calls[0].apply, true);
 });
 
+test("daily balance backfill apply reports a completed write instead of dry-run metadata", async () => {
+  const result = await runDailyBalanceBackfillRoute({
+    method: "POST",
+    query: {
+      from: "2026-07-01",
+      to: "2026-07-29",
+      apply: "1",
+      confirm: DAILY_BALANCE_BACKFILL_CONFIRMATION,
+    },
+    buildReport: async () => ({
+      ok: true,
+      dryRun: false,
+      save: { rowCount: 1, inserted: 1, updated: 0, skipped: 0, applied: true },
+    }),
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.dryRun, false);
+  assert.equal(result.body.applied, true);
+  assert.deepEqual(result.body.write_summary, { inserted: 1, updated: 0, skipped: 0 });
+});
+
 test("daily balance backfill route rejects invalid windows", async () => {
   const result = await runDailyBalanceBackfillRoute({
     method: "GET",
