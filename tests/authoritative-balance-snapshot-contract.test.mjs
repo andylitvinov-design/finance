@@ -23,6 +23,23 @@ test("owner-confirmed full July batches preserve supplied USD totals and factual
   });
 });
 
+test("owner-confirmed July rows use registry owner keys and approved display labels", () => {
+  const rows = buildOwnerConfirmedJulySnapshotRows();
+  const july1 = rows.filter((row) => row.date === "2026-07-01");
+  const july29 = rows.filter((row) => row.date === "2026-07-29");
+
+  assert.equal(july1.length, 19);
+  assert.equal(july29.length, 20);
+  assert.equal(july1.some((row) => row.owner_key === "zen"), false);
+  assert.equal(july29.find((row) => row.owner_key === "zen")?.channel, "ZEN");
+  assert.deepEqual(july29.slice(0, 11).map((row) => row.channel), [
+    "Яндекс", "PayPal USD", "PayPal EUR", "Dep24 USD", "Dep24 EUR", "PayPal CAD",
+    "Privat24 UAH", "Monobank UAH", "Wise EUR", "Wise USD", "Revolut",
+  ]);
+  assert.equal(july29.find((row) => row.owner_key === "binance_spot")?.channel, "Binance Spot");
+  assert.equal(july29.find((row) => row.owner_key === "bank_canada_cad")?.channel, "Bank Canada CAD");
+});
+
 test("a reliable owner-confirmed full batch excludes same-date provider, derived, OCR and legacy anchors", () => {
   const ownerRows = buildOwnerConfirmedJulySnapshotRows().filter((row) => row.date === "2026-07-01");
   const composition = composeAuthoritativeSnapshotRows([
@@ -59,8 +76,8 @@ test("explicit zero and omitted channels remain distinct in the persisted status
 
 test("aggregate owner positions exclude component aliases only inside their authoritative batch", () => {
   const rows = buildOwnerConfirmedJulySnapshotRows().filter((row) => row.date === "2026-07-29");
-  const spot = rows.find((row) => row.channel === "Binance Spot aggregate");
-  const revolut = rows.find((row) => row.channel === "Revolut aggregate");
+  const spot = rows.find((row) => row.channel === "Binance Spot");
+  const revolut = rows.find((row) => row.channel === "Revolut");
   const usdt = rows.find((row) => row.channel === "Binance Save USDT");
 
   assert.equal(spot.representation, "aggregate");
