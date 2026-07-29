@@ -1041,7 +1041,7 @@ test("fetchPayPalStatementEntriesFromMcp reports sanitized samples when REST enr
   assert.doesNotMatch(result.entries[0].counterpartyLabel, /invoice|event|220261/i);
 });
 
-test("handler falls back to PayPal MCP when REST credentials fail", async () => {
+test("handler uses PayPal MCP first when auto mode has MCP credentials", async () => {
   const previousEnv = {
     PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
     PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
@@ -1140,17 +1140,9 @@ test("handler falls back to PayPal MCP when REST credentials fail", async () => 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.source, "paypal-mcp");
-    assert.equal(response.body.providerStatus, "auth_failed");
-    assert.equal(response.body.phase, "oauth");
-    assert.deepEqual(response.body.paypalRest, {
-      providerStatus: "auth_failed",
-      phase: "oauth",
-      environment: "live",
-      baseUrl: "https://api-m.paypal.com",
-      hasClientId: true,
-      hasClientSecret: true,
-      maskedClientId: "bad-...ient"
-    });
+    assert.equal(response.body.providerStatus, undefined);
+    assert.equal(response.body.phase, undefined);
+    assert.equal(response.body.paypalRest, undefined);
     assert.match(response.body.warnings.join(" | "), /PayPal fee unavailable due to API permissions\/auth/);
     assert.equal(response.body.entries[0].sourceTransactionId, "FALLBACK-1");
     assert.equal(response.body.entries[0].suggestedCategory, "servicein");
@@ -1276,8 +1268,9 @@ test("handler classifies PayPal MCP grant-not-found refresh failures without lea
     assert.equal(response.body.providerStatus, "mcp_grant_not_found");
     assert.equal(response.body.phase, "mcp_token");
     assert.equal(response.body.actionRequired, "reconnect_paypal_mcp");
-    assert.equal(response.body.paypalRest.providerStatus, "auth_failed");
-    assert.equal(response.body.paypalRest.phase, "oauth");
+    assert.equal(response.body.manualStep, undefined);
+    assert.equal(response.body.paypalRest.providerStatus, "mcp_grant_not_found");
+    assert.equal(response.body.paypalRest.phase, "mcp_token");
     assert.equal(response.body.paypalRest.environment, "live");
     assert.equal(response.body.paypalRest.hasClientId, true);
     assert.equal(response.body.paypalRest.hasClientSecret, true);
@@ -1289,7 +1282,7 @@ test("handler classifies PayPal MCP grant-not-found refresh failures without lea
       hasRefreshToken: true
     });
     assert.match(response.body.shortExcerpt, /PayPal MCP token refresh failed \(400\): Grant not found/);
-    assert.match(response.body.warnings.join(" | "), /PayPal REST import failed: PayPal OAuth failed \(401\): Client Authentication failed/);
+    assert.equal(response.body.warnings, undefined);
     assert.doesNotMatch(JSON.stringify(response.body), /bad-rest-secret|mcp-refresh-secret-token/);
   } finally {
     global.fetch = previousFetch;
@@ -1370,6 +1363,58 @@ test("personal_mcp import mode skips REST and uses MCP first", async () => {
     assert.equal(response.body.source, "paypal-mcp");
     assert.equal(calls.some((href) => href.includes("/v1/oauth2/token")), false);
     assert.equal(calls.some((href) => href.includes("/v1/reporting/transactions")), false);
+  } finally {
+    global.fetch = previousFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("auto import mode with personal MCP credentials skips Business REST", async () => {
+  const previousEnv = {
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID,
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET,
+    PAYPAL_MCP_CLIENT_ID: process.env.PAYPAL_MCP_CLIENT_ID,
+    PAYPAL_MCP_REFRESH_TOKEN: process.env.PAYPAL_MCP_REFRESH_TOKEN,
+    PAYPAL_IMPORT_MODE: process.env.PAYPAL_IMPORT_MODE,
+  };
+  const previousFetch = global.fetch;
+  const calls = [];
+
+  process.env.PAYPAL_CLIENT_ID = "rest-client";
+  process.env.PAYPAL_CLIENT_SECRET = "rest-secret";
+  process.env.PAYPAL_MCP_CLIENT_ID = "mcp-client";
+  process.env.PAYPAL_MCP_REFRESH_TOKEN = "revoked-personal-grant";
+  delete process.env.PAYPAL_IMPORT_MODE;
+
+  try {
+    global.fetch = async (url) => {
+      const href = String(url);
+      calls.push(href);
+      if (href === "https://mcp.paypal.com/token") {
+        return {
+          ok: false,
+          status: 400,
+          async text() {
+            return JSON.stringify({ error: "invalid_grant", error_description: "Grant not found" });
+          }
+        };
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    };
+
+    const response = createResponseRecorder();
+    await handler({ method: "POST", body: { startDate: "2026-06-01", endDate: "2026-06-02" } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.providerStatus, "mcp_grant_not_found");
+    assert.equal(response.body.actionRequired, "reconnect_paypal_mcp");
+    assert.equal(calls.includes("https://mcp.paypal.com/token"), true);
+    assert.equal(calls.some((href) => href.includes("api-m.sandbox.paypal.com")), false);
+    assert.equal(calls.some((href) => href.includes("api-m.paypal.com")), false);
   } finally {
     global.fetch = previousFetch;
     for (const [key, value] of Object.entries(previousEnv)) {

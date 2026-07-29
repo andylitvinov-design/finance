@@ -53,7 +53,7 @@ export default async function handler(request, response) {
       return response.status(200).json({ ok: true, ...result });
     }
     let result;
-    if (importMode === "personal_mcp") {
+    if (importMode === "personal_mcp" || (importMode === "auto" && mcpClientId && mcpRefreshToken)) {
       if (!mcpClientId || !mcpRefreshToken) {
         return response.status(200).json(buildPayPalManualImportRequiredPayload(
           "PayPal MCP credentials are not configured. Set PAYPAL_MCP_CLIENT_ID/PAYPAL_MCP_REFRESH_TOKEN.",
@@ -807,9 +807,6 @@ function buildPayPalManualImportRequiredPayload(error, options = {}) {
     canUseManualImport: true,
     providerStatus,
     ...(actionRequired ? { actionRequired } : {}),
-    ...(actionRequired === "reconnect_paypal_mcp" ? {
-      manualStep: "Open the PayPal MCP/OAuth connector authorization page, sign in once to the personal PayPal account, then store the new PAYPAL_MCP_REFRESH_TOKEN in Vercel Production."
-    } : {}),
     paypalRest: options.paypalRest || buildPayPalRestDiagnostics(error, options.restConfig || {}),
     ...(options.mcpConfig ? { paypalMcp: buildPayPalMcpDiagnostics(error, options.mcpConfig) } : {}),
     shortExcerpt,

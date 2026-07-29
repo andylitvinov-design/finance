@@ -2604,14 +2604,14 @@ function getPayPalManualImportMessage(payload = {}) {
     || /insufficient permissions|authorization failed|not authorized|permission_denied|permission denied|reporting permission/i.test(`${warnings} ${excerpt}`)
   );
   const mcpGrantMissing = mcpStatus === "mcp_grant_not_found" || /grant not found/i.test(excerpt);
+  if (payload?.actionRequired === "reconnect_paypal_mcp" || mcpGrantMissing) {
+    return "Подключение PayPal больше не действует. Повторно подключите личный PayPal, чтобы восстановить автоматическую загрузку. Пока можно загрузить CSV-выписку. Сохранённые операции и баланс не изменены.";
+  }
   if (restPermissionDenied && mcpGrantMissing) {
     return `PayPal REST не имеет reporting/transaction permission or wrong live/sandbox app. MCP fallback also failed: refresh grant not found. Fix Vercel PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET with business/reporting permissions or re-authorize/replace PAYPAL_MCP_REFRESH_TOKEN. CSV fallback remains available.${details ? ` ${details}` : ""}`;
   }
   if (restRejected && mcpGrantMissing) {
     return `PayPal REST credentials rejected by PayPal: check Vercel PAYPAL_CLIENT_ID/PAYPAL_CLIENT_SECRET and PAYPAL_ENVIRONMENT live/sandbox. MCP fallback also failed: refresh grant not found; re-authorize PayPal MCP or replace PAYPAL_MCP_REFRESH_TOKEN. You can still import Activity/CSV and confirm net manually.${details ? ` ${details}` : ""}`;
-  }
-  if (payload?.actionRequired === "reconnect_paypal_mcp" || mcpGrantMissing) {
-    return `PayPal MCP/OAuth grant is invalid or expired. Re-authorize PayPal MCP for the personal account and replace PAYPAL_MCP_REFRESH_TOKEN in Vercel. CSV fallback remains available; keep gross and net separate unless fee/net is proven.${details ? ` ${details}` : ""}`;
   }
   if (phase === "oauth" && providerStatus === "auth_failed") {
     return `PayPal REST credentials rejected by PayPal. Check live/sandbox credentials in Vercel env.${details ? ` ${details}` : ""}`;
