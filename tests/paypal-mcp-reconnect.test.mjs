@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildPayPalMcpAuthorizationUrl,
+  startPayPalMcpCallbackListener,
   validatePayPalMcpReconnectCallback,
 } from "../scripts/reconnect-paypal-mcp.mjs";
 
@@ -32,4 +33,15 @@ test("PayPal MCP reconnect callback rejects missing, mismatched, and provider-er
     validatePayPalMcpReconnectCallback(new URLSearchParams({ code: "one-time-code", state: "expected-state" }), "expected-state"),
     { code: "one-time-code" }
   );
+});
+
+test("PayPal MCP listener is healthy before an authorization URL can be issued", async () => {
+  const listener = await startPayPalMcpCallbackListener({ port: 0 });
+  try {
+    const response = await fetch(`${listener.origin}/health`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, status: "listening" });
+  } finally {
+    await listener.close();
+  }
 });
