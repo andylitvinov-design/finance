@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildPayPalMcpAuthorizationUrl,
   startPayPalMcpCallbackListener,
+  storePayPalMcpProductionCredentials,
   validatePayPalMcpReconnectCallback,
 } from "../scripts/reconnect-paypal-mcp.mjs";
 
@@ -44,4 +45,21 @@ test("PayPal MCP listener is healthy before an authorization URL can be issued",
   } finally {
     await listener.close();
   }
+});
+
+test("PayPal MCP reconnect stores the dynamic client and its refresh grant together", async () => {
+  const calls = [];
+  await storePayPalMcpProductionCredentials({
+    clientId: "test-public-client",
+    refreshToken: "test-refresh-grant",
+  }, async (command, args, input = "") => {
+    calls.push({ command, args, input });
+  });
+
+  assert.deepEqual(calls.map(({ command, args, input }) => ({ command, args, input })), [
+    { command: "npx", args: ["--yes", "vercel", "env", "rm", "PAYPAL_MCP_CLIENT_ID", "production", "--yes"], input: "" },
+    { command: "npx", args: ["--yes", "vercel", "env", "add", "PAYPAL_MCP_CLIENT_ID", "production"], input: "test-public-client\n" },
+    { command: "npx", args: ["--yes", "vercel", "env", "rm", "PAYPAL_MCP_REFRESH_TOKEN", "production", "--yes"], input: "" },
+    { command: "npx", args: ["--yes", "vercel", "env", "add", "PAYPAL_MCP_REFRESH_TOKEN", "production"], input: "test-refresh-grant\n" },
+  ]);
 });
