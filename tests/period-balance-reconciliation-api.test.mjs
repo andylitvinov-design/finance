@@ -8,6 +8,33 @@ import {
 } from "../server/period-balance-reconciliation-route.js";
 import { buildYooMoneyProviderEvidenceFixture } from "../server/provider-ledger-reconciliation-engine.js";
 
+test("period balance reconciliation marks totals unavailable when the manual repository read fails", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-07-14", to: "2026-07-27" },
+    repositoryLoader: async () => ({
+      ok: false,
+      warning: "Manual Google Sheets overlay failed: Quota exceeded for read requests.",
+    }),
+    autoBalanceLoader: async () => ({
+      ok: false,
+      balances: [],
+      warnings: ["Auto balance sheet unavailable: Quota exceeded for read requests."],
+    }),
+  });
+
+  const reconciliation = snapshot.period_balance_reconciliation;
+  assert.equal(reconciliation.source_status, "needs_verification");
+  assert.equal(reconciliation.summary.status, "needs_verification");
+  assert.equal(reconciliation.total_usd_row.status, "needs_verification");
+  assert.equal(reconciliation.total_usd_row.total_coverage_status, "unavailable");
+  assert.equal(reconciliation.reconciliation_report_summary.total_usd_row.status, "needs_verification");
+  assert.equal(reconciliation.reconciliation_report_summary.total_usd_row.total_coverage_status, "unavailable");
+  assert.equal(reconciliation.canonical_total.status, "needs_verification");
+  assert.equal(reconciliation.canonical_total_usd_row.status, "needs_verification");
+  assert.equal(reconciliation.by_channel_currency.length, 0);
+  assert.match(snapshot.warnings.join("\n"), /read access is unavailable/i);
+});
+
 test("period balance reconciliation API snapshot exposes planned and real period deltas", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
     query: { from: "2026-05-11", to: "2026-05-15" },
