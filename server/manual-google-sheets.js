@@ -16,6 +16,7 @@ import {
 } from "./ledger-audit-helpers.js";
 import { FX_RATES_HEADERS as PARSED_FX_RATES_HEADERS, parseFxRateRows } from "./fx-rates.js";
 import { normalizeBalanceValueContract } from "./balance-native-usd-contract.js";
+import { parseSnapshotContractStatus } from "./authoritative-balance-snapshot-contract.js";
 
 export const MANUAL_SPREADSHEET_ID = "1XI_JeQmyrjWtGj_U5o8Rf8kG-oGkC7gmn_e8sbDxoJY";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -1015,7 +1016,7 @@ function normalizeExchangeUsdSign(amountUsd, operation) {
   return numeric;
 }
 
-function parseBalanceRows(values) {
+export function parseBalanceRows(values) {
   const { header, rows } = splitHeaderRows(values);
   const dateIndex = findHeaderIndex(header, ["дата", "date"]);
   const channelIndex = findHeaderIndex(header, ["канал", "account", "channel"]);
@@ -1026,6 +1027,8 @@ function parseBalanceRows(values) {
   const usdIndex = findHeaderIndex(header, ["сумма_usd", "usd amount", "usdAmount"]);
   const commentIndex = findHeaderIndex(header, ["комментарий", "comment"]);
   const sourceIndex = findHeaderIndex(header, ["source"]);
+  const statusIndex = findHeaderIndex(header, ["status"]);
+  const rawSourceIdIndex = findHeaderIndex(header, ["raw_source_id", "raw source id"]);
   return rows
     .map((row, rowIndex) => {
       const rawChannel = String(row[channelIndex] || "").trim();
@@ -1034,6 +1037,9 @@ function parseBalanceRows(values) {
       const comment = commentIndex === -1 ? "" : String(row[commentIndex] || "").trim();
       const isIntraday = isIntradayBalanceComment(comment);
       const rawSource = sourceIndex === -1 ? "" : String(row[sourceIndex] || "").trim();
+      const metadataStatus = statusIndex === -1 ? "" : String(row[statusIndex] || "").trim();
+      const rawSourceId = rawSourceIdIndex === -1 ? "" : String(row[rawSourceIdIndex] || "").trim();
+      const snapshotMetadata = parseSnapshotContractStatus(metadataStatus);
       const balanceSource = classifyBalanceSource({ source: rawSource, comment });
       const rawAmount = String(row[amountIndex] || "").trim();
       const rawUsdAmount = usdIndex === -1 ? "" : String(row[usdIndex] || "").trim();
@@ -1061,6 +1067,10 @@ function parseBalanceRows(values) {
         usdAmount: contract.amount_usd,
         comment,
         source: balanceSource === "provider_auto" ? "provider_auto" : (rawSource || "manual-google-sheets"),
+        ...(rawSource ? { metadataSource: rawSource } : {}),
+        ...(metadataStatus ? { metadataStatus } : {}),
+        ...(rawSourceId ? { rawSourceId } : {}),
+        ...((metadataStatus || rawSourceId || rawSource) ? snapshotMetadata : {}),
         balanceSource,
         status: isIntraday ? "intraday_not_eod" : "",
         balanceStatus: isIntraday ? "intraday_not_eod" : "",

@@ -1,5 +1,6 @@
 const MANUAL_BALANCE_SHEET_NAME = "Остатки";
 const AUTO_BALANCE_SHEET_NAME = "Авто Остатки";
+import { composeAuthoritativeSnapshotRows } from "./authoritative-balance-snapshot-contract.js";
 
 export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = []) {
   const manualRows = (manualBalances || []).map((row) => {
@@ -43,10 +44,14 @@ export function mergeManualAndAutoBalances(manualBalances = [], autoBalances = [
     });
   }
 
-  const rows = [...manualRows, ...autoFallbackRows];
+  const composition = composeAuthoritativeSnapshotRows([...manualRows, ...autoFallbackRows]);
+  const rows = composition.rows;
   return {
     rows,
     merged: rows,
+    excluded_from_authoritative_total: composition.excluded_rows,
+    authoritative_batches: composition.authoritative_batches,
+    authoritative_snapshot_conflicts: composition.conflicts,
     autoUsed: autoFallbackRows.length,
     autoIgnored,
     auto_balance_rows_used_as_fallback: autoFallbackRows.length,

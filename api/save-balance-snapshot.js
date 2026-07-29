@@ -3,10 +3,11 @@ import {
   SHEETS_API_BASE_URL,
   getManualGoogleSheetsAccessToken,
 } from "../server/manual-google-sheets.js";
+import { parseSnapshotContractStatus } from "../server/authoritative-balance-snapshot-contract.js";
 
 const TARGET_SHEET = "Остатки";
 const WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const HEADER = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"];
+const HEADER = ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий", "source", "status", "raw_source_id"];
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -154,7 +155,7 @@ export async function buildOstatkiUpsertPlan({ rows = [], fetchImpl = fetch, exi
       ...(existing || {}),
       ...row,
       comment: row.comment || existing?.comment || "owner_confirmed",
-      source: "owner_confirmed",
+      source: row.metadataSource || existing?.metadataSource || "owner_confirmed",
     };
     outputByKey.set(key, merged);
     if (existing) updated.push(merged);
@@ -178,13 +179,16 @@ export function parseOstatkiValues(values = []) {
       rate: row[headerMap.rate >= 0 ? headerMap.rate : 4],
       usdAmount: row[headerMap.usdAmount >= 0 ? headerMap.usdAmount : 5],
       comment: row[headerMap.comment >= 0 ? headerMap.comment : 6],
+      metadataSource: row[headerMap.metadataSource],
+      metadataStatus: row[headerMap.metadataStatus],
+      rawSourceId: row[headerMap.rawSourceId],
     }))
     .filter(Boolean);
 }
 
-async function readOstatkiValues({ fetchImpl = fetch } = {}) {
+export async function readOstatkiValues({ fetchImpl = fetch } = {}) {
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: WRITE_SCOPE, fetchImpl });
-  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:G`);
+  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:J`);
   const response = await fetchImpl(
     `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}`,
     {
@@ -202,9 +206,9 @@ async function readOstatkiValues({ fetchImpl = fetch } = {}) {
   return payload.values || [];
 }
 
-async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
+export async function writeOstatkiRows(rows = [], { fetchImpl = fetch } = {}) {
   const accessToken = await getManualGoogleSheetsAccessToken({ scope: WRITE_SCOPE, fetchImpl });
-  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:G`);
+  const range = encodeURIComponent(`'${TARGET_SHEET}'!A:J`);
   const clearResponse = await fetchImpl(
     `${SHEETS_API_BASE_URL}/spreadsheets/${MANUAL_SPREADSHEET_ID}/values/${range}:clear`,
     {
@@ -252,6 +256,10 @@ function normalizeSnapshotRow(row = {}, payload = {}) {
   const usdAmount = row.usdAmount ?? row.amount_usd ?? row.amountUsd ?? "";
   if (!date || !channel || !currency) return null;
   if ((amount === undefined || amount === null || amount === "") && (usdAmount === undefined || usdAmount === null || usdAmount === "")) return null;
+  const metadataSource = String(row.metadataSource ?? row.source ?? payload.metadataSource ?? payload.source ?? "").trim();
+  const metadataStatus = String(row.metadataStatus ?? row.status ?? payload.metadataStatus ?? payload.status ?? "").trim();
+  const rawSourceId = String(row.rawSourceId ?? row.raw_source_id ?? payload.rawSourceId ?? payload.raw_source_id ?? "").trim();
+  const contract = parseSnapshotContractStatus(metadataStatus);
   return {
     date,
     channel,
@@ -260,6 +268,10 @@ function normalizeSnapshotRow(row = {}, payload = {}) {
     rate: normalizeNumberText(row.rate ?? row.fxRate ?? ""),
     usdAmount: normalizeNumberText(usdAmount),
     comment: String(row.comment || row.status || row.source || payload.comment || "owner_confirmed").trim() || "owner_confirmed",
+    ...(metadataSource ? { metadataSource } : {}),
+    ...(metadataStatus ? { metadataStatus } : {}),
+    ...(rawSourceId ? { rawSourceId } : {}),
+    metadataReliability: contract.metadata_reliability,
   };
 }
 
@@ -272,6 +284,9 @@ function buildOstatkiValues(rows = []) {
     row.rate || "",
     row.usdAmount || "",
     row.comment || "",
+    row.metadataSource || "",
+    row.metadataStatus || "",
+    row.rawSourceId || "",
   ])];
 }
 
@@ -286,6 +301,9 @@ function buildHeaderMap(header = []) {
     rate: find(["курс", "rate"]),
     usdAmount: find(["сумма usd", "сумма_usd", "amount usd", "amount_usd", "usdamount"]),
     comment: find(["комментарий", "comment", "status", "source"]),
+    metadataSource: find(["source"]),
+    metadataStatus: find(["status"]),
+    rawSourceId: find(["raw source id", "raw_source_id"]),
   };
 }
 

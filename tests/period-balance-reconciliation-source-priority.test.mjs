@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildPeriodBalanceReconciliationSnapshot } from "../server/period-balance-reconciliation-route.js";
+import { buildOwnerConfirmedJulySnapshotRows } from "../server/authoritative-balance-snapshot-contract.js";
 
 test("reconciliation source priority is manual over auto over missing", async () => {
   const snapshot = await buildPeriodBalanceReconciliationSnapshot({
@@ -494,4 +495,30 @@ test("manual period-start opening overrides auto and auto-only fact stays pendin
   assert.equal(autoFact.needsManualConfirmation, true);
   assert.equal(autoFact.sourceSheet, "Авто Остатки");
   assert.equal(autoFact.sourceRow, 23);
+});
+
+test("reconciliation exposes factual-full owner opening and closing without changing ledger movement", async () => {
+  const snapshot = await buildPeriodBalanceReconciliationSnapshot({
+    query: { from: "2026-07-01", to: "2026-07-29" },
+    repositoryLoader: async () => ({
+      ok: true,
+      operations: [],
+      balances: buildOwnerConfirmedJulySnapshotRows(),
+      autoBalances: [
+        { date: "2026-07-01", channel: "Бинанс spot", currency: "USDT", amount: "999", source: "provider", sourceSheet: "Авто Остатки" },
+      ],
+      plannedRows: [],
+      plannedSourceStatus: "available",
+      warnings: [],
+    }),
+  });
+
+  assert.deepEqual(snapshot.period_balance_reconciliation.authoritative_snapshot, {
+    opening: { date: "2026-07-01", total_usd: 21090.5, source_status: "factual_full" },
+    closing: { date: "2026-07-29", total_usd: 22454.5, source_status: "factual_full" },
+    factual_change_usd: 1364,
+    ledger_movement_usd: null,
+    unexplained_difference_usd: null,
+  });
+  assert.equal(snapshot.period_balance_reconciliation.diagnostics.excluded_from_authoritative_total, 1);
 });
