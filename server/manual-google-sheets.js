@@ -418,14 +418,16 @@ export async function appendManualLedgerRows({ rows = [], fetchImpl = fetch, spr
     fetchImpl,
   });
   const values = valuesBySheet[LEDGER_SHEET_NAME] || [];
-  const header = (values[0] || []).map((value) => String(value || "").trim().toLowerCase());
-  const requiredHeaders = ["date", "operation", "amount", "currency", "external_id", "raw_source_id"];
-  if (!requiredHeaders.every((name) => header.includes(name))) {
+  const header = (values[0] || []).map((value) => String(value || "").trim());
+  const canonicalHeader = header.map(resolveManualLedgerImportHeader);
+  const requiredHeaders = ["date", "operation", "amount", "currency"];
+  if (!requiredHeaders.every((name) => canonicalHeader.includes(name)) ||
+      (!canonicalHeader.includes("external_id") && !canonicalHeader.includes("raw_source_id"))) {
     throw new Error("Ledger header does not satisfy the idempotent provider import contract.");
   }
-  const externalIndex = header.indexOf("external_id");
-  const rawIndex = header.indexOf("raw_source_id");
-  const seen = new Set((values.slice(1) || []).flatMap((row) => [row?.[externalIndex], row?.[rawIndex]]
+  const externalIndex = canonicalHeader.indexOf("external_id");
+  const rawIndex = canonicalHeader.indexOf("raw_source_id");
+  const seen = new Set((values.slice(1) || []).flatMap((row) => [externalIndex === -1 ? "" : row?.[externalIndex], rawIndex === -1 ? "" : row?.[rawIndex]]
     .map((value) => String(value || "").trim()).filter(Boolean)));
   const appended = [];
   let duplicateCount = 0;
@@ -474,7 +476,7 @@ export async function appendManualLedgerRows({ rows = [], fetchImpl = fetch, spr
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ values: appended.map((row) => {
         const valuesByHeader = byHeader(row);
-        return header.map((name) => valuesByHeader[name] ?? "");
+        return canonicalHeader.map((name) => valuesByHeader[name] ?? "");
       }) }),
     }
   );
@@ -486,6 +488,48 @@ export async function appendManualLedgerRows({ rows = [], fetchImpl = fetch, spr
     skippedCount: rows.length - candidates.length,
     updatedRange: payload?.updates?.updatedRange || null,
   };
+}
+
+export function resolveManualLedgerImportHeader(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const aliases = {
+    "дата": "date",
+    "операция": "operation",
+    "канал_списания": "from_channel",
+    "канал_from": "from_channel",
+    "канал_зачисления": "to_channel",
+    "канал_to": "to_channel",
+    "сумма": "amount",
+    "валюта": "currency",
+    "сумма_usd": "amount_usd",
+    "usd_amount": "amount_usd",
+    "amount_usd": "amount_usd",
+    "amount_gross": "amount_gross",
+    "client_paid": "amount_gross",
+    "gross": "amount_gross",
+    "amount_fee": "amount_fee",
+    "provider_fee": "amount_fee",
+    "fee": "amount_fee",
+    "amount_net": "amount_net",
+    "net_received": "amount_net",
+    "net": "amount_net",
+    "категория": "category",
+    "подкатегория": "subcategory",
+    "направление": "direction",
+    "комментарий": "comment",
+    "контрагент": "counterparty",
+    "описание": "description",
+    "источник": "source",
+    "external_id": "external_id",
+    "external_id_": "external_id",
+    "raw_source_id": "raw_source_id",
+    "source_transaction_id": "raw_source_id",
+    "transfer_group_id": "transfer_group_id",
+    "exchange_group_id": "transfer_group_id",
+    "created_at": "created_at",
+    "updated_at": "updated_at",
+  };
+  return aliases[normalized] || normalized;
 }
 
 function buildOstatkiSheetValues(rows = []) {

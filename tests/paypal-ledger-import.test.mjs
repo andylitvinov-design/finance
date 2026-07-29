@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildPayPalLedgerImportPlan } from "../server/paypal-ledger-import.js";
+import { resolveManualLedgerImportHeader } from "../server/manual-google-sheets.js";
 
 test("PayPal import plan keeps gross, fee, net, direction, and stable source id", () => {
   const plan = buildPayPalLedgerImportPlan({
@@ -73,4 +74,12 @@ test("PayPal import plan is idempotent by stable external or source transaction 
   assert.equal(plan.counts.new, 0);
   assert.equal(plan.counts.duplicates, 1);
   assert.equal(plan.rows.length, 0);
+});
+
+test("PayPal Ledger append accepts existing normalized header aliases", () => {
+  assert.deepEqual(
+    ["Date", "Operation", "From channel", "To channel", "Amount", "Currency", "External ID", "Raw Source ID"]
+      .map(resolveManualLedgerImportHeader),
+    ["date", "operation", "from_channel", "to_channel", "amount", "currency", "external_id", "raw_source_id"]
+  );
 });
