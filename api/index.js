@@ -22,6 +22,7 @@ import {
   validateBalanceScreenshotImages,
 } from "../server/balance-screenshot-draft.js";
 import paypalManualBalanceHandler from "../server/paypal-manual-balance.js";
+import paypalLedgerImportHandler from "../server/paypal-ledger-import-route.js";
 import periodBalanceReconciliationHandler from "../server/period-balance-reconciliation-route.js";
 import { loadManualRepositoryFromGoogleSheets } from "../server/manual-google-sheets.js";
 import {
@@ -51,6 +52,7 @@ const RECONCILE_BALANCES_AND_TRANSFERS_ACTION = "reconcileBalancesAndTransfers";
 const PAYONEER_TRANSACTIONS_ACTION = "payoneerTransactions";
 const REVOLUT_TRANSACTIONS_ACTION = "revolutTransactions";
 const PAYPAL_MANUAL_BALANCE_ACTION = "paypalManualBalance";
+const PAYPAL_LEDGER_IMPORT_ACTION = "paypalImport";
 const BALANCE_PAIRS_ACTION = "balancePairs";
 const DEBUG_GOOGLE_ACTION = "debugGoogle";
 const PARSE_BALANCE_SCREENSHOT_ACTION = "parseBalanceScreenshot";
@@ -231,6 +233,10 @@ export default async function handler(request, response) {
 
   if (debugAction === PAYPAL_MANUAL_BALANCE_ACTION) {
     return await paypalManualBalanceHandler(request, response);
+  }
+
+  if (debugAction === PAYPAL_LEDGER_IMPORT_ACTION) {
+    return await paypalLedgerImportHandler(request, response);
   }
 
   if (debugAction === BALANCE_PAIRS_ACTION) {

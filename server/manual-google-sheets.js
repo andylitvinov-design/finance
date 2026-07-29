@@ -400,6 +400,94 @@ export async function appendManualOstatkiRows({ rows = [], fetchImpl = fetch, sp
   };
 }
 
+export async function appendManualLedgerRows({ rows = [], fetchImpl = fetch, spreadsheetId = MANUAL_SPREADSHEET_ID } = {}) {
+  const candidates = (rows || []).filter((row) =>
+    String(row?.date || "").trim() &&
+    String(row?.operation || "").trim() &&
+    String(row?.amount || "").trim() &&
+    String(row?.currency || "").trim() &&
+    String(row?.externalId || row?.external_id || row?.rawSourceId || row?.raw_source_id || "").trim()
+  );
+  if (!candidates.length) return { addedCount: 0, duplicateCount: 0, skippedCount: rows.length, updatedRange: null };
+
+  const accessToken = await getManualGoogleSheetsAccessToken({ scope: SHEETS_WRITE_SCOPE, fetchImpl });
+  const valuesBySheet = await batchGetSheetValues({
+    spreadsheetId,
+    sheetNames: [LEDGER_SHEET_NAME],
+    accessToken,
+    fetchImpl,
+  });
+  const values = valuesBySheet[LEDGER_SHEET_NAME] || [];
+  const header = (values[0] || []).map((value) => String(value || "").trim().toLowerCase());
+  const requiredHeaders = ["date", "operation", "amount", "currency", "external_id", "raw_source_id"];
+  if (!requiredHeaders.every((name) => header.includes(name))) {
+    throw new Error("Ledger header does not satisfy the idempotent provider import contract.");
+  }
+  const externalIndex = header.indexOf("external_id");
+  const rawIndex = header.indexOf("raw_source_id");
+  const seen = new Set((values.slice(1) || []).flatMap((row) => [row?.[externalIndex], row?.[rawIndex]]
+    .map((value) => String(value || "").trim()).filter(Boolean)));
+  const appended = [];
+  let duplicateCount = 0;
+  for (const row of candidates) {
+    const ids = [row.externalId || row.external_id, row.rawSourceId || row.raw_source_id]
+      .map((value) => String(value || "").trim()).filter(Boolean);
+    if (ids.some((id) => seen.has(id))) {
+      duplicateCount += 1;
+      continue;
+    }
+    ids.forEach((id) => seen.add(id));
+    appended.push(row);
+  }
+  if (!appended.length) return { addedCount: 0, duplicateCount, skippedCount: rows.length - candidates.length, updatedRange: null };
+
+  const byHeader = (row) => ({
+    date: row.date,
+    operation: row.operation,
+    from_channel: row.fromChannel || row.from_channel || "",
+    to_channel: row.toChannel || row.to_channel || "",
+    amount: row.amount,
+    currency: row.currency,
+    amount_usd: row.amountUsd ?? row.amount_usd ?? "",
+    amount_gross: row.amountGross ?? row.amount_gross ?? "",
+    amount_fee: row.amountFee ?? row.amount_fee ?? "",
+    amount_net: row.amountNet ?? row.amount_net ?? "",
+    category: row.category || "",
+    subcategory: row.subcategory || "",
+    direction: row.direction || "",
+    comment: row.comment || "",
+    counterparty: row.counterparty || "",
+    description: row.description || "",
+    source: row.source || "",
+    external_id: row.externalId || row.external_id || "",
+    raw_source_id: row.rawSourceId || row.raw_source_id || "",
+    transfer_group_id: row.transferGroupId || row.transfer_group_id || "",
+    created_at: row.createdAt || row.created_at || "",
+    updated_at: row.updatedAt || row.updated_at || "",
+  });
+  const escaped = LEDGER_SHEET_NAME.replace(/'/g, "''");
+  const range = encodeURIComponent(`'${escaped}'!A:V`);
+  const response = await fetchImpl(
+    `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ values: appended.map((row) => {
+        const valuesByHeader = byHeader(row);
+        return header.map((name) => valuesByHeader[name] ?? "");
+      }) }),
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error?.message || `Sheets Ledger append failed with HTTP ${response.status}`);
+  return {
+    addedCount: appended.length,
+    duplicateCount,
+    skippedCount: rows.length - candidates.length,
+    updatedRange: payload?.updates?.updatedRange || null,
+  };
+}
+
 function buildOstatkiSheetValues(rows = []) {
   return [
     ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий"],
