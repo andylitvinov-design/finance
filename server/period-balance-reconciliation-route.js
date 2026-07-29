@@ -180,6 +180,11 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     plannedSourceStatus,
     period,
   });
+  reconciliation.authoritative_snapshot = buildAuthoritativeSnapshotBridge(
+    balanceSnapshotMerge.authoritative_batches,
+    period,
+    reconciliation
+  );
   annotateReconciliationSources(reconciliation, sourceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
   annotateDailyBalanceCoverage(reconciliation, {
@@ -198,6 +203,9 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     auto_balance_status_rows_loaded: autoStatusRows.length,
     auto_balance_status_counts: countAutoBalanceStatuses(autoStatusRows),
     balance_snapshot_rows_loaded: balanceRows.length,
+    excluded_from_authoritative_total: balanceSnapshotMerge.excluded_from_authoritative_total?.length || 0,
+    authoritative_snapshot_batches: balanceSnapshotMerge.authoritative_batches || [],
+    authoritative_snapshot_conflicts: balanceSnapshotMerge.authoritative_snapshot_conflicts || [],
     ocr_alias_collisions: ocrAliasCollisions,
     calculated_balance_rows_built: calculatedBalanceRows.length,
     fx_rates_rows_loaded: Array.isArray(repository.fxRates) ? repository.fxRates.length : 0,
@@ -224,6 +232,24 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     mutates_data: false,
     period_balance_reconciliation: reconciliation,
     warnings: unique(warnings),
+  };
+}
+
+function buildAuthoritativeSnapshotBridge(batches = [], period = {}, reconciliation = {}) {
+  const openingBatch = (batches || []).find((batch) => batch.effective_date === period.from) || null;
+  const closingBatch = (batches || []).find((batch) => batch.effective_date === period.to) || null;
+  const opening = openingBatch ? { date: openingBatch.effective_date, total_usd: openingBatch.total_usd, source_status: openingBatch.total_source_status } : null;
+  const closing = closingBatch ? { date: closingBatch.effective_date, total_usd: closingBatch.total_usd, source_status: closingBatch.total_source_status } : null;
+  const factualChange = opening && closing ? round(closing.total_usd - opening.total_usd) : null;
+  const ledgerMovement = Number.isFinite(reconciliation?.total_usd_row?.real_delta_usd)
+    ? reconciliation.total_usd_row.real_delta_usd
+    : null;
+  return {
+    opening,
+    closing,
+    factual_change_usd: factualChange,
+    ledger_movement_usd: ledgerMovement,
+    unexplained_difference_usd: factualChange !== null && ledgerMovement !== null ? round(factualChange - ledgerMovement) : null,
   };
 }
 

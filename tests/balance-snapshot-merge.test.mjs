@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { mergeManualAndAutoBalances } from "../server/balance-snapshot-merge.js";
+import { buildOwnerConfirmedJulySnapshotRows } from "../server/authoritative-balance-snapshot-contract.js";
 
 test("owner-confirmed YooMoney Остатки rows override same-date auto snapshots", () => {
   const result = mergeManualAndAutoBalances(
@@ -204,4 +205,17 @@ test("retired legacy combined Binance derived row is not selected as auto fallba
   assert.equal(result.autoIgnored, 1);
   assert.equal(result.autoUsed, 0);
   assert.deepEqual(result.rows, []);
+});
+
+test("owner-confirmed full batch excludes same-date provider components without deleting their diagnostics", () => {
+  const ownerRows = buildOwnerConfirmedJulySnapshotRows().filter((row) => row.date === "2026-07-29");
+  const result = mergeManualAndAutoBalances(ownerRows, [
+    { date: "2026-07-29", channel: "Бинанс spot", currency: "USDT", amount: "999", amount_usd: "999", source: "provider", sourceSheet: "Авто Остатки" },
+    { date: "2026-07-29", channel: "REVOLUT дол", currency: "USD", amount: "50", amount_usd: "50", source: "provider", sourceSheet: "Авто Остатки" },
+  ]);
+
+  assert.equal(result.rows.length, ownerRows.length);
+  assert.equal(result.authoritative_batches[0].total_usd, 22454.5);
+  assert.equal(result.excluded_from_authoritative_total.length, 2);
+  assert.equal(result.excluded_from_authoritative_total[0].exclusion_reason, "owner_confirmed_full_batch");
 });

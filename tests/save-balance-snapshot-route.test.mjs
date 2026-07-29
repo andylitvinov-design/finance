@@ -32,6 +32,7 @@ test("save-balance-snapshot parses owner rows with rate and usd amount", () => {
       rate: "0,74",
       usdAmount: "7798,12",
       comment: "owner_confirmed",
+      metadataReliability: "legacy_unreliable",
     },
   ]);
 });
@@ -70,8 +71,22 @@ test("parseOstatkiValues preserves amount rate usd and comment columns", () => {
       rate: "1",
       usdAmount: "2020",
       comment: "owner_confirmed",
+      metadataReliability: "legacy_unreliable",
     },
   ]);
+});
+
+test("parseOstatkiValues preserves A:J snapshot metadata and marks absent legacy metadata unreliable", () => {
+  const rows = parseOstatkiValues([
+    ["дата", "канал", "сумма", "валюта", "курс", "сумма_usd", "комментарий", "source", "status", "raw_source_id"],
+    ["2026-07-01", "Wise USD", "1275", "USD", "", "1275", "owner_confirmed_full_snapshot", "owner_confirmed", "snapshot_contract_v1:%7B%22completeness%22%3A%22full%22%7D", "owner-confirmed-july-2026-07-01"],
+    ["2026-06-26", "legacy", "1", "USD", "1", "1", "legacy"],
+  ]);
+
+  assert.equal(rows[0].metadataSource, "owner_confirmed");
+  assert.match(rows[0].metadataStatus, /^snapshot_contract_v1:/);
+  assert.equal(rows[0].rawSourceId, "owner-confirmed-july-2026-07-01");
+  assert.equal(rows[1].metadataReliability, "legacy_unreliable");
 });
 
 test("parseJsonBody supports already parsed and string payloads", () => {
