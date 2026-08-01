@@ -1542,24 +1542,103 @@ test("PayPal EUR missing amount_net blocks without gross-as-net substitution", (
         date: "2026-05-12",
         fromChannel: "пейпал евр",
         currency: "EUR",
-        amountGross: "100",
+        amountGross: "36",
         amountNet: "",
-        balanceAmount: -100,
+        balanceAmount: -36,
         source: "paypal",
-        ledgerV2: { date: "2026-05-12", operation: "expense", source: "paypal", from_channel: "пейпал евр", currency: "EUR", amount_gross: "100", amount_fee: "", amount_net: "", balance_amount: -100 },
+        ledgerV2: { date: "2026-05-12", operation: "expense", source: "paypal", from_channel: "пейпал евр", currency: "EUR", amount_gross: "36", amount_fee: "", amount_net: "", balance_amount: -36 },
       },
     ],
     balanceRows: [
       { date: "2026-05-10", channel: "пейпал евр", currency: "EUR", amount: "0" },
-      { date: "2026-05-15", channel: "пейпал евр", currency: "EUR", amount: "-100" },
+      { date: "2026-05-15", channel: "пейпал евр", currency: "EUR", amount: "-36" },
     ],
   });
   const row = result.by_channel_currency[0];
   assert.equal(result.summary.status, "blocked");
   assert.equal(row.status, "missing_amount_net");
+  assert.equal(row.blocker_classification, "missing_amount_net");
   assert.equal(row.real_outflow, 0);
   assert.equal(row.missing_amount_net_rows, 1);
+  assert.equal(row.repair_action, "manual_confirm_amount_net");
+  assert.equal(row.diagnostic_candidates[0].safe_to_apply, false);
+  assert.match(row.fix_action, /gross не использовать/);
   assert.match(result.warnings.join(" "), /provider permission/);
+});
+
+test("Privat UAH no movement diff is classified for movement or fact confirmation without repair", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [],
+    balanceRows: [
+      { date: "2026-04-30", channel: "приват 24-грн", currency: "UAH", amount: "11239" },
+      { date: "2026-05-20", channel: "приват 24-грн", currency: "UAH", amount: "20096" },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "mismatch");
+  assert.equal(row.blocker_classification, "missing_movement_or_fact_confirmation");
+  assert.equal(row.movement_rows, 0);
+  assert.equal(row.real_difference, 8857);
+  assert.equal(row.safe_to_auto_repair, false);
+  assert.equal(row.diagnostic_candidates[0].type, "missing_movement_or_fact_confirmation");
+  assert.match(row.fix_action, /не создавать movement автоматически/);
+});
+
+test("Binance spot and binance save stay separate account channels", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [
+      {
+        date: "2026-05-02",
+        toChannel: "Бинанс spot",
+        currency: "USDT",
+        amountNet: "1018.5",
+        balanceAmount: 1018.5,
+        ledgerV2: { date: "2026-05-02", operation: "income", to_channel: "Бинанс spot", currency: "USDT", amount_net: "1018.5", balance_amount: 1018.5 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-04-30", channel: "Бинанс spot", currency: "USDT", amount: "1090" },
+      { date: "2026-05-20", channel: "Бинанс spot", currency: "USDT", amount: "2112" },
+      { date: "2026-04-30", channel: "binance save", currency: "USDT", amount: "8519" },
+      { date: "2026-05-20", channel: "binance save", currency: "USDT", amount: "7432" },
+    ],
+  });
+  const rows = new Map(result.by_channel_currency.map((row) => [row.channel, row]));
+  assert.equal(rows.size, 2);
+  assert.equal(rows.get("Бинанс spot").real_difference, 3.5);
+  assert.equal(rows.get("binance save").real_difference, -1087);
+  assert.equal(rows.get("Бинанс spot").blocker_classification, "account_split_mismatch");
+  assert.equal(rows.get("binance save").blocker_classification, "account_split_mismatch");
+  assert.match(rows.get("binance save").fix_action, /не объединять каналы автоматически/);
+});
+
+test("Wise USD residual outputs candidates only and does not mutate data", () => {
+  const result = buildPeriodBalanceReconciliation({
+    period: { from: "2026-05-01", to: "2026-05-20" },
+    operations: [
+      {
+        date: "2026-05-02",
+        fromChannel: "трансервайз дол",
+        currency: "USD",
+        amountNet: "1807.26",
+        balanceAmount: -1807.26,
+        ledgerV2: { date: "2026-05-02", operation: "expense", from_channel: "трансервайз дол", currency: "USD", amount_net: "1807.26", balance_amount: -1807.26 },
+      },
+    ],
+    balanceRows: [
+      { date: "2026-04-30", channel: "трансервайз дол", currency: "USD", amount: "2639" },
+      { date: "2026-05-20", channel: "трансервайз дол", currency: "USD", amount: "827" },
+    ],
+  });
+  const row = result.by_channel_currency[0];
+  assert.equal(row.status, "mismatch");
+  assert.equal(row.blocker_classification, "residual_fee_or_rounding_needs_verification");
+  assert.equal(row.real_difference, -4.74);
+  assert.equal(row.safe_to_auto_repair, false);
+  assert.equal(row.diagnostic_candidates[0].type, "residual_fee_or_rounding_needs_verification");
+  assert.equal(row.diagnostic_candidates[0].safe_to_apply, false);
 });
 
 test("Binance spot USDT movement without manual/provider fact reports missing provider balance", () => {
