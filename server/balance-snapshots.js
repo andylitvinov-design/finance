@@ -20,6 +20,8 @@ import { applyOwnerMayCurrentBalanceSnapshot } from "./may-2026-owner-current-ba
 import { applyOwnerMayOpeningBalanceSeed } from "./may-2026-owner-opening-balances.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 import { buildProviderBalanceMatrix } from "./provider-balance-matrix.js";
+import { buildOwnerBalanceView } from "./owner-balance-view.js";
+import registry from "../balance-channel-registry.js";
 
 const PROJECT_NAME = "ezohata-incoming-ledger";
 const BALANCE_SHEET_NAME = "Остатки";
@@ -213,6 +215,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     selectedDateStatus: selectedDateCoverage.status,
   });
   const factBalanceRows = buildFactBalanceRows(repository, periodFilter, normalizedRows.filter((row) => row.valid));
+  const ownerBalanceView = buildOwnerBalanceView(validMergedRows, { date: selectedDateSummary.selected_date });
 
   return {
     total_rows: filteredRows.length,
@@ -251,6 +254,7 @@ export function buildBalanceSnapshotsSummary(balanceRows = [], periodFilter = {}
     selected_rows: buildSelectedRows(selectedDateSummary.rows),
     selected_date: selectedDateSummary.selected_date,
     total_usd: selectedTotalUsd,
+    ...ownerBalanceView,
     canonical_total_usd: canonicalTotal.canonical_total_usd,
     canonical_total: canonicalTotal,
     selected_date_rows: buildDetailedRows(selectedDateSummary.rows),
@@ -344,26 +348,18 @@ function emptyBalanceSnapshotsSummary() {
 function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) {
   if (!targetDate) return [];
   const activePairs = new Map();
-  for (const channel of loadConfiguredChannels()) {
-    const currency = inferCurrencyFromChannel(channel);
-    if (currency) addActivePair(activePairs, { channel, currency });
-  }
-  for (const row of balanceRows || []) {
-    addActivePair(activePairs, row);
-  }
-  for (const operation of operations || []) {
-    for (const pair of getOperationChannelCurrencyPairs(operation)) {
-      addActivePair(activePairs, pair);
-    }
-  }
+  for (const owner of registry.listOwnerChannels({ date: targetDate })) addActivePair(activePairs, { channel: owner.display_name, currency: owner.native_currency });
 
   const existingByKey = new Map();
   for (const row of balanceRows || []) {
-    if (row.date === targetDate) existingByKey.set(makeKey(row.channel, row.currency), row);
+    if (row.date !== targetDate) continue;
+    const mapped = registry.resolveOwnerChannel(row.channel, row.currency);
+    const owner = registry.getOwnerChannel(mapped.key);
+    existingByKey.set(makeKey(owner?.display_name || row.channel, owner?.native_currency || row.currency), row);
   }
 
   return Array.from(activePairs.values())
-    .sort(compareChannelCurrency)
+    .sort((left, right) => ownerDisplayOrder(left.channel) - ownerDisplayOrder(right.channel))
     .map((pair) => {
       const existing = existingByKey.get(makeKey(pair.channel, pair.currency));
       const existingAmount = existing ? existing.amount : null;
@@ -381,6 +377,10 @@ function buildInputRows({ targetDate, balanceRows = [], operations = [] } = {}) 
         status: existingAmount === null ? "needs_input" : "already_entered",
       };
     });
+}
+
+function ownerDisplayOrder(channel) {
+  return registry.OWNER_CHANNELS.find((owner) => owner.display_name === channel)?.display_order || Number.MAX_SAFE_INTEGER;
 }
 
 function buildFactBalanceRows(repository = {}, periodFilter = {}, balanceRows = []) {

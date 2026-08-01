@@ -1,3 +1,5 @@
+import registry from "../balance-channel-registry.js";
+
 const STATUS_PREFIX = "snapshot_contract_v1:";
 
 export const OWNER_CONFIRMED_JULY_SNAPSHOT_BATCHES = Object.freeze([
@@ -49,7 +51,13 @@ export function parseSnapshotContractStatus(value) {
 export function buildOwnerConfirmedJulySnapshotRows({ createdAt = "2026-07-29T00:00:00.000Z", createdBy = "owner" } = {}) {
   return OWNER_CONFIRMED_JULY_SNAPSHOT_BATCHES.flatMap((batch) => batch.rows.map((entry) => {
     const [channel, amount, currency, amountUsd, representation = "standalone", reliability = "reliable"] = entry;
+    const ownerMapping = registry.resolveOwnerChannel(channel, currency);
+    const owner = registry.getOwnerChannel(ownerMapping.key);
+    if (!owner || ownerMapping.status !== "mapped") {
+      throw new Error(`Owner-confirmed fixture row is not in the canonical registry: ${channel} / ${currency}`);
+    }
     const metadata = {
+      owner_key: owner.key,
       snapshot_batch_id: batch.snapshot_batch_id,
       effective_date: batch.effective_date,
       source: "owner_confirmed",
@@ -63,7 +71,10 @@ export function buildOwnerConfirmedJulySnapshotRows({ createdAt = "2026-07-29T00
     };
     return {
       date: batch.effective_date,
-      channel,
+      channel: owner.display_name,
+      display_name: owner.display_name,
+      display_order: owner.display_order,
+      owner_key: owner.key,
       amount,
       currency,
       rate: "",
@@ -75,7 +86,7 @@ export function buildOwnerConfirmedJulySnapshotRows({ createdAt = "2026-07-29T00
       rawSourceId: batch.raw_source_id,
       ...metadata,
     };
-  }));
+  }).sort((left, right) => left.display_order - right.display_order));
 }
 
 export function composeAuthoritativeSnapshotRows(rows = []) {
@@ -150,8 +161,10 @@ export function normalizeContractRow(row = {}) {
     effective_date: row.effective_date ?? row.effectiveDate ?? row.date ?? persisted.effective_date,
     source: row.metadataSource ?? row.metadata_source ?? row.source ?? persisted.source,
     raw_source_id: row.rawSourceId ?? row.raw_source_id ?? persisted.raw_source_id,
+    owner_key: row.owner_key ?? row.ownerKey ?? persisted.owner_key,
     completeness: row.completeness ?? persisted.completeness,
     explicit_zero: row.explicit_zero ?? row.explicitZero ?? persisted.explicit_zero,
+    omitted: row.omitted ?? persisted.omitted,
     representation: row.representation ?? persisted.representation,
     metadata_reliability: row.metadata_reliability ?? row.metadataReliability ?? persisted.metadata_reliability,
     created_at: row.created_at ?? row.createdAt ?? persisted.created_at,
@@ -161,6 +174,7 @@ export function normalizeContractRow(row = {}) {
     ...row,
     ...metadata,
     source: metadata.source || row.source || "",
+    owner_key: metadata.owner_key,
     date: metadata.effective_date || row.date || "",
     amount_usd: numericOrNull(row.amount_usd ?? row.usdAmount),
   };
@@ -190,11 +204,13 @@ function normalizeMetadata(metadata = {}) {
   const representation = normalizeEnum(metadata.representation, ["aggregate", "component", "standalone"], "standalone");
   const metadata_reliability = normalizeEnum(metadata.metadata_reliability, ["reliable", "legacy_unreliable", "needs_verification"], "legacy_unreliable");
   return {
+    owner_key: String(metadata.owner_key || "").trim(),
     snapshot_batch_id: String(metadata.snapshot_batch_id || "").trim(),
     effective_date: normalizeDate(metadata.effective_date),
     source,
     completeness,
     explicit_zero: metadata.explicit_zero === true || String(metadata.explicit_zero).toLowerCase() === "true",
+    omitted: metadata.omitted === true || String(metadata.omitted).toLowerCase() === "true" ? true : undefined,
     representation,
     raw_source_id: String(metadata.raw_source_id || "").trim(),
     metadata_reliability,

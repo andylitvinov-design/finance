@@ -8,6 +8,7 @@ import { buildDailyBalanceCoverage } from "./daily-balance-engine.js";
 import { loadManualRepositoryFromGoogleSheets } from "./manual-google-sheets.js";
 import { buildPeriodBalanceReconciliation } from "./period-balance-reconciliation-engine.js";
 import { buildProviderLedgerReconciliation } from "./provider-ledger-reconciliation-engine.js";
+import { buildOwnerBalanceView } from "./owner-balance-view.js";
 import { fetchYooMoneyStatementEntries } from "../api/yoomoney-transactions.js";
 import { canonicalOstatkiChannel } from "../api/save-balance-snapshot.js";
 
@@ -164,6 +165,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
   const rawBalanceRows = balanceSnapshotMerge.rows || balanceSnapshotMerge.merged || [];
   const ocrAliasCollisions = buildOcrAliasCollisionDiagnostics(rawBalanceRows);
   const balanceRows = canonicalizeBalanceRowChannels(rawBalanceRows);
+  const ownerBalanceView = buildOwnerBalanceView(rawBalanceRows, { date: period.to });
   const calculatedBalances = buildDailyCalculatedBalances({
     operations: repository.operations || [],
     balanceRows,
@@ -185,6 +187,7 @@ export async function buildPeriodBalanceReconciliationSnapshot(options = {}) {
     period,
     reconciliation
   );
+  Object.assign(reconciliation, ownerBalanceView);
   annotateReconciliationSources(reconciliation, sourceRows);
   annotateBalanceSourceDiagnostics(reconciliation, period);
   annotateDailyBalanceCoverage(reconciliation, {

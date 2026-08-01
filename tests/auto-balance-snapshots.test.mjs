@@ -10,6 +10,7 @@ import {
   EXPECTED_PROVIDER_BALANCES,
   collectProviderBalanceRows,
   buildPayPalManualBalanceRows,
+  classifyAutoBalanceSnapshotWrite,
   derivePayoneerBalanceRow,
   derivePayPalBalanceRow,
   mergeBalanceRowsByDateChannelCurrency,
@@ -368,6 +369,31 @@ test("same date provider channel currency replaces existing auto row without del
     "wise|трансервайз евро|EUR|2|old-eur",
     "wise|трансервайз дол|USD|9|new-usd",
   ]);
+});
+
+test("auto-balance write reporting skips a semantically unchanged derived row", () => {
+  const existing = {
+    date: "2026-07-29",
+    provider: "derived",
+    channel: "wise usd",
+    amount: "90",
+    currency: "USD",
+    rate: "1",
+    usdAmount: "90",
+    source: "derived_from_confirmed_balance",
+    fetchedAt: "2026-07-29T09:00:00.000Z",
+    rawSourceId: "derived_from_confirmed_balance:2026-07-29:wise usd:USD",
+    status: "derived_from_confirmed_balance",
+    comment: "Derived from confirmed balance.",
+  };
+  const result = classifyAutoBalanceSnapshotWrite([existing], [{ ...existing, fetchedAt: "2026-07-29T10:00:00.000Z" }]);
+
+  assert.deepEqual(result, {
+    rows_to_write: [],
+    inserted: 0,
+    updated: 0,
+    skipped: 1,
+  });
 });
 
 test("USDT and USDC auto balance rows use native amount as USD amount", async () => {

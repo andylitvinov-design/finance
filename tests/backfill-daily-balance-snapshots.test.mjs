@@ -118,9 +118,14 @@ test("backfill daily balance snapshots apply writes only planned derived rows", 
   });
 
   assert.equal(report.dryRun, false);
+  assert.equal(report.applied, true);
+  assert.match(report.batch_id, /^daily-balance-backfill:2026-05-17:2026-05-17:/);
   assert.equal(saved.length, 1);
   assert.equal(saved[0].source, "derived_from_confirmed_balance");
   assert.equal(report.save.rowCount, 1);
+  assert.equal(report.save.inserted, 1);
+  assert.equal(report.save.updated, 0);
+  assert.equal(report.save.skipped, 0);
 });
 
 test("backfill daily balance snapshots does not overwrite confirmed same-date balances and is idempotent", async () => {

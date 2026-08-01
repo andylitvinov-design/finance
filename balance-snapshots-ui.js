@@ -57,15 +57,26 @@
       section.appendChild(el("div", "empty", "Нет активных каналов для ввода остатков."));
     }
 
+    var ownerRows = Array.isArray(data.owner_rows) ? data.owner_rows : [];
     var selectedRows = Array.isArray(data.selected_rows) ? data.selected_rows : [];
     var autoRows = Array.isArray(data.auto_balance_rows) ? data.auto_balance_rows : [];
     var confirmedRows = Array.isArray(data.confirmed_rows) ? data.confirmed_rows : [];
     var rows = Array.isArray(data.rows) ? data.rows : [];
-    if (selectedRows.length) section.appendChild(renderSelectedRowsTable(selectedRows));
+    if (ownerRows.length) {
+      section.appendChild(el("h4", "", "Owner-confirmed остатки"));
+      section.appendChild(renderRowsTable(ownerRows));
+      section.appendChild(el("div", "tab-note", "Owner TOTAL: " + formatAmount(data.owner_total)));
+    } else if (selectedRows.length) section.appendChild(renderSelectedRowsTable(selectedRows));
     else if (rows.length) section.appendChild(renderRowsTable(rows));
     if (confirmedRows.length) section.appendChild(renderConfirmedRowsBlock(confirmedRows));
     var diagnostics = renderRawRowsDiagnostics(autoRows);
     if (diagnostics) section.appendChild(diagnostics);
+    if (Array.isArray(data.diagnostic_rows) && data.diagnostic_rows.length) {
+      var ownerDiagnostics = el("details", "balance-snapshots-diagnostics");
+      ownerDiagnostics.appendChild(el("summary", "", "Technical diagnostics (excluded from owner TOTAL)"));
+      ownerDiagnostics.appendChild(renderRowsTable(data.diagnostic_rows));
+      section.appendChild(ownerDiagnostics);
+    }
     if (!rows.length && !inputRows.length) return section;
 
     var pairs = Array.isArray(data.by_channel_currency) ? data.by_channel_currency : [];

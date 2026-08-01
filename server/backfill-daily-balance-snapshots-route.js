@@ -45,9 +45,16 @@ export async function runDailyBalanceBackfillRoute(options = {}) {
 
   const buildReport = options.buildReport || await loadBackfillReportBuilder();
   const report = await buildReport({ from, to, apply });
+  const write = report?.save || {};
   return jsonResult(report.ok ? 200 : 500, {
     ...report,
     dryRun: !apply,
+    applied: Boolean(apply && write.applied),
+    write_summary: {
+      inserted: Number(write.inserted || 0),
+      updated: Number(write.updated || 0),
+      skipped: Number(write.skipped || 0),
+    },
     route_guard: {
       may_2026_only: false,
       range_limited_to_may_2026: false,
