@@ -149,8 +149,29 @@ test("Yandex RUB collision audit detects the two stale migration rows", () => {
   assert.equal(report.current_diff, 86290.08);
   assert.equal(report.computed_without_candidates, 139451.92);
   assert.equal(report.remaining_diff, 334.08);
+  assert.deepEqual(report.remaining_yandex_rub_usd_input, {
+    date: "2026-04-24",
+    channel: "Яндекс руб",
+    currency: "RUB",
+    amount_rub: 334.08,
+    status: "needs_verification",
+    required_input: "date | Яндекс руб | amount RUB | Sberbank USD/RUB rate | amount_usd",
+  });
   assert.equal(report.candidate_rows[0].action, "archive_or_delete_after_owner_confirmation");
   assert.equal(report.recommendation.includes("owner confirmation"), true);
+});
+
+test("Yandex RUB remaining amount uses only existing Sberbank USD/RUB evidence", () => {
+  const repository = fixtureRepository();
+  repository.sberbankUsdRubRates = [{ date: "2026-04-24", rate: "84.5563", raw_source_id: "sberbank-rate-proof" }];
+
+  const report = buildYandexRubLedgerCollisionReport(repository);
+
+  assert.equal(report.remaining_yandex_rub_usd_input.status, "ready_with_existing_sberbank_rate");
+  assert.equal(report.remaining_yandex_rub_usd_input.sberbank_usd_rub_rate, 84.5563);
+  assert.equal(report.remaining_yandex_rub_usd_input.amount_usd, 3.951);
+  assert.equal(report.remaining_yandex_rub_usd_input.comment, "Sberbank Russia USD/RUB rate");
+  assert.equal(report.remaining_yandex_rub_usd_input.source, "Sberbank Russia USD/RUB rate");
 });
 
 test("Yandex RUB collision audit excludes opening-date movements from the segment", () => {
