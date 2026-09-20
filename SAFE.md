@@ -1,6 +1,6 @@
 # SAFE.md — ezohata-incoming-ledger / finance
 
-Last verified date: 2026-06-28
+Last verified date: 2026-09-20
 
 This file is a compact repo-level safety map for `/safe` sweeps. It lists environment variable names only and must never contain real values.
 
@@ -30,7 +30,7 @@ This file is a compact repo-level safety map for `/safe` sweeps. It lists enviro
 
 | Env name | Browser-safe? | Purpose | Notes |
 | --- | --- | --- | --- |
-| `EZOHATA_V2_APPS_SCRIPT_URL` | no | Apps Script integration | value never stored |
+| `FINANCE_DASHBOARD_ACCESS_TOKEN` | no | owner-only HTTP access gate | required in every deployed environment; value never stored |\n| `EZOHATA_V2_APPS_SCRIPT_URL` | no | Apps Script integration | value never stored |
 | `EZOHATA_LEGACY_MANUAL_FINANCE_URL` | no | legacy/manual finance source | value never stored |
 | `PAYPAL_CLIENT_ID` | no | PayPal API | value never stored |
 | `PAYPAL_CLIENT_SECRET` | no | PayPal API | value never stored |
@@ -75,7 +75,7 @@ This file is a compact repo-level safety map for `/safe` sweeps. It lists enviro
 
 ## Headers / browser baseline
 
-- CSP or CSP plan: needs verification.
+- Owner access gate: `middleware.mjs` must cover every static and API route; missing `FINANCE_DASHBOARD_ACCESS_TOKEN` must fail closed with `503`.\n- CSP or CSP plan: needs verification.
 - X-Content-Type-Options: needs verification.
 - Referrer-Policy: needs verification.
 - Permissions-Policy: needs verification.
@@ -103,11 +103,12 @@ npm run deploy:verify
 
 ## Last `/safe` result
 
-- Date: 2026-06-28
-- Routes selected: Vercel API/frontend, finance/provider import, paid API cost, frontend data display, headers, rollback/backup.
-- Critical/high findings: none proven in this pass.
-- Fix applied: repo-level safety map added.
-- Checks run: project memory, `AGENTS.md`, and package scripts review.
-- Checks not run: tests/build/release-guard, live smoke, provider/OAuth/authenticated flows, browser visual check.
-- Live verified: needs verification.
-- Next action: run tests/build/release-guard and live read-only smoke before merge/deploy.
+- Date: 2026-09-20
+- Routes selected: Vercel all-route middleware, public root/API exposure, provider/finance boundaries, frontend error state, rollback/backup.
+- Critical finding: unauthenticated production root rendered client-identifying service records and financial rows.
+- Fix prepared: fail-closed owner Basic-auth gate for every route on `codex/safe-private-ledger-gate-20260920`; no secret value is stored.
+- Checks run: clean desktop live smoke; anonymous root/API evidence; focused access-gate tests (5/5).
+- Checks not run: authenticated preview, full repository tests/build/release-guard, provider/OAuth flows, production deploy verification.
+- Live verified: vulnerable before state confirmed; fix is not live until reviewed, configured, merged, deployed, and anonymously rechecked.
+- Rollback: close/revert the isolated gate PR or promote the previous Vercel deployment. No data/schema backup is required for this code-only guard.
+- Next action: configure `FINANCE_DASHBOARD_ACCESS_TOKEN` in preview only, verify anonymous `401` and authorized owner access, then review for production rollout.
