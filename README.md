@@ -160,6 +160,16 @@ YooMoney wallet OAuth setup:
 
 Use YooMoney wallet API for `/api/yoomoney-transactions`; do not replace it with YooKassa business API.
 
+## Private production access
+
+The ledger contains private client and financial data. Every static asset and API route must remain behind the fail-closed gate in `middleware.mjs`.
+
+- Configure `FINANCE_DASHBOARD_ACCESS_TOKEN` as a server-only secret in each intended Vercel environment.
+- Open the site with HTTP Basic authentication using username `owner` and the configured token as the password.
+- If the variable is absent, the deployment intentionally returns `503`; anonymous or invalid credentials return `401`.
+- Do not place the token in source, browser configuration, logs, screenshots, issue text, or PR text.
+- Before production rollout, verify a preview twice: anonymously (no ledger content) and with the owner credential (normal UI/API access).
+
 ## Deploy Flow
 
 Production must be wired to GitHub integration from `andylitvinov-design/finance`.
